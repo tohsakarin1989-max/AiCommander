@@ -132,3 +132,4 @@ AiCommander/
 详细开发指南请参考项目文档。
 
 # AiCommander
+## Ready for AI Review
