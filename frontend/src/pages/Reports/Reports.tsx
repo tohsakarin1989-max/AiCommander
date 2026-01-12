@@ -31,7 +31,12 @@ const { Panel } = Collapse
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
-  const { data: meetings, isLoading } = useQuery({
+  const {
+    data: meetings,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['meetings'],
     queryFn: () => meetingApi.getMeetings(),
   })
@@ -73,6 +78,15 @@ const Reports: React.FC = () => {
         <Button onClick={() => navigate('/meetings')}>查看所有会议</Button>
       </div>
 
+      {isError && (
+        <Alert
+          message="会议列表加载失败"
+          description={error instanceof Error ? error.message : '请稍后重试'}
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {isLoading ? (
         <Card loading>加载中...</Card>
       ) : completedMeetings.length === 0 ? (
@@ -108,24 +122,51 @@ interface ReportCardProps {
 
 const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, onViewDetail }) => {
   const [detailModalVisible, setDetailModalVisible] = useState(false)
-  const { data: report, isLoading } = useQuery({
+  const {
+    data: report,
+    isLoading,
+    isError: reportError,
+    error: reportErrorDetail,
+  } = useQuery({
     queryKey: ['report', meetingId],
     queryFn: () => meetingApi.getReport(meetingId),
   })
 
-  const { data: analyses } = useQuery({
+  const {
+    data: analyses,
+    isError: analysesError,
+    error: analysesErrorDetail,
+  } = useQuery({
     queryKey: ['analyses', meetingId],
     queryFn: () => meetingApi.getAnalyses(meetingId),
     enabled: detailModalVisible,
   })
 
-  const { data: rankings } = useQuery({
+  const {
+    data: rankings,
+    isError: rankingsError,
+    error: rankingsErrorDetail,
+  } = useQuery({
     queryKey: ['rankings', meetingId],
     queryFn: () => meetingApi.getRankings(meetingId),
     enabled: detailModalVisible,
   })
 
   if (isLoading) return <Card loading>加载中...</Card>
+  if (reportError) {
+    return (
+      <Card>
+        <Alert
+          message="报告加载失败"
+          description={
+            reportErrorDetail instanceof Error ? reportErrorDetail.message : '请稍后重试'
+          }
+          type="error"
+          showIcon
+        />
+      </Card>
+    )
+  }
   if (!report) return null
 
   const reportContent = typeof report.content === 'string' 
@@ -275,6 +316,28 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
         ]}
         width={900}
       >
+        {analysesError && (
+          <Alert
+            message="第一阶段分析加载失败"
+            description={
+              analysesErrorDetail instanceof Error ? analysesErrorDetail.message : '请稍后重试'
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        {rankingsError && (
+          <Alert
+            message="排名结果加载失败"
+            description={
+              rankingsErrorDetail instanceof Error ? rankingsErrorDetail.message : '请稍后重试'
+            }
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Collapse defaultActiveKey={['summary', 'consensus', 'recommendations']}>
           <Panel header="执行摘要" key="summary">
             <Paragraph>{reportContent?.summary || reportContent || '无'}</Paragraph>
@@ -423,4 +486,3 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
 }
 
 export default Reports
-

@@ -20,14 +20,6 @@ interface Case {
   status: string
 }
 
-interface DashboardData {
-  cases: Case[]
-  statistics: {
-    total_cases: number
-    today_cases: number
-  }
-}
-
 const Dashboard: React.FC = () => {
   const [wsConnected, setWsConnected] = useState(false)
   const [cases, setCases] = useState<Case[]>([])

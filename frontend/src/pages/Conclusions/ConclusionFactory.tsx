@@ -13,6 +13,7 @@ import {
   List,
   Collapse,
   Spin,
+  Alert,
 } from 'antd'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { conclusionApi, Conclusion, ConclusionFilters } from '../../services/conclusions'
@@ -25,7 +26,13 @@ const ConclusionFactory: React.FC = () => {
   const [detailOpen, setDetailOpen] = useState(false)
   const navigate = useNavigate()
 
-  const { data, refetch, isFetching } = useQuery({
+  const {
+    data,
+    refetch,
+    isFetching,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['conclusions', filters],
     queryFn: () => conclusionApi.list(filters),
   })
@@ -53,7 +60,12 @@ const ConclusionFactory: React.FC = () => {
     },
   })
 
-  const { data: detail, isFetching: isDetailLoading } = useQuery({
+  const {
+    data: detail,
+    isFetching: isDetailLoading,
+    isError: detailError,
+    error: detailErrorDetail,
+  } = useQuery({
     queryKey: ['conclusion-detail', detailId],
     queryFn: () => conclusionApi.get(detailId as number),
     enabled: detailOpen && !!detailId,
@@ -142,6 +154,15 @@ const ConclusionFactory: React.FC = () => {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title="结论工厂（低人力模式）">
+        {isError && (
+          <Alert
+            message="结论列表加载失败"
+            description={error instanceof Error ? error.message : '请稍后重试'}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Space wrap>
             <InputNumber
@@ -240,6 +261,17 @@ const ConclusionFactory: React.FC = () => {
         width={640}
         onClose={() => setDetailOpen(false)}
       >
+        {detailError && (
+          <Alert
+            message="证据链详情加载失败"
+            description={
+              detailErrorDetail instanceof Error ? detailErrorDetail.message : '请稍后重试'
+            }
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
         {isDetailLoading ? (
           <Spin />
         ) : detail ? (

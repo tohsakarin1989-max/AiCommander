@@ -4,12 +4,21 @@ import { useQuery } from '@tanstack/react-query'
 import { caseApi, Case } from '../../services/cases'
 
 const CaseFeatures: React.FC = () => {
-  const { data: cases, isLoading } = useQuery({
+  const {
+    data: cases,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
   })
 
-  const { data: preprocessStatus } = useQuery({
+  const {
+    data: preprocessStatus,
+    isError: preprocessError,
+    error: preprocessErrorDetail,
+  } = useQuery({
     queryKey: ['preprocess-status'],
     queryFn: () => caseApi.getPreprocessStatus(),
     refetchInterval: 5000,
@@ -186,6 +195,28 @@ const CaseFeatures: React.FC = () => {
 
   return (
     <div>
+      {isError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="案件数据加载失败"
+          description={error instanceof Error ? error.message : '请稍后重试'}
+        />
+      )}
+      {preprocessError && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="预处理状态加载失败"
+          description={
+            preprocessErrorDetail instanceof Error
+              ? preprocessErrorDetail.message
+              : '请稍后重试'
+          }
+        />
+      )}
       {preprocessStatus && (
         <Alert
           type="info"
@@ -242,5 +273,4 @@ const CaseFeatures: React.FC = () => {
 }
 
 export default CaseFeatures
-
 

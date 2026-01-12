@@ -39,7 +39,12 @@ const Meetings: React.FC = () => {
   const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
 
-  const { data: meetings, isLoading } = useQuery({
+  const {
+    data: meetings,
+    isLoading,
+    isError: meetingsError,
+    error: meetingsErrorDetail,
+  } = useQuery({
     queryKey: ['meetings'],
     queryFn: () => meetingApi.getMeetings(),
   })
@@ -54,41 +59,69 @@ const Meetings: React.FC = () => {
     }
   }, [searchParams, meetings])
 
-  const { data: models } = useQuery({
+  const {
+    data: models,
+    isError: modelsError,
+    error: modelsErrorDetail,
+  } = useQuery({
     queryKey: ['models'],
     queryFn: () => modelApi.getModels(),
   })
 
-  const { data: cases } = useQuery({
+  const {
+    data: cases,
+    isError: casesError,
+    error: casesErrorDetail,
+  } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
   })
 
   // 获取圆桌会议配置
-  const { data: meetingConfig } = useQuery({
+  const {
+    data: meetingConfig,
+    isError: meetingConfigError,
+    error: meetingConfigErrorDetail,
+  } = useQuery({
     queryKey: ['meetingConfig'],
     queryFn: () => systemConfigApi.getMeetingConfig(),
   })
 
-  const { data: conversations } = useQuery({
+  const {
+    data: conversations,
+    isError: conversationsError,
+    error: conversationsErrorDetail,
+  } = useQuery({
     queryKey: ['conversations', selectedMeeting],
     queryFn: () => meetingApi.getConversations(selectedMeeting!),
     enabled: !!selectedMeeting,
   })
 
-  const { data: report } = useQuery({
+  const {
+    data: report,
+    isError: reportError,
+    error: reportErrorDetail,
+  } = useQuery({
     queryKey: ['report', selectedMeeting],
     queryFn: () => meetingApi.getReport(selectedMeeting!),
     enabled: !!selectedMeeting,
   })
 
-  const { data: analyses } = useQuery({
+  const {
+    data: analyses,
+    isError: analysesError,
+    error: analysesErrorDetail,
+  } = useQuery({
     queryKey: ['analyses', selectedMeeting],
     queryFn: () => meetingApi.getAnalyses(selectedMeeting!),
     enabled: !!selectedMeeting,
   })
 
-  const { data: rankings } = useQuery({
+  const {
+    data: rankings,
+    isError: rankingsError,
+    error: rankingsErrorDetail,
+  } = useQuery({
     queryKey: ['rankings', selectedMeeting],
     queryFn: () => meetingApi.getRankings(selectedMeeting!),
     enabled: !!selectedMeeting,
@@ -214,6 +247,55 @@ const Meetings: React.FC = () => {
         </Button>
       </div>
 
+      {meetingsError && (
+        <Alert
+          message="会议列表加载失败"
+          description={
+            meetingsErrorDetail instanceof Error
+              ? meetingsErrorDetail.message
+              : '请稍后重试'
+          }
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {modelsError && (
+        <Alert
+          message="模型配置加载失败"
+          description={
+            modelsErrorDetail instanceof Error ? modelsErrorDetail.message : '请稍后重试'
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {casesError && (
+        <Alert
+          message="案件列表加载失败"
+          description={
+            casesErrorDetail instanceof Error ? casesErrorDetail.message : '请稍后重试'
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {meetingConfigError && (
+        <Alert
+          message="会议配置加载失败"
+          description={
+            meetingConfigErrorDetail instanceof Error
+              ? meetingConfigErrorDetail.message
+              : '请稍后重试'
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       {meetingConfig?.provider === 'openrouter' && !meetingConfig?.api_key && (
         <Alert
           message="圆桌会议API配置缺失"
@@ -317,12 +399,61 @@ const Meetings: React.FC = () => {
         footer={null}
       >
         {selectedMeeting && (
-          <Tabs
-            defaultActiveKey="stage1"
-            items={[
-              {
-                key: 'stage1',
-                label: (
+          <>
+            {conversationsError && (
+              <Alert
+                message="会议时间线加载失败"
+                description={
+                  conversationsErrorDetail instanceof Error
+                    ? conversationsErrorDetail.message
+                    : '请稍后重试'
+                }
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {reportError && (
+              <Alert
+                message="会议报告加载失败"
+                description={
+                  reportErrorDetail instanceof Error ? reportErrorDetail.message : '请稍后重试'
+                }
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {analysesError && (
+              <Alert
+                message="第一阶段分析加载失败"
+                description={
+                  analysesErrorDetail instanceof Error
+                    ? analysesErrorDetail.message
+                    : '请稍后重试'
+                }
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {rankingsError && (
+              <Alert
+                message="排名结果加载失败"
+                description={
+                  rankingsErrorDetail instanceof Error ? rankingsErrorDetail.message : '请稍后重试'
+                }
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            <Tabs
+              defaultActiveKey="stage1"
+              items={[
+                {
+                  key: 'stage1',
+                  label: (
                   <span>
                     <Badge count={analyses?.length || 0} offset={[8, 0]}>
                       第一阶段：第一意见
@@ -567,7 +698,8 @@ const Meetings: React.FC = () => {
                 ),
               },
             ]}
-          />
+              />
+          </>
         )}
       </Modal>
     </div>
