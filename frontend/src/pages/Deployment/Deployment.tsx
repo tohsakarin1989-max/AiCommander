@@ -34,32 +34,58 @@ const { Title, Paragraph, Text } = Typography
 const Deployment: React.FC = () => {
   const [analysisDays, setAnalysisDays] = useState(90)
 
-  const { data: report, isLoading, refetch } = useQuery({
+  const {
+    data: report,
+    isLoading,
+    refetch,
+    isError: reportError,
+    error: reportErrorDetail,
+  } = useQuery({
     queryKey: ['deploymentReport', analysisDays],
     queryFn: () => deploymentApi.getReport(analysisDays),
   })
 
-  const { data: temporalPatterns } = useQuery({
+  const {
+    data: temporalPatterns,
+    isError: temporalError,
+    error: temporalErrorDetail,
+  } = useQuery({
     queryKey: ['temporalPatterns', analysisDays],
     queryFn: () => deploymentApi.getTemporalPatterns(analysisDays),
   })
 
-  const { data: targetPatterns } = useQuery({
+  const {
+    data: targetPatterns,
+    isError: targetError,
+    error: targetErrorDetail,
+  } = useQuery({
     queryKey: ['targetPatterns'],
     queryFn: () => deploymentApi.getTargetPatterns(),
   })
 
-  const { data: patrolRoutes } = useQuery({
+  const {
+    data: patrolRoutes,
+    isError: patrolError,
+    error: patrolErrorDetail,
+  } = useQuery({
     queryKey: ['patrolRoutes'],
     queryFn: () => deploymentApi.getPatrolRoutes(),
   })
 
-  const { data: resourceAllocation } = useQuery({
+  const {
+    data: resourceAllocation,
+    isError: resourceError,
+    error: resourceErrorDetail,
+  } = useQuery({
     queryKey: ['resourceAllocation'],
     queryFn: () => deploymentApi.getResourceAllocation(),
   })
 
-  const { data: preventionMeasures } = useQuery({
+  const {
+    data: preventionMeasures,
+    isError: preventionError,
+    error: preventionErrorDetail,
+  } = useQuery({
     queryKey: ['preventionMeasures'],
     queryFn: () => deploymentApi.getPreventionMeasures(),
   })
@@ -117,6 +143,38 @@ const Deployment: React.FC = () => {
         type="info"
         style={{ marginBottom: 24 }}
       />
+      {reportError && (
+        <Alert
+          message="综合分析摘要加载失败"
+          description={
+            reportErrorDetail instanceof Error ? reportErrorDetail.message : '请稍后重试'
+          }
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {(temporalError || targetError || patrolError || resourceError || preventionError) && (
+        <Alert
+          message="部分分析模块加载失败"
+          description={
+            temporalErrorDetail instanceof Error
+              ? temporalErrorDetail.message
+              : targetErrorDetail instanceof Error
+                ? targetErrorDetail.message
+                : patrolErrorDetail instanceof Error
+                  ? patrolErrorDetail.message
+                  : resourceErrorDetail instanceof Error
+                    ? resourceErrorDetail.message
+                    : preventionErrorDetail instanceof Error
+                      ? preventionErrorDetail.message
+                      : '请稍后重试'
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       {report?.summary && (
         <Card title="综合分析摘要" style={{ marginBottom: 16 }}>
@@ -531,4 +589,3 @@ const Deployment: React.FC = () => {
 }
 
 export default Deployment
-

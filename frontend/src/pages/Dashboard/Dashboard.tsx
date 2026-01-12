@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Card, Statistic, Row, Col, Table, Tag, Alert, Button, Space, Spin } from 'antd'
+import { Card, Statistic, Row, Col, Table, Tag, Alert, Button, Space } from 'antd'
 import {
   AlertOutlined,
   EnvironmentOutlined,
@@ -8,9 +8,6 @@ import {
   PlayCircleOutlined,
   PauseCircleOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
-import api from '../../services/api'
-import './Dashboard.css'
 
 interface Case {
   id: number
@@ -23,82 +20,90 @@ interface Case {
   status: string
 }
 
-interface DashboardData {
-  cases: Case[]
-  statistics: {
-    total_cases: number
-    today_cases: number
-  }
-}
-
 const Dashboard: React.FC = () => {
   const [wsConnected, setWsConnected] = useState(false)
   const [cases, setCases] = useState<Case[]>([])
   const [statistics, setStatistics] = useState({ total_cases: 0, today_cases: 0 })
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const isPlayingRef = useRef(isPlaying)
+  const reconnectTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying
+  }, [isPlaying])
 
   // 初始化WebSocket连接
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host.replace(':3000', ':8000')}/api/ws/dashboard`
-    
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
 
-    ws.onopen = () => {
-      console.log('WebSocket连接已建立')
-      setWsConnected(true)
-    }
+    const connect = () => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        console.log('收到WebSocket消息:', data)
+      setIsInitialLoading(true)
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
 
-        if (data.type === 'initial_data') {
-          setCases(data.data.cases || [])
-          setStatistics(data.data.statistics || { total_cases: 0, today_cases: 0 })
-        } else if (data.type === 'update') {
-          // 更新案件列表（添加新案件）
-          if (data.data?.new_cases) {
-            setCases((prev) => {
-              const newCases = data.data.new_cases
-              const existingIds = new Set(prev.map((c) => c.id))
-              const uniqueNewCases = newCases.filter((c: Case) => !existingIds.has(c.id))
-              return [...uniqueNewCases, ...prev].slice(0, 50) // 只保留最近50个
-            })
+      ws.onopen = () => {
+        setWsConnected(true)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'initial_data') {
+            setCases(data.data.cases || [])
+            setStatistics(data.data.statistics || { total_cases: 0, today_cases: 0 })
+            setIsInitialLoading(false)
+            setLastUpdate(new Date())
+          } else if (data.type === 'update') {
+            if (!isPlayingRef.current) {
+              return
+            }
+            if (data.data?.new_cases) {
+              setCases((prev) => {
+                const newCases = data.data.new_cases
+                const existingIds = new Set(prev.map((c) => c.id))
+                const uniqueNewCases = newCases.filter((c: Case) => !existingIds.has(c.id))
+                return [...uniqueNewCases, ...prev].slice(0, 50)
+              })
+              setLastUpdate(new Date())
+            }
+          } else if (data.type === 'heartbeat' || data.type === 'pong') {
+            // 心跳消息，保持连接
           }
-        } else if (data.type === 'heartbeat' || data.type === 'pong') {
-          // 心跳消息，保持连接
+        } catch (error) {
+          console.error('解析WebSocket消息失败:', error)
         }
-      } catch (error) {
-        console.error('解析WebSocket消息失败:', error)
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket错误:', error)
+        setWsConnected(false)
+      }
+
+      ws.onclose = () => {
+        setWsConnected(false)
+        reconnectTimerRef.current = window.setTimeout(() => {
+          connect()
+        }, 3000)
       }
     }
 
-    ws.onerror = (error) => {
-      console.error('WebSocket错误:', error)
-      setWsConnected(false)
-    }
-
-    ws.onclose = () => {
-      console.log('WebSocket连接已关闭')
-      setWsConnected(false)
-      // 尝试重连
-      setTimeout(() => {
-        if (wsRef.current?.readyState === WebSocket.CLOSED) {
-          // 重新初始化连接
-          const newWs = new WebSocket(wsUrl)
-          wsRef.current = newWs
-        }
-      }, 3000)
-    }
+    connect()
 
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close()
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
       }
+      wsRef.current?.close()
     }
   }, [])
 
@@ -178,9 +183,18 @@ const Dashboard: React.FC = () => {
           <Tag color={wsConnected ? 'success' : 'error'}>
             {wsConnected ? '实时连接中' : '连接断开'}
           </Tag>
+          <Tag color={isPlaying ? 'processing' : 'default'}>
+            {isPlaying ? '实时更新中' : '更新已暂停'}
+          </Tag>
+          {lastUpdate && (
+            <Tag color="blue">
+              最近更新：{lastUpdate.toLocaleTimeString('zh-CN')}
+            </Tag>
+          )}
           <Button
             icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
             onClick={() => setIsPlaying(!isPlaying)}
+            disabled={!wsConnected}
           >
             {isPlaying ? '暂停' : '播放'}
           </Button>
@@ -194,6 +208,24 @@ const Dashboard: React.FC = () => {
         <Alert
           message="WebSocket连接断开"
           description="正在尝试重新连接..."
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {wsConnected && isInitialLoading && (
+        <Alert
+          message="正在加载实时数据"
+          description="等待服务端推送初始数据..."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {wsConnected && !isPlaying && (
+        <Alert
+          message="实时更新已暂停"
+          description="点击“播放”恢复实时刷新。"
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
@@ -247,6 +279,7 @@ const Dashboard: React.FC = () => {
           dataSource={cases}
           columns={columns}
           rowKey="id"
+          loading={isInitialLoading && wsConnected}
           pagination={{ pageSize: 10 }}
           size="small"
           scroll={{ y: 400 }}
@@ -268,4 +301,3 @@ const Dashboard: React.FC = () => {
 }
 
 export default Dashboard
-

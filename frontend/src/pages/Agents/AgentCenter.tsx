@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Card, Input, Button, Space, List, Tag, message } from 'antd'
+import { Card, Input, Button, Space, List, Tag, message, Alert } from 'antd'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { agentApi, AgentTask } from '../../services/agents'
 
@@ -8,7 +8,13 @@ const { TextArea } = Input
 const AgentCenter: React.FC = () => {
   const [query, setQuery] = useState('')
 
-  const { data, refetch, isFetching } = useQuery({
+  const {
+    data,
+    refetch,
+    isFetching,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['agent-tasks'],
     queryFn: agentApi.list,
   })
@@ -52,6 +58,15 @@ const AgentCenter: React.FC = () => {
       </Card>
 
       <Card title="任务记录" loading={isFetching}>
+        {isError && (
+          <Alert
+            message="任务记录加载失败"
+            description={error instanceof Error ? error.message : '请稍后重试'}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <List
           dataSource={data || []}
           renderItem={(item: AgentTask) => (

@@ -42,18 +42,33 @@ const Settings: React.FC = () => {
   const queryClient = useQueryClient()
 
   // 获取配置
-  const { data: mapConfigs, isLoading: mapLoading } = useQuery({
+  const {
+    data: mapConfigs,
+    isLoading: mapLoading,
+    isError: mapError,
+    error: mapErrorDetail,
+  } = useQuery({
     queryKey: ['configs', 'map'],
     queryFn: () => systemConfigApi.getConfigs('map'),
   })
 
-  const { data: meetingConfigs, isLoading: meetingLoading } = useQuery({
+  const {
+    data: meetingConfigs,
+    isLoading: meetingLoading,
+    isError: meetingError,
+    error: meetingErrorDetail,
+  } = useQuery({
     queryKey: ['configs', 'meeting'],
     queryFn: () => systemConfigApi.getConfigs('meeting'),
   })
 
   // AI模型相关查询
-  const { data: models, isLoading: modelsLoading } = useQuery({
+  const {
+    data: models,
+    isLoading: modelsLoading,
+    isError: modelsError,
+    error: modelsErrorDetail,
+  } = useQuery({
     queryKey: ['models'],
     queryFn: () => modelApi.getModels(),
   })
@@ -358,6 +373,38 @@ const Settings: React.FC = () => {
           初始化默认配置
         </Button>
       </div>
+
+      {mapError && (
+        <Alert
+          message="地图配置加载失败"
+          description={mapErrorDetail instanceof Error ? mapErrorDetail.message : '请稍后重试'}
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {meetingError && (
+        <Alert
+          message="会议配置加载失败"
+          description={
+            meetingErrorDetail instanceof Error ? meetingErrorDetail.message : '请稍后重试'
+          }
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {modelsError && (
+        <Alert
+          message="模型列表加载失败"
+          description={
+            modelsErrorDetail instanceof Error ? modelsErrorDetail.message : '请稍后重试'
+          }
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <Tabs
         defaultActiveKey="map"
@@ -694,4 +741,3 @@ const Settings: React.FC = () => {
 }
 
 export default Settings
-
