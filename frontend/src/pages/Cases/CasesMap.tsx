@@ -14,9 +14,10 @@ import {
   Modal,
   Spin,
   Collapse,
+  message,
 } from 'antd'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { caseApi, Case } from '../../services/cases'
 import { systemConfigApi } from '../../services/systemConfig'
 import { mapMCPApi } from '../../services/mapMCP'
@@ -25,11 +26,9 @@ import {
   FireOutlined,
   LinkOutlined,
   EnvironmentOutlined,
-  SearchOutlined,
   RobotOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons'
-import { message } from 'antd'
 
 const { Text, Paragraph } = Typography
 const { Panel } = Collapse
@@ -41,28 +40,37 @@ const { Panel } = Collapse
  * - 根据地理位置研判案件线索
  */
 const CasesMap: React.FC = () => {
-  const { data: cases, isLoading } = useQuery({
+  const {
+    data: cases,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
   })
 
-  const { data: geoAnalysis } = useQuery({
+  const { data: geoAnalysis, isLoading: geoLoading } = useQuery({
     queryKey: ['geoAnalysis'],
     queryFn: () => caseApi.getGeographicAnalysis(),
   })
 
-  const { data: hotspots } = useQuery({
+  const { data: hotspots, isLoading: hotspotsLoading } = useQuery({
     queryKey: ['hotspots'],
     queryFn: () => caseApi.getHotspots(),
   })
 
-  const { data: serialCases } = useQuery({
+  const { data: serialCases, isLoading: serialLoading } = useQuery({
     queryKey: ['serialCases'],
     queryFn: () => caseApi.getSerialCases(),
   })
 
   // 获取地图配置
-  const { data: mapConfig } = useQuery({
+  const {
+    data: mapConfig,
+    isLoading: mapConfigLoading,
+    isError: mapConfigError,
+  } = useQuery({
     queryKey: ['mapConfig'],
     queryFn: () => systemConfigApi.getMapConfig(),
   })
@@ -121,6 +129,7 @@ const CasesMap: React.FC = () => {
   const casesWithGeo = (cases || []).filter(
     (c) => c.latitude != null && c.longitude != null,
   )
+  const isMapLoading = isLoading || mapConfigLoading
 
   // 根据配置生成地图URL（支持多个标记点）
   const generateMapUrl = useMemo(() => {
@@ -204,6 +213,25 @@ const CasesMap: React.FC = () => {
   }, [mapConfig])
 
   const renderMap = () => {
+    if (isMapLoading) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
+          <Spin tip="加载地图数据中..." />
+        </div>
+      )
+    }
+
+    if (mapConfigError) {
+      return (
+        <Alert
+          message="地图配置加载失败"
+          description="请检查系统设置中的地图配置或稍后重试。"
+          type="warning"
+          showIcon
+        />
+      )
+    }
+
     if (casesWithGeo.length === 0) {
       return <Empty description="暂无带经纬度的案件" />
     }
@@ -221,7 +249,7 @@ const CasesMap: React.FC = () => {
             <div>
               <p>当前选择的地图服务提供商（{provider}）需要API密钥。</p>
               <p>
-                请前往 <a href="/settings">系统设置</a> 配置地图API密钥。
+                请前往 <Link to="/settings">系统设置</Link> 配置地图API密钥。
               </p>
             </div>
           }
@@ -370,6 +398,15 @@ const CasesMap: React.FC = () => {
       <p style={{ marginBottom: 16 }}>
         根据经纬度定位案件位置，通过地图展示发案情况，并根据地理位置研判可能的案件线索。
       </p>
+      {isError && (
+        <Alert
+          message="案件数据加载失败"
+          description={error instanceof Error ? error.message : '请检查网络或稍后重试'}
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <Tabs
         defaultActiveKey="map"
@@ -434,44 +471,46 @@ const CasesMap: React.FC = () => {
               </span>
             ),
             children: (
-              <div>
-                {hotspots?.hotspots && hotspots.hotspots.length > 0 ? (
-                  <List
-                    dataSource={hotspots.hotspots}
-                    renderItem={(hotspot: any) => (
-                      <List.Item>
-                        <Card style={{ width: '100%' }}>
-                          <Descriptions column={2} size="small">
-                            <Descriptions.Item label="中心位置">
-                              {hotspot.center_latitude.toFixed(6)},{' '}
-                              {hotspot.center_longitude.toFixed(6)}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="案件数量">
-                              <Tag color="red">{hotspot.case_count} 起</Tag>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="影响半径">
-                              {hotspot.radius_km} 公里
-                            </Descriptions.Item>
-                          </Descriptions>
-                          <div style={{ marginTop: 8 }}>
-                            <Text strong>涉及案件：</Text>
-                            <Space wrap style={{ marginTop: 4 }}>
-                              {hotspot.cases.slice(0, 5).map((c: any) => (
-                                <Tag key={c.id}>{c.case_number}</Tag>
-                              ))}
-                              {hotspot.cases.length > 5 && (
-                                <Tag>+{hotspot.cases.length - 5} 个</Tag>
-                              )}
-                            </Space>
-                          </div>
-                        </Card>
-                      </List.Item>
-                    )}
-                  />
-                ) : (
-                  <Empty description="暂无热点区域" />
-                )}
-              </div>
+              <Spin spinning={hotspotsLoading} tip="加载热点数据中...">
+                <div>
+                  {hotspots?.hotspots && hotspots.hotspots.length > 0 ? (
+                    <List
+                      dataSource={hotspots.hotspots}
+                      renderItem={(hotspot: any) => (
+                        <List.Item>
+                          <Card style={{ width: '100%' }}>
+                            <Descriptions column={2} size="small">
+                              <Descriptions.Item label="中心位置">
+                                {hotspot.center_latitude.toFixed(6)},{' '}
+                                {hotspot.center_longitude.toFixed(6)}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="案件数量">
+                                <Tag color="red">{hotspot.case_count} 起</Tag>
+                              </Descriptions.Item>
+                              <Descriptions.Item label="影响半径">
+                                {hotspot.radius_km} 公里
+                              </Descriptions.Item>
+                            </Descriptions>
+                            <div style={{ marginTop: 8 }}>
+                              <Text strong>涉及案件：</Text>
+                              <Space wrap style={{ marginTop: 4 }}>
+                                {hotspot.cases.slice(0, 5).map((c: any) => (
+                                  <Tag key={c.id}>{c.case_number}</Tag>
+                                ))}
+                                {hotspot.cases.length > 5 && (
+                                  <Tag>+{hotspot.cases.length - 5} 个</Tag>
+                                )}
+                              </Space>
+                            </div>
+                          </Card>
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <Empty description="暂无热点区域" />
+                  )}
+                </div>
+              </Spin>
             ),
           },
           {
@@ -482,64 +521,66 @@ const CasesMap: React.FC = () => {
               </span>
             ),
             children: (
-              <div>
-                {serialCases?.serial_cases && serialCases.serial_cases.length > 0 ? (
-                  <List
-                    dataSource={serialCases.serial_cases}
-                    renderItem={(group: any) => (
-                      <List.Item>
-                        <Card style={{ width: '100%' }}>
-                          <Space direction="vertical" style={{ width: '100%' }}>
-                            <Descriptions column={3} size="small">
-                              <Descriptions.Item label="串案组">
-                                <Tag color={group.analysis.likely_serial ? 'red' : 'orange'}>
-                                  {group.analysis.likely_serial ? '高度疑似' : '可能串案'}
-                                </Tag>
-                              </Descriptions.Item>
-                              <Descriptions.Item label="案件数量">
-                                {group.case_count} 起
-                              </Descriptions.Item>
-                              <Descriptions.Item label="时间跨度">
-                                {group.time_span_days} 天
-                              </Descriptions.Item>
-                              <Descriptions.Item label="中心位置">
-                                {group.center_latitude.toFixed(6)},{' '}
-                                {group.center_longitude.toFixed(6)}
-                              </Descriptions.Item>
-                              <Descriptions.Item label="共同类型">
-                                {group.common_case_type || '未知'}
-                              </Descriptions.Item>
-                            </Descriptions>
-                            <div>
-                              <Text strong>涉及案件：</Text>
-                              <Space wrap style={{ marginTop: 4 }}>
-                                {group.cases.map((c: any) => (
-                                  <Tag key={c.id}>{c.case_number}</Tag>
-                                ))}
-                              </Space>
-                            </div>
-                            {group.analysis.suggestions.length > 0 && (
-                              <Alert
-                                message="研判建议"
-                                description={
-                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                    {group.analysis.suggestions.map((s: string, idx: number) => (
-                                      <li key={idx}>{s}</li>
-                                    ))}
-                                  </ul>
-                                }
-                                type="info"
-                              />
-                            )}
-                          </Space>
-                        </Card>
-                      </List.Item>
-                    )}
-                  />
-                ) : (
-                  <Empty description="暂无串案" />
-                )}
-              </div>
+              <Spin spinning={serialLoading} tip="加载串案分析中...">
+                <div>
+                  {serialCases?.serial_cases && serialCases.serial_cases.length > 0 ? (
+                    <List
+                      dataSource={serialCases.serial_cases}
+                      renderItem={(group: any) => (
+                        <List.Item>
+                          <Card style={{ width: '100%' }}>
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                              <Descriptions column={3} size="small">
+                                <Descriptions.Item label="串案组">
+                                  <Tag color={group.analysis.likely_serial ? 'red' : 'orange'}>
+                                    {group.analysis.likely_serial ? '高度疑似' : '可能串案'}
+                                  </Tag>
+                                </Descriptions.Item>
+                                <Descriptions.Item label="案件数量">
+                                  {group.case_count} 起
+                                </Descriptions.Item>
+                                <Descriptions.Item label="时间跨度">
+                                  {group.time_span_days} 天
+                                </Descriptions.Item>
+                                <Descriptions.Item label="中心位置">
+                                  {group.center_latitude.toFixed(6)},{' '}
+                                  {group.center_longitude.toFixed(6)}
+                                </Descriptions.Item>
+                                <Descriptions.Item label="共同类型">
+                                  {group.common_case_type || '未知'}
+                                </Descriptions.Item>
+                              </Descriptions>
+                              <div>
+                                <Text strong>涉及案件：</Text>
+                                <Space wrap style={{ marginTop: 4 }}>
+                                  {group.cases.map((c: any) => (
+                                    <Tag key={c.id}>{c.case_number}</Tag>
+                                  ))}
+                                </Space>
+                              </div>
+                              {group.analysis.suggestions.length > 0 && (
+                                <Alert
+                                  message="研判建议"
+                                  description={
+                                    <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                      {group.analysis.suggestions.map((s: string, idx: number) => (
+                                        <li key={idx}>{s}</li>
+                                      ))}
+                                    </ul>
+                                  }
+                                  type="info"
+                                />
+                              )}
+                            </Space>
+                          </Card>
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <Empty description="暂无串案" />
+                  )}
+                </div>
+              </Spin>
             ),
           },
           {
@@ -550,41 +591,43 @@ const CasesMap: React.FC = () => {
               </span>
             ),
             children: (
-              <div>
-                {geoAnalysis?.clues && geoAnalysis.clues.length > 0 ? (
-                  <Space direction="vertical" style={{ width: '100%' }} size="large">
-                    {geoAnalysis.clues.map((clue: any, idx: number) => (
-                      <Card key={idx} title={clue.title}>
-                        <Paragraph>{clue.description}</Paragraph>
-                        {clue.suggestions && (
-                          <Alert
-                            message="研判建议"
-                            description={
-                              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                {clue.suggestions.map((s: string, i: number) => (
-                                  <li key={i}>{s}</li>
-                                ))}
-                              </ul>
-                            }
-                            type="info"
-                            style={{ marginTop: 8 }}
+              <Spin spinning={geoLoading} tip="加载地理线索中...">
+                <div>
+                  {geoAnalysis?.clues && geoAnalysis.clues.length > 0 ? (
+                    <Space direction="vertical" style={{ width: '100%' }} size="large">
+                      {geoAnalysis.clues.map((clue: any, idx: number) => (
+                        <Card key={idx} title={clue.title}>
+                          <Paragraph>{clue.description}</Paragraph>
+                          {clue.suggestions && (
+                            <Alert
+                              message="研判建议"
+                              description={
+                                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                  {clue.suggestions.map((s: string, i: number) => (
+                                    <li key={i}>{s}</li>
+                                  ))}
+                                </ul>
+                              }
+                              type="info"
+                              style={{ marginTop: 8 }}
+                            />
+                          )}
+                        </Card>
+                      ))}
+                      {geoAnalysis.recommendations && (
+                        <Card title="综合建议">
+                          <List
+                            dataSource={geoAnalysis.recommendations}
+                            renderItem={(item: string) => <List.Item>{item}</List.Item>}
                           />
-                        )}
-                      </Card>
-                    ))}
-                    {geoAnalysis.recommendations && (
-                      <Card title="综合建议">
-                        <List
-                          dataSource={geoAnalysis.recommendations}
-                          renderItem={(item: string) => <List.Item>{item}</List.Item>}
-                        />
-                      </Card>
-                    )}
-                  </Space>
-                ) : (
-                  <Empty description="暂无地理线索" />
-                )}
-              </div>
+                        </Card>
+                      )}
+                    </Space>
+                  ) : (
+                    <Empty description="暂无地理线索" />
+                  )}
+                </div>
+              </Spin>
             ),
           },
         ]}
@@ -931,5 +974,3 @@ const CasesMap: React.FC = () => {
 }
 
 export default CasesMap
-
-
