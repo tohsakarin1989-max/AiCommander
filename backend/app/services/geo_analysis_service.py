@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.utils.geo import haversine_km, bounding_box
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, DefaultDict
 from collections import defaultdict
 from datetime import datetime, timedelta
 import math
@@ -24,40 +24,59 @@ class GeoAnalysisService:
         min_cases: int = 3
     ) -> List[Dict]:
         """
-        识别案件热点区域
+        识别案件热点区域（优化版：使用网格预分区减少 O(n²) 计算）
         返回：热点中心坐标、案件数量、案件列表
         """
         cases = GeoAnalysisService.get_all_cases_with_geo(db)
         if len(cases) < min_cases:
             return []
-        
-        # 使用网格聚类方法识别热点
+
+        # 使用网格预分区：将案件按网格分组，只需计算相邻网格内案件的距离
+        # 网格大小略大于 radius_km，确保相邻网格覆盖搜索范围
+        grid_size_deg = radius_km / 111.0 * 1.5  # 1度纬度 ≈ 111km
+
+        # 构建网格索引
+        grid_index: Dict[Tuple[int, int], List[Case]] = defaultdict(list)
+        for case in cases:
+            grid_x = int(case.latitude / grid_size_deg)
+            grid_y = int(case.longitude / grid_size_deg)
+            grid_index[(grid_x, grid_y)].append(case)
+
         hotspots = []
         processed = set()
-        
+
         for case in cases:
             if case.id in processed:
                 continue
-            
-            # 找到该案件附近的所有案件
+
+            # 只搜索当前网格及相邻 8 个网格（共 9 个）
+            grid_x = int(case.latitude / grid_size_deg)
+            grid_y = int(case.longitude / grid_size_deg)
+
             nearby = []
-            for other in cases:
-                if other.id == case.id:
-                    continue
-                dist = haversine_km(
-                    case.latitude, case.longitude,
-                    other.latitude, other.longitude
-                )
-                if dist <= radius_km:
-                    nearby.append(other)
-                    processed.add(other.id)
-            
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    for other in grid_index.get((grid_x + dx, grid_y + dy), []):
+                        if other.id == case.id or other.id in processed:
+                            continue
+                        dist = haversine_km(
+                            case.latitude, case.longitude,
+                            other.latitude, other.longitude
+                        )
+                        if dist <= radius_km:
+                            nearby.append(other)
+
             if len(nearby) + 1 >= min_cases:  # 包括中心案件
-                # 计算热点中心（所有案件的平均坐标）
+                # 标记所有聚类内案件为已处理
+                for c in nearby:
+                    processed.add(c.id)
+                processed.add(case.id)
+
+                # 计算热点中心
                 all_cases_in_cluster = [case] + nearby
                 avg_lat = sum(c.latitude for c in all_cases_in_cluster) / len(all_cases_in_cluster)
                 avg_lng = sum(c.longitude for c in all_cases_in_cluster) / len(all_cases_in_cluster)
-                
+
                 hotspots.append({
                     "center_latitude": avg_lat,
                     "center_longitude": avg_lng,
@@ -77,8 +96,7 @@ class GeoAnalysisService:
                         for c in all_cases_in_cluster
                     ]
                 })
-                processed.add(case.id)
-        
+
         # 按案件数量排序
         hotspots.sort(key=lambda x: x["case_count"], reverse=True)
         return hotspots

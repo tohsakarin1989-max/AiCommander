@@ -1,19 +1,317 @@
+/**
+ * 智慧大屏样式
+ * 支持暗色/亮色主题
+ */
+
+/* ========== 容器基础样式 ========== */
 .dashboard-container {
-  padding: 24px;
-  background: #f0f2f5;
   min-height: 100vh;
+  padding: 16px;
+  transition: background-color 0.3s ease;
+  display: flex;
+  flex-direction: column;
 }
 
+.dashboard-container--light {
+  background: linear-gradient(135deg, #f0f2f5 0%, #e8eaed 100%);
+}
+
+.dashboard-container--dark {
+  background: linear-gradient(135deg, #0a0a1a 0%, #1a1a2e 50%, #0f0f23 100%);
+}
+
+/* ========== 顶部标题栏 ========== */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  padding: 12px 20px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
 }
 
-.dashboard-header h1 {
+.dashboard-container--light .dashboard-header {
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.dashboard-container--dark .dashboard-header {
+  background: rgba(30, 30, 60, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dashboard-header__left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.dashboard-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
+  display: flex;
+  align-items: center;
 }
 
+.dashboard-container--light .dashboard-title {
+  color: #1a1a2e;
+}
+
+.dashboard-container--dark .dashboard-title {
+  color: #fff;
+  text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+}
+
+.connection-tag {
+  font-size: 12px;
+}
+
+.header-btn {
+  font-size: 18px !important;
+}
+
+.dashboard-container--light .header-btn {
+  color: #666 !important;
+}
+
+.dashboard-container--dark .header-btn {
+  color: #a0a0a0 !important;
+}
+
+.dashboard-container--dark .header-btn:hover {
+  color: #00d4ff !important;
+}
+
+/* ========== 连接警告 ========== */
+.connection-alert {
+  margin-bottom: 16px;
+  border-radius: 8px;
+}
+
+/* ========== 主内容区域 ========== */
+.dashboard-content {
+  display: grid;
+  grid-template-columns: 320px 1fr 400px;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1600px) {
+  .dashboard-content {
+    grid-template-columns: 280px 1fr 360px;
+  }
+}
+
+@media (max-width: 1400px) {
+  .dashboard-content {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .dashboard-left {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .stat-cards {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ========== 左侧统计区 ========== */
+.dashboard-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stat-cards {
+  margin-bottom: 4px;
+}
+
+/* ========== 中间地图区 ========== */
+.dashboard-center {
+  display: flex;
+  flex-direction: column;
+}
+
+.map-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-card .ant-card-body {
+  flex: 1;
+  padding: 12px;
+}
+
+/* ========== 右侧列表区 ========== */
+.dashboard-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.table-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-card .ant-card-body {
+  flex: 1;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ========== 卡片样式 ========== */
+.chart-card,
+.map-card,
+.table-card {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.dashboard-container--light .chart-card,
+.dashboard-container--light .map-card,
+.dashboard-container--light .table-card {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.dashboard-container--dark .chart-card,
+.dashboard-container--dark .map-card,
+.dashboard-container--dark .table-card {
+  background: linear-gradient(145deg, rgba(30, 30, 60, 0.8) 0%, rgba(20, 20, 40, 0.9) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dashboard-container--light .card-title {
+  color: #333;
+}
+
+.dashboard-container--dark .card-title {
+  color: #e0e0e0;
+}
+
+/* Ant Design Card 标题覆盖 */
+.dashboard-container--dark .ant-card-head {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: transparent;
+}
+
+.dashboard-container--dark .ant-card-head-title {
+  color: #e0e0e0;
+}
+
+/* ========== 表格样式 ========== */
+.dashboard-table--light .ant-table {
+  background: transparent;
+}
+
+.dashboard-table--dark .ant-table {
+  background: transparent;
+}
+
+.dashboard-table--dark .ant-table-thead > tr > th {
+  background: rgba(0, 0, 0, 0.2) !important;
+  color: #a0a0a0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.dashboard-table--dark .ant-table-tbody > tr > td {
+  background: transparent !important;
+  color: #c0c0c0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+.dashboard-table--dark .ant-table-tbody > tr:hover > td {
+  background: rgba(0, 212, 255, 0.05) !important;
+}
+
+.dashboard-table--dark .ant-table-tbody > tr.selected-row > td {
+  background: rgba(250, 173, 20, 0.1) !important;
+}
+
+.dashboard-table--dark .ant-table-placeholder {
+  background: transparent !important;
+}
+
+.dashboard-table--dark .ant-empty-description {
+  color: #666 !important;
+}
+
+/* ========== 底部状态栏 ========== */
+.dashboard-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  margin-top: 16px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.dashboard-container--light .dashboard-footer {
+  background: rgba(255, 255, 255, 0.6);
+  color: #666;
+}
+
+.dashboard-container--dark .dashboard-footer {
+  background: rgba(30, 30, 60, 0.4);
+  color: #808080;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+/* ========== 动画效果 ========== */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.dashboard-container--dark .connection-tag[color="success"] {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ========== 滚动条样式 ========== */
+.dashboard-container--dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dashboard-container--dark ::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 3px;
+}
+
+.dashboard-container--dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.dashboard-container--dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ========== 全屏模式 ========== */
+.dashboard-container:fullscreen {
+  padding: 20px;
+}
+
+.dashboard-container:fullscreen .dashboard-content {
+  height: calc(100vh - 160px);
+}

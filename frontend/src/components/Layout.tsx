@@ -11,6 +11,7 @@ import {
   ProfileOutlined,
   RobotOutlined,
   DashboardOutlined,
+  RadarChartOutlined,
 } from '@ant-design/icons'
 
 const { Header, Content, Sider } = AntLayout
@@ -84,6 +85,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       key: '/graphs/serial',
       icon: <ProfileOutlined />,
       label: '串案图谱',
+    },
+    {
+      key: '/area-analysis',
+      icon: <RadarChartOutlined />,
+      label: '区域研判',
     },
     {
       key: '/dashboard',

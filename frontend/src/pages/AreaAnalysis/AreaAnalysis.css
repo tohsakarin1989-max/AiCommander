@@ -1,0 +1,117 @@
+/**
+ * 区域研判页面样式
+ */
+
+.area-analysis-page {
+  padding: 24px;
+  background: #f0f2f5;
+  min-height: 100vh;
+}
+
+.main-card {
+  margin-bottom: 24px;
+}
+
+.search-card {
+  margin-bottom: 24px;
+  background: #fafafa;
+}
+
+.statistics-row {
+  margin-bottom: 16px;
+}
+
+.statistics-row .ant-card {
+  text-align: center;
+}
+
+.high-risk-card {
+  height: 100%;
+}
+
+.analysis-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.risk-assessment-card .risk-score-display {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.risk-score-display .score {
+  font-size: 36px;
+  font-weight: bold;
+}
+
+.risk-score-display .label {
+  font-size: 14px;
+  color: #666;
+}
+
+.events-card .ant-table {
+  margin-top: 16px;
+}
+
+.relations-card .ant-list-item {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 12px 0;
+}
+
+.patrol-suggestions-card .patrol-item {
+  padding: 8px 0;
+}
+
+.patrol-item .patrol-location {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.patrol-item .patrol-reason {
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.patrol-item .patrol-timing {
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.patrol-item .patrol-focus {
+  margin-top: 8px;
+}
+
+.patrol-item .patrol-focus .ant-tag {
+  margin: 4px 4px 4px 0;
+}
+
+.search-suggestions-card .ant-list-item {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* 高风险区域列表 */
+.high-risk-card .ant-list-item {
+  padding: 12px 0;
+}
+
+/* 事件类型分布 */
+.area-analysis-page .ant-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+  .area-analysis-page {
+    padding: 12px;
+  }
+
+  .statistics-row .ant-col {
+    margin-bottom: 12px;
+  }
+}

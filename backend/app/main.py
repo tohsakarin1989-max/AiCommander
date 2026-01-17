@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs
+from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events
 from app.database import engine, Base, SessionLocal
 from app.config import settings
 import app.models  # noqa: F401
@@ -49,6 +49,7 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
+app.include_router(events.router, prefix="/api/events", tags=["events"])
 
 @app.get("/")
 async def root():

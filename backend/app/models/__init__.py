@@ -7,6 +7,7 @@ from app.models.system_config import SystemConfig
 from app.models.conclusion import Conclusion
 from app.models.conclusion_review import ConclusionReview
 from app.models.agent_task import AgentTask
+from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
 
 __all__ = [
     "AIModel",
@@ -22,4 +23,11 @@ __all__ = [
     "Conclusion",
     "ConclusionReview",
     "AgentTask",
+    # 事件和区域研判相关
+    "Event",
+    "AreaProfile",
+    "EventRelation",
+    "AnalysisSession",
+    "EVENT_TYPES",
+    "RELATION_TYPES",
 ]

@@ -1,17 +1,24 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Float, Index
 from sqlalchemy.sql import func
 from app.database import Base
 
 class Case(Base):
     __tablename__ = "cases"
-    
+
+    # 添加复合索引用于地理查询优化
+    __table_args__ = (
+        Index('ix_cases_geo', 'latitude', 'longitude'),
+        Index('ix_cases_status', 'status'),
+        Index('ix_cases_occurred_time', 'occurred_time'),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     case_number = Column(String(50), unique=True, nullable=False, index=True)
     occurred_time = Column(DateTime(timezone=True), nullable=False)
     location = Column(String(200))
-    # 地理信息：经纬度，支持地图定位和空间分析
-    latitude = Column(Float, nullable=True)   # 纬度
-    longitude = Column(Float, nullable=True)  # 经度
+    # 地理信息：经纬度，支持地图定位和空间分析（已添加复合索引）
+    latitude = Column(Float, nullable=True, index=True)   # 纬度
+    longitude = Column(Float, nullable=True, index=True)  # 经度
     case_type = Column(String(50))
     description = Column(Text)
     involved_persons = Column(JSON)

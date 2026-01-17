@@ -83,40 +83,45 @@ class MeetingManager:
     async def conduct_stage_2_review_and_rank(self, analyses: List[Dict]) -> List[Dict]:
         """
         第二阶段：复习和排名
-        每个LLM匿名审查其他LLM的回答并排名
+        每个LLM匿名审查其他LLM的回答并排名（并发执行）
         """
         logger.info(f"会议 {self.meeting_id} 开始第二阶段：复习和排名")
-        
+
         # 创建完全匿名的批次（打乱顺序，移除身份信息）
         anonymous_batch = self.anonymizer.create_anonymous_batch(analyses)
-        
-        # 每个分析员对所有其他分析员的结果进行排名
-        all_rankings = []
-        for i, analyst in enumerate(self.analysts):
+
+        async def rank_by_analyst(analyst_index: int, analyst: AnalystAgent) -> Dict:
+            """单个分析员的排名任务"""
             # 获取其他分析员的结果（排除自己）
             other_analyses = [
                 anonymous_batch[j]
                 for j in range(len(anonymous_batch))
-                if anonymous_batch[j].get("_anonymous_id") != f"Response_{i+1}"
+                if anonymous_batch[j].get("_anonymous_id") != f"Response_{analyst_index+1}"
             ]
-            
+
             # 如果只有自己，跳过排名
             if not other_analyses:
-                logger.warning(f"分析员 {i+1} 没有其他结果可排名")
-                all_rankings.append({
-                    "analyst_index": i,
+                logger.warning(f"分析员 {analyst_index+1} 没有其他结果可排名")
+                return {
+                    "analyst_index": analyst_index,
                     "rankings": [],
                     "overall_comment": "无其他分析结果可排名"
-                })
-                continue
-            
+                }
+
             # 进行排名
             ranking_result = await analyst.rank_analyses(other_analyses)
-            ranking_result["analyst_index"] = i
-            all_rankings.append(ranking_result)
-        
+            ranking_result["analyst_index"] = analyst_index
+            return ranking_result
+
+        # 并发执行所有分析员的排名任务
+        ranking_tasks = [
+            rank_by_analyst(i, analyst)
+            for i, analyst in enumerate(self.analysts)
+        ]
+        all_rankings = await asyncio.gather(*ranking_tasks)
+
         logger.info(f"会议 {self.meeting_id} 第二阶段完成，共收集 {len(all_rankings)} 个排名结果")
-        return all_rankings
+        return list(all_rankings)
     
     async def conduct_stage_3_final_response(
         self,

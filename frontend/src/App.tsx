@@ -16,6 +16,7 @@ import Dashboard from './pages/Dashboard/Dashboard'
 import ConclusionFactory from './pages/Conclusions/ConclusionFactory'
 import AgentCenter from './pages/Agents/AgentCenter'
 import CaseGraph from './pages/Graphs/CaseGraph'
+import AreaAnalysis from './pages/AreaAnalysis/AreaAnalysis'
 
 const queryClient = new QueryClient()
 
@@ -44,6 +45,7 @@ function App() {
               <Route path="/conclusions" element={<ConclusionFactory />} />
               <Route path="/agents" element={<AgentCenter />} />
               <Route path="/graphs/serial" element={<CaseGraph />} />
+              <Route path="/area-analysis" element={<AreaAnalysis />} />
               <Route path="*" element={<div>页面未找到</div>} />
             </Routes>
           </Layout>

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.database import get_db
 from app.services.case_service import CaseService
 from app.models.case import Case
@@ -93,6 +94,108 @@ class CaseResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class CaseStatistics(BaseModel):
+    """案件统计数据"""
+    total_cases: int
+    today_cases: int
+    pending_cases: int
+    processing_cases: int
+    resolved_cases: int
+    this_week_cases: int
+    this_month_cases: int
+    cases_with_geo: int
+    case_type_distribution: dict
+    daily_trend: List[dict]
+
+
+@router.get("/statistics", response_model=CaseStatistics)
+def get_case_statistics(db: Session = Depends(get_db)):
+    """
+    获取案件统计数据
+    用于智慧大屏和仪表板展示
+    """
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=now.weekday())
+    month_start = today_start.replace(day=1)
+
+    # 总数统计
+    total_cases = db.query(func.count(Case.id)).scalar() or 0
+
+    # 今日案件
+    today_cases = db.query(func.count(Case.id)).filter(
+        Case.occurred_time >= today_start
+    ).scalar() or 0
+
+    # 状态统计
+    pending_cases = db.query(func.count(Case.id)).filter(
+        Case.status == 'pending'
+    ).scalar() or 0
+
+    processing_cases = db.query(func.count(Case.id)).filter(
+        Case.status == 'processing'
+    ).scalar() or 0
+
+    resolved_cases = db.query(func.count(Case.id)).filter(
+        Case.status == 'resolved'
+    ).scalar() or 0
+
+    # 本周案件
+    this_week_cases = db.query(func.count(Case.id)).filter(
+        Case.occurred_time >= week_start
+    ).scalar() or 0
+
+    # 本月案件
+    this_month_cases = db.query(func.count(Case.id)).filter(
+        Case.occurred_time >= month_start
+    ).scalar() or 0
+
+    # 带地理坐标的案件
+    cases_with_geo = db.query(func.count(Case.id)).filter(
+        Case.latitude.isnot(None),
+        Case.longitude.isnot(None)
+    ).scalar() or 0
+
+    # 案件类型分布
+    type_counts = db.query(
+        Case.case_type,
+        func.count(Case.id)
+    ).group_by(Case.case_type).all()
+
+    case_type_distribution = {
+        (t or '未分类'): c for t, c in type_counts
+    }
+
+    # 最近7天趋势
+    daily_trend = []
+    for i in range(6, -1, -1):
+        day = today_start - timedelta(days=i)
+        day_end = day + timedelta(days=1)
+        count = db.query(func.count(Case.id)).filter(
+            Case.occurred_time >= day,
+            Case.occurred_time < day_end
+        ).scalar() or 0
+        daily_trend.append({
+            'date': day.strftime('%Y-%m-%d'),
+            'label': day.strftime('%m/%d'),
+            'count': count
+        })
+
+    return CaseStatistics(
+        total_cases=total_cases,
+        today_cases=today_cases,
+        pending_cases=pending_cases,
+        processing_cases=processing_cases,
+        resolved_cases=resolved_cases,
+        this_week_cases=this_week_cases,
+        this_month_cases=this_month_cases,
+        cases_with_geo=cases_with_geo,
+        case_type_distribution=case_type_distribution,
+        daily_trend=daily_trend
+    )
+
 
 @router.post("/", response_model=CaseResponse)
 def create_case(case: CaseCreate, db: Session = Depends(get_db)):
