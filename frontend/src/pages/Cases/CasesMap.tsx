@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { FireOutlined, LinkOutlined, FieldTimeOutlined } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
 import LeafletMap from '../../components/Map/LeafletMap'
-import type { CaseMarker, SerialGroup } from '../../types'
+import type { CaseMarker, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import type { Case } from '../../types'
 
 const { Text } = Typography
@@ -42,11 +42,6 @@ const CasesMap: React.FC = () => {
     queryFn: () => caseApi.getSerialCases(),
   })
 
-  const { data: geoAnalysis } = useQuery({
-    queryKey: ['geoAnalysis'],
-    queryFn: () => caseApi.getGeographicAnalysis(),
-  })
-
   // 有坐标的案件 → LeafletMap markers
   const markers: CaseMarker[] = (cases || [])
     .filter((c) => c.latitude != null && c.longitude != null)
@@ -64,19 +59,14 @@ const CasesMap: React.FC = () => {
 
   // 串案组
   const serialGroups: SerialGroup[] = showSerial
-    ? (serialCases || []).map((group: { case_ids?: number[]; cases?: { id: number }[] }, i: number) => ({
-        caseIds: group.case_ids || (group.cases || []).map((c: { id: number }) => c.id),
+    ? (serialCases || []).map((group: SerialCaseGroup, i: number) => ({
+        caseIds: group.case_ids,
         color: ['#a78bfa', '#f472b6', '#34d399', '#fb923c'][i % 4],
       }))
     : []
 
   // 热点列表（取前5）
   const topHotspots = (hotspots || []).slice(0, 5)
-
-  // AI 巡逻建议（从 geoAnalysis 取）
-  const patrolSuggestions =
-    (geoAnalysis as { patrol_suggestions?: { location: string; timing?: string; reason?: string }[] } | null)
-      ?.patrol_suggestions?.slice(0, 3) || []
 
   return (
     <div style={{ height: 'calc(100vh - 80px)', display: 'flex', gap: 12 }}>
@@ -104,27 +94,28 @@ const CasesMap: React.FC = () => {
               <Text style={{ color: '#475569', fontSize: 11 }}>暂无热点数据</Text>
             ) : (
               topHotspots.map(
-                (
-                  h: { area_name?: string; cluster_center?: string; case_count?: number; risk_level?: string },
-                  i: number
-                ) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: '#1e293b',
-                      borderRadius: 4,
-                      padding: '5px 8px',
-                      borderLeft: `2px solid ${RISK_COLOR[h.risk_level || 'medium']}`,
-                    }}
-                  >
-                    <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>
-                      {h.area_name || h.cluster_center || `热点 ${i + 1}`}
+                (h: Hotspot, i: number) => {
+                  // risk_score > 0.6 = 高风险，> 0.3 = 中风险，否则低风险
+                  const riskLevel = h.risk_score > 0.6 ? 'high' : h.risk_score > 0.3 ? 'medium' : 'low'
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        background: '#1e293b',
+                        borderRadius: 4,
+                        padding: '5px 8px',
+                        borderLeft: `2px solid ${RISK_COLOR[riskLevel]}`,
+                      }}
+                    >
+                      <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>
+                        {`${h.center.latitude.toFixed(4)}, ${h.center.longitude.toFixed(4)}`}
+                      </div>
+                      <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
+                        {h.case_count}起 · 半径{h.radius_km.toFixed(1)}km
+                      </div>
                     </div>
-                    <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
-                      {h.case_count || 0}起
-                    </div>
-                  </div>
-                )
+                  )
+                }
               )
             )}
           </div>
@@ -194,36 +185,7 @@ const CasesMap: React.FC = () => {
             <FireOutlined style={{ color: '#f59e0b' }} />
             <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>AI巡逻建议</Text>
           </Space>
-          {patrolSuggestions.length === 0 ? (
-            <Text style={{ color: '#475569', fontSize: 11 }}>暂无建议，请先运行区域分析</Text>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {patrolSuggestions.map(
-                (
-                  s: { location: string; timing?: string; reason?: string },
-                  i: number
-                ) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: '#1e293b',
-                      borderRadius: 4,
-                      padding: '5px 8px',
-                      borderLeft: `2px solid ${i === 0 ? '#ef4444' : '#f59e0b'}`,
-                    }}
-                  >
-                    <div style={{ color: i === 0 ? '#fca5a5' : '#fde68a', fontSize: 10, fontWeight: 600 }}>
-                      优先级 {i + 1}
-                    </div>
-                    <div style={{ color: '#cbd5e1', fontSize: 10, marginTop: 2 }}>{s.location}</div>
-                    {s.timing && (
-                      <div style={{ color: '#64748b', fontSize: 9, marginTop: 1 }}>{s.timing}</div>
-                    )}
-                  </div>
-                )
-              )}
-            </div>
-          )}
+          <Text style={{ color: '#475569', fontSize: 11 }}>请前往「区域研判」生成巡逻建议</Text>
         </Card>
 
         {/* 串案分析 */}
@@ -240,10 +202,10 @@ const CasesMap: React.FC = () => {
               <List
                 size="small"
                 dataSource={(serialCases || []).slice(0, 2)}
-                renderItem={(group: { case_ids?: number[]; cases?: { id: number }[]; similarity_score?: number }, i: number) => (
-                  <List.Item style={{ padding: '4px 0', borderBottom: '1px solid #1e293b' }}>
+                renderItem={(group: SerialCaseGroup, i: number) => (
+                  <List.Item key={group.group_id} style={{ padding: '4px 0', borderBottom: '1px solid #1e293b' }}>
                     <Text style={{ color: '#94a3b8', fontSize: 10 }}>
-                      组 {i + 1}：{(group.case_ids || (group.cases || []).map((c: { id: number }) => c.id)).length} 起案件
+                      组 {i + 1}：{group.case_ids.length} 起案件
                     </Text>
                   </List.Item>
                 )}
