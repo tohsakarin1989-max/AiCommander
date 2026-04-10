@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
   Table,
   Button,
@@ -13,29 +13,78 @@ import {
   Popconfirm,
   Upload,
   Alert,
+  Card,
+  Select,
+  Row,
+  Col,
+  Switch,
 } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, EnvironmentOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, EnvironmentOutlined, SearchOutlined, ClearOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { caseApi, Case, CaseCreate } from '../../services/cases'
+import { caseApi } from '../../services/cases'
+import type { Case, CaseCreate } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
+import MapPicker from '../../components/Map/MapPicker'
 
 const { TextArea } = Input
+const { RangePicker } = DatePicker
+const { Option } = Select
+
+// 搜索筛选参数接口
+interface SearchFilters {
+  keyword?: string
+  status?: string
+  case_type?: string
+  oil_type?: string
+  start_date?: string
+  end_date?: string
+  has_geo?: boolean
+}
 
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
+  const [searchForm] = Form.useForm()
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [importModalVisible, setImportModalVisible] = useState(false)
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false)
+  const [filters, setFilters] = useState<SearchFilters>({})
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
+  // 构建查询参数
+  const queryParams = useMemo(() => {
+    const params: Record<string, string | boolean> = {}
+    if (filters.keyword) params.keyword = filters.keyword
+    if (filters.status) params.status = filters.status
+    if (filters.case_type) params.case_type = filters.case_type
+    if (filters.oil_type) params.oil_type = filters.oil_type
+    if (filters.start_date) params.start_date = filters.start_date
+    if (filters.end_date) params.end_date = filters.end_date
+    if (filters.has_geo !== undefined) params.has_geo = filters.has_geo
+    return params
+  }, [filters])
+
   const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases'],
-    queryFn: () => caseApi.getCases(),
+    queryKey: ['cases', queryParams],
+    queryFn: () => caseApi.getCases(queryParams),
   })
+
+  // 获取所有案件类型和油品类型（用于筛选下拉）
+  const caseTypes = useMemo(() => {
+    const types = new Set<string>()
+    cases?.forEach(c => c.case_type && types.add(c.case_type))
+    return Array.from(types)
+  }, [cases])
+
+  const oilTypes = useMemo(() => {
+    const types = new Set<string>()
+    cases?.forEach(c => c.oil_type && types.add(c.oil_type))
+    return Array.from(types)
+  }, [cases])
 
   useEffect(() => {
     const caseIdFromUrl = searchParams.get('caseId')
@@ -94,20 +143,8 @@ const Cases: React.FC = () => {
   })
 
   const importMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await fetch('/api/cases/import', {
-        method: 'POST',
-        body: formData,
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.detail || '导入失败')
-      }
-      return res.json()
-    },
-    onSuccess: async (data: any) => {
+    mutationFn: (file: File) => caseApi.importCases(file),
+    onSuccess: async (data) => {
       message.success(`导入成功：共 ${data.total} 条，成功 ${data.created} 条`)
       if (data.errors && data.errors.length) {
         message.warning('部分记录导入失败，详情请查看控制台')
@@ -117,7 +154,7 @@ const Cases: React.FC = () => {
       setImportModalVisible(false)
       await queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       message.error(`导入失败：${error.message}`)
     },
   })
@@ -273,6 +310,34 @@ const Cases: React.FC = () => {
     }
   }
 
+  // 搜索处理
+  const handleSearch = () => {
+    const values = searchForm.getFieldsValue()
+    const newFilters: SearchFilters = {}
+
+    if (values.keyword) newFilters.keyword = values.keyword
+    if (values.status) newFilters.status = values.status
+    if (values.case_type) newFilters.case_type = values.case_type
+    if (values.oil_type) newFilters.oil_type = values.oil_type
+    if (values.dateRange?.[0]) {
+      newFilters.start_date = values.dateRange[0].format('YYYY-MM-DD')
+    }
+    if (values.dateRange?.[1]) {
+      newFilters.end_date = values.dateRange[1].format('YYYY-MM-DD')
+    }
+    if (values.has_geo !== undefined) newFilters.has_geo = values.has_geo
+
+    setFilters(newFilters)
+  }
+
+  const handleResetSearch = () => {
+    searchForm.resetFields()
+    setFilters({})
+  }
+
+  // 检查是否有筛选条件
+  const hasFilters = Object.keys(filters).length > 0
+
   return (
     <div>
       {preprocessStatus && (
@@ -290,6 +355,94 @@ const Cases: React.FC = () => {
         />
       )}
 
+      {/* 搜索筛选区域 */}
+      <Card style={{ marginBottom: 16 }}>
+        <Form form={searchForm} layout="inline" style={{ marginBottom: 16 }}>
+          <Form.Item name="keyword" style={{ marginBottom: 8 }}>
+            <Input
+              placeholder="搜索案件编号/地点/描述"
+              prefix={<SearchOutlined />}
+              allowClear
+              style={{ width: 240 }}
+              onPressEnter={handleSearch}
+            />
+          </Form.Item>
+          <Form.Item name="status" style={{ marginBottom: 8 }}>
+            <Select placeholder="状态" allowClear style={{ width: 120 }}>
+              <Option value="pending">待处理</Option>
+              <Option value="processing">处理中</Option>
+              <Option value="completed">已完成</Option>
+              <Option value="resolved">已结案</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 8 }}>
+            <Space>
+              <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
+                搜索
+              </Button>
+              <Button icon={<ClearOutlined />} onClick={handleResetSearch}>
+                重置
+              </Button>
+              <Button type="link" onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}>
+                {showAdvancedSearch ? '收起高级' : '高级搜索'}
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        {/* 高级搜索选项 */}
+        {showAdvancedSearch && (
+          <Form form={searchForm} layout="vertical">
+            <Row gutter={16}>
+              <Col span={6}>
+                <Form.Item name="case_type" label="案件类型">
+                  <Select placeholder="选择案件类型" allowClear>
+                    {caseTypes.map(type => (
+                      <Option key={type} value={type}>{type}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item name="oil_type" label="油品类型">
+                  <Select placeholder="选择油品类型" allowClear>
+                    {oilTypes.map(type => (
+                      <Option key={type} value={type}>{type}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="dateRange" label="发生时间">
+                  <RangePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={4}>
+                <Form.Item name="has_geo" label="有坐标" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Form>
+        )}
+
+        {/* 当前筛选条件显示 */}
+        {hasFilters && (
+          <div style={{ marginTop: 8 }}>
+            <Space wrap>
+              <span style={{ color: '#666' }}>当前筛选：</span>
+              {filters.keyword && <Tag closable onClose={() => setFilters(f => ({ ...f, keyword: undefined }))}>关键词: {filters.keyword}</Tag>}
+              {filters.status && <Tag closable onClose={() => setFilters(f => ({ ...f, status: undefined }))}>状态: {filters.status}</Tag>}
+              {filters.case_type && <Tag closable onClose={() => setFilters(f => ({ ...f, case_type: undefined }))}>类型: {filters.case_type}</Tag>}
+              {filters.oil_type && <Tag closable onClose={() => setFilters(f => ({ ...f, oil_type: undefined }))}>油品: {filters.oil_type}</Tag>}
+              {filters.start_date && <Tag closable onClose={() => setFilters(f => ({ ...f, start_date: undefined }))}>开始: {filters.start_date}</Tag>}
+              {filters.end_date && <Tag closable onClose={() => setFilters(f => ({ ...f, end_date: undefined }))}>结束: {filters.end_date}</Tag>}
+              {filters.has_geo !== undefined && <Tag closable onClose={() => setFilters(f => ({ ...f, has_geo: undefined }))}>有坐标</Tag>}
+            </Space>
+          </div>
+        )}
+      </Card>
+
       <div
         style={{
           marginBottom: '16px',
@@ -298,7 +451,10 @@ const Cases: React.FC = () => {
           alignItems: 'center',
         }}
       >
-        <h2>案件管理</h2>
+        <h2>
+          案件管理
+          {hasFilters && <Tag color="blue" style={{ marginLeft: 8 }}>已筛选: {cases?.length || 0} 条</Tag>}
+        </h2>
         <Space>
           <Button onClick={() => setImportModalVisible(true)}>导入 CSV/Excel</Button>
           <Button
@@ -368,6 +524,16 @@ const Cases: React.FC = () => {
                 />
               </Form.Item>
             </div>
+          </Form.Item>
+
+          <Form.Item label="地图选点（可选）">
+            <MapPicker
+              lat={form.getFieldValue('latitude')}
+              lng={form.getFieldValue('longitude')}
+              onChange={(lat, lng) => {
+                form.setFieldsValue({ latitude: lat, longitude: lng })
+              }}
+            />
           </Form.Item>
 
           <Form.Item name="case_type" label="类型（可选）">
