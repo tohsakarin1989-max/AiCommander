@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { Card, DatePicker, Button, Spin, Typography, Space, Tag } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { PlayCircleOutlined, PauseCircleOutlined, StepBackwardOutlined } from '@ant-design/icons'
@@ -24,12 +24,20 @@ const SpaceTimeAnalysis: React.FC = () => {
   ])
   const [isPlaying, setIsPlaying] = useState(false)
   const [playIndex, setPlayIndex] = useState(0)
-  const [playSpeed] = useState(1000) // ms/步
+  const PLAY_SPEED_MS = 1000 // ms/步
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases'],
-    queryFn: () => caseApi.getCases(),
+    queryKey: ['cases', 'space-time-all'],
+    queryFn: () => caseApi.getCases({ limit: 2000 }),
   })
+
+  // 组件卸载时清理回放定时器
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [])
 
   // 按日期范围筛选有坐标的案件，按时间排序
   const filteredCases = useMemo(() => {
@@ -96,18 +104,20 @@ const SpaceTimeAnalysis: React.FC = () => {
   // 回放控制
   const handlePlay = () => {
     if (filteredCases.length === 0) return
+    if (intervalRef.current) clearInterval(intervalRef.current)
     setPlayIndex(0)
     setIsPlaying(true)
-    const interval = setInterval(() => {
+    intervalRef.current = setInterval(() => {
       setPlayIndex((prev) => {
         if (prev >= filteredCases.length - 1) {
-          clearInterval(interval)
+          if (intervalRef.current) clearInterval(intervalRef.current)
+          intervalRef.current = null
           setIsPlaying(false)
           return prev
         }
         return prev + 1
       })
-    }, playSpeed)
+    }, PLAY_SPEED_MS)
   }
 
   const handleReset = () => {
