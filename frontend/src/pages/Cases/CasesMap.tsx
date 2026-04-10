@@ -1,46 +1,35 @@
-import React, { useState, useEffect } from 'react'
-import { Table, Card, Empty, Tabs, Alert, Space, Button } from 'antd'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
-import { message } from 'antd'
-import {
-  TrophyOutlined,
-  FireOutlined,
-  LinkOutlined,
-  InfoCircleOutlined,
-  RobotOutlined,
-} from '@ant-design/icons'
-
+import React, { useState } from 'react'
+import { Card, List, Button, Spin, Space, Typography, Switch, Divider } from 'antd'
+import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { FireOutlined, LinkOutlined, FieldTimeOutlined } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
-import { systemConfigApi } from '../../services/systemConfig'
-import { mapMCPApi } from '../../services/mapMCP'
-import type { Case, MapConfig } from '../../types'
+import LeafletMap from '../../components/Map/LeafletMap'
+import type { CaseMarker, SerialGroup } from '../../types'
+import type { Case } from '../../types'
 
-import {
-  HotspotsPanel,
-  SerialCasesPanel,
-  GeoCluesPanel,
-  LocationInfoModal,
-  AIAnalysisModal,
-} from './components'
-import { useMapUrl, needsApiKey, getProviderDisplayName } from './hooks/useMapUrl'
+const { Text } = Typography
 
-/**
- * 案件地图视图
- * - 支持同时展示所有案件（多个marker）
- * - 展示地理线索分析（热点、串案等）
- * - 根据地理位置研判案件线索
- */
+const RISK_COLOR: Record<string, string> = {
+  high: '#ef4444',
+  medium: '#f59e0b',
+  low: '#22c55e',
+}
+
+const cardStyle = {
+  background: '#0d1117',
+  border: '1px solid #1e293b',
+  borderRadius: 6,
+}
+
 const CasesMap: React.FC = () => {
-  // 数据查询
+  const navigate = useNavigate()
+  const [showSerial, setShowSerial] = useState(true)
+  const [selectedCase, setSelectedCase] = useState<Case | null>(null)
+
   const { data: cases, isLoading } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
-  })
-
-  const { data: geoAnalysis } = useQuery({
-    queryKey: ['geoAnalysis'],
-    queryFn: () => caseApi.getGeographicAnalysis(),
   })
 
   const { data: hotspots } = useQuery({
@@ -53,341 +42,233 @@ const CasesMap: React.FC = () => {
     queryFn: () => caseApi.getSerialCases(),
   })
 
-  const { data: mapConfig } = useQuery({
-    queryKey: ['mapConfig'],
-    queryFn: () => systemConfigApi.getMapConfig(),
+  const { data: geoAnalysis } = useQuery({
+    queryKey: ['geoAnalysis'],
+    queryFn: () => caseApi.getGeographicAnalysis(),
   })
 
-  // URL 参数和状态
-  const [searchParams] = useSearchParams()
-  const caseIdFromUrl = searchParams.get('caseId')
+  // 有坐标的案件 → LeafletMap markers
+  const markers: CaseMarker[] = (cases || [])
+    .filter((c) => c.latitude != null && c.longitude != null)
+    .map((c) => ({
+      id: c.id,
+      lat: c.latitude!,
+      lng: c.longitude!,
+      title: c.case_number,
+      caseNumber: c.case_number,
+      caseType: c.case_type,
+      riskLevel: 'medium' as const,
+      occurredTime: c.occurred_time,
+      modus: c.modus_operandi,
+    }))
 
-  const [selected, setSelected] = useState<Case | null>(null)
-  const [mapMode, setMapMode] = useState<'single' | 'all'>('all')
-  const [locationInfoModalVisible, setLocationInfoModalVisible] = useState(false)
-  const [aiAnalysisModalVisible, setAiAnalysisModalVisible] = useState(false)
+  // 串案组
+  const serialGroups: SerialGroup[] = showSerial
+    ? (serialCases || []).map((group: { case_ids?: number[]; cases?: { id: number }[] }, i: number) => ({
+        caseIds: group.case_ids || (group.cases || []).map((c: { id: number }) => c.id),
+        color: ['#a78bfa', '#f472b6', '#34d399', '#fb923c'][i % 4],
+      }))
+    : []
 
-  // 地图 URL 生成
-  const { generateMapUrl } = useMapUrl(mapConfig as MapConfig | undefined)
+  // 热点列表（取前5）
+  const topHotspots = (hotspots || []).slice(0, 5)
 
-  // URL 参数处理：自动定位到指定案件
-  useEffect(() => {
-    if (caseIdFromUrl && cases) {
-      const targetCase = cases.find((c) => c.id === parseInt(caseIdFromUrl))
-      if (targetCase && targetCase.latitude != null && targetCase.longitude != null) {
-        setSelected(targetCase)
-        setMapMode('single')
-      }
-    }
-  }, [caseIdFromUrl, cases])
-
-  // MCP 数据查询
-  const { data: locationInfo, isLoading: locationLoading } = useQuery({
-    queryKey: ['locationInfo', selected?.id],
-    queryFn: () =>
-      mapMCPApi.getLocationInfo(selected!.latitude!, selected!.longitude!),
-    enabled: !!selected && selected.latitude != null && selected.longitude != null,
-  })
-
-  const { data: nearbyPOIs, isLoading: poisLoading } = useQuery({
-    queryKey: ['nearbyPOIs', selected?.id],
-    queryFn: () =>
-      mapMCPApi.searchNearbyPOIs(
-        selected!.latitude!,
-        selected!.longitude!,
-        '加油站|油库|输油管线|储油设施|化工厂|工厂|企业',
-        2000
-      ),
-    enabled: !!selected && selected.latitude != null && selected.longitude != null,
-  })
-
-  // AI 分析
-  const aiAnalysisMutation = useMutation({
-    mutationFn: (caseId: number) => mapMCPApi.analyzeCaseLocation(caseId),
-    onSuccess: () => {
-      setAiAnalysisModalVisible(true)
-    },
-    onError: (error: Error & { response?: { data?: { detail?: string } } }) => {
-      message.error(`AI分析失败: ${error.response?.data?.detail || error.message}`)
-    },
-  })
-
-  // 筛选有地理坐标的案件
-  const casesWithGeo = (cases || []).filter(
-    (c) => c.latitude != null && c.longitude != null
-  )
-
-  // 渲染地图
-  const renderMap = () => {
-    if (casesWithGeo.length === 0) {
-      return <Empty description="暂无带经纬度的案件" />
-    }
-
-    const provider = (mapConfig as MapConfig)?.provider || 'openstreetmap'
-    const apiKey = (mapConfig as MapConfig)?.api_key || ''
-
-    if (needsApiKey(provider) && !apiKey) {
-      return (
-        <Alert
-          message="地图API配置缺失"
-          description={
-            <div>
-              <p>当前选择的地图服务提供商（{provider}）需要API密钥。</p>
-              <p>
-                请前往 <a href="/settings">系统设置</a> 配置地图API密钥。
-              </p>
-            </div>
-          }
-          type="warning"
-          showIcon
-        />
-      )
-    }
-
-    const providerName = getProviderDisplayName(provider)
-
-    if (mapMode === 'single') {
-      if (!selected || selected.latitude == null || selected.longitude == null) {
-        return <Empty description="请选择左侧列表中的案件" />
-      }
-
-      const mapUrl = generateMapUrl({ lat: selected.latitude, lng: selected.longitude })
-
-      return (
-        <div>
-          <Alert message={`当前使用：${providerName}`} type="info" style={{ marginBottom: 8 }} />
-          <iframe
-            title="案件地图"
-            src={mapUrl}
-            style={{ width: '100%', height: 600, border: 0 }}
-          />
-        </div>
-      )
-    }
-
-    // 全部模式
-    const firstCase = casesWithGeo[0]
-    if (!firstCase) return <Empty description="无法生成地图" />
-
-    const mapUrl = generateMapUrl({
-      lat: firstCase.latitude!,
-      lng: firstCase.longitude!,
-      allCases: casesWithGeo,
-    })
-
-    return (
-      <div>
-        <Alert
-          message={`当前显示 ${casesWithGeo.length} 个案件位置 | 使用：${providerName}`}
-          type="info"
-          style={{ marginBottom: 8 }}
-        />
-        {provider === 'amap' || provider === 'baidu' ? (
-          <img
-            src={mapUrl}
-            alt="案件地图"
-            style={{ width: '100%', height: 600, objectFit: 'contain' }}
-          />
-        ) : (
-          <iframe
-            title="案件地图（全部）"
-            src={mapUrl}
-            style={{ width: '100%', height: 600, border: 0 }}
-          />
-        )}
-        {provider === 'openstreetmap' && casesWithGeo.length > 1 && (
-          <Alert
-            message="提示"
-            description="OpenStreetMap仅显示中心位置和范围。如需查看所有案件标记点，请切换到Mapbox或高德地图。"
-            type="info"
-            style={{ marginTop: 8 }}
-            showIcon
-          />
-        )}
-        <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
-          <p>
-            共 {casesWithGeo.length} 个案件位置
-            {provider !== 'openstreetmap' && '（已在地图上标记）'}
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  // 表格列定义
-  const columns = [
-    {
-      title: '案件编号',
-      dataIndex: 'case_number',
-      key: 'case_number',
-    },
-    {
-      title: '地点',
-      dataIndex: 'location',
-      key: 'location',
-    },
-    {
-      title: '时间',
-      dataIndex: 'occurred_time',
-      key: 'occurred_time',
-      render: (time: string) => new Date(time).toLocaleDateString(),
-    },
-    {
-      title: '坐标',
-      key: 'coordinates',
-      render: (_: unknown, record: Case) =>
-        record.latitude != null && record.longitude != null
-          ? `${record.latitude.toFixed(6)}, ${record.longitude.toFixed(6)}`
-          : '-',
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_: unknown, record: Case) => (
-        <Space>
-          {record.latitude != null && record.longitude != null && (
-            <>
-              <Button
-                type="link"
-                size="small"
-                icon={<InfoCircleOutlined />}
-                onClick={() => {
-                  setSelected(record)
-                  setLocationInfoModalVisible(true)
-                }}
-              >
-                位置信息
-              </Button>
-              <Button
-                type="link"
-                size="small"
-                icon={<RobotOutlined />}
-                onClick={() => aiAnalysisMutation.mutate(record.id)}
-                loading={aiAnalysisMutation.isPending}
-              >
-                AI分析
-              </Button>
-            </>
-          )}
-        </Space>
-      ),
-    },
-  ]
+  // AI 巡逻建议（从 geoAnalysis 取）
+  const patrolSuggestions =
+    (geoAnalysis as { patrol_suggestions?: { location: string; timing?: string; reason?: string }[] } | null)
+      ?.patrol_suggestions?.slice(0, 3) || []
 
   return (
-    <div>
-      <h2>案件地图与地理线索研判</h2>
-      <p style={{ marginBottom: 16 }}>
-        根据经纬度定位案件位置，通过地图展示发案情况，并根据地理位置研判可能的案件线索。
-      </p>
-
-      <Tabs
-        defaultActiveKey="map"
-        items={[
-          {
-            key: 'map',
-            label: '地图视图',
-            children: (
-              <div style={{ display: 'flex', gap: 16 }}>
-                <div style={{ flex: '0 0 400px' }}>
-                  <Card
-                    title="案件列表"
-                    extra={
-                      <Space>
-                        <Button
-                          size="small"
-                          type={mapMode === 'single' ? 'primary' : 'default'}
-                          onClick={() => setMapMode('single')}
-                        >
-                          单个
-                        </Button>
-                        <Button
-                          size="small"
-                          type={mapMode === 'all' ? 'primary' : 'default'}
-                          onClick={() => setMapMode('all')}
-                        >
-                          全部
-                        </Button>
-                      </Space>
-                    }
-                  >
-                    <Table
-                      columns={columns}
-                      dataSource={casesWithGeo}
-                      loading={isLoading}
-                      rowKey="id"
-                      size="small"
-                      pagination={{ pageSize: 10 }}
-                      onRow={(record) => ({
-                        onClick: () => {
-                          setSelected(record)
-                          setMapMode('single')
-                        },
-                      })}
-                      rowClassName={(record) =>
-                        selected && record.id === selected.id ? 'ant-table-row-selected' : ''
-                      }
-                    />
-                  </Card>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <Card title="地图位置">{renderMap()}</Card>
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'hotspots',
-            label: (
-              <span>
-                <FireOutlined /> 热点区域
-              </span>
-            ),
-            children: <HotspotsPanel hotspots={(hotspots as { hotspots?: unknown[] })?.hotspots as any} />,
-          },
-          {
-            key: 'serial',
-            label: (
-              <span>
-                <LinkOutlined /> 串案分析
-              </span>
-            ),
-            children: (
-              <SerialCasesPanel
-                serialCases={(serialCases as { serial_cases?: unknown[] })?.serial_cases as any}
+    <div style={{ height: 'calc(100vh - 80px)', display: 'flex', gap: 12 }}>
+      {/* 左侧控制面板 */}
+      <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>图层控制</Text>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: '#cbd5e1', fontSize: 12 }}>串案连线</Text>
+              <Switch
+                size="small"
+                checked={showSerial}
+                onChange={setShowSerial}
+                style={{ '--ant-color-primary': '#7dd3fc' } as React.CSSProperties}
               />
-            ),
-          },
-          {
-            key: 'clues',
-            label: (
-              <span>
-                <TrophyOutlined /> 地理线索
-              </span>
-            ),
-            children: <GeoCluesPanel geoAnalysis={geoAnalysis as any} />,
-          },
-        ]}
-      />
+            </div>
+          </div>
+        </Card>
 
-      {/* 位置信息模态框 */}
-      <LocationInfoModal
-        visible={locationInfoModalVisible}
-        onClose={() => setLocationInfoModalVisible(false)}
-        selectedCase={selected}
-        locationInfo={locationInfo as any}
-        locationLoading={locationLoading}
-        nearbyPOIs={nearbyPOIs as any}
-        poisLoading={poisLoading}
-      />
+        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>热点区域</Text>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {topHotspots.length === 0 ? (
+              <Text style={{ color: '#475569', fontSize: 11 }}>暂无热点数据</Text>
+            ) : (
+              topHotspots.map(
+                (
+                  h: { area_name?: string; cluster_center?: string; case_count?: number; risk_level?: string },
+                  i: number
+                ) => (
+                  <div
+                    key={i}
+                    style={{
+                      background: '#1e293b',
+                      borderRadius: 4,
+                      padding: '5px 8px',
+                      borderLeft: `2px solid ${RISK_COLOR[h.risk_level || 'medium']}`,
+                    }}
+                  >
+                    <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>
+                      {h.area_name || h.cluster_center || `热点 ${i + 1}`}
+                    </div>
+                    <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
+                      {h.case_count || 0}起
+                    </div>
+                  </div>
+                )
+              )
+            )}
+          </div>
+        </Card>
 
-      {/* AI分析模态框 */}
-      <AIAnalysisModal
-        visible={aiAnalysisModalVisible}
-        onClose={() => setAiAnalysisModalVisible(false)}
-        data={aiAnalysisMutation.data as any}
-        loading={aiAnalysisMutation.isPending}
-      />
+        <Button
+          icon={<FieldTimeOutlined />}
+          style={{
+            background: 'rgba(125,211,252,0.1)',
+            border: '1px solid #7dd3fc',
+            color: '#7dd3fc',
+            width: '100%',
+          }}
+          onClick={() => navigate('/cases/spacetime')}
+        >
+          时空研判
+        </Button>
+      </div>
+
+      {/* 地图主体 */}
+      <div style={{ flex: 1 }}>
+        {isLoading ? (
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spin tip="加载地图数据..." />
+          </div>
+        ) : (
+          <LeafletMap
+            markers={markers}
+            serialGroups={serialGroups}
+            height="100%"
+            onMarkerClick={(m) => {
+              const found = (cases || []).find((c) => c.id === m.id)
+              if (found) setSelectedCase(found)
+            }}
+          />
+        )}
+      </div>
+
+      {/* 右侧 AI 分析面板 */}
+      <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+        {/* 选中案件详情 */}
+        {selectedCase && (
+          <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+            <Text style={{ color: '#7dd3fc', fontSize: 11, fontWeight: 600 }}>选中案件</Text>
+            <div style={{ marginTop: 6 }}>
+              <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>{selectedCase.case_number}</div>
+              <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>{selectedCase.case_type || '未分类'}</div>
+              <div style={{ color: '#64748b', fontSize: 10 }}>
+                {selectedCase.occurred_time?.slice(0, 10)}
+              </div>
+            </div>
+            <Divider style={{ borderColor: '#1e293b', margin: '8px 0' }} />
+            <Button
+              size="small"
+              type="link"
+              style={{ color: '#7dd3fc', padding: 0, fontSize: 11 }}
+              onClick={() => navigate(`/cases`)}
+            >
+              查看详情 →
+            </Button>
+          </Card>
+        )}
+
+        {/* AI 巡逻建议 */}
+        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+          <Space style={{ marginBottom: 8 }}>
+            <FireOutlined style={{ color: '#f59e0b' }} />
+            <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>AI巡逻建议</Text>
+          </Space>
+          {patrolSuggestions.length === 0 ? (
+            <Text style={{ color: '#475569', fontSize: 11 }}>暂无建议，请先运行区域分析</Text>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {patrolSuggestions.map(
+                (
+                  s: { location: string; timing?: string; reason?: string },
+                  i: number
+                ) => (
+                  <div
+                    key={i}
+                    style={{
+                      background: '#1e293b',
+                      borderRadius: 4,
+                      padding: '5px 8px',
+                      borderLeft: `2px solid ${i === 0 ? '#ef4444' : '#f59e0b'}`,
+                    }}
+                  >
+                    <div style={{ color: i === 0 ? '#fca5a5' : '#fde68a', fontSize: 10, fontWeight: 600 }}>
+                      优先级 {i + 1}
+                    </div>
+                    <div style={{ color: '#cbd5e1', fontSize: 10, marginTop: 2 }}>{s.location}</div>
+                    {s.timing && (
+                      <div style={{ color: '#64748b', fontSize: 9, marginTop: 1 }}>{s.timing}</div>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* 串案分析 */}
+        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+          <Space style={{ marginBottom: 8 }}>
+            <LinkOutlined style={{ color: '#a78bfa' }} />
+            <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>串案关联</Text>
+          </Space>
+          {(serialCases || []).length === 0 ? (
+            <Text style={{ color: '#475569', fontSize: 11 }}>未发现串案</Text>
+          ) : (
+            <div style={{ color: '#7dd3fc', fontSize: 11 }}>
+              发现 {(serialCases || []).length} 组串案
+              <List
+                size="small"
+                dataSource={(serialCases || []).slice(0, 2)}
+                renderItem={(group: { case_ids?: number[]; cases?: { id: number }[]; similarity_score?: number }, i: number) => (
+                  <List.Item style={{ padding: '4px 0', borderBottom: '1px solid #1e293b' }}>
+                    <Text style={{ color: '#94a3b8', fontSize: 10 }}>
+                      组 {i + 1}：{(group.case_ids || (group.cases || []).map((c: { id: number }) => c.id)).length} 起案件
+                    </Text>
+                  </List.Item>
+                )}
+              />
+            </div>
+          )}
+        </Card>
+
+        {/* 图例 */}
+        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
+          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>图例</Text>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {Object.entries({ '高风险': '#ef4444', '中风险': '#f59e0b', '低风险': '#22c55e', '案件点': '#7dd3fc' }).map(([label, color]) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                <Text style={{ color: '#94a3b8', fontSize: 11 }}>{label}</Text>
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 16, height: 2, background: 'repeating-linear-gradient(90deg,#a78bfa,#a78bfa 4px,transparent 4px,transparent 7px)' }} />
+              <Text style={{ color: '#94a3b8', fontSize: 11 }}>串案连线</Text>
+            </div>
+          </div>
+        </Card>
+      </div>
     </div>
   )
 }
