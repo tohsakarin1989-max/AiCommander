@@ -120,7 +120,19 @@ const SpaceTimeAnalysis: React.FC = () => {
     }, PLAY_SPEED_MS)
   }
 
+  const handlePause = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    setIsPlaying(false)
+  }
+
   const handleReset = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
     setIsPlaying(false)
     setPlayIndex(0)
   }
@@ -211,7 +223,7 @@ const SpaceTimeAnalysis: React.FC = () => {
             <Button
               size="small"
               icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-              onClick={isPlaying ? () => setIsPlaying(false) : handlePlay}
+              onClick={isPlaying ? handlePause : handlePlay}
               disabled={filteredCases.length === 0}
               style={{ background: 'rgba(125,211,252,0.1)', border: '1px solid #7dd3fc', color: '#7dd3fc' }}
             >

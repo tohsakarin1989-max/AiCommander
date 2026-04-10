@@ -88,9 +88,16 @@ const MapPicker: React.FC<MapPickerProps> = ({
       markerRef.current.setLatLng([lat, lng])
     } else {
       markerRef.current = L.marker([lat, lng], { draggable: true }).addTo(map)
+      markerRef.current.on('dragend', (e) => {
+        const pos = (e.target as L.Marker).getLatLng()
+        onChange(
+          Math.round(pos.lat * 1000000) / 1000000,
+          Math.round(pos.lng * 1000000) / 1000000
+        )
+      })
     }
     map.setView([lat, lng])
-  }, [lat, lng])
+  }, [lat, lng, onChange])
 
   return (
     <div style={{ marginTop: 8 }}>
