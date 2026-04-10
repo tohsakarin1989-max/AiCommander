@@ -1,4 +1,5 @@
 from app.ai.agents.base_agent import BaseAgent
+from app.ai.utils import parse_llm_json_response
 from typing import Dict, List, Optional
 import json
 
@@ -86,18 +87,19 @@ class AnalystAgent(BaseAgent):
 
 1. **区域聚集特征**：
    - 哪些村屯/区域事件密集？
-   - 事件是否沿特定道路/管线分布？
+   - 事件是否沿特定道路/输油管线（干线/集输支线）分布？
+   - 哪些输油设施（油库、储油罐区、加油站）周边案件集中？
    - 是否存在明显的"热点区域"？
 
 2. **上下游关联**：
    - 囤油点与盗油点的空间关系如何？
-   - 查获车辆地点与其他事件的关联？
-   - 是否能推断出作案团伙的活动范围？
+   - 查获罐车地点与管线盗油点的关联？
+   - 是否能推断出作案团伙的活动范围（管线沿线半径内）？
 
 3. **巡逻路线建议**：
-   - 应重点巡逻哪些路口/路段？
-   - 高风险区域周边5公里范围内还有哪些值得关注的点位？
-   - 是否需要在特定村屯增设巡逻点？
+   - 应重点巡逻哪些管线路口/路段？
+   - 高风险输油设施周边5公里范围内还有哪些值得关注的点位？
+   - 是否需要在特定村屯或管线阀室增设巡逻点？
 """
         elif self.specialty == "modus":
             role_desc = """
@@ -105,19 +107,23 @@ class AnalystAgent(BaseAgent):
 请从作案手法维度分析这些已破获案件/事件，重点提炼：
 
 1. **作案模板提炼**：
-   - 常见的作案手法有哪些（打孔、切割、偷接等）？
-   - 常用的作案工具有哪些？
-   - 作案团伙的典型组织结构？
+   常见涉油作案手法包括（请结合实际案件识别）：
+   - 打孔盗油：在输油管线上钻孔，使用软管和泵抽取油品
+   - 切割管线：截断管段直接取油
+   - 偷接管线：非法接驳分支管道长期盗取
+   - 罐车过驳：用罐车在隐蔽地点装载盗取油品
+   - 混入合法装运：伪造运输单据掩盖非法油品
+   - 常用作案工具：电钻、割管机、手摇泵、储油桶、罐车
 
 2. **团伙特征识别**：
-   - 多起事件是否可能属于同一团伙？（车辆相同/手法一致/区域重叠）
-   - 专业化程度如何？是惯犯还是临时起意？
-   - 是否存在"师傅带徒弟"的模仿作案？
+   - 多起事件是否可能属于同一团伙？（车牌相同/手法一致/区域重叠）
+   - 专业化程度：惯犯（工具专业、路线固定）还是临时起意？
+   - 是否存在"师傅带徒弟"的模仿作案或团伙分工？
 
 3. **防范经验提炼**：
-   - 针对常见手法，应如何加强巡逻识别？
-   - 巡逻时应重点关注哪些可疑特征？
-   - 哪些位置/设施类型最易被作案？
+   - 针对打孔/偷接等常见手法，巡逻时应关注哪些可疑特征？
+   - 哪些类型的设施（阀室/弯管/偏僻管线段）最易被作案？
+   - 罐车查扣时应重点核查哪些信息（运输单据、油品来源证明）？
 """
         elif self.specialty == "prevention":
             role_desc = """
@@ -126,18 +132,22 @@ class AnalystAgent(BaseAgent):
 
 1. **重点区域排查建议**：
    - 基于已有事件，哪些区域应优先排查？
-   - 在高风险村屯周边，应重点寻找什么（隐蔽囤油点/可疑车辆/作案工具）？
-   - 是否需要对特定区域进行地毯式排查？
+   - 在高风险村屯周边及管线沿线，应重点寻找什么？
+     （隐蔽囤油点/可疑罐车/打孔痕迹/临时接管设施）
+   - 是否需要对特定管线段进行地毯式排查？
 
 2. **巡逻策略优化**：
-   - 现有巡逻路线是否覆盖高风险区域？
-   - 应在哪些时段/路口增加巡逻频次？
-   - 建议采用何种巡逻方式（车巡/步巡/蹲守）？
+   - 现有巡逻路线是否覆盖高风险管线段和油库周边？
+   - 应在哪些时段/路口增加巡逻频次（重点关注夜间罐车动向）？
+   - 建议采用何种巡逻方式（车巡/步巡/管线徒步检查/无人机巡检）？
 
 3. **联防联控建议**：
-   - 哪些区域需要与公安机关加强配合？
-   - 是否需要发动群众线索举报？
-   - 与周边单位的联防机制建议？
+   - 应与哪些单位加强配合？
+     · 公安机关（交警查扣过路罐车）
+     · 管道公司/油田保卫部门（共享管线告警数据）
+     · 周边加油站（核查可疑购油行为）
+   - 是否需要发动群众线索举报（油品异味/可疑车辆/地面油污）？
+   - 是否建议暂时提升该管线段的巡检频次？
 """
         else:
             role_desc = """
@@ -213,23 +223,18 @@ class AnalystAgent(BaseAgent):
             content = response.content
 
             # 尝试解析JSON
-            try:
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-                result = json.loads(content)
-            except Exception:
-                # 如果解析失败，返回原始内容
-                result = {
-                    "patterns": [],
-                    "area_risks": [],
-                    "correlations": [],
-                    "patrol_suggestions": [],
-                    "search_suggestions": [],
-                    "experience_summary": "",
-                    "raw_content": content,
-                }
+            default_result = {
+                "patterns": [],
+                "area_risks": [],
+                "correlations": [],
+                "patrol_suggestions": [],
+                "search_suggestions": [],
+                "experience_summary": "",
+                "raw_content": content,
+            }
+            result, error = parse_llm_json_response(content, default_result)
+            if error:
+                result["parse_error"] = error
 
             return result
         except Exception as e:
@@ -273,20 +278,14 @@ class AnalystAgent(BaseAgent):
             content = response.content
             
             # 尝试解析JSON
-            try:
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-                evaluation = json.loads(content)
-            except:
-                evaluation = {
-                    "score": 5,
-                    "strengths": [],
-                    "weaknesses": [],
-                    "suggestions": content
-                }
-            
+            default_eval = {
+                "score": 5,
+                "strengths": [],
+                "weaknesses": [],
+                "suggestions": content
+            }
+            evaluation, _ = parse_llm_json_response(content, default_eval)
+
             return evaluation
         except Exception as e:
             return {
@@ -354,25 +353,18 @@ class AnalystAgent(BaseAgent):
             content = response.content
             
             # 尝试解析JSON
-            try:
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-                ranking_result = json.loads(content)
-                
-                # 验证排名结果格式
-                if "rankings" not in ranking_result:
-                    ranking_result["rankings"] = []
-                    
-            except Exception as e:
-                # 如果解析失败，尝试从文本中提取排名信息
-                ranking_result = {
-                    "rankings": [],
-                    "overall_comment": content,
-                    "parse_error": str(e)
-                }
-            
+            default_ranking = {
+                "rankings": [],
+                "overall_comment": content,
+            }
+            ranking_result, error = parse_llm_json_response(content, default_ranking)
+
+            # 验证排名结果格式
+            if "rankings" not in ranking_result:
+                ranking_result["rankings"] = []
+            if error:
+                ranking_result["parse_error"] = error
+
             return ranking_result
         except Exception as e:
             return {
@@ -415,19 +407,13 @@ class AnalystAgent(BaseAgent):
             content = response.content
             
             # 尝试解析JSON
-            try:
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-                optimized = json.loads(content)
-            except:
-                optimized = {
-                    **original_analysis,
-                    "optimized_content": content,
-                    "version": original_analysis.get("version", 1) + 1
-                }
-            
+            default_optimized = {
+                **original_analysis,
+                "optimized_content": content,
+                "version": original_analysis.get("version", 1) + 1
+            }
+            optimized, _ = parse_llm_json_response(content, default_optimized)
+
             return optimized
         except Exception as e:
             return {
