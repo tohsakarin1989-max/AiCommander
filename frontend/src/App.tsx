@@ -19,6 +19,7 @@ import CaseGraph from './pages/Graphs/CaseGraph'
 import AreaAnalysis from './pages/AreaAnalysis/AreaAnalysis'
 import Patrols from './pages/Patrols/Patrols'
 import GangAnalysis from './pages/Gangs/GangAnalysis'
+import SpaceTimeAnalysis from './pages/Cases/SpaceTimeAnalysis'
 
 const queryClient = new QueryClient()
 
@@ -72,6 +73,7 @@ function App() {
               <Route path="/cases" element={<Cases />} />
               <Route path="/cases/map" element={<CasesMap />} />
               <Route path="/cases/features" element={<CaseFeatures />} />
+              <Route path="/cases/spacetime" element={<SpaceTimeAnalysis />} />
               <Route path="/meetings" element={<Meetings />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/settings" element={<Settings />} />
