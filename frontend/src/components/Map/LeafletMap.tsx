@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import type { CaseMarker, SerialGroup } from '../../types'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -9,23 +10,6 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 })
-
-export interface CaseMarker {
-  id: number
-  lat: number
-  lng: number
-  title: string
-  caseNumber: string
-  caseType?: string
-  riskLevel?: 'high' | 'medium' | 'low'
-  occurredTime?: string
-  modus?: string
-}
-
-export interface SerialGroup {
-  caseIds: number[]
-  color?: string
-}
 
 interface LeafletMapProps {
   markers?: CaseMarker[]
