@@ -45,6 +45,8 @@ interface SearchFilters {
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
   const [searchForm] = Form.useForm()
+  const watchedLat = Form.useWatch('latitude', form)
+  const watchedLng = Form.useWatch('longitude', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
@@ -528,8 +530,8 @@ const Cases: React.FC = () => {
 
           <Form.Item label="地图选点（可选）">
             <MapPicker
-              lat={form.getFieldValue('latitude')}
-              lng={form.getFieldValue('longitude')}
+              lat={watchedLat}
+              lng={watchedLng}
               onChange={(lat, lng) => {
                 form.setFieldsValue({ latitude: lat, longitude: lng })
               }}
