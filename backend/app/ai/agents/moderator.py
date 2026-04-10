@@ -347,6 +347,19 @@ class ModeratorAgent(BaseAgent):
     "next_steps": [
         "后续工作建议1",
         "后续工作建议2"
+    ],
+
+    "risk_trend": {{
+        "direction": "increasing/stable/decreasing",
+        "description": "近期发案趋势描述（如：近3个月呈上升趋势，集中在冬季）"
+    }},
+
+    "infrastructure_risks": [
+        {{
+            "facility_type": "设施类型（输油管线/油库/加油站/储油罐区）",
+            "risk_level": "high/medium/low",
+            "description": "该类设施的具体风险描述"
+        }}
     ]
 }}
 
@@ -384,6 +397,8 @@ class ModeratorAgent(BaseAgent):
                     "experience_extraction": [],
                     "expert_contributions": {},
                     "next_steps": [],
+                    "risk_trend": {"direction": "stable", "description": ""},
+                    "infrastructure_risks": [],
                     "parse_error": str(e)
                 }
 
@@ -399,6 +414,8 @@ class ModeratorAgent(BaseAgent):
                 "experience_extraction": [],
                 "expert_contributions": {},
                 "next_steps": [],
+                "risk_trend": {"direction": "stable", "description": ""},
+                "infrastructure_risks": [],
                 "error": str(e)
             }
 
