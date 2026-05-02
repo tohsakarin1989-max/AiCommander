@@ -24,7 +24,7 @@ def get_reports(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
         for r in reports
     ]
 
-@router.get("/{report_id}")
+@router.get("/{report_id:int}")
 def get_report(report_id: int, db: Session = Depends(get_db)):
     """获取单个报告"""
     report = db.query(Report).filter(Report.id == report_id).first()
@@ -40,4 +40,3 @@ def get_report(report_id: int, db: Session = Depends(get_db)):
         "model_contributions": report.model_contributions,
         "created_at": str(report.created_at)
     }
-

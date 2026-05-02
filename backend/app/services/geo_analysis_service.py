@@ -1,10 +1,10 @@
 from sqlalchemy.orm import Session
 from app.models.case import Case
-from app.utils.geo import haversine_km, bounding_box
-from typing import List, Dict, Tuple, DefaultDict
+from app.utils.geo import haversine_km, bounding_box, create_grid_key, km_to_deg
+from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
-import math
+import calendar
 
 class GeoAnalysisService:
     """地理线索分析服务 - 基于经纬度进行案件空间研判"""
@@ -19,28 +19,41 @@ class GeoAnalysisService:
     
     @staticmethod
     def find_hotspots(
-        db: Session,
+        db: Optional[Session] = None,
         radius_km: float = 0.5,
-        min_cases: int = 3
+        min_cases: int = 3,
+        cases: Optional[List[Case]] = None,
     ) -> List[Dict]:
         """
         识别案件热点区域（优化版：使用网格预分区减少 O(n²) 计算）
-        返回：热点中心坐标、案件数量、案件列表
+
+        Args:
+            db: 数据库会话（可选，若提供 cases 则忽略）
+            radius_km: 搜索半径（公里）
+            min_cases: 热点最少案件数
+            cases: 案件列表（可选，直接提供则跳过数据库查询）
+
+        Returns:
+            热点列表：包含中心坐标、案件数量、案件列表
         """
-        cases = GeoAnalysisService.get_all_cases_with_geo(db)
+        if cases is None:
+            if db is None:
+                raise ValueError("必须提供 db 或 cases 参数")
+            cases = GeoAnalysisService.get_all_cases_with_geo(db)
+        if radius_km <= 0 or min_cases <= 0:
+            return []
         if len(cases) < min_cases:
             return []
 
         # 使用网格预分区：将案件按网格分组，只需计算相邻网格内案件的距离
         # 网格大小略大于 radius_km，确保相邻网格覆盖搜索范围
-        grid_size_deg = radius_km / 111.0 * 1.5  # 1度纬度 ≈ 111km
+        grid_size_deg = km_to_deg(radius_km) * 1.5
 
         # 构建网格索引
         grid_index: Dict[Tuple[int, int], List[Case]] = defaultdict(list)
         for case in cases:
-            grid_x = int(case.latitude / grid_size_deg)
-            grid_y = int(case.longitude / grid_size_deg)
-            grid_index[(grid_x, grid_y)].append(case)
+            grid_key = create_grid_key(case.latitude, case.longitude, grid_size_deg)
+            grid_index[grid_key].append(case)
 
         hotspots = []
         processed = set()
@@ -50,8 +63,7 @@ class GeoAnalysisService:
                 continue
 
             # 只搜索当前网格及相邻 8 个网格（共 9 个）
-            grid_x = int(case.latitude / grid_size_deg)
-            grid_y = int(case.longitude / grid_size_deg)
+            grid_x, grid_y = create_grid_key(case.latitude, case.longitude, grid_size_deg)
 
             nearby = []
             for dx in [-1, 0, 1]:
@@ -76,6 +88,16 @@ class GeoAnalysisService:
                 all_cases_in_cluster = [case] + nearby
                 avg_lat = sum(c.latitude for c in all_cases_in_cluster) / len(all_cases_in_cluster)
                 avg_lng = sum(c.longitude for c in all_cases_in_cluster) / len(all_cases_in_cluster)
+                source_distribution = defaultdict(int)
+                oil_nature_distribution = defaultdict(int)
+                quality_scores = []
+                for c in all_cases_in_cluster:
+                    source_distribution[c.source_type or "未标注"] += 1
+                    if c.oil_nature:
+                        oil_nature_distribution[c.oil_nature] += 1
+                    if isinstance(c.quality_score, (int, float)):
+                        quality_scores.append(c.quality_score)
+                low_quality_count = sum(1 for score in quality_scores if score < 60)
 
                 hotspots.append({
                     "center_latitude": avg_lat,
@@ -83,6 +105,16 @@ class GeoAnalysisService:
                     "case_count": len(all_cases_in_cluster),
                     "radius_km": radius_km,
                     "case_ids": [c.id for c in all_cases_in_cluster],
+                    "source_distribution": dict(source_distribution),
+                    "oil_nature_distribution": dict(oil_nature_distribution),
+                    "average_quality_score": round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else None,
+                    "low_quality_count": low_quality_count,
+                    "risk_score": min(
+                        100,
+                        len(all_cases_in_cluster) * 15
+                        + low_quality_count * 3
+                        + sum(1 for c in all_cases_in_cluster if c.oil_type or c.oil_nature) * 2,
+                    ),
                     "cases": [
                         {
                             "id": c.id,
@@ -92,6 +124,10 @@ class GeoAnalysisService:
                             "latitude": c.latitude,
                             "longitude": c.longitude,
                             "case_type": c.case_type,
+                            "source_type": c.source_type,
+                            "oil_nature": c.oil_nature,
+                            "quality_score": c.quality_score,
+                            "quality_level": c.quality_level,
                         }
                         for c in all_cases_in_cluster
                     ]
@@ -124,8 +160,14 @@ class GeoAnalysisService:
         if len(cases) < 2:
             return []
         
-        # 按时间排序
-        cases_sorted = sorted(cases, key=lambda c: c.occurred_time)
+        # 按时间排序（去除时区信息统一比较）
+        def _strip_tz(dt):
+            if dt is None:
+                from datetime import datetime
+                return datetime.min
+            return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+        cases_sorted = sorted(cases, key=lambda c: _strip_tz(c.occurred_time))
         
         serial_groups = []
         processed = set()
@@ -148,7 +190,7 @@ class GeoAnalysisService:
                 )
                 
                 # 计算时间间隔
-                time_diff = abs((case2.occurred_time - case1.occurred_time).total_seconds() / 86400)
+                time_diff = abs((_strip_tz(case2.occurred_time) - _strip_tz(case1.occurred_time)).total_seconds() / 86400)
                 
                 # 如果空间和时间都接近，可能是串案
                 if dist_km <= max_distance_km and time_diff <= time_window_days:
@@ -169,7 +211,7 @@ class GeoAnalysisService:
                     "case_count": len(group),
                     "center_latitude": avg_lat,
                     "center_longitude": avg_lng,
-                    "time_span_days": (group[-1].occurred_time - group[0].occurred_time).days,
+                    "time_span_days": (_strip_tz(group[-1].occurred_time) - _strip_tz(group[0].occurred_time)).days,
                     "common_case_type": common_type,
                     "cases": [
                         {
@@ -189,8 +231,8 @@ class GeoAnalysisService:
                         "temporal_cluster": True,
                         "suggestions": [
                             "建议重点排查该区域",
-                            "可能存在同一团伙作案",
-                            "建议加强该区域巡逻"
+                            "复盘该区域道路、井场和技防薄弱条件",
+                            "形成该区域防控参考"
                         ] if len(group) >= 3 else []
                     }
                 })
@@ -312,9 +354,9 @@ class GeoAnalysisService:
                 "description": f"识别出 {len(serial_cases)} 个串案组，其中 {len(likely_serials)} 个高度疑似",
                 "details": serial_cases[:5],  # 只返回前5个
                 "suggestions": [
-                    "建议并案侦查",
-                    "分析串案共同特征",
-                    "排查是否存在同一团伙"
+                    "复盘相似案件条件",
+                    "分析时间、空间、现场薄弱点等共同特征",
+                    "沉淀区域防控经验"
                 ]
             })
         
@@ -342,3 +384,144 @@ class GeoAnalysisService:
             ]
         }
 
+    @staticmethod
+    def find_hotspots_by_period(
+        db: Session,
+        months: int = 6,
+        radius_km: float = 1.0,
+        min_cases: int = 2,
+    ) -> Dict:
+        """
+        按月份分段计算热点，返回热点时间演化数据
+
+        Args:
+            db: 数据库会话
+            months: 分析最近几个月（每月为一个时间段）
+            radius_km: 热点识别半径（公里）
+            min_cases: 热点最少案件数
+
+        Returns:
+            包含各月热点及趋势摘要的字典
+        """
+        now = datetime.now()
+        # 计算各月的起止时间段
+        periods_meta = []
+        for i in range(months - 1, -1, -1):
+            # 往前推 i 个月
+            year = now.year
+            month = now.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+            _, last_day = calendar.monthrange(year, month)
+            start_dt = datetime(year, month, 1, 0, 0, 0)
+            end_dt = datetime(year, month, last_day, 23, 59, 59)
+            periods_meta.append({
+                "period": f"{year:04d}-{month:02d}",
+                "start_date": start_dt.isoformat(),
+                "end_date": end_dt.isoformat(),
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+            })
+
+        # 一次性查出所有带坐标的案件，避免多次数据库查询
+        all_cases = db.query(Case).filter(
+            Case.latitude.isnot(None),
+            Case.longitude.isnot(None),
+            Case.occurred_time.isnot(None),
+        ).all()
+
+        def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
+            if dt is None:
+                return None
+            return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+        periods_result = []
+        for meta in periods_meta:
+            start_dt = meta["start_dt"]
+            end_dt = meta["end_dt"]
+
+            # 筛选该月案件
+            filtered = [
+                c for c in all_cases
+                if start_dt <= (_strip_tz(c.occurred_time) or datetime.min) <= end_dt
+            ]
+
+            # 调用通用热点识别（传入 cases 跳过数据库查询）
+            raw_hotspots = GeoAnalysisService.find_hotspots(
+                cases=filtered,
+                radius_km=radius_km,
+                min_cases=min_cases,
+            )
+
+            # 为每个热点生成跨月追踪键
+            hotspots_out = []
+            for hs in raw_hotspots:
+                lat = hs["center_latitude"]
+                lng = hs["center_longitude"]
+                hotspot_key = f"{round(lat, 2)}_{round(lng, 2)}"
+                hotspots_out.append({
+                    "center_latitude": lat,
+                    "center_longitude": lng,
+                    "case_count": hs["case_count"],
+                    "radius_km": hs["radius_km"],
+                    "hotspot_key": hotspot_key,
+                    "source_distribution": hs.get("source_distribution", {}),
+                    "oil_nature_distribution": hs.get("oil_nature_distribution", {}),
+                    "average_quality_score": hs.get("average_quality_score"),
+                    "low_quality_count": hs.get("low_quality_count", 0),
+                    "risk_score": hs.get("risk_score"),
+                })
+
+            periods_result.append({
+                "period": meta["period"],
+                "start_date": meta["start_date"],
+                "end_date": meta["end_date"],
+                "hotspots": hotspots_out,
+                "total_cases": len(filtered),
+            })
+
+        # 计算趋势摘要：比较最后两个月热点变化
+        heating_up = 0
+        cooling_down = 0
+        stable = 0
+        new_hotspots = 0
+
+        if len(periods_result) >= 2:
+            last_period = periods_result[-1]
+            prev_period = periods_result[-2]
+
+            # 构建上个月热点的 key -> case_count 映射
+            prev_map: Dict[str, int] = {
+                hs["hotspot_key"]: hs["case_count"]
+                for hs in prev_period["hotspots"]
+            }
+            prev_keys = set(prev_map.keys())
+            last_keys = set(hs["hotspot_key"] for hs in last_period["hotspots"])
+
+            # 新出现热点：本月有但上月没有的
+            new_hotspots = len(last_keys - prev_keys)
+
+            for hs in last_period["hotspots"]:
+                key = hs["hotspot_key"]
+                if key not in prev_map:
+                    continue  # 新热点已单独统计
+                prev_count = prev_map[key]
+                curr_count = hs["case_count"]
+                if curr_count > prev_count:
+                    heating_up += 1
+                elif curr_count < prev_count:
+                    cooling_down += 1
+                else:
+                    stable += 1
+
+        return {
+            "periods": periods_result,
+            "trend_summary": {
+                "heating_up": heating_up,
+                "cooling_down": cooling_down,
+                "stable": stable,
+                "new_hotspots": new_hotspots,
+            },
+            "months_analyzed": months,
+        }

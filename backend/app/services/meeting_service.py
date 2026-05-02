@@ -4,14 +4,26 @@ from app.models.report import Report
 from app.models.case import Case
 from app.ai.meeting_manager import MeetingManager
 from app.services.case_service import CaseService
+from app.services.case_quality_service import CaseQualityService
 from app.services.system_config_service import SystemConfigService
 from typing import List, Optional, Dict
 import asyncio
 import json
 from app.utils.logger import logger
 
+
+async def _default_progress_callback(meeting_id: str, stage: int, stage_name: str,
+                                     status: str, progress: int, details: Optional[Dict] = None):
+    """默认进度回调 - 通过 WebSocket 广播"""
+    try:
+        from app.api.websocket import broadcast_meeting_progress
+        await broadcast_meeting_progress(meeting_id, stage, stage_name, status, progress, details)
+    except Exception as e:
+        logger.warning(f"广播会议进度失败: {e}")
+
+
 class MeetingService:
-    
+
     @staticmethod
     async def create_and_run_meeting(
         db: Session,
@@ -29,9 +41,9 @@ class MeetingService:
                 logger.warning("圆桌会议配置为OpenRouter模式，但未配置API密钥，将使用Direct模式")
         else:
             logger.info(f"圆桌会议使用Direct模式，直接使用AI模型配置中的API密钥")
-        
-        # 创建会议管理器
-        manager = MeetingManager(db)
+
+        # 创建会议管理器（传入进度回调）
+        manager = MeetingManager(db, progress_callback=_default_progress_callback)
         
         # 如果提供了已存在的会议ID，使用它；否则创建新的
         if existing_meeting_id:
@@ -107,6 +119,8 @@ class MeetingService:
                 basic = features.get("basic", {}) if isinstance(features, dict) else {}
                 geo = features.get("geo", {}) if isinstance(features, dict) else {}
                 oil = features.get("oil", {}) if isinstance(features, dict) else {}
+                oil_facts = oil.get("facts", {}) if isinstance(oil, dict) else {}
+                profile = CaseQualityService.build_case_feature_profile(db, c)
 
                 summary = basic.get("summary") or (c.description or "")
 
@@ -123,11 +137,23 @@ class MeetingService:
                         "involved_items": c.involved_items,
                         "loss_amount": c.loss_amount,
                         "nearby_case_count": len(nearby_cases),
+                        "management": profile["management"],
+                        "quality": profile["quality"],
+                        "vehicles": profile["vehicles"],
+                        "persons": profile["actors"]["persons"],
+                        "evidence_count": len(profile["evidence"]),
                         # 涉油特征（如果有）
-                        "oil_type": oil.get("oil_type") or c.oil_type,
-                        "oil_volume": oil.get("volume") or c.oil_volume,
-                        "facility_type": oil.get("facility_type") or c.facility_type,
+                        "oil_type": oil_facts.get("oil_type") or c.oil_type,
+                        "oil_nature": c.oil_nature,
+                        "oil_volume": oil_facts.get("volume") or c.oil_volume,
+                        "water_cut": c.water_cut,
+                        "facility_type": oil_facts.get("facility_type") or c.facility_type,
                         "modus_operandi": c.modus_operandi,
+                        "analysis_readiness": (
+                            features.get("analysis_readiness", {})
+                            if isinstance(features, dict)
+                            else {}
+                        ),
                     }
                 )
             
@@ -332,4 +358,3 @@ class MeetingService:
         if not meeting or not meeting.final_report_id:
             return None
         return db.query(Report).filter(Report.id == meeting.final_report_id).first()
-

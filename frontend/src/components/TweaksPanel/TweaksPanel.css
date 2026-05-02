@@ -1,0 +1,195 @@
+/* ── Tweaks toggle button ──────────────────────────────────────── */
+.tweak-toggle {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  padding: 7px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--accent-line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  color: var(--ink-1);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  box-shadow: 0 4px 20px oklch(0 0 0 / 0.5);
+  text-transform: uppercase;
+}
+
+.tweak-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: oklch(0.78 0.14 var(--accent-hue) / 0.06);
+}
+
+.tweak-toggle .d {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  box-shadow: 0 0 6px var(--accent);
+}
+
+/* ── Panel ─────────────────────────────────────────────────────── */
+.tweaks-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 60px;
+  width: 292px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  padding: 18px;
+  z-index: 9100;
+  box-shadow: 0 16px 56px oklch(0 0 0 / 0.7);
+}
+
+/* ── Header ────────────────────────────────────────────────────── */
+.tw-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.tw-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+  padding: 0 2px;
+  transition: color 0.12s;
+}
+
+.tw-close:hover { color: var(--ink-0); }
+
+/* ── Row ────────────────────────────────────────────────────────── */
+.tw-row {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.tw-row:last-of-type { margin-bottom: 0; }
+
+.tw-row label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tw-val {
+  color: var(--accent);
+}
+
+/* ── Hue strip (visual preview) ─────────────────────────────────── */
+.tw-hue-strip {
+  height: 4px;
+  width: 100%;
+  background: linear-gradient(
+    to right,
+    oklch(0.72 0.18 0),
+    oklch(0.72 0.18 60),
+    oklch(0.72 0.18 120),
+    oklch(0.72 0.18 180),
+    oklch(0.72 0.18 240),
+    oklch(0.72 0.18 300),
+    oklch(0.72 0.18 360)
+  );
+  margin-bottom: 4px;
+}
+
+/* ── Range input ─────────────────────────────────────────────────── */
+.tw-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: var(--line);
+  outline: none;
+  cursor: pointer;
+}
+
+.tw-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg-0);
+  transition: transform 0.1s;
+}
+
+.tw-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
+/* ── Segmented control ────────────────────────────────────────────── */
+.tw-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border: 1px solid var(--line);
+}
+
+.tw-seg button {
+  padding: 7px 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--line);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.tw-seg button:last-child { border-right: none; }
+
+.tw-seg button:hover {
+  background: oklch(0.32 0.014 250 / 0.3);
+  color: var(--ink-1);
+}
+
+.tw-seg button.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ── Reset button ─────────────────────────────────────────────────── */
+.tw-reset {
+  margin-top: 14px;
+  width: 100%;
+  padding: 7px;
+  background: transparent;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.tw-reset:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}

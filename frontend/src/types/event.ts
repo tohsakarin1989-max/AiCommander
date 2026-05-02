@@ -63,6 +63,7 @@ export interface Event {
   risk_level?: RiskLevel
   analysis_notes?: string
   suggested_actions?: string[]
+  related_case_id?: number
   created_at?: string
 }
 
@@ -109,6 +110,26 @@ export interface EventRelation {
   created_at?: string
 }
 
+export interface CorrelationRelation {
+  event_id: number
+  event_a_id: number
+  event_b_id: number
+  relation_type: RelationType | string
+  distance_km?: number
+  time_gap_days?: number
+  confidence?: number
+  reasoning?: string
+  chain_role?: string
+  common_plates?: string[]
+  related_event?: Event
+}
+
+export interface CorrelationAnalysisResponse {
+  event_count: number
+  relations: CorrelationRelation[]
+  relation_count: number
+}
+
 // 巡逻建议
 export interface PatrolSuggestion {
   location: string
@@ -127,6 +148,73 @@ export interface SearchSuggestion {
   rationale?: string
 }
 
+export interface AreaTimelineItem {
+  id: number
+  event_number: string
+  event_type: EventType | string
+  event_type_name: string
+  occurred_time?: string
+  title?: string
+  location?: string
+  handling_result?: string
+}
+
+export interface AreaInternalRelation {
+  event_a_id: number
+  event_b_id: number
+  event_a_type?: EventType | string
+  event_b_type?: EventType | string
+  distance_km?: number
+  time_gap_days?: number
+  relation_types: string[]
+  confidence?: number
+  evidence?: string
+  reasoning?: string
+  supply_chain_note?: string
+}
+
+export interface AreaSuggestion {
+  type: string
+  priority: 'low' | 'medium' | 'high' | string
+  title: string
+  content: string
+  action: string
+}
+
+export interface AreaPatrolSuggestions {
+  area_name: string
+  priority_level: 'low' | 'medium' | 'high' | string
+  suggested_times: Array<{ period: string; reason: string }>
+  suggested_days: Array<{ day: string; reason: string }>
+  watch_targets: Array<{ type: string; description: string }>
+  patrol_points: string[]
+  frequency: string
+}
+
+export interface AreaRiskRankingItem {
+  area_name: string
+  event_count: number
+  last_event?: string
+  type_counts: Record<string, number>
+  risk_score: number
+  risk_level: RiskLevel
+  days_since_last?: number
+}
+
+export interface AreaHotspot extends AreaRiskRankingItem {
+  center_latitude?: number
+  center_longitude?: number
+}
+
+export interface RefreshAreaProfileResult {
+  message: string
+  profile_id: number
+  area_name: string
+  risk_level: RiskLevel
+  risk_score: number
+  total_events: number
+}
+
 // 区域分析请求
 export interface AreaAnalysisRequest {
   area_name: string
@@ -138,18 +226,15 @@ export interface AreaAnalysisRequest {
 export interface AreaAnalysisResponse {
   area_name: string
   events: Event[]
-  timeline: {
-    monthly: Record<string, number>
-    by_type: Record<string, number>
-  }
-  relations: EventRelation[]
+  timeline: AreaTimelineItem[]
+  relations: AreaInternalRelation[]
   risk_assessment: {
     level: RiskLevel
     score: number
     factors: string[]
   }
-  suggestions: SearchSuggestion[]
-  patrol_suggestions: PatrolSuggestion[]
+  suggestions: AreaSuggestion[]
+  patrol_suggestions: AreaPatrolSuggestions
 }
 
 // 事件统计

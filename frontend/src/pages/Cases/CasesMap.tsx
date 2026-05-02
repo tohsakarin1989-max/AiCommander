@@ -1,26 +1,30 @@
 import React, { useState } from 'react'
-import { Card, List, Button, Spin, Space, Typography, Switch, Divider } from 'antd'
+import { Button, List, Spin, Switch } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { FireOutlined, LinkOutlined, FieldTimeOutlined } from '@ant-design/icons'
+import {
+  FireOutlined,
+  LinkOutlined,
+  FieldTimeOutlined,
+  EnvironmentOutlined,
+  AppstoreOutlined,
+} from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
 import LeafletMap from '../../components/Map/LeafletMap'
 import type { CaseMarker, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import type { Case } from '../../types'
+import './CasesMap.css'
 
-const { Text } = Typography
+const RISK_LEVEL = (score: number): 'high' | 'medium' | 'low' =>
+  score > 0.6 ? 'high' : score > 0.3 ? 'medium' : 'low'
 
-const RISK_COLOR: Record<string, string> = {
-  high: '#ef4444',
-  medium: '#f59e0b',
-  low: '#22c55e',
-}
-
-const cardStyle = {
-  background: '#0d1117',
-  border: '1px solid #1e293b',
-  borderRadius: 6,
-}
+const LEGEND_ITEMS: Array<{ label: string; type: 'dot' | 'line'; color: string }> = [
+  { label: '高风险',  type: 'dot',  color: 'var(--c-danger)' },
+  { label: '中风险',  type: 'dot',  color: 'var(--c-warning)' },
+  { label: '低风险',  type: 'dot',  color: 'var(--c-success)' },
+  { label: '案件点',  type: 'dot',  color: 'var(--c-cyan)' },
+  { label: '串案连线', type: 'line', color: '#a78bfa' },
+]
 
 const CasesMap: React.FC = () => {
   const navigate = useNavigate()
@@ -39,7 +43,8 @@ const CasesMap: React.FC = () => {
 
   const { data: serialCases } = useQuery({
     queryKey: ['serialCases'],
-    queryFn: () => caseApi.getSerialCases(),
+    // 仅用地理分析，关闭语义搜索（向量库未就绪时会超时 20s+）
+    queryFn: () => caseApi.getSerialCases(undefined, 2.0, 30, false, true),
   })
 
   // 有坐标的案件 → LeafletMap markers
@@ -69,167 +74,191 @@ const CasesMap: React.FC = () => {
   const topHotspots = (hotspots || []).slice(0, 5)
 
   return (
-    <div style={{ height: 'calc(100vh - 80px)', display: 'flex', gap: 12 }}>
-      {/* 左侧控制面板 */}
-      <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
-        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>图层控制</Text>
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ color: '#cbd5e1', fontSize: 12 }}>串案连线</Text>
-              <Switch
-                size="small"
-                checked={showSerial}
-                onChange={setShowSerial}
-                style={{ '--ant-color-primary': '#7dd3fc' } as React.CSSProperties}
-              />
-            </div>
-          </div>
-        </Card>
+    <div className="cases-map-wrap">
 
-        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>热点区域</Text>
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {topHotspots.length === 0 ? (
-              <Text style={{ color: '#475569', fontSize: 11 }}>暂无热点数据</Text>
-            ) : (
-              topHotspots.map(
-                (h: Hotspot, i: number) => {
-                  // risk_score > 0.6 = 高风险，> 0.3 = 中风险，否则低风险
-                  const riskLevel = h.risk_score > 0.6 ? 'high' : h.risk_score > 0.3 ? 'medium' : 'low'
+      {/* ── 页面头 ── */}
+      <div className="ds-page-hdr" style={{ paddingBottom: 16, marginBottom: 14 }}>
+        <div className="ds-page-hdr__left">
+          <div className="ds-eyebrow">空间分布分析</div>
+          <h1 className="ds-page-title">案件地图</h1>
+        </div>
+        <div className="ds-page-hdr__right">
+          <Button
+            className="cases-map-filter__spacetime-btn"
+            icon={<FieldTimeOutlined />}
+            onClick={() => navigate('/cases/spacetime')}
+          >
+            时空研判
+          </Button>
+        </div>
+      </div>
+
+      {/* ── 筛选/图层控制卡片（顶部） ── */}
+      <div className="cases-map-filter">
+        <span className="cases-map-filter__label">
+          <AppstoreOutlined style={{ marginRight: 6 }} />
+          图层控制
+        </span>
+        <div className="cases-map-filter__layer">
+          <span className="cases-map-filter__layer-text">串案连线</span>
+          <Switch
+            size="small"
+            checked={showSerial}
+            onChange={setShowSerial}
+          />
+        </div>
+        <span className="cases-map-filter__label" style={{ marginLeft: 12 }}>
+          <EnvironmentOutlined style={{ marginRight: 6 }} />
+          标记点：{markers.length} / {(cases || []).length} 件含坐标
+        </span>
+      </div>
+
+      {/* ── 主体 ── */}
+      <div className="cases-map-body">
+
+        {/* 左侧面板 */}
+        <div className="cases-map-panel">
+
+          {/* 热点区域 */}
+          <div className="cases-map-card">
+            <div className="cases-map-card__hdr">
+              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 11 }} />
+              <span className="cases-map-card__title">热点区域</span>
+            </div>
+            <div className="cases-map-card__body">
+              {topHotspots.length === 0 ? (
+                <span className="cases-map-empty">暂无热点数据</span>
+              ) : (
+                topHotspots.map((h: Hotspot, i: number) => {
+                  const level = RISK_LEVEL(h.risk_score)
                   return (
-                    <div
-                      key={i}
-                      style={{
-                        background: '#1e293b',
-                        borderRadius: 4,
-                        padding: '5px 8px',
-                        borderLeft: `2px solid ${RISK_COLOR[riskLevel]}`,
-                      }}
-                    >
-                      <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>
-                        {`${h.center.latitude.toFixed(4)}, ${h.center.longitude.toFixed(4)}`}
+                    <div key={i} className={`cases-map-hotspot cases-map-hotspot--${level}`}>
+                      <div className="cases-map-hotspot__coords">
+                        {h.center.latitude.toFixed(4)}, {h.center.longitude.toFixed(4)}
                       </div>
-                      <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>
-                        {h.case_count}起 · 半径{h.radius_km.toFixed(1)}km
+                      <div className="cases-map-hotspot__meta">
+                        {h.case_count} 起 · 半径 {h.radius_km.toFixed(1)} km
                       </div>
                     </div>
                   )
-                }
-              )
-            )}
-          </div>
-        </Card>
-
-        <Button
-          icon={<FieldTimeOutlined />}
-          style={{
-            background: 'rgba(125,211,252,0.1)',
-            border: '1px solid #7dd3fc',
-            color: '#7dd3fc',
-            width: '100%',
-          }}
-          onClick={() => navigate('/cases/spacetime')}
-        >
-          时空研判
-        </Button>
-      </div>
-
-      {/* 地图主体 */}
-      <div style={{ flex: 1 }}>
-        {isLoading ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Spin tip="加载地图数据..." />
-          </div>
-        ) : (
-          <LeafletMap
-            markers={markers}
-            serialGroups={serialGroups}
-            height="100%"
-            onMarkerClick={(m) => {
-              const found = (cases || []).find((c) => c.id === m.id)
-              if (found) setSelectedCase(found)
-            }}
-          />
-        )}
-      </div>
-
-      {/* 右侧 AI 分析面板 */}
-      <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
-        {/* 选中案件详情 */}
-        {selectedCase && (
-          <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-            <Text style={{ color: '#7dd3fc', fontSize: 11, fontWeight: 600 }}>选中案件</Text>
-            <div style={{ marginTop: 6 }}>
-              <div style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600 }}>{selectedCase.case_number}</div>
-              <div style={{ color: '#94a3b8', fontSize: 10, marginTop: 2 }}>{selectedCase.case_type || '未分类'}</div>
-              <div style={{ color: '#64748b', fontSize: 10 }}>
-                {selectedCase.occurred_time?.slice(0, 10)}
-              </div>
+                })
+              )}
             </div>
-            <Divider style={{ borderColor: '#1e293b', margin: '8px 0' }} />
-            <Button
-              size="small"
-              type="link"
-              style={{ color: '#7dd3fc', padding: 0, fontSize: 11 }}
-              onClick={() => navigate(`/cases`)}
-            >
-              查看详情 →
-            </Button>
-          </Card>
-        )}
+          </div>
 
-        {/* AI 巡逻建议 */}
-        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-          <Space style={{ marginBottom: 8 }}>
-            <FireOutlined style={{ color: '#f59e0b' }} />
-            <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>AI巡逻建议</Text>
-          </Space>
-          <Text style={{ color: '#475569', fontSize: 11 }}>请前往「区域研判」生成巡逻建议</Text>
-        </Card>
+          {/* 图例 */}
+          <div className="cases-map-card">
+            <div className="cases-map-card__hdr">
+              <span className="cases-map-card__title">图例</span>
+            </div>
+            <div className="cases-map-card__body">
+              {LEGEND_ITEMS.map(item => (
+                <div key={item.label} className="cases-map-legend__item">
+                  {item.type === 'dot' ? (
+                    <div className="cases-map-legend__dot" style={{ background: item.color }} />
+                  ) : (
+                    <div className="cases-map-legend__line" />
+                  )}
+                  {item.label}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
 
-        {/* 串案分析 */}
-        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-          <Space style={{ marginBottom: 8 }}>
-            <LinkOutlined style={{ color: '#a78bfa' }} />
-            <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>串案关联</Text>
-          </Space>
-          {(serialCases || []).length === 0 ? (
-            <Text style={{ color: '#475569', fontSize: 11 }}>未发现串案</Text>
+        {/* 地图主体 */}
+        <div className="cases-map-container">
+          {isLoading ? (
+            <div className="cases-map-loading">
+              <Spin size="large" />
+              <span>加载地图数据…</span>
+            </div>
           ) : (
-            <div style={{ color: '#7dd3fc', fontSize: 11 }}>
-              发现 {(serialCases || []).length} 组串案
-              <List
-                size="small"
-                dataSource={(serialCases || []).slice(0, 2)}
-                renderItem={(group: SerialCaseGroup, i: number) => (
-                  <List.Item key={group.group_id} style={{ padding: '4px 0', borderBottom: '1px solid #1e293b' }}>
-                    <Text style={{ color: '#94a3b8', fontSize: 10 }}>
-                      组 {i + 1}：{group.case_ids.length} 起案件
-                    </Text>
-                  </List.Item>
-                )}
-              />
+            <LeafletMap
+              markers={markers}
+              serialGroups={serialGroups}
+              height="100%"
+              onMarkerClick={(m) => {
+                const found = (cases || []).find((c) => c.id === m.id)
+                if (found) setSelectedCase(found)
+              }}
+            />
+          )}
+        </div>
+
+        {/* 右侧面板 */}
+        <div className="cases-map-panel">
+
+          {/* 选中案件详情 */}
+          {selectedCase && (
+            <div className="cases-map-card">
+              <div className="cases-map-card__hdr">
+                <EnvironmentOutlined style={{ color: 'var(--c-cyan)', fontSize: 11 }} />
+                <span className="cases-map-card__title">选中案件</span>
+              </div>
+              <div className="cases-map-card__body">
+                <div className="cases-map-selected__num">{selectedCase.case_number}</div>
+                <div className="cases-map-selected__type">{selectedCase.case_type || '未分类'}</div>
+                <div className="cases-map-selected__date">
+                  {selectedCase.occurred_time?.slice(0, 10)}
+                </div>
+                <div className="cases-map-selected__divider" />
+                <Button
+                  type="link"
+                  size="small"
+                  className="cases-map-selected__link"
+                  onClick={() => navigate('/cases')}
+                >
+                  查看详情 →
+                </Button>
+              </div>
             </div>
           )}
-        </Card>
 
-        {/* 图例 */}
-        <Card size="small" style={cardStyle} styles={{ body: { padding: 12 } }}>
-          <Text style={{ color: '#94a3b8', fontSize: 11, letterSpacing: '0.8px' }}>图例</Text>
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {Object.entries({ '高风险': '#ef4444', '中风险': '#f59e0b', '低风险': '#22c55e', '案件点': '#7dd3fc' }).map(([label, color]) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                <Text style={{ color: '#94a3b8', fontSize: 11 }}>{label}</Text>
-              </div>
-            ))}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 16, height: 2, background: 'repeating-linear-gradient(90deg,#a78bfa,#a78bfa 4px,transparent 4px,transparent 7px)' }} />
-              <Text style={{ color: '#94a3b8', fontSize: 11 }}>串案连线</Text>
+          {/* AI 巡逻建议 */}
+          <div className="cases-map-card">
+            <div className="cases-map-card__hdr">
+              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 11 }} />
+              <span className="cases-map-card__title">AI 巡逻建议</span>
+            </div>
+            <div className="cases-map-card__body">
+              <span className="cases-map-empty">请前往「区域研判」生成巡逻建议</span>
             </div>
           </div>
-        </Card>
+
+          {/* 串案关联 */}
+          <div className="cases-map-card">
+            <div className="cases-map-card__hdr">
+              <LinkOutlined style={{ color: '#a78bfa', fontSize: 11 }} />
+              <span className="cases-map-card__title">串案关联</span>
+            </div>
+            <div className="cases-map-card__body">
+              {(serialCases || []).length === 0 ? (
+                <span className="cases-map-serial__empty">未发现串案</span>
+              ) : (
+                <>
+                  <div className="cases-map-serial__count">
+                    发现 {(serialCases || []).length} 组串案
+                  </div>
+                  <List
+                    size="small"
+                    dataSource={(serialCases || []).slice(0, 3)}
+                    renderItem={(group: SerialCaseGroup, i: number) => (
+                      <List.Item
+                        key={group.group_id}
+                        style={{ padding: '4px 0', borderBottom: '1px solid var(--bd-0)' }}
+                      >
+                        <span className="cases-map-serial__item">
+                          组 {i + 1}：{(group.case_ids?.length ?? (group as unknown as Record<string, unknown>).case_count ?? '?')} 起案件
+                        </span>
+                      </List.Item>
+                    )}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

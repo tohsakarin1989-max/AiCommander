@@ -2,7 +2,7 @@
  * 实时计数器组件
  * 带滚动数字动画的计数器
  */
-import React, { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import './RealTimeCounter.css'
 
 export interface RealTimeCounterProps {

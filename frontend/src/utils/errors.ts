@@ -52,6 +52,23 @@ export class ApiError extends Error {
   }
 }
 
+interface ErrorEnvelope {
+  error?: {
+    code?: string
+    message?: string
+    request_id?: string
+    details?: unknown
+  }
+  detail?: unknown
+  message?: unknown
+}
+
+interface ValidationIssue {
+  loc?: Array<string | number>
+  msg?: string
+  type?: string
+}
+
 // HTTP 状态码到错误代码的映射
 const statusToErrorCode: Record<number, ErrorCode> = {
   400: ErrorCode.BAD_REQUEST,
@@ -123,7 +140,7 @@ export function createApiError(error: unknown, context?: string): ApiError {
   if (isAxiosError(error) && error.response) {
     const status = error.response.status
     const code = getErrorCodeFromStatus(status)
-    const serverMessage = error.response.data?.detail || error.response.data?.message
+    const serverMessage = extractServerMessage(error.response.data)
     const message = serverMessage || getUserFriendlyMessage(code)
 
     return new ApiError(message, code, status, context, error.response.data)
@@ -139,13 +156,43 @@ export function createApiError(error: unknown, context?: string): ApiError {
   return new ApiError(message, ErrorCode.UNKNOWN, undefined, context)
 }
 
+function extractServerMessage(data: ErrorEnvelope | undefined): string | undefined {
+  if (!data) return undefined
+  if (typeof data.error?.message === 'string' && data.error.message.trim()) {
+    return data.error.message
+  }
+  if (typeof data.detail === 'string' && data.detail.trim()) {
+    return data.detail
+  }
+  if (Array.isArray(data.detail)) {
+    const messages = data.detail
+      .map(formatValidationIssue)
+      .filter((item): item is string => Boolean(item))
+    return messages.length > 0 ? messages.join('；') : undefined
+  }
+  if (typeof data.message === 'string' && data.message.trim()) {
+    return data.message
+  }
+  return undefined
+}
+
+function formatValidationIssue(issue: unknown): string | undefined {
+  if (!isValidationIssue(issue)) return undefined
+  const field = issue.loc?.filter(part => part !== 'body' && part !== 'query').join('.')
+  return field ? `${field}: ${issue.msg || '校验失败'}` : issue.msg
+}
+
+function isValidationIssue(value: unknown): value is ValidationIssue {
+  return typeof value === 'object' && value !== null && ('msg' in value || 'loc' in value)
+}
+
 /**
  * 类型守卫：检查是否为 Axios 错误
  */
 function isAxiosError(error: unknown): error is {
   response?: {
     status: number
-    data?: { detail?: string; message?: string }
+    data?: ErrorEnvelope
   }
   code?: string
   message?: string

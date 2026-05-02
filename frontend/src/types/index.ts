@@ -8,11 +8,14 @@ export * from './event'
 
 // ============ 案件相关类型 ============
 
-export type CaseStatus = 'pending' | 'processing' | 'completed' | 'failed'
+export type CaseStatus = 'pending' | 'processing' | 'completed' | 'resolved' | 'failed'
 export type OilType = '汽油' | '柴油' | '原油' | '润滑油' | '其他'
 export type FacilityType = '管线' | '油库' | '加油站' | '油罐车' | '其他'
 export type SecurityLevel = '高' | '中' | '低'
 export type PersonRole = '内部员工' | '司机' | '加油员' | '其他'
+export type CaseQualityLevel = 'high' | 'medium' | 'low'
+export type CaseSourceType = '巡逻发现' | '群众举报' | '领导指派' | '公安机关线索' | '技防预警' | '红色网格上报' | '作业区反馈' | '其他'
+export type OilNature = '被盗原油' | '落地原油' | '收缴油品' | '回收原油' | '其他'
 
 export interface Person {
   name?: string
@@ -35,6 +38,100 @@ export interface VehicleInfo {
   vehicle_type?: string
   color?: string
   owner?: string
+}
+
+export interface CaseQuality {
+  score: number
+  level: CaseQualityLevel
+  category_scores: Record<string, number>
+  missing_required: Array<{ field: string; label: string; reason: string }>
+  warnings: Array<{ field: string; message: string }>
+  recommendations: string[]
+  facts: Record<string, unknown>
+}
+
+export interface CaseVehicle {
+  id: number
+  case_id: number
+  vehicle_type?: string
+  color?: string
+  brand?: string
+  model?: string
+  plate_number?: string
+  oil_volume?: number
+  water_cut?: number
+  custody_location?: string
+  current_location?: string
+  handling_status?: string
+  transferred_to_police?: boolean
+  transfer_time?: string
+  transfer_document_no?: string
+  notes?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CasePerson {
+  id: number
+  case_id: number
+  name?: string
+  gender?: string
+  id_number?: string
+  home_address?: string
+  phone?: string
+  role?: string
+  handling_status?: string
+  notes?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CaseEvidence {
+  id: number
+  case_id: number
+  evidence_type?: string
+  title?: string
+  file_path?: string
+  requirement_key?: string
+  captured_at?: string
+  latitude?: number
+  longitude?: number
+  is_sensitive?: boolean
+  meta?: Record<string, unknown>
+  notes?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OilRecoveryRecord {
+  id: number
+  case_id: number
+  oil_nature?: OilNature | string
+  volume_tons?: number
+  water_cut?: number
+  source?: string
+  receiver?: string
+  handled_at?: string
+  handling_method?: string
+  notes?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CaseTip {
+  id: number
+  case_id?: number
+  reporter_name?: string
+  reporter_contact?: string
+  reported_at?: string
+  location?: string
+  content?: string
+  source_type?: CaseSourceType | string
+  verification_status?: string
+  resolution?: string
+  prevention_actions?: Array<Record<string, unknown>>
+  created_at?: string
+  updated_at?: string
 }
 
 // 预处理后的案件结构化特征
@@ -110,6 +207,22 @@ export interface CaseFeatures {
     level?: string
     factors?: string[]
   }
+  management?: {
+    report_quality_score?: number
+    report_quality_level?: CaseQualityLevel | string
+    missing_fields?: string[]
+    timeliness?: {
+      reported_within_1h?: boolean
+      entered_within_48h?: boolean
+    }
+    recommended_completion_actions?: string[]
+  }
+  analysis_readiness?: {
+    spacetime?: string
+    gang?: string
+    patrol?: string
+    roundtable?: string
+  }
   tags?: string[]
   confidence?: number
 }
@@ -138,6 +251,26 @@ export interface Case {
   vehicle_info?: VehicleInfo
   upstream_source?: string
   downstream_destination?: string
+  report_time?: string
+  report_unit?: string
+  source_type?: CaseSourceType | string
+  source_detail?: string
+  police_reported?: boolean
+  case_filed?: boolean
+  police_officer?: string
+  police_phone?: string
+  security_officers?: string[]
+  oil_nature?: OilNature | string
+  water_cut?: number
+  vehicle_handling?: string
+  person_handling?: string
+  oil_handling?: string
+  operation_role?: string
+  current_stage?: string
+  quality_score?: number
+  quality_level?: CaseQualityLevel
+  quality_issues?: CaseQuality
+  quality_updated_at?: string
   // 结构化预处理结果
   features?: CaseFeatures
   status: CaseStatus
@@ -164,6 +297,22 @@ export interface CaseCreate {
   vehicle_info?: VehicleInfo
   upstream_source?: string
   downstream_destination?: string
+  report_time?: string
+  report_unit?: string
+  source_type?: CaseSourceType | string
+  source_detail?: string
+  police_reported?: boolean
+  case_filed?: boolean
+  police_officer?: string
+  police_phone?: string
+  security_officers?: string[]
+  oil_nature?: OilNature | string
+  water_cut?: number
+  vehicle_handling?: string
+  person_handling?: string
+  oil_handling?: string
+  operation_role?: string
+  current_stage?: string
 }
 
 // ============ 会议相关类型 ============
@@ -423,6 +572,14 @@ export interface ChatResponse {
 export interface AgentTaskResult {
   result?: string
   steps?: string[]
+  confidence?: number
+  facts?: string[]
+  inferences?: string[]
+  recommendations?: string[]
+  information_gaps?: string[]
+  evidence_refs?: string[]
+  boundary?: string[]
+  mode?: string
 }
 
 export interface AgentTask {
@@ -804,7 +961,42 @@ export interface AreaRisk {
   updated_at: string
 }
 
-// ============ 团伙分析类型（从 gangs.ts 迁移） ============
+export interface CaseDrivenPatrolPlan {
+  generated_at: string
+  analysis_days: number
+  area_count: number
+  areas: Array<{
+    area_name: string
+    case_count: number
+    case_ids: number[]
+    center: {
+      latitude?: number | null
+      longitude?: number | null
+    }
+    priority_score: number
+    risk_level: string
+    average_quality_score: number
+    source_types: string[]
+    oil_natures: string[]
+    recommended_windows: Array<{
+      start_hour: number
+      end_hour: number
+      label: string
+      case_count: number
+      risk_level: string
+    }>
+    patrol_focus: string[]
+    completion_actions: string[]
+  }>
+  data_quality: {
+    total_cases: number
+    missing_geo_case_count: number
+    low_quality_case_count: number
+    note: string
+  }
+}
+
+// ============ 相似条件组分析类型（兼容旧 gangs API 命名） ============
 
 export interface GangProfile {
   case_ids: number[]
@@ -871,4 +1063,54 @@ export interface CaseMarker {
 export interface SerialGroup {
   caseIds: number[]
   color?: string
+}
+
+// ── 保卫人员 ─────────────────────────────────────────────────────────────────
+export interface SecurityPersonnel {
+  id: number
+  name: string
+  badge_number?: string
+  department?: string
+  position?: string
+  phone?: string
+  status: string
+  notes?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SecurityPersonnelCreate {
+  name: string
+  badge_number?: string
+  department?: string
+  position?: string
+  phone?: string
+  status?: string
+  notes?: string
+}
+
+// ── 重要部位 ─────────────────────────────────────────────────────────────────
+export interface KeyLocation {
+  id: number
+  name: string
+  location_type: string
+  latitude?: number
+  longitude?: number
+  address?: string
+  description?: string
+  risk_level: number
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KeyLocationCreate {
+  name: string
+  location_type: string
+  latitude?: number
+  longitude?: number
+  address?: string
+  description?: string
+  risk_level?: number
+  status?: string
 }

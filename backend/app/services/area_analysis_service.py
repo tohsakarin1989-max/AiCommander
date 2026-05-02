@@ -263,6 +263,91 @@ class AreaAnalysisService:
         return risk_areas[:limit]
 
     @staticmethod
+    def get_area_risk_ranking(db: Session, limit: int = 10) -> List[Dict]:
+        """兼容 API 层使用的区域风险排名入口。"""
+        return AreaAnalysisService.get_high_risk_areas(db, limit=limit)
+
+    @staticmethod
+    def identify_hotspots(
+        db: Session,
+        days_back: int = 90,
+        min_events: int = 2
+    ) -> List[Dict]:
+        """
+        识别近期事件热点区域。
+
+        以 village_name 为聚合单元，返回达到最小事件数阈值的区域。
+        """
+        if days_back <= 0 or min_events <= 0:
+            return []
+
+        cutoff = datetime.now() - timedelta(days=days_back)
+        village_stats = db.query(
+            Event.village_name,
+            func.count(Event.id).label("event_count"),
+            func.max(Event.occurred_time).label("last_event"),
+            func.avg(Event.latitude).label("center_latitude"),
+            func.avg(Event.longitude).label("center_longitude"),
+        ).filter(
+            Event.village_name.isnot(None),
+            Event.occurred_time >= cutoff,
+        ).group_by(Event.village_name).having(
+            func.count(Event.id) >= min_events
+        ).all()
+
+        hotspots = []
+        for village_name, event_count, last_event, center_latitude, center_longitude in village_stats:
+            type_stats = db.query(
+                Event.event_type,
+                func.count(Event.id),
+            ).filter(
+                Event.village_name == village_name,
+                Event.occurred_time >= cutoff,
+            ).group_by(Event.event_type).all()
+            type_counts = {event_type: count for event_type, count in type_stats}
+
+            risk_score = 0
+            for event_type, count in type_counts.items():
+                risk_score += AreaAnalysisService.RISK_WEIGHTS.get(event_type, 5) * count
+
+            if last_event:
+                comparable_last_event = (
+                    last_event.replace(tzinfo=None)
+                    if last_event.tzinfo is not None else last_event
+                )
+                days_since_last = (datetime.now() - comparable_last_event).days
+                if days_since_last <= 30:
+                    risk_score *= 1.5
+                elif days_since_last <= 90:
+                    risk_score *= 1.2
+            else:
+                days_since_last = None
+
+            if risk_score >= 100:
+                risk_level = "critical"
+            elif risk_score >= 60:
+                risk_level = "high"
+            elif risk_score >= 30:
+                risk_level = "medium"
+            else:
+                risk_level = "low"
+
+            hotspots.append({
+                "area_name": village_name,
+                "event_count": event_count,
+                "last_event": last_event,
+                "center_latitude": center_latitude,
+                "center_longitude": center_longitude,
+                "type_counts": type_counts,
+                "risk_score": round(risk_score, 1),
+                "risk_level": risk_level,
+                "days_since_last": days_since_last,
+            })
+
+        hotspots.sort(key=lambda item: (-item["event_count"], -item["risk_score"]))
+        return hotspots
+
+    @staticmethod
     def update_area_profile(db: Session, area_name: str) -> AreaProfile:
         """
         更新或创建区域档案

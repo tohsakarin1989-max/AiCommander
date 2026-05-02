@@ -2,9 +2,8 @@
  * 饼图/环形图组件
  * 展示案件类型分布等比例数据
  */
-import React, { useMemo } from 'react'
+import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
-import type { EChartsOption } from 'echarts'
 
 export interface PieDataItem {
   name: string
@@ -49,7 +48,7 @@ const PieChart: React.FC<PieChartProps> = ({
   const colors = customColors || defaultColors
   const textColor = theme === 'dark' ? '#b0b0b0' : '#666'
 
-  const option: EChartsOption = useMemo(
+  const option = useMemo(
     () => ({
       backgroundColor: 'transparent',
       title: title

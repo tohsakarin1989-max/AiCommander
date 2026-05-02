@@ -16,7 +16,7 @@ class SemanticAnalysisService:
     
     def __init__(self):
         self.vector_db = VectorDBService()
-        self.geo_service = GeoAnalysisService()
+        self.geo_service = GeoAnalysisService
     
     def analyze_hybrid_serial_cases(
         self,
@@ -54,8 +54,14 @@ class SemanticAnalysisService:
         if len(cases) < 2:
             return []
         
-        # 按时间排序
-        cases_sorted = sorted(cases, key=lambda c: c.occurred_time)
+        # 按时间排序（统一去除时区信息避免比较异常）
+        def strip_tz(dt):
+            if dt is None:
+                from datetime import datetime
+                return datetime.min
+            return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+        cases_sorted = sorted(cases, key=lambda c: strip_tz(c.occurred_time))
         
         serial_groups = []
         processed = set()
@@ -104,10 +110,17 @@ class SemanticAnalysisService:
                         should_include = True
                         match_reasons.append(f"地理距离: {dist_km:.2f}km")
                 
-                # 时间窗口检查
-                time_diff = abs((case2.occurred_time - case1.occurred_time).total_seconds() / 86400)
+                # 时间窗口检查（统一去除时区）
+                t1 = strip_tz(case1.occurred_time)
+                t2 = strip_tz(case2.occurred_time)
+                time_diff = abs((t2 - t1).total_seconds() / 86400)
                 if time_diff > time_window_days:
                     should_include = False  # 时间超出窗口，不加入
+
+                structured_reasons = self._structured_match_reasons(case1, case2)
+                if structured_reasons:
+                    should_include = True
+                    match_reasons.extend(structured_reasons)
                 
                 # 至少满足一个条件（语义或地理）且时间在窗口内
                 if should_include and time_diff <= time_window_days:
@@ -125,6 +138,15 @@ class SemanticAnalysisService:
                 
                 modus_operandi_list = [c.modus_operandi for c in group if c.modus_operandi]
                 common_modus = max(set(modus_operandi_list), key=modus_operandi_list.count) if modus_operandi_list else None
+                source_types = [c.source_type for c in group if c.source_type]
+                common_source_type = max(set(source_types), key=source_types.count) if source_types else None
+                oil_natures = [c.oil_nature for c in group if c.oil_nature]
+                common_oil_nature = max(set(oil_natures), key=oil_natures.count) if oil_natures else None
+                quality_scores = [
+                    c.quality_score
+                    for c in group
+                    if isinstance(c.quality_score, (int, float))
+                ]
                 
                 # 判断串案可能性
                 has_semantic_match = use_semantic and any(
@@ -144,9 +166,14 @@ class SemanticAnalysisService:
                     "case_count": len(group),
                     "center_latitude": avg_lat,
                     "center_longitude": avg_lng,
-                    "time_span_days": (group[-1].occurred_time - group[0].occurred_time).days if len(group) > 1 else 0,
+                    "time_span_days": (
+                        strip_tz(group[-1].occurred_time) - strip_tz(group[0].occurred_time)
+                    ).days if len(group) > 1 else 0,
                     "common_case_type": common_type,
                     "common_modus_operandi": common_modus,
+                    "common_source_type": common_source_type,
+                    "common_oil_nature": common_oil_nature,
+                    "average_quality_score": round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else None,
                     "cases": [
                         {
                             "id": c.id,
@@ -157,6 +184,10 @@ class SemanticAnalysisService:
                             "longitude": c.longitude,
                             "case_type": c.case_type,
                             "modus_operandi": c.modus_operandi,
+                            "source_type": c.source_type,
+                            "oil_nature": c.oil_nature,
+                            "quality_score": c.quality_score,
+                            "quality_level": c.quality_level,
                         }
                         for c in group
                     ],
@@ -170,6 +201,61 @@ class SemanticAnalysisService:
                 })
         
         return serial_groups
+
+    def _structured_match_reasons(self, case1: Case, case2: Case) -> List[str]:
+        """基于新案件台账字段补充串案锚点，不依赖向量数据库。"""
+        reasons: List[str] = []
+
+        def _persons(case: Case) -> set:
+            names = set()
+            for p in case.involved_persons or []:
+                if isinstance(p, dict) and p.get("name"):
+                    names.add(p["name"])
+            try:
+                for p in case.persons or []:
+                    if p.name:
+                        names.add(p.name)
+            except Exception:
+                pass
+            return names
+
+        def _plates(case: Case) -> set:
+            plates = set()
+            vehicle_info = case.vehicle_info
+            if isinstance(vehicle_info, dict) and vehicle_info.get("plate_number"):
+                plates.add(vehicle_info["plate_number"])
+            if isinstance(vehicle_info, list):
+                for item in vehicle_info:
+                    if isinstance(item, dict) and item.get("plate_number"):
+                        plates.add(item["plate_number"])
+            try:
+                for vehicle in case.vehicles or []:
+                    if vehicle.plate_number:
+                        plates.add(vehicle.plate_number)
+            except Exception:
+                pass
+            return plates
+
+        duplicate_reasons = []
+        common_persons = _persons(case1) & _persons(case2)
+        common_plates = _plates(case1) & _plates(case2)
+        if common_persons:
+            duplicate_reasons.append(f"相同人员需核验: {', '.join(sorted(common_persons)[:3])}")
+        if common_plates:
+            duplicate_reasons.append(f"相同车辆需核验: {', '.join(sorted(common_plates)[:3])}")
+
+        same_source = case1.source_type and case1.source_type == case2.source_type
+        same_oil_nature = case1.oil_nature and case1.oil_nature == case2.oil_nature
+        same_modus = case1.modus_operandi and case1.modus_operandi == case2.modus_operandi
+        if same_source and same_oil_nature and same_modus:
+            reasons.append(f"线索来源/原油性质/手法一致: {case1.source_type}/{case1.oil_nature}")
+        elif case1.source_type and case1.source_type == case2.source_type:
+            reasons.append(f"线索来源一致: {case1.source_type}")
+        elif case1.oil_nature and case1.oil_nature == case2.oil_nature:
+            reasons.append(f"原油性质一致: {case1.oil_nature}")
+        if duplicate_reasons:
+            reasons.extend(duplicate_reasons)
+        return reasons
     
     def _generate_suggestions(
         self,
@@ -181,17 +267,17 @@ class SemanticAnalysisService:
         suggestions = []
         
         if has_semantic_match and has_geo_cluster:
-            suggestions.append("高度疑似串案：作案手法相似且地理位置接近")
-            suggestions.append("建议并案侦查，重点排查共同特征")
+            suggestions.append("相似条件高度集中：作案手法相似且地理位置接近")
+            suggestions.append("建议复盘现场薄弱点、时间窗口和周边道路条件")
         elif has_semantic_match:
             suggestions.append("语义相似度高：作案手法或特征描述高度相似")
-            suggestions.append("建议深入分析作案手法，可能存在同一团伙")
+            suggestions.append("建议深入分析作案条件和现场防护短板")
         elif has_geo_cluster:
             suggestions.append("地理位置接近：可能存在地域性犯罪模式")
-            suggestions.append("建议加强该区域巡逻和防控")
+            suggestions.append("建议围绕该区域形成防控参考方案")
         
         if len(group) >= 3:
-            suggestions.append("案件数量较多，建议成立专案组")
+            suggestions.append("案件数量较多，建议沉淀为区域复盘专题")
         
         return suggestions
     
@@ -247,4 +333,3 @@ class SemanticAnalysisService:
                 })
         
         return results
-

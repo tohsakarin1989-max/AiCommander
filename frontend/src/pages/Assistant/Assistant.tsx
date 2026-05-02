@@ -1,32 +1,29 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
-  Card,
-  Input,
-  Button,
-  Avatar,
-  Typography,
-  Space,
-  Tag,
-  Spin,
-  Alert,
-  Empty,
-  Divider,
-  message,
-} from 'antd'
-import {
-  SendOutlined,
   RobotOutlined,
   UserOutlined,
   FileTextOutlined,
   DatabaseOutlined,
+  SendOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { assistantApi, ChatMessage, ChatResponse } from '../../services/assistant'
+import { aiApi } from '../../services/ai'
+import type { ChatMessage, ChatResponse, SourceItem } from '../../types'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
+import { Input } from 'antd'
+import './Assistant.css'
 
 const { TextArea } = Input
-const { Text, Paragraph } = Typography
+
+const HINT_QUESTIONS = [
+  '最近有哪些案件？',
+  '案件统计信息',
+  '最新的分析报告是什么？',
+  '案件的地理分布情况',
+  '高风险案件有哪些？',
+]
 
 const Assistant: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -37,23 +34,22 @@ const Assistant: React.FC = () => {
 
   const { data: stats, error: statsError } = useQuery({
     queryKey: ['assistant-stats'],
-    queryFn: () => assistantApi.getStats(),
+    queryFn: () => aiApi.assistant.getStats(),
     retry: 1,
   })
 
   const chatMutation = useMutation({
-    mutationFn: assistantApi.chat,
+    mutationFn: aiApi.assistant.chat,
     onSuccess: (response: ChatResponse) => {
       const assistantMessage: ChatMessage = {
         role: 'assistant',
-        content: response.answer,
+        content: response.answer || response.response,
         timestamp: new Date().toISOString(),
       }
       setMessages((prev) => [...prev, assistantMessage])
       setIsLoading(false)
     },
     onError: (error: any) => {
-      console.error('Chat error:', error)
       const errorMessage: ChatMessage = {
         role: 'assistant',
         content: `抱歉，处理您的问题时出现错误：${error.response?.data?.detail || error.message || '未知错误'}`,
@@ -61,7 +57,6 @@ const Assistant: React.FC = () => {
       }
       setMessages((prev) => [...prev, errorMessage])
       setIsLoading(false)
-      message.error('发送消息失败，请稍后重试')
     },
   })
 
@@ -73,29 +68,24 @@ const Assistant: React.FC = () => {
     scrollToBottom()
   }, [messages])
 
-  const handleSend = async () => {
-    if (!inputValue.trim() || isLoading) return
+  const handleSend = (text?: string) => {
+    const content = (text ?? inputValue).trim()
+    if (!content || isLoading) return
 
     const userMessage: ChatMessage = {
       role: 'user',
-      content: inputValue.trim(),
+      content,
       timestamp: new Date().toISOString(),
     }
 
     setMessages((prev) => [...prev, userMessage])
-    const currentInput = inputValue.trim()
     setInputValue('')
     setIsLoading(true)
 
-    try {
-      chatMutation.mutate({
-        query: currentInput,
-        conversation_history: messages,
-      })
-    } catch (error) {
-      console.error('Send error:', error)
-      setIsLoading(false)
-    }
+    chatMutation.mutate({
+      query: content,
+      conversation_history: messages,
+    })
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -105,7 +95,7 @@ const Assistant: React.FC = () => {
     }
   }
 
-  const handleSourceClick = (source: ChatResponse['sources'][0]) => {
+  const handleSourceClick = (source: SourceItem) => {
     if (source.type === 'case' && source.id) {
       navigate(`/cases?caseId=${source.id}`)
     } else if (source.type === 'report' && source.meeting_id) {
@@ -113,66 +103,81 @@ const Assistant: React.FC = () => {
     }
   }
 
-  const getWelcomeMessage = () => {
+  const getWelcomeText = () => {
     if (stats) {
-      return `您好！我是AI案件分析智能助手。当前系统中有 ${stats.total_cases} 起案件，已完成 ${stats.completed_meetings} 个分析报告。我可以帮您查询案件信息、分析报告等。请告诉我您想了解什么？`
+      return `您好！我是 AI 案件分析助手。当前系统中有 ${stats.total_cases} 起案件，已完成 ${stats.recent_meetings} 个分析报告。请告诉我您想了解什么？`
     }
-    return '您好！我是AI案件分析智能助手。我可以帮您查询案件信息、分析报告等。请告诉我您想了解什么？'
+    return '您好！我是 AI 案件分析助手。我可以帮您查询案件信息、分析报告等。请告诉我您想了解什么？'
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
-      <Card
-        title={
-          <Space>
-            <RobotOutlined style={{ fontSize: 20, color: '#1890ff' }} />
-            <span>智能助手</span>
-            {stats && (
-              <Tag color="blue">
-                案件: {stats.total_cases} | 报告: {stats.completed_meetings}
-              </Tag>
-            )}
-            {statsError && (
-              <Tag color="red">统计信息加载失败</Tag>
-            )}
-          </Space>
-        }
-        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
-        bodyStyle={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 0 }}
-      >
-        {/* 消息列表 */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '16px',
-            backgroundColor: '#f5f5f5',
-          }}
-        >
-          {messages.length === 0 ? (
-            <Empty
-              description={
-                <div>
-                  <Paragraph>{getWelcomeMessage()}</Paragraph>
-                  <Divider />
-                  <Paragraph type="secondary">
-                    <strong>您可以问我：</strong>
-                  </Paragraph>
-                  <ul style={{ textAlign: 'left', display: 'inline-block' }}>
-                    <li>最近有哪些案件？</li>
-                    <li>案件统计信息</li>
-                    <li>最新的分析报告是什么？</li>
-                    <li>某个案件的具体情况</li>
-                    <li>案件的地理分布情况</li>
-                  </ul>
+    <div className="page-scrollable">
+      {/* 页面标题 */}
+      <div className="page-title">
+        <h1>智能助手</h1>
+        <span className="sub">AI ASSISTANT</span>
+        {stats && !statsError && (
+          <span className="chip" style={{ marginLeft: 'auto' }}>
+            案件 <span style={{ color: 'var(--accent)', marginLeft: 4 }}>{stats.total_cases}</span>
+            <span style={{ color: 'var(--ink-3)', margin: '0 4px' }}>·</span>
+            报告 <span style={{ color: 'var(--accent)', marginLeft: 4 }}>{stats.recent_meetings}</span>
+          </span>
+        )}
+      </div>
+
+      {/* 主体双栏布局 */}
+      <div className="assistant-layout">
+
+        {/* 左侧：会话历史 */}
+        <div className="assistant-sidebar">
+          <div className="card">
+            <div className="card-head">
+              <MessageOutlined className="ico" />
+              <span className="ti">会话历史</span>
+            </div>
+            <div className="card-body scroll">
+              {messages.length === 0 ? (
+                <div className="empty-state" style={{ padding: '20px 14px' }}>
+                  <div className="icon"><MessageOutlined /></div>
+                  <span>暂无会话</span>
                 </div>
-              }
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-          ) : (
-            <div>
-              {messages.map((message, index) => {
-                const isUser = message.role === 'user'
+              ) : (
+                messages
+                  .filter((m) => m.role === 'user')
+                  .map((m, i) => (
+                    <div key={i} className={`conv-item${i === 0 ? ' active' : ''}`}>
+                      <div className="conv-item__id">MSG-{String(i + 1).padStart(3, '0')}</div>
+                      <div className="conv-item__preview">{m.content}</div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 右侧：聊天主区 */}
+        <div className="assistant-chat">
+          {/* 消息列表 */}
+          <div className="assistant-messages">
+            {messages.length === 0 ? (
+              <div className="assistant-welcome">
+                <div className="assistant-welcome__icon"><RobotOutlined /></div>
+                <div className="assistant-welcome__title">{getWelcomeText()}</div>
+                <div className="assistant-welcome__hints">
+                  {HINT_QUESTIONS.map((q) => (
+                    <div
+                      key={q}
+                      className="assistant-welcome__hint"
+                      onClick={() => handleSend(q)}
+                    >
+                      {q}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((msg, index) => {
+                const isUser = msg.role === 'user'
                 let sources: ChatResponse['sources'] = []
                 if (!isUser && index === messages.length - 1) {
                   const lastResponse = chatMutation.data as ChatResponse | undefined
@@ -180,139 +185,88 @@ const Assistant: React.FC = () => {
                     sources = lastResponse.sources
                   }
                 }
-
                 return (
-                  <div
-                    key={index}
-                    style={{
-                      display: 'flex',
-                      justifyContent: isUser ? 'flex-end' : 'flex-start',
-                      marginBottom: 16,
-                    }}
-                  >
-                    <div
-                      style={{
-                        maxWidth: '70%',
-                        display: 'flex',
-                        flexDirection: isUser ? 'row-reverse' : 'row',
-                        gap: 12,
-                      }}
-                    >
-                      <Avatar
-                        icon={isUser ? <UserOutlined /> : <RobotOutlined />}
-                        style={{
-                          backgroundColor: isUser ? '#1890ff' : '#52c41a',
-                        }}
-                      />
-                      <div>
-                        <Card
-                          size="small"
-                          style={{
-                            backgroundColor: isUser ? '#1890ff' : '#fff',
-                            color: isUser ? '#fff' : '#000',
-                            border: isUser ? 'none' : '1px solid #d9d9d9',
-                          }}
-                        >
-                          <Paragraph
-                            style={{
-                              margin: 0,
-                              color: isUser ? '#fff' : '#000',
-                              whiteSpace: 'pre-wrap',
-                            }}
-                          >
-                            {message.content}
-                          </Paragraph>
-                          {message.timestamp && (
-                            <Text
-                              type="secondary"
-                              style={{
-                                fontSize: 12,
-                                color: isUser ? 'rgba(255,255,255,0.7)' : undefined,
-                                display: 'block',
-                                marginTop: 4,
-                              }}
-                            >
-                              {dayjs(message.timestamp).format('HH:mm:ss')}
-                            </Text>
-                          )}
-                        </Card>
-                        {sources && sources.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              相关来源：
-                            </Text>
-                            <Space size={4} wrap style={{ marginTop: 4 }}>
-                              {sources.map((source, idx) => (
-                                <Tag
-                                  key={idx}
-                                  icon={
-                                    source.type === 'case' ? (
-                                      <DatabaseOutlined />
-                                    ) : (
-                                      <FileTextOutlined />
-                                    )
-                                  }
-                                  style={{ cursor: 'pointer' }}
-                                  onClick={() => handleSourceClick(source)}
-                                >
-                                  {source.type === 'case'
-                                    ? source.case_number || `案件 #${source.id}`
-                                    : `报告 ${source.meeting_id}`}
-                                </Tag>
-                              ))}
-                            </Space>
+                  <div key={index} className={`msg-row${isUser ? ' msg-row--user' : ''}`}>
+                    <div className={`msg-avatar${isUser ? ' msg-avatar--user' : ' msg-avatar--ai'}`}>
+                      {isUser ? <UserOutlined /> : <RobotOutlined />}
+                    </div>
+                    <div className="msg-body">
+                      <div className={`msg-bubble${isUser ? ' msg-bubble--user' : ' msg-bubble--ai'}`}>
+                        <pre>{msg.content}</pre>
+                        {msg.timestamp && (
+                          <div className="msg-time" style={{ marginTop: 6 }}>
+                            {dayjs(msg.timestamp).format('HH:mm:ss')}
                           </div>
                         )}
                       </div>
+                      {sources && sources.length > 0 && (
+                        <div className="msg-sources">
+                          <span className="msg-sources__label">来源</span>
+                          {sources.map((source, idx) => (
+                            <div
+                              key={idx}
+                              className="msg-source-tag"
+                              onClick={() => handleSourceClick(source)}
+                            >
+                              {source.type === 'case' ? <DatabaseOutlined /> : <FileTextOutlined />}
+                              {source.type === 'case'
+                                ? source.case_number || `案件 #${source.id}`
+                                : `报告 ${source.meeting_id}`}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
-              })}
-            </div>
-          )}
-          {isLoading && (
-            <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 16 }}>
-              <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#52c41a' }} />
-              <Card size="small" style={{ marginLeft: 12 }}>
-                <Spin size="small" /> 正在思考...
-              </Card>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+              })
+            )}
 
-        {/* 输入区域 */}
-        <div style={{ padding: '16px', borderTop: '1px solid #f0f0f0' }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <TextArea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="输入您的问题，按 Enter 发送，Shift+Enter 换行..."
-              autoSize={{ minRows: 1, maxRows: 4 }}
-              disabled={isLoading}
-              style={{ flex: 1 }}
-            />
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={handleSend}
-              loading={isLoading}
-              disabled={!inputValue.trim()}
-              style={{ height: 'auto' }}
-            >
-              发送
-            </Button>
-          </Space.Compact>
-          <Alert
-            message="提示"
-            description="智能助手可以帮您查询案件信息、分析报告等。如果回答中提到了具体案件或报告，您可以点击相关标签查看详情。"
-            type="info"
-            showIcon
-            style={{ marginTop: 12 }}
-          />
+            {isLoading && (
+              <div className="msg-loading-row">
+                <div className="msg-avatar msg-avatar--ai"><RobotOutlined /></div>
+                <div className="msg-loading-bubble">
+                  <div className="pulse-dots">
+                    <div className="pulse-dot" />
+                    <div className="pulse-dot" />
+                    <div className="pulse-dot" />
+                  </div>
+                  <span className="msg-loading-label">正在思考...</span>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 输入区 */}
+          <div className="assistant-input-area">
+            <div className="assistant-input-row">
+              <TextArea
+                className="assistant-textarea"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="输入您的问题，按 Enter 发送，Shift+Enter 换行..."
+                autoSize={{ minRows: 1, maxRows: 5 }}
+                disabled={isLoading}
+              />
+              <button
+                className="btn-primary"
+                onClick={() => handleSend()}
+                disabled={isLoading || !inputValue.trim()}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <SendOutlined />
+                发送
+              </button>
+            </div>
+            <div className="assistant-input-hint">
+              ENTER 发送 · SHIFT+ENTER 换行 · 点击来源标签可跳转详情
+            </div>
+          </div>
         </div>
-      </Card>
+      </div>
     </div>
   )
 }

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.services.deployment_service import DeploymentService
+from app.services.smart_analysis_service import SmartAnalysisService
 
 router = APIRouter()
 
@@ -51,4 +52,35 @@ def get_resource_allocation(db: Session = Depends(get_db)):
 def get_prevention_measures(db: Session = Depends(get_db)):
     """获取预防措施建议"""
     return DeploymentService.generate_prevention_measures(db)
+
+
+@router.post("/smart-analysis")
+async def smart_analysis(
+    time_window_days: int = 90,
+    min_cases: int = 2,
+    include_deployment: bool = True,
+    db: Session = Depends(get_db),
+):
+    """
+    一键智能研判
+
+    自动串联多个分析模块，生成综合研判报告：
+    - 热点区域分析
+    - 团伙识别分析
+    - 作案模式分析
+    - 部署建议生成
+
+    Returns:
+        综合研判报告，包含多维度分析结果和优先行动建议
+    """
+    try:
+        service = SmartAnalysisService(db)
+        report = await service.analyze(
+            time_window_days=time_window_days,
+            min_cases=min_cases,
+            include_deployment=include_deployment,
+        )
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"智能研判失败: {str(e)}")
 

@@ -1,0 +1,108 @@
+/* ===================================================
+   CASE FEATURES PAGE — design-system.css 派生
+   =================================================== */
+
+/* 主体：左侧列表 + 右侧详情 */
+.cf-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  align-items: start;
+  margin-top: var(--gap);
+}
+
+/* 状态条 */
+.cf-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--info);
+  padding: 9px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-bottom: var(--gap);
+}
+.cf-status-bar__num {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: 4px;
+}
+
+/* 预处理状态 badge */
+.cf-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  padding: 2px 7px;
+  display: inline-block;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--line);
+}
+.cf-badge--done    { color: var(--ok);   border-color: oklch(0.78 0.14 155 / 0.4); background: oklch(0.78 0.14 155 / 0.1); }
+.cf-badge--pending { color: var(--ink-3); }
+
+/* 列表选中行高亮 */
+.cf-list-card .ant-table-tbody > tr {
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.cf-list-card .ant-table-tbody > tr:hover > td { background: var(--bg-2) !important; }
+.cf-list-card .ant-table-tbody > tr.cf-row--selected > td {
+  background: var(--accent-soft) !important;
+}
+.cf-list-card .ant-table-tbody > tr.cf-row--selected > td:first-child {
+  border-left: 2px solid var(--accent);
+}
+
+/* 低置信度警告 */
+.cf-low-confidence {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: oklch(0.70 0.20 25 / 0.06);
+  border: 1px solid oklch(0.70 0.20 25 / 0.3);
+  border-left: 3px solid var(--err);
+  padding: 9px 13px;
+  margin-bottom: 13px;
+  font-size: 12px;
+  color: var(--err);
+}
+
+/* 摘要文本 */
+.cf-summary-title {
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink-0);
+  margin-bottom: 8px;
+}
+.cf-summary-body {
+  font-size: 13px;
+  color: var(--ink-1);
+  line-height: 1.7;
+}
+
+/* Descriptions 覆写 */
+.cf-detail-card .ant-descriptions-item-label {
+  font-size: 11.5px !important;
+  color: var(--ink-3) !important;
+  background: var(--bg-2) !important;
+  border-color: var(--line-soft) !important;
+  font-family: var(--sans) !important;
+  padding: 6px 12px !important;
+}
+.cf-detail-card .ant-descriptions-item-content {
+  font-size: 12px !important;
+  color: var(--ink-1) !important;
+  background: var(--bg-1) !important;
+  border-color: var(--line-soft) !important;
+  font-family: var(--mono) !important;
+  padding: 6px 12px !important;
+}
+.cf-detail-card .ant-descriptions-bordered .ant-descriptions-view {
+  border-color: var(--line-soft) !important;
+  border-radius: 0 !important;
+}

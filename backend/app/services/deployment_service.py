@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.services.geo_analysis_service import GeoAnalysisService
+from app.utils.geo import haversine_km
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -384,4 +385,75 @@ class DeploymentService:
             "prevention_measures": prevention,
             "generated_at": datetime.now().isoformat()
         }
+
+    @staticmethod
+    def optimize_route_order(hotspots: List[Dict]) -> List[Dict]:
+        """
+        贪心最近邻 TSP：给定多个热点坐标，返回最优访问顺序
+
+        hotspot 格式：{"center_latitude": float, "center_longitude": float, "case_count": int, ...}
+
+        返回：同格式 hotspot 列表，每条记录增加：
+          - "visit_order": int  访问序号（从 1 开始）
+          - "est_distance_km": float  到下一个点的距离（最后一个点为 0.0）
+
+        算法：
+        1. 从案件数最多的热点出发
+        2. 每次选择距当前位置最近的未访问热点
+        3. 记录每段距离，累计总距离
+        """
+        if not hotspots:
+            return []
+
+        # 过滤掉缺少坐标的热点
+        valid = [
+            h for h in hotspots
+            if h.get("center_latitude") is not None and h.get("center_longitude") is not None
+        ]
+        if not valid:
+            return []
+
+        # 从案件数最多的热点出发
+        unvisited = list(range(len(valid)))
+        start_idx = max(unvisited, key=lambda i: valid[i].get("case_count", 0))
+
+        ordered_indices: List[int] = [start_idx]
+        unvisited.remove(start_idx)
+
+        # 贪心最近邻
+        while unvisited:
+            current = ordered_indices[-1]
+            cur_lat = valid[current]["center_latitude"]
+            cur_lon = valid[current]["center_longitude"]
+            nearest = min(
+                unvisited,
+                key=lambda i: haversine_km(
+                    cur_lat, cur_lon,
+                    valid[i]["center_latitude"],
+                    valid[i]["center_longitude"],
+                )
+            )
+            ordered_indices.append(nearest)
+            unvisited.remove(nearest)
+
+        # 构建结果列表，附加 visit_order 和 est_distance_km
+        result = []
+        for order, idx in enumerate(ordered_indices):
+            h = dict(valid[idx])  # 不修改原始对象
+            h["visit_order"] = order + 1
+            # 计算到下一个点的距离
+            if order < len(ordered_indices) - 1:
+                next_idx = ordered_indices[order + 1]
+                dist = haversine_km(
+                    valid[idx]["center_latitude"],
+                    valid[idx]["center_longitude"],
+                    valid[next_idx]["center_latitude"],
+                    valid[next_idx]["center_longitude"],
+                )
+                h["est_distance_km"] = round(dist, 2)
+            else:
+                h["est_distance_km"] = 0.0
+            result.append(h)
+
+        return result
 

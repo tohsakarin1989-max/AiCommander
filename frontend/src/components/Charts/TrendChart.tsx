@@ -2,9 +2,8 @@
  * 趋势图组件
  * 展示案件数量随时间的变化趋势
  */
-import React, { useMemo } from 'react'
+import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
-import type { EChartsOption } from 'echarts'
 
 export interface TrendDataPoint {
   date: string
@@ -48,7 +47,7 @@ const TrendChart: React.FC<TrendChartProps> = ({
     [theme, color]
   )
 
-  const option: EChartsOption = useMemo(
+  const option = useMemo(
     () => ({
       backgroundColor: colors.bg,
       title: title

@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { CaseMarker, SerialGroup } from '../../types'
+import { CachedTileLayer } from './CachedTileLayer'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -28,10 +29,10 @@ const RISK_COLORS: Record<string, string> = {
 }
 
 function makeCircleIcon(color: string): L.DivIcon {
-  const size = 14
+  const size = 18
   return L.divIcon({
     className: '',
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #0d1117;box-shadow:0 0 6px ${color}88"></div>`,
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 8px ${color},0 2px 4px rgba(0,0,0,0.4)"></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   })
@@ -68,18 +69,20 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     })
     mapRef.current = map
 
-    // CartoDB Dark Matter 底图（深色，无需 API Key）
-    L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    // OpenStreetMap 底图（国内可访问）
+    new CachedTileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
         attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: 'abcd',
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        subdomains: 'abc',
         maxZoom: 19,
       }
     ).addTo(map)
 
     return () => {
+      // 先停止所有动画，再销毁，避免 Leaflet zoom 动画竞态报错
+      try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
     }

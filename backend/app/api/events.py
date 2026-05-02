@@ -5,15 +5,146 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
+from app.services.case_service import CaseService
 from app.services.relation_analysis_service import RelationAnalysisService
 from app.services.area_analysis_service import AreaAnalysisService
 
 router = APIRouter()
+
+
+def _event_value(event: Any, field_name: str, default: Any = None) -> Any:
+    """兼容 SQLAlchemy model 和 dict 两种事件结构。"""
+    if isinstance(event, dict):
+        return event.get(field_name, default)
+    return getattr(event, field_name, default)
+
+
+def _event_days_since(event_time: Optional[datetime], now: datetime) -> Optional[int]:
+    if not event_time:
+        return None
+    if event_time.tzinfo is not None:
+        event_time = event_time.replace(tzinfo=None)
+    return (now - event_time).days
+
+
+def _serialize_event(event: Any) -> Dict[str, Any]:
+    if isinstance(event, dict):
+        return dict(event)
+
+    return {
+        "id": event.id,
+        "event_number": event.event_number,
+        "event_type": event.event_type,
+        "event_type_name": EVENT_TYPES.get(event.event_type, event.event_type),
+        "occurred_time": event.occurred_time,
+        "location": event.location,
+        "latitude": event.latitude,
+        "longitude": event.longitude,
+        "village_name": event.village_name,
+        "village_distance_km": event.village_distance_km,
+        "township": event.township,
+        "title": event.title,
+        "description": event.description,
+        "vehicles": event.vehicles,
+        "oil_volume_liters": event.oil_volume_liters,
+        "oil_type": event.oil_type,
+        "equipment": event.equipment,
+        "suspects_count": event.suspects_count,
+        "discovery_method": event.discovery_method,
+        "handling_result": event.handling_result,
+        "risk_level": event.risk_level,
+        "related_case_id": event.related_case_id,
+        "created_at": event.created_at,
+    }
+
+
+def _serialize_area_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
+    serialized = dict(result)
+    serialized["events"] = [
+        _serialize_event(event) for event in result.get("events", [])
+    ]
+    serialized.setdefault("timeline", [])
+    serialized.setdefault("relations", [])
+    serialized.setdefault("risk_assessment", {})
+    serialized.setdefault("suggestions", [])
+    serialized.setdefault("patrol_suggestions", [])
+    return serialized
+
+
+def _next_event_number(db: Session, generated_at: datetime) -> str:
+    prefix = f"EVT{generated_at.strftime('%Y%m%d')}"
+    existing_numbers = db.query(Event.event_number).filter(
+        Event.event_number.like(f"{prefix}%")
+    ).all()
+
+    max_sequence = 0
+    for event_number, in existing_numbers:
+        suffix = event_number.replace(prefix, "", 1)
+        if suffix.isdigit():
+            max_sequence = max(max_sequence, int(suffix))
+
+    return f"{prefix}{max_sequence + 1:03d}"
+
+
+def _build_event_model(event: "EventCreate", event_number: str) -> Event:
+    return Event(
+        event_number=event_number,
+        event_type=event.event_type,
+        occurred_time=event.occurred_time,
+        location=event.location,
+        latitude=event.latitude,
+        longitude=event.longitude,
+        village_name=event.village_name,
+        village_distance_km=event.village_distance_km,
+        township=event.township,
+        title=event.title,
+        description=event.description,
+        vehicles=event.vehicles,
+        oil_volume_liters=event.oil_volume_liters,
+        oil_type=event.oil_type,
+        equipment=event.equipment,
+        suspects_count=event.suspects_count,
+        suspects_description=event.suspects_description,
+        discovery_method=event.discovery_method,
+        handling_result=event.handling_result,
+        related_case_id=event.related_case_id,
+    )
+
+
+def _normalize_relation(source_event: Event, relation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    target_event = relation.get("event")
+    target_id = relation.get("event_id") or relation.get("event_b_id")
+    if target_id is None and target_event is not None:
+        target_id = _event_value(target_event, "id")
+
+    if target_id is None or target_id == source_event.id:
+        return None
+
+    relation_type = relation.get("relation_type")
+    if not relation_type:
+        relation_types = relation.get("relation_types") or []
+        relation_type = relation_types[0] if relation_types else "unknown"
+
+    normalized = {
+        key: value
+        for key, value in relation.items()
+        if key != "event"
+    }
+    normalized["event_id"] = target_id
+    normalized["event_a_id"] = source_event.id
+    normalized["event_b_id"] = target_id
+    normalized["relation_type"] = relation_type
+
+    if target_event is not None:
+        normalized["related_event"] = _serialize_event(target_event)
+
+    return normalized
 
 
 # ==================== Pydantic 模型 ====================
@@ -89,6 +220,7 @@ class EventResponse(BaseModel):
     risk_level: Optional[str]
     analysis_notes: Optional[str]
     suggested_actions: Optional[List[str]]
+    related_case_id: Optional[int]
     created_at: Optional[datetime]
 
     class Config:
@@ -105,17 +237,73 @@ class AreaAnalysisRequest(BaseModel):
 class AreaAnalysisResponse(BaseModel):
     """区域分析响应"""
     area_name: str
-    events: List[Dict]
-    timeline: Dict
-    relations: List[Dict]
-    risk_assessment: Dict
-    suggestions: List[Dict]
-    patrol_suggestions: List[Dict]
+    events: List[Dict[str, Any]]
+    timeline: Any
+    relations: List[Dict[str, Any]]
+    risk_assessment: Dict[str, Any]
+    suggestions: List[Dict[str, Any]]
+    patrol_suggestions: Any
+
+
+class AreaRiskRankingItem(BaseModel):
+    """区域风险排名项"""
+    area_name: str
+    event_count: int
+    last_event: Optional[datetime]
+    type_counts: Dict[str, int]
+    risk_score: float
+    risk_level: str
+    days_since_last: Optional[int]
+
+
+class AreaHotspotResponse(BaseModel):
+    """事件热点区域"""
+    area_name: str
+    event_count: int
+    last_event: Optional[datetime]
+    center_latitude: Optional[float]
+    center_longitude: Optional[float]
+    type_counts: Dict[str, int]
+    risk_score: float
+    risk_level: str
+    days_since_last: Optional[int]
+
+
+class RefreshAreaProfileResponse(BaseModel):
+    """刷新区域档案响应"""
+    message: str
+    profile_id: int
+    area_name: str
+    risk_level: str
+    risk_score: float
+    total_events: int
 
 
 class CorrelationAnalysisRequest(BaseModel):
     """关联分析请求"""
     event_ids: List[int] = Field(..., description="要分析的事件ID列表")
+
+
+class CorrelationRelationResponse(BaseModel):
+    """关联分析结果项"""
+    event_id: int
+    event_a_id: int
+    event_b_id: int
+    relation_type: str
+    distance_km: Optional[float] = None
+    time_gap_days: Optional[int] = None
+    confidence: Optional[float] = None
+    reasoning: Optional[str] = None
+    chain_role: Optional[str] = None
+    common_plates: Optional[List[str]] = None
+    related_event: Optional[Dict[str, Any]] = None
+
+
+class CorrelationAnalysisResponse(BaseModel):
+    """关联分析响应"""
+    event_count: int
+    relations: List[CorrelationRelationResponse]
+    relation_count: int
 
 
 class AreaProfileResponse(BaseModel):
@@ -164,45 +352,20 @@ async def get_event_types():
 @router.post("/", response_model=EventResponse)
 async def create_event(event: EventCreate, db: Session = Depends(get_db)):
     """创建新事件"""
-    # 生成事件编号
-    today = datetime.now()
-    prefix = f"EVT{today.strftime('%Y%m%d')}"
+    for _ in range(5):
+        db_event = _build_event_model(
+            event=event,
+            event_number=_next_event_number(db, datetime.now()),
+        )
+        db.add(db_event)
+        try:
+            db.commit()
+            db.refresh(db_event)
+            return db_event
+        except IntegrityError:
+            db.rollback()
 
-    # 查找今天已有的事件数量
-    count = db.query(func.count(Event.id)).filter(
-        Event.event_number.like(f"{prefix}%")
-    ).scalar()
-
-    event_number = f"{prefix}{count + 1:03d}"
-
-    db_event = Event(
-        event_number=event_number,
-        event_type=event.event_type,
-        occurred_time=event.occurred_time,
-        location=event.location,
-        latitude=event.latitude,
-        longitude=event.longitude,
-        village_name=event.village_name,
-        village_distance_km=event.village_distance_km,
-        township=event.township,
-        title=event.title,
-        description=event.description,
-        vehicles=event.vehicles,
-        oil_volume_liters=event.oil_volume_liters,
-        oil_type=event.oil_type,
-        equipment=event.equipment,
-        suspects_count=event.suspects_count,
-        suspects_description=event.suspects_description,
-        discovery_method=event.discovery_method,
-        handling_result=event.handling_result,
-        related_case_id=event.related_case_id,
-    )
-
-    db.add(db_event)
-    db.commit()
-    db.refresh(db_event)
-
-    return db_event
+    raise HTTPException(status_code=409, detail="事件编号生成冲突，请重试")
 
 
 @router.get("/", response_model=List[EventResponse])
@@ -229,7 +392,7 @@ async def list_events(
     return events
 
 
-@router.get("/{event_id}", response_model=EventResponse)
+@router.get("/{event_id:int}", response_model=EventResponse)
 async def get_event(event_id: int, db: Session = Depends(get_db)):
     """获取单个事件详情"""
     event = db.query(Event).filter(Event.id == event_id).first()
@@ -238,7 +401,54 @@ async def get_event(event_id: int, db: Session = Depends(get_db)):
     return event
 
 
-@router.put("/{event_id}", response_model=EventResponse)
+@router.post("/{event_id:int}/convert-to-case")
+async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
+    """将事件转为案件，并回写事件关联案件 ID"""
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    if event.related_case_id:
+        return {
+            "case_id": event.related_case_id,
+            "event_id": event.id,
+            "message": "事件已关联案件",
+        }
+
+    description_parts = [
+        event.title or EVENT_TYPES.get(event.event_type, event.event_type),
+        event.description,
+        f"发现方式：{event.discovery_method}" if event.discovery_method else None,
+        f"处置结果：{event.handling_result}" if event.handling_result else None,
+        f"涉及车辆：{event.vehicles}" if event.vehicles else None,
+        f"涉及设备：{', '.join(event.equipment)}" if event.equipment else None,
+    ]
+    case = CaseService.create_case(
+        db=db,
+        case_number=None,
+        occurred_time=event.occurred_time,
+        location=event.location,
+        latitude=event.latitude,
+        longitude=event.longitude,
+        case_type=EVENT_TYPES.get(event.event_type, event.event_type),
+        description="\n".join(part for part in description_parts if part),
+        oil_type=event.oil_type,
+        oil_volume=event.oil_volume_liters,
+        vehicle_info={"vehicles": event.vehicles} if event.vehicles else None,
+    )
+
+    event.related_case_id = case.id
+    event.handling_result = event.handling_result or "已转案件"
+    db.commit()
+    db.refresh(event)
+
+    return {
+        "case_id": case.id,
+        "event_id": event.id,
+        "message": "事件已转为案件",
+    }
+
+
+@router.put("/{event_id:int}", response_model=EventResponse)
 async def update_event(
     event_id: int,
     event_update: EventUpdate,
@@ -258,7 +468,7 @@ async def update_event(
     return event
 
 
-@router.delete("/{event_id}")
+@router.delete("/{event_id:int}")
 async def delete_event(event_id: int, db: Session = Depends(get_db)):
     """删除事件"""
     event = db.query(Event).filter(Event.id == event_id).first()
@@ -290,13 +500,13 @@ async def analyze_area(
         db=db,
         area_name=request.area_name,
         radius_km=request.radius_km,
-        days_back=request.days_back
+        time_range_days=request.days_back
     )
 
-    return result
+    return _serialize_area_analysis(result)
 
 
-@router.get("/area/risk-ranking")
+@router.get("/area/risk-ranking", response_model=List[AreaRiskRankingItem])
 async def get_area_risk_ranking(
     limit: int = 10,
     db: Session = Depends(get_db)
@@ -306,7 +516,7 @@ async def get_area_risk_ranking(
     return result
 
 
-@router.get("/area/hotspots")
+@router.get("/area/hotspots", response_model=List[AreaHotspotResponse])
 async def get_hotspots(
     days_back: int = 90,
     min_events: int = 2,
@@ -343,7 +553,7 @@ async def list_area_profiles(
     return profiles
 
 
-@router.get("/areas/{area_id}", response_model=AreaProfileResponse)
+@router.get("/areas/{area_id:int}", response_model=AreaProfileResponse)
 async def get_area_profile(area_id: int, db: Session = Depends(get_db)):
     """获取区域档案详情"""
     profile = db.query(AreaProfile).filter(AreaProfile.id == area_id).first()
@@ -352,7 +562,7 @@ async def get_area_profile(area_id: int, db: Session = Depends(get_db)):
     return profile
 
 
-@router.post("/areas/{area_name}/refresh")
+@router.post("/areas/{area_name}/refresh", response_model=RefreshAreaProfileResponse)
 async def refresh_area_profile(
     area_name: str,
     radius_km: float = 5.0,
@@ -385,11 +595,13 @@ async def refresh_area_profile(
     now = datetime.now()
     profile.events_last_30_days = sum(
         1 for e in events
-        if e.get("occurred_time") and (now - e["occurred_time"]).days <= 30
+        if (days_since := _event_days_since(_event_value(e, "occurred_time"), now)) is not None
+        and days_since <= 30
     )
     profile.events_last_90_days = sum(
         1 for e in events
-        if e.get("occurred_time") and (now - e["occurred_time"]).days <= 90
+        if (days_since := _event_days_since(_event_value(e, "occurred_time"), now)) is not None
+        and days_since <= 90
     )
 
     # 更新风险评估
@@ -405,8 +617,16 @@ async def refresh_area_profile(
 
     # 计算中心点
     if events:
-        lats = [e.get("latitude") for e in events if e.get("latitude")]
-        lngs = [e.get("longitude") for e in events if e.get("longitude")]
+        lats = [
+            _event_value(e, "latitude")
+            for e in events
+            if _event_value(e, "latitude") is not None
+        ]
+        lngs = [
+            _event_value(e, "longitude")
+            for e in events
+            if _event_value(e, "longitude") is not None
+        ]
         if lats and lngs:
             profile.center_latitude = sum(lats) / len(lats)
             profile.center_longitude = sum(lngs) / len(lngs)
@@ -414,9 +634,18 @@ async def refresh_area_profile(
     # 事件类型统计
     type_counts = {}
     for e in events:
-        t = e.get("event_type", "unknown")
+        t = _event_value(e, "event_type", "unknown")
         type_counts[t] = type_counts.get(t, 0) + 1
     profile.event_types_count = type_counts
+
+    times = [
+        _event_value(e, "occurred_time")
+        for e in events
+        if _event_value(e, "occurred_time")
+    ]
+    if times:
+        profile.first_event_time = min(times)
+        profile.last_event_time = max(times)
 
     db.commit()
     db.refresh(profile)
@@ -433,7 +662,7 @@ async def refresh_area_profile(
 
 # ==================== 关联分析 ====================
 
-@router.post("/correlations/analyze")
+@router.post("/correlations/analyze", response_model=CorrelationAnalysisResponse)
 async def analyze_correlations(
     request: CorrelationAnalysisRequest,
     db: Session = Depends(get_db)
@@ -458,21 +687,37 @@ async def analyze_correlations(
     for event in events:
         # 空间关联
         spatial = RelationAnalysisService.find_spatial_relations(db, event)
-        all_relations.extend(spatial)
+        all_relations.extend(
+            relation for relation in (
+                _normalize_relation(event, item) for item in spatial
+            )
+            if relation is not None
+        )
 
         # 上下游关联
         supply_chain = RelationAnalysisService.find_supply_chain_relations(db, event)
-        all_relations.extend(supply_chain)
+        all_relations.extend(
+            relation for relation in (
+                _normalize_relation(event, item) for item in supply_chain
+            )
+            if relation is not None
+        )
 
         # 车辆关联
         vehicle = RelationAnalysisService.find_vehicle_relations(db, event)
-        all_relations.extend(vehicle)
+        all_relations.extend(
+            relation for relation in (
+                _normalize_relation(event, item) for item in vehicle
+            )
+            if relation is not None
+        )
 
     # 去重
     unique_relations = []
     seen = set()
     for r in all_relations:
-        key = (r["event_a_id"], r["event_b_id"], r["relation_type"])
+        event_pair = tuple(sorted((r["event_a_id"], r["event_b_id"])))
+        key = (*event_pair, r["relation_type"])
         if key not in seen:
             seen.add(key)
             unique_relations.append(r)
@@ -517,7 +762,7 @@ async def list_correlations(
     } for r in relations]
 
 
-@router.post("/correlations/{relation_id}/confirm")
+@router.post("/correlations/{relation_id:int}/confirm")
 async def confirm_correlation(
     relation_id: int,
     confirmed: bool = True,

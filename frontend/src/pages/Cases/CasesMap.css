@@ -1,0 +1,260 @@
+/* =========================================================
+   CASES MAP PAGE
+   ========================================================= */
+
+.cases-map-wrap {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 80px);
+  font-family: var(--f-ui);
+  color: var(--tx-1);
+  gap: 0;
+}
+
+/* ── 筛选卡片（顶部） ───────────────────────────────────── */
+.cases-map-filter {
+  background: var(--bg-3);
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  padding: 12px 18px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  transition: var(--ease);
+}
+.cases-map-filter:hover {
+  border-color: var(--bd-2);
+}
+
+.cases-map-filter__label {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  color: var(--tx-4);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.cases-map-filter__layer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cases-map-filter__layer-text {
+  font-size: 12px;
+  color: var(--tx-2);
+}
+
+.cases-map-filter__spacetime-btn.ant-btn {
+  background: rgba(0, 198, 228, 0.08) !important;
+  border: 1px solid rgba(0, 198, 228, 0.25) !important;
+  color: var(--c-cyan) !important;
+  font-size: 12px !important;
+  height: 30px !important;
+  padding: 0 14px !important;
+  border-radius: 4px !important;
+  transition: var(--ease) !important;
+  margin-left: auto;
+}
+.cases-map-filter__spacetime-btn.ant-btn:hover {
+  background: rgba(0, 198, 228, 0.14) !important;
+  border-color: var(--c-cyan) !important;
+}
+
+/* ── 主体布局：左面板 + 地图 + 右面板 ────────────────────── */
+.cases-map-body {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── 侧边面板通用 ───────────────────────────────────────── */
+.cases-map-panel {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* ── 面板卡片 ───────────────────────────────────────────── */
+.cases-map-card {
+  background: var(--bg-3);
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: var(--ease);
+  flex-shrink: 0;
+}
+.cases-map-card:hover {
+  border-color: var(--bd-2);
+}
+
+.cases-map-card__hdr {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bd-0);
+}
+
+.cases-map-card__title {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  color: var(--tx-3);
+  text-transform: uppercase;
+}
+
+.cases-map-card__body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── 热点条目 ───────────────────────────────────────────── */
+.cases-map-hotspot {
+  background: var(--bg-4);
+  border-radius: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid transparent;
+}
+.cases-map-hotspot--high   { border-left-color: var(--c-danger); }
+.cases-map-hotspot--medium { border-left-color: var(--c-warning); }
+.cases-map-hotspot--low    { border-left-color: var(--c-success); }
+
+.cases-map-hotspot__coords {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--tx-0);
+  font-weight: 600;
+}
+.cases-map-hotspot__meta {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--tx-3);
+  margin-top: 2px;
+}
+
+/* ── 选中案件详情 ───────────────────────────────────────── */
+.cases-map-selected__num {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--c-cyan);
+  font-weight: 600;
+}
+.cases-map-selected__type {
+  font-size: 11px;
+  color: var(--tx-2);
+  margin-top: 2px;
+}
+.cases-map-selected__date {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--tx-4);
+  margin-top: 1px;
+}
+.cases-map-selected__divider {
+  border-top: 1px solid var(--bd-0);
+  margin: 8px 0;
+}
+.cases-map-selected__link.ant-btn-link {
+  color: var(--c-cyan) !important;
+  font-size: 11px !important;
+  padding: 0 !important;
+  height: auto !important;
+  transition: var(--ease) !important;
+}
+.cases-map-selected__link.ant-btn-link:hover {
+  color: #00d6f4 !important;
+}
+
+/* ── 串案关联 ───────────────────────────────────────────── */
+.cases-map-serial__count {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--c-purple, #a78bfa);
+  margin-bottom: 6px;
+}
+.cases-map-serial__item {
+  font-size: 11px;
+  color: var(--tx-3);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--bd-0);
+}
+.cases-map-serial__item:last-child {
+  border-bottom: none;
+}
+.cases-map-serial__empty {
+  font-size: 11px;
+  color: var(--tx-4);
+}
+
+/* ── 图例 ───────────────────────────────────────────────── */
+.cases-map-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--tx-3);
+}
+
+.cases-map-legend__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cases-map-legend__line {
+  width: 16px;
+  height: 2px;
+  flex-shrink: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    #a78bfa,
+    #a78bfa 4px,
+    transparent 4px,
+    transparent 7px
+  );
+}
+
+/* ── 空状态 ─────────────────────────────────────────────── */
+.cases-map-empty {
+  font-size: 11px;
+  color: var(--tx-4);
+}
+
+/* ── 地图容器 ───────────────────────────────────────────── */
+.cases-map-container {
+  flex: 1;
+  background: var(--bg-3);
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.cases-map-container:hover {
+  border-color: var(--bd-2);
+}
+
+.cases-map-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--tx-3);
+  font-size: 13px;
+}

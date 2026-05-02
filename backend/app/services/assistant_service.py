@@ -5,6 +5,7 @@ from app.models.report import Report
 from app.models.ai_model import AIModel
 from app.ai.model_factory import ModelFactory
 from app.services.case_service import CaseService
+from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.meeting_service import MeetingService
 from typing import Dict, List, Optional
 import json
@@ -55,6 +56,7 @@ class AssistantService:
             "cases_summary": [],
             "reports_summary": [],
             "statistics": {},
+            "case_intelligence": {},
         }
         
         try:
@@ -92,6 +94,50 @@ class AssistantService:
             context["statistics"] = {
                 "total_cases": total_cases,
                 "completed_meetings": completed_meetings,
+            }
+
+            selected_case_id = None
+            normalized_query = str(query or "")
+            for case in context["cases_summary"]:
+                case_number = case.get("case_number")
+                if case_number and case_number in normalized_query:
+                    selected_case_id = case.get("id")
+                    break
+                if str(case.get("id")) in normalized_query:
+                    selected_case_id = case.get("id")
+                    break
+
+            workbench = CaseIntelligenceService.build_workbench(
+                db,
+                case_id=selected_case_id,
+                days=365,
+                limit=5,
+            )
+            tags = workbench.get("feature_tags", {}).get("tags", [])
+            similar_items = workbench.get("similar_cases", {}).get("items", [])
+            suggestions = workbench.get("prevention_suggestions", {}).get("items", [])
+            context["case_intelligence"] = {
+                "scope": workbench.get("scope"),
+                "selected_case": workbench.get("selected_case"),
+                "top_tags": [tag.get("label") for tag in tags[:8] if tag.get("label")],
+                "spatiotemporal_insights": workbench.get("spatiotemporal", {}).get("insights", [])[:5],
+                "similar_cases": [
+                    {
+                        "case_number": item.get("case", {}).get("case_number"),
+                        "score": item.get("similarity_score"),
+                        "reasons": item.get("reasons", [])[:3],
+                    }
+                    for item in similar_items[:5]
+                ],
+                "suggestions": [
+                    {
+                        "title": item.get("title"),
+                        "action": item.get("action"),
+                        "basis": item.get("reason", [])[:3],
+                    }
+                    for item in suggestions[:5]
+                ],
+                "boundary": workbench.get("prevention_suggestions", {}).get("boundary"),
             }
             
         except Exception as e:
@@ -144,6 +190,28 @@ class AssistantService:
    摘要：{report.get('summary', 'N/A')[:100]}...
    创建时间：{report.get('created_at', 'N/A')}
 """
+        intelligence = context.get("case_intelligence") or {}
+        if intelligence:
+            context_text += "\n案件研判工作台摘要：\n"
+            context_text += f"- 范围：{intelligence.get('scope')}\n"
+            if intelligence.get("selected_case"):
+                context_text += f"- 命中案件：{intelligence.get('selected_case')}\n"
+            if intelligence.get("top_tags"):
+                context_text += f"- 主要标签：{'、'.join(intelligence['top_tags'])}\n"
+            if intelligence.get("spatiotemporal_insights"):
+                context_text += "- 时空洞察：\n"
+                for item in intelligence["spatiotemporal_insights"]:
+                    context_text += f"  · {item}\n"
+            if intelligence.get("similar_cases"):
+                context_text += "- 相似条件案件：\n"
+                for item in intelligence["similar_cases"]:
+                    context_text += f"  · {item.get('case_number')}，分值 {item.get('score')}，依据：{'; '.join(item.get('reasons') or [])}\n"
+            if intelligence.get("suggestions"):
+                context_text += "- 防控参考草案：\n"
+                for item in intelligence["suggestions"]:
+                    context_text += f"  · {item.get('title')}：{item.get('action')}，依据：{'; '.join(item.get('basis') or [])}\n"
+            if intelligence.get("boundary"):
+                context_text += f"- 边界：{intelligence.get('boundary')}\n"
         
         # 构建对话历史
         history_text = ""
@@ -168,7 +236,7 @@ class AssistantService:
 2. 如果用户询问具体案件，请提供案件编号、时间、地点等关键信息
 3. 如果用户询问报告，请提供报告摘要和关键发现
 4. 如果信息不足，请诚实告知，不要编造信息
-5. 回答要专业、准确、友好
+5. 涉及研判时必须区分“事实依据、模式推断、防控参考”，不能把建议说成已执行任务
 6. 如果用户的问题无法从当前上下文中找到答案，可以建议用户查看具体的案件详情或报告详情
 
 请用自然、友好的语言回答用户的问题："""
@@ -215,4 +283,3 @@ class AssistantService:
                 "sources": [],
                 "error": str(e)
             }
-

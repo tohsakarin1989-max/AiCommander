@@ -1,159 +1,226 @@
-import React, { useState } from 'react'
-import { Layout as AntLayout, Menu } from 'antd'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import type { MenuProps } from 'antd'
-import {
-  HomeOutlined,
-  DatabaseOutlined,
-  TeamOutlined,
-  FileTextOutlined,
-  SettingOutlined,
-  EnvironmentOutlined,
-  ProfileOutlined,
-  RobotOutlined,
-  RadarChartOutlined,
-  FolderOutlined,
-  BulbOutlined,
-  ApartmentOutlined,
-  SolutionOutlined,
-  CarOutlined,
-  FieldTimeOutlined,
-} from '@ant-design/icons'
+import { useQuery } from '@tanstack/react-query'
+import { configApi } from '../services/config'
+import type { AIModel } from '../types'
+import './Layout.css'
 
-const { Content, Sider } = AntLayout
-type MenuItem = Required<MenuProps>['items'][number]
+interface LayoutProps { children: React.ReactNode }
 
-interface LayoutProps {
-  children: React.ReactNode
-}
+const NAV_ITEMS = [
+  { label: '大屏', num: '01', paths: ['/dashboard'] },
+  { label: '案件', num: '02', paths: ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
+  { label: '研判', num: '03', paths: ['/case-intelligence', '/area-analysis', '/jurisdiction', '/suggestions', '/reports', '/conclusions'] },
+  { label: '数智', num: '04', paths: ['/intelli-inspect'] },
+  { label: '助手', num: '05', paths: ['/assistant', '/agents'] },
+  { label: '设置', num: '06', paths: ['/settings'] },
+]
 
-const GROUP_KEYS = ['case-analysis', 'meeting-reports', 'ai-assist', 'system']
+type SubNavItem = { label: string; path: string }
 
-const getInitialOpenKey = (pathname: string): string => {
-  if (pathname.startsWith('/cases') || pathname.startsWith('/area') ||
-      pathname.startsWith('/graphs') || pathname.startsWith('/patrols') ||
-      pathname.startsWith('/gangs')) return 'case-analysis'
-  if (pathname.startsWith('/meetings') || pathname.startsWith('/reports') ||
-      pathname.startsWith('/conclusions') || pathname.startsWith('/deployment'))
-    return 'meeting-reports'
-  if (pathname.startsWith('/assistant') || pathname.startsWith('/agents'))
-    return 'ai-assist'
-  if (pathname.startsWith('/settings') || pathname.startsWith('/dashboard'))
-    return 'system'
-  return ''
+const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
+  {
+    paths: ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'],
+    items: [
+      { label: '案件列表', path: '/cases' },
+      { label: '地图视图', path: '/cases/map' },
+      { label: '时空研判', path: '/cases/spacetime' },
+      { label: '特征提取', path: '/cases/features' },
+      { label: '关系图谱', path: '/graphs/serial' },
+    ],
+  },
+  {
+    paths: ['/case-intelligence', '/area-analysis', '/jurisdiction', '/suggestions', '/reports', '/conclusions'],
+    items: [
+      { label: '案件研判', path: '/case-intelligence' },
+      { label: '时空区域', path: '/area-analysis' },
+      { label: '辖区底座', path: '/jurisdiction' },
+      { label: '防控建议', path: '/suggestions' },
+      { label: '分析报告', path: '/reports' },
+      { label: '情报结论', path: '/conclusions' },
+    ],
+  },
+]
+
+function Clock() {
+  const [time, setTime] = useState(new Date())
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const days = ['日', '一', '二', '三', '四', '五', '六']
+  return (
+    <div className="topbar-clock">
+      <div className="t">
+        <span>{pad(time.getHours())}</span>
+        <span className="sep">:</span>
+        <span>{pad(time.getMinutes())}</span>
+        <span className="sep">:</span>
+        <span>{pad(time.getSeconds())}</span>
+      </div>
+      <div className="d">
+        {time.getFullYear()}-{pad(time.getMonth() + 1)}-{pad(time.getDate())}
+        {' · '}星期{days[time.getDay()]}
+      </div>
+    </div>
+  )
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate()
   const location = useLocation()
-  const [openKeys, setOpenKeys] = useState<string[]>(() => {
-    const k = getInitialOpenKey(location.pathname)
-    return k ? [k] : []
+
+  // ── 真实后端状态 ──────────────────────────────────────────────
+  const { data: models, isSuccess: backendOk, isError: backendErr } = useQuery<AIModel[]>({
+    queryKey: ['layout-models'],
+    queryFn: () => configApi.models.list(),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: 1,
   })
 
-  const menuItems: MenuItem[] = [
-    { key: '/', icon: <HomeOutlined />, label: '首页' },
-    {
-      key: 'case-analysis',
-      icon: <FolderOutlined />,
-      label: '案件分析',
-      children: [
-        { key: '/cases', icon: <DatabaseOutlined />, label: '案件管理' },
-        { key: '/cases/map', icon: <EnvironmentOutlined />, label: '案件地图' },
-        { key: '/cases/spacetime', icon: <FieldTimeOutlined />, label: '时空研判' },
-        { key: '/area-analysis', icon: <RadarChartOutlined />, label: '区域研判' },
-        { key: '/graphs/serial', icon: <ApartmentOutlined />, label: '串案图谱' },
-        { key: '/cases/features', icon: <ProfileOutlined />, label: '案件预处理' },
-        { key: '/patrols', icon: <CarOutlined />, label: '巡逻管理' },
-        { key: '/gangs', icon: <TeamOutlined />, label: '团伙分析' },
-      ],
-    },
-    {
-      key: 'meeting-reports',
-      icon: <TeamOutlined />,
-      label: '会议与报告',
-      children: [
-        { key: '/meetings', icon: <TeamOutlined />, label: '圆桌会议' },
-        { key: '/reports', icon: <FileTextOutlined />, label: '分析报告' },
-        { key: '/conclusions', icon: <SolutionOutlined />, label: '结论工厂' },
-        { key: '/deployment', icon: <BulbOutlined />, label: '工作部署建议' },
-      ],
-    },
-    {
-      key: 'ai-assist',
-      icon: <RobotOutlined />,
-      label: '智能辅助',
-      children: [
-        { key: '/assistant', icon: <RobotOutlined />, label: '智能助手' },
-        { key: '/agents', icon: <RobotOutlined />, label: '侦查Agent' },
-      ],
-    },
-    {
-      key: 'system',
-      icon: <SettingOutlined />,
-      label: '系统管理',
-      children: [
-        { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
-        { key: '/dashboard', icon: <RadarChartOutlined />, label: '实时指挥大屏' },
-      ],
-    },
-  ]
+  const { data: mapConfig } = useQuery({
+    queryKey: ['layout-map-config'],
+    queryFn: () => configApi.system.getMapConfig(),
+    staleTime: 120_000,
+    retry: false,
+  })
 
-  // 手风琴：同一时间只展开一个分组
-  const handleOpenChange = (keys: string[]) => {
-    const newKey = keys.find((k) => !openKeys.includes(k))
-    setOpenKeys(newKey ? [newKey] : [])
-  }
+  // 拼接活跃模型名称列表
+  const activeModels = models?.filter(m => m.is_active) ?? []
+  const modelDisplay = activeModels.length > 0
+    ? activeModels.map(m => m.name || m.model_name).slice(0, 4).join(' · ')
+    : backendErr ? '未连接' : '加载中...'
 
-  const handleMenuClick = ({ key }: { key: string }) => {
-    if (!GROUP_KEYS.includes(key)) navigate(key)
+  // MCP 是否已配置（有非空 API Key）
+  // getMapConfig() 返回 {provider, api_key, api_base_url} 对象
+  const mcpActive = (() => {
+    if (!mapConfig) return false
+    const cfg = mapConfig as unknown as { provider?: string; api_key?: string }
+    // openstreetmap 不需要 key，视为已配置
+    if (cfg.provider === 'openstreetmap') return true
+    return !!(cfg.api_key && cfg.api_key.trim() !== '' && cfg.api_key !== 'your_api_key_here')
+  })()
+
+  // DB/后端状态
+  const dbStatus = backendErr ? 'err' : backendOk ? 'ok' : 'loading'
+
+  // ── 子导航计算 ────────────────────────────────────────────────
+  const subNav = SUB_NAVS.find(n => n.paths.includes(location.pathname)) ?? null
+
+  const isActive = (item: typeof NAV_ITEMS[0]) =>
+    item.paths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'))
+
+  const goto = (e: React.MouseEvent, path: string) => {
+    e.preventDefault()
+    navigate(path)
   }
 
   return (
-    <AntLayout style={{ minHeight: '100vh', background: '#0a0e17' }}>
-      <Sider width={200} style={{ background: '#0d1117', borderRight: '1px solid #1e293b' }}>
-        {/* Logo */}
-        <div
-          style={{
-            height: 48,
-            display: 'flex',
-            alignItems: 'center',
-            padding: '0 16px',
-            borderBottom: '1px solid #1e293b',
-            color: '#7dd3fc',
-            fontWeight: 700,
-            fontSize: 14,
-            letterSpacing: '0.5px',
-          }}
-        >
-          ⬡ AI案件分析
+    <div className="app-shell">
+
+      {/* ── Topbar ── */}
+      <header className="topbar">
+        {/* Brand */}
+        <a className="brand" href="/dashboard" onClick={e => goto(e, '/dashboard')}>
+          <div className="mark">AiC</div>
+          <div className="wordmark">
+            <div className="n">涉油案件指挥系统</div>
+            <div className="s">AiCommander · <span className="pulse">● 实时</span></div>
+          </div>
+        </a>
+
+        {/* Tab navigation */}
+        <nav className="top-nav">
+          {NAV_ITEMS.map(item => (
+            <a
+              key={item.num}
+              href={item.paths[0]}
+              className={isActive(item) ? 'active' : ''}
+              onClick={e => goto(e, item.paths[0])}
+            >
+              {item.label} <span className="num">{item.num}</span>
+            </a>
+          ))}
+        </nav>
+
+        {/* Clock */}
+        <Clock />
+
+        {/* System chips */}
+        <div className="sys-chips">
+          <span className={`chip${dbStatus === 'ok' ? ' live' : dbStatus === 'err' ? ' err' : ''}`}>
+            <span className="dot" style={dbStatus === 'err' ? { background: 'var(--err)' } : {}} />
+            {dbStatus === 'err' ? '服务离线' : '实时连接'}
+          </span>
+          <span className="chip accent">
+            <span className="dot" style={{ background: 'var(--accent)' }} />
+            AI 推理中
+          </span>
         </div>
-        <Menu
-          mode="inline"
-          theme="dark"
-          selectedKeys={[location.pathname]}
-          openKeys={openKeys}
-          onOpenChange={handleOpenChange}
-          items={menuItems}
-          onClick={handleMenuClick}
-          style={{ background: '#0d1117', borderRight: 'none' }}
-        />
-      </Sider>
-      <AntLayout style={{ background: '#0a0e17' }}>
-        <Content
-          style={{
-            margin: '16px',
-            padding: 20,
-            background: '#0d1117',
-            borderRadius: 6,
-            border: '1px solid #1e293b',
-            minHeight: 280,
-          }}
-        >
-          {children}
-        </Content>
-      </AntLayout>
-    </AntLayout>
+
+        {/* User */}
+        <div className="user-badge">
+          <div className="a">管</div>
+          <div>
+            <div className="n">管理员</div>
+            <div className="r">涉油专案组 · 指挥</div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Sub-nav（案件/研判 模块内页签）── */}
+      {subNav && (
+        <nav className="sub-nav">
+          {subNav.items.map(item => (
+            <a
+              key={item.path}
+              href={item.path}
+              className={location.pathname === item.path ? 'active' : ''}
+              onClick={e => goto(e, item.path)}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+      )}
+
+      {/* ── Main content ── */}
+      <main className="app-main">
+        {children}
+      </main>
+
+      {/* ── Status bar ── */}
+      <footer className="statusbar">
+        <span>
+          <span className="k">数据库</span>
+          <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
+            {dbStatus === 'err' ? '× SQLite' : '● SQLite'}
+          </span>
+        </span>
+        <span>
+          <span className="k">缓存</span>
+          <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
+            {dbStatus === 'err' ? '× Redis' : '● Redis'}
+          </span>
+        </span>
+        <span>
+          <span className="k">模型</span>
+          <span className={`v${activeModels.length > 0 ? ' accent' : ''}`}>{modelDisplay}</span>
+        </span>
+        <span>
+          <span className="k">地图 MCP</span>
+          <span className={`v${mcpActive ? ' ok' : ''}`}>
+            {mcpActive ? '已连接' : '未配置'}
+          </span>
+        </span>
+        <div className="statusbar-right">
+          <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
+          <span><span className="k">版本</span><span className="v">v0.9.3</span></span>
+        </div>
+      </footer>
+    </div>
   )
 }
 

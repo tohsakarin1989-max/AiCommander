@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AiCommander · 涉油案件智慧指挥大屏</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css" />
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage">
+<div class="app">
+
+  <!-- ========= TOP BAR ========= -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a href="Dashboard.html" class="cur">大屏 <span class="num">01</span></a>
+      <a href="Cases.html">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html">研判 <span class="num">04</span></a>
+      <a href="Gangs.html">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html">巡逻 <span class="num">06</span></a>
+    </nav>
+
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========= MAIN: map-dominant ========= -->
+  <div class="main main-map">
+
+    <!-- LEFT: HERO MAP -->
+    <div class="card map-card">
+      <div class="card-head">
+        <span class="ico">◈</span>
+        <span class="ti">辖区案件空间分布</span>
+        <span class="chip" style="margin-left:10px;">本年累计 · 127 案发点</span>
+        <span class="spacer"></span>
+        <div class="seg">
+          <button class="on">散点</button>
+          <button>热力</button>
+          <button>轨迹</button>
+          <button>聚类</button>
+        </div>
+        <div class="seg" style="margin-left:8px;">
+          <button>今日</button>
+          <button>本周</button>
+          <button class="on">本月</button>
+          <button>本年</button>
+        </div>
+      </div>
+      <div class="card-body" style="position:relative;">
+
+        <svg class="map-svg" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <pattern id="grid-map" width="60" height="60" patternUnits="userSpaceOnUse">
+              <path d="M60 0 L0 0 0 60" fill="none" stroke="oklch(0.32 0.014 250 / 0.22)" stroke-width="0.5"/>
+            </pattern>
+            <pattern id="grid-fine" width="15" height="15" patternUnits="userSpaceOnUse">
+              <path d="M15 0 L0 0 0 15" fill="none" stroke="oklch(0.32 0.014 250 / 0.08)" stroke-width="0.3"/>
+            </pattern>
+            <radialGradient id="heat-hi">
+              <stop offset="0%" stop-color="oklch(0.70 0.20 25 / 0.45)"/>
+              <stop offset="100%" stop-color="oklch(0.70 0.20 25 / 0)"/>
+            </radialGradient>
+            <radialGradient id="heat-mid">
+              <stop offset="0%" stop-color="oklch(0.80 0.16 75 / 0.32)"/>
+              <stop offset="100%" stop-color="oklch(0.80 0.16 75 / 0)"/>
+            </radialGradient>
+            <radialGradient id="heat-lo">
+              <stop offset="0%" stop-color="oklch(0.78 0.14 155 / 0.26)"/>
+              <stop offset="100%" stop-color="oklch(0.78 0.14 155 / 0)"/>
+            </radialGradient>
+            <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="oklch(0.16 0.015 230)"/>
+              <stop offset="100%" stop-color="oklch(0.12 0.015 230)"/>
+            </linearGradient>
+          </defs>
+
+          <!-- sea background wash -->
+          <rect width="1200" height="800" fill="url(#sea)"/>
+          <rect width="1200" height="800" fill="url(#grid-fine)"/>
+          <rect width="1200" height="800" fill="url(#grid-map)"/>
+
+          <!-- coast / landmass (stylized Bohai bay with Shandong coastline) -->
+          <g fill="oklch(0.195 0.014 250)" stroke="oklch(0.40 0.014 250 / 0.7)" stroke-width="1">
+            <path d="M 0 720 L 120 700 C 220 690, 320 696, 420 670 C 520 640, 620 630, 720 598 C 820 568, 920 558, 1020 528 C 1080 512, 1140 496, 1200 488 L 1200 800 L 0 800 Z"/>
+            <path d="M 0 100 L 140 80 C 260 68, 380 80, 500 62 C 620 46, 740 52, 860 36 C 960 22, 1060 18, 1200 10 L 1200 340 C 1100 370, 990 390, 880 420 C 760 450, 650 460, 540 476 C 430 490, 320 488, 220 482 C 140 476, 60 450, 0 420 Z" opacity="0.96"/>
+          </g>
+
+          <!-- inland islets / secondary landmasses (accent) -->
+          <g fill="oklch(0.18 0.014 250)" stroke="oklch(0.36 0.014 250 / 0.5)" stroke-width="0.6">
+            <ellipse cx="880" cy="540" rx="28" ry="10"/>
+            <ellipse cx="1020" cy="580" rx="18" ry="7"/>
+          </g>
+
+          <!-- rivers / oil pipeline network (highlighted as key infrastructure) -->
+          <g fill="none">
+            <!-- river (黄河) -->
+            <path d="M 0 460 C 180 470, 280 490, 420 510 C 560 530, 700 540, 900 548 C 1020 552, 1100 560, 1200 562"
+                  stroke="oklch(0.58 0.10 220 / 0.7)" stroke-width="2"/>
+            <path d="M 300 220 C 360 300, 440 380, 560 450 C 620 485, 680 500, 760 508"
+                  stroke="oklch(0.58 0.10 220 / 0.55)" stroke-width="1.5"/>
+            <!-- pipeline highlight -->
+            <path d="M 160 340 L 340 400 L 520 420 L 720 420 L 940 440 L 1120 460"
+                  stroke="oklch(0.78 0.14 45 / 0.6)" stroke-width="1.6" stroke-dasharray="10 4"/>
+            <path d="M 240 520 L 420 540 L 620 520 L 820 540 L 1020 520"
+                  stroke="oklch(0.78 0.14 45 / 0.45)" stroke-width="1.2" stroke-dasharray="8 4"/>
+          </g>
+
+          <!-- roads / expressways -->
+          <g stroke="oklch(0.42 0.014 250 / 0.5)" stroke-width="0.8" fill="none" stroke-dasharray="5 3">
+            <line x1="0" y1="480" x2="1200" y2="440"/>
+            <line x1="0" y1="320" x2="1200" y2="340"/>
+            <line x1="240" y1="800" x2="280" y2="0"/>
+            <line x1="680" y1="800" x2="720" y2="0"/>
+            <line x1="940" y1="800" x2="980" y2="0"/>
+          </g>
+
+          <!-- heat blobs (low density — only 3 real hotspots) -->
+          <circle cx="340" cy="460" r="160" fill="url(#heat-hi)"/>
+          <circle cx="720" cy="420" r="130" fill="url(#heat-mid)"/>
+          <circle cx="980" cy="480" r="110" fill="url(#heat-lo)"/>
+
+          <!-- case scatter: modest density matching the real volume -->
+          <g fill="oklch(0.78 0.14 45)">
+            <circle cx="325" cy="448" r="3.5" opacity=".9"/>
+            <circle cx="345" cy="440" r="3.5" opacity=".9"/>
+            <circle cx="352" cy="460" r="3.5" opacity=".9"/>
+            <circle cx="318" cy="476" r="3.5" opacity=".9"/>
+            <circle cx="340" cy="482" r="3.5" opacity=".9"/>
+            <circle cx="365" cy="472" r="3.5" opacity=".9"/>
+            <circle cx="308" cy="466" r="3.5" opacity=".9"/>
+            <circle cx="372" cy="452" r="3.5" opacity=".9"/>
+            <circle cx="705" cy="410" r="3.5"/>
+            <circle cx="720" cy="398" r="3.5"/>
+            <circle cx="736" cy="420" r="3.5"/>
+            <circle cx="714" cy="432" r="3.5"/>
+            <circle cx="696" cy="420" r="3.5"/>
+            <circle cx="970" cy="472" r="3" opacity=".8"/>
+            <circle cx="988" cy="484" r="3" opacity=".8"/>
+            <circle cx="1002" cy="466" r="3" opacity=".8"/>
+            <!-- scattered -->
+            <circle cx="520" cy="488" r="2.5" opacity="0.75"/>
+            <circle cx="600" cy="452" r="2.5" opacity="0.75"/>
+            <circle cx="480" cy="532" r="2.5" opacity="0.65"/>
+            <circle cx="820" cy="502" r="2.5" opacity="0.65"/>
+            <circle cx="1068" cy="504" r="2.5" opacity="0.55"/>
+            <circle cx="420" cy="400" r="2.5" opacity="0.55"/>
+            <circle cx="560" cy="360" r="2.5" opacity="0.55"/>
+          </g>
+
+          <!-- live pulse on active hotspot -->
+          <g>
+            <circle class="pulse-ring" cx="340" cy="460" r="18" fill="none" stroke="oklch(0.70 0.20 25)" stroke-width="1.8"/>
+            <circle cx="340" cy="460" r="7" fill="oklch(0.70 0.20 25)"/>
+            <circle cx="340" cy="460" r="7" fill="none" stroke="oklch(0.97 0.008 90)" stroke-width="1"/>
+          </g>
+          <g>
+            <circle class="pulse-ring" cx="720" cy="420" r="14" fill="none" stroke="oklch(0.80 0.16 75)" stroke-width="1.4" style="animation-delay:1s"/>
+            <circle cx="720" cy="420" r="5.5" fill="oklch(0.80 0.16 75)"/>
+          </g>
+
+          <!-- cluster labels -->
+          <g font-family="JetBrains Mono" font-size="14" fill="oklch(0.78 0.14 45)">
+            <text x="396" y="454">α · 滨城北片区 · 9 案</text>
+            <text x="752" y="414">β · 垦利中段 · 6 案</text>
+            <text x="1016" y="488">γ · 寿光沿海 · 4 案</text>
+          </g>
+
+          <!-- city/area labels -->
+          <g font-family="IBM Plex Sans" font-size="15" fill="oklch(0.88 0.010 90)" font-weight="500">
+            <text x="200" y="420">滨州</text>
+            <text x="640" y="378">东营</text>
+            <text x="940" y="440">潍坊</text>
+            <text x="440" y="440" font-size="12" fill="oklch(0.62 0.013 90)">博兴</text>
+            <text x="540" y="580" font-size="12" fill="oklch(0.62 0.013 90)">广饶</text>
+            <text x="860" y="490" font-size="12" fill="oklch(0.62 0.013 90)">寿光</text>
+          </g>
+
+          <!-- facility pins: 油库 / 加油站 / 管线节点 -->
+          <g>
+            <!-- 油库 (大方块) -->
+            <g>
+              <rect x="186" y="414" width="10" height="10" fill="oklch(0.72 0.14 285)" stroke="oklch(0.97 0.008 90)" stroke-width="0.6"/>
+              <text x="202" y="422" font-family="JetBrains Mono" font-size="9" fill="oklch(0.82 0.010 90)">滨州石化</text>
+            </g>
+            <g>
+              <rect x="680" y="372" width="10" height="10" fill="oklch(0.72 0.14 285)" stroke="oklch(0.97 0.008 90)" stroke-width="0.6"/>
+              <text x="696" y="380" font-family="JetBrains Mono" font-size="9" fill="oklch(0.82 0.010 90)">胜利油田</text>
+            </g>
+            <g>
+              <rect x="920" y="438" width="10" height="10" fill="oklch(0.72 0.14 285)" stroke="oklch(0.97 0.008 90)" stroke-width="0.6"/>
+              <text x="936" y="446" font-family="JetBrains Mono" font-size="9" fill="oklch(0.82 0.010 90)">潍坊油库</text>
+            </g>
+            <!-- 加油站 (菱形) -->
+            <g fill="oklch(0.78 0.11 220)" stroke="oklch(0.97 0.008 90)" stroke-width="0.5">
+              <polygon points="420,506 426,512 420,518 414,512"/>
+              <polygon points="580,480 586,486 580,492 574,486"/>
+              <polygon points="820,524 826,530 820,536 814,530"/>
+              <polygon points="1080,498 1086,504 1080,510 1074,504"/>
+              <polygon points="300,548 306,554 300,560 294,554"/>
+            </g>
+            <!-- 管线节点 (三角) -->
+            <g fill="oklch(0.80 0.16 75)" opacity="0.85">
+              <polygon points="160,340 164,348 156,348"/>
+              <polygon points="340,400 344,408 336,408"/>
+              <polygon points="520,420 524,428 516,428"/>
+              <polygon points="720,420 724,428 716,428"/>
+              <polygon points="940,440 944,448 936,448"/>
+              <polygon points="1120,460 1124,468 1116,468"/>
+            </g>
+          </g>
+
+          <!-- patrol routes -->
+          <g stroke="oklch(0.78 0.11 220 / 0.55)" stroke-width="1.6" fill="none" stroke-dasharray="8 5">
+            <path d="M 340 460 C 480 440, 600 420, 720 420"/>
+            <path d="M 720 420 C 820 440, 900 460, 980 480"/>
+          </g>
+          <!-- patrol vehicle markers -->
+          <g>
+            <circle cx="520" cy="440" r="5" fill="oklch(0.78 0.11 220)"/>
+            <text x="528" y="437" font-family="JetBrains Mono" font-size="9" fill="oklch(0.82 0.010 90)">巡-A3 · 12:40 巡毕</text>
+          </g>
+          <g>
+            <circle cx="850" cy="450" r="5" fill="oklch(0.78 0.11 220)"/>
+            <text x="858" y="447" font-family="JetBrains Mono" font-size="9" fill="oklch(0.82 0.010 90)">巡-B1 · 进行中</text>
+          </g>
+
+          <!-- crosshair on active case -->
+          <g stroke="oklch(0.97 0.008 90)" stroke-width="0.8">
+            <circle cx="340" cy="460" r="28" fill="none" stroke-dasharray="3 4"/>
+            <line x1="298" y1="460" x2="382" y2="460"/>
+            <line x1="340" y1="418" x2="340" y2="502"/>
+          </g>
+
+          <!-- compass -->
+          <g transform="translate(1120 720)" font-family="JetBrains Mono" font-size="11" fill="oklch(0.72 0.013 90)">
+            <circle r="26" fill="oklch(0.12 0.012 250 / 0.6)" stroke="oklch(0.32 0.014 250 / 0.8)"/>
+            <line x1="0" y1="-26" x2="0" y2="26" stroke="oklch(0.32 0.014 250 / 0.6)"/>
+            <line x1="-26" y1="0" x2="26" y2="0" stroke="oklch(0.32 0.014 250 / 0.6)"/>
+            <polygon points="0,-26 -5,-10 5,-10" fill="oklch(0.78 0.14 45)"/>
+            <text x="-4" y="-30">N</text>
+          </g>
+
+          <!-- scale bar -->
+          <g transform="translate(960 752)" font-family="JetBrains Mono" font-size="11" fill="oklch(0.72 0.013 90)">
+            <line x1="0" y1="0" x2="100" y2="0" stroke="oklch(0.72 0.013 90)" stroke-width="1.2"/>
+            <line x1="0" y1="-4" x2="0" y2="4" stroke="oklch(0.72 0.013 90)"/>
+            <line x1="50" y1="-3" x2="50" y2="3" stroke="oklch(0.72 0.013 90)"/>
+            <line x1="100" y1="-4" x2="100" y2="4" stroke="oklch(0.72 0.013 90)"/>
+            <text x="36" y="18">25 km</text>
+          </g>
+        </svg>
+
+        <!-- floating HUD -->
+        <div class="map-hud">
+          <div class="pod">VIEW · <span class="n">37.38°N</span> · <span class="n">118.02°E</span></div>
+          <div class="pod">ZOOM · <span class="n">L9</span></div>
+          <div class="pod">WINDOW · <span class="n">P30D</span></div>
+          <div class="pod">RENDER · <span class="n">127 案发点</span></div>
+        </div>
+        <div class="map-controls">
+          <button title="放大">＋</button>
+          <button title="缩小">−</button>
+          <button title="定位">◎</button>
+          <button title="筛选">☰</button>
+          <button title="全屏">⛶</button>
+        </div>
+
+        <!-- floating KPI pills (top-right, atop map) -->
+        <div class="map-kpis">
+          <div class="kpill">
+            <div class="lbl">案件总数</div>
+            <div class="val">127</div>
+            <div class="sub"><span class="trend">↑ 6</span>本月</div>
+          </div>
+          <div class="kpill">
+            <div class="lbl">待处理</div>
+            <div class="val" style="color:var(--warn)">8</div>
+            <div class="sub">未超期 6</div>
+          </div>
+          <div class="kpill">
+            <div class="lbl">处理中</div>
+            <div class="val" style="color:var(--info)">14</div>
+            <div class="sub">研判 3 · 巡逻 4</div>
+          </div>
+          <div class="kpill">
+            <div class="lbl">已侦破</div>
+            <div class="val" style="color:var(--ok)">105</div>
+            <div class="sub">破案率 82.7%</div>
+          </div>
+        </div>
+
+        <!-- legend bottom -->
+        <div class="map-legend-bottom">
+          <span><span class="sw" style="background:oklch(0.70 0.20 25)"></span>高风险点</span>
+          <span><span class="sw" style="background:oklch(0.80 0.16 75)"></span>中风险点</span>
+          <span><span class="sw" style="background:oklch(0.78 0.14 155)"></span>低风险点</span>
+          <span><span class="sw sq" style="background:oklch(0.72 0.14 285)"></span>油库</span>
+          <span><span class="sw dm" style="background:oklch(0.78 0.11 220)"></span>加油站</span>
+          <span><span class="sw tr" style="background:oklch(0.80 0.16 75)"></span>管线节点</span>
+          <span><span class="sw" style="background:oklch(0.78 0.11 220)"></span>巡逻路径</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: rail -->
+    <div class="col-right">
+
+      <!-- trend mini -->
+      <div class="card">
+        <div class="card-head">
+          <span class="ico">◈</span>
+          <span class="ti">30 天趋势</span>
+          <span class="spacer"></span>
+          <span class="chip">均 4.2 件/日</span>
+        </div>
+        <div class="card-body" style="padding:10px 14px 12px;">
+          <svg viewBox="0 0 320 110" style="width:100%;height:110px;display:block;" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="grad-total" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="oklch(0.78 0.14 45)" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="oklch(0.78 0.14 45)" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <g stroke="oklch(0.32 0.014 250 / 0.35)" stroke-width="0.4">
+              <line x1="0" y1="25" x2="320" y2="25"/>
+              <line x1="0" y1="55" x2="320" y2="55"/>
+              <line x1="0" y1="85" x2="320" y2="85"/>
+            </g>
+            <path d="M 0 82 L 11 78 22 84 33 76 44 72 55 80 66 70 77 74 88 66 99 70 110 62 121 66 132 58 143 64 154 52 165 56 176 48 187 52 198 44 209 50 220 42 231 46 242 38 253 44 264 36 275 42 286 34 297 40 308 32 320 38 L 320 110 L 0 110 Z"
+                  fill="url(#grad-total)"/>
+            <polyline points="0,82 11,78 22,84 33,76 44,72 55,80 66,70 77,74 88,66 99,70 110,62 121,66 132,58 143,64 154,52 165,56 176,48 187,52 198,44 209,50 220,42 231,46 242,38 253,44 264,36 275,42 286,34 297,40 308,32 320,38"
+                      fill="none" stroke="oklch(0.78 0.14 45)" stroke-width="1.5"/>
+            <circle cx="308" cy="32" r="3" fill="oklch(0.78 0.14 45)"/>
+            <g font-family="JetBrains Mono" font-size="8" fill="oklch(0.45 0.013 90)">
+              <text x="0" y="106">03-22</text>
+              <text x="145" y="106">04-05</text>
+              <text x="290" y="106">04-19</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      <!-- case-type pie -->
+      <div class="card pie-card">
+        <div class="card-head">
+          <span class="ico">◎</span>
+          <span class="ti">案件类型分布</span>
+          <span class="spacer"></span>
+          <span class="chip">本年</span>
+        </div>
+        <div class="card-body">
+          <div class="pie-wrap" style="position:relative;">
+            <svg viewBox="0 0 130 130">
+              <g transform="translate(65 65)" fill="none" stroke-width="16">
+                <circle r="52" stroke="oklch(0.78 0.14 45)"    stroke-dasharray="111 327" stroke-dashoffset="0"    transform="rotate(-90)"/>
+                <circle r="52" stroke="oklch(0.72 0.14 285)"   stroke-dasharray="72 327"  stroke-dashoffset="-111" transform="rotate(-90)"/>
+                <circle r="52" stroke="oklch(0.78 0.11 220)"   stroke-dasharray="59 327"  stroke-dashoffset="-183" transform="rotate(-90)"/>
+                <circle r="52" stroke="oklch(0.80 0.16 75)"    stroke-dasharray="52 327"  stroke-dashoffset="-242" transform="rotate(-90)"/>
+                <circle r="52" stroke="oklch(0.55 0.013 250)"  stroke-dasharray="33 327"  stroke-dashoffset="-294" transform="rotate(-90)"/>
+              </g>
+            </svg>
+            <div class="pie-center">
+              <div class="n">127</div>
+              <div class="l">本年累计</div>
+            </div>
+          </div>
+          <div class="pie-legend">
+            <div class="row"><span class="sw" style="background:oklch(0.78 0.14 45)"></span><span class="nm">管线开孔</span><span class="pct">34%</span><span class="n">43</span></div>
+            <div class="row"><span class="sw" style="background:oklch(0.72 0.14 285)"></span><span class="nm">油库入侵</span><span class="pct">22%</span><span class="n">28</span></div>
+            <div class="row"><span class="sw" style="background:oklch(0.78 0.11 220)"></span><span class="nm">加油站</span><span class="pct">18%</span><span class="n">23</span></div>
+            <div class="row"><span class="sw" style="background:oklch(0.80 0.16 75)"></span><span class="nm">罐车劫持</span><span class="pct">16%</span><span class="n">20</span></div>
+            <div class="row"><span class="sw" style="background:oklch(0.55 0.013 250)"></span><span class="nm">其他</span><span class="pct">10%</span><span class="n">13</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- alerts -->
+      <div class="card alerts-card">
+        <div class="card-head">
+          <span class="ico">⚠</span>
+          <span class="ti">实时警报</span>
+          <span class="spacer"></span>
+          <span class="chip err"><span class="dot" style="background:var(--err)"></span>3 条</span>
+        </div>
+        <div class="card-body">
+          <div class="alert-row sev-crit">
+            <span class="sev"></span>
+            <span class="glyph">!</span>
+            <div class="body">
+              <div class="ti"><span class="no">A-0412</span>管线开孔·滨城北 K112</div>
+              <div class="sub">柴油 · 蓝白罐车 · 套牌 · 已派 3 班</div>
+            </div>
+            <div class="t">14:22</div>
+          </div>
+          <div class="alert-row sev-hi">
+            <span class="sev"></span>
+            <span class="glyph">△</span>
+            <div class="body">
+              <div class="ti"><span class="no">A-0411</span>压差异常·垦利</div>
+              <div class="sub">压力降 0.3 MPa · 待现场</div>
+            </div>
+            <div class="t">14:18</div>
+          </div>
+          <div class="alert-row sev-med">
+            <span class="sev"></span>
+            <span class="glyph">◇</span>
+            <div class="body">
+              <div class="ti"><span class="no">A-0409</span>圆桌会议完成·M-8431</div>
+              <div class="sub">4 AI 共识 · 置信 0.74 · 报告就绪</div>
+            </div>
+            <div class="t">13:52</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- gangs -->
+      <div class="card gang-card">
+        <div class="card-head">
+          <span class="ico">◉</span>
+          <span class="ti">活跃团伙</span>
+          <span class="spacer"></span>
+          <span class="chip">4 个</span>
+        </div>
+        <div class="card-body">
+          <div class="gang-row hi">
+            <div class="avatar">夜鹰</div>
+            <div>
+              <div class="nm">"夜鹰" 团伙</div>
+              <div class="m">9 起 · 滨城-垦利 · 23 天</div>
+            </div>
+            <div class="risk"><span class="s">0.91</span>风险</div>
+          </div>
+          <div class="gang-row">
+            <div class="avatar">G25</div>
+            <div>
+              <div class="nm">G25 沿线流窜</div>
+              <div class="m">6 起 · 跨市 · 套牌罐车</div>
+            </div>
+            <div class="risk"><span class="s">0.74</span>风险</div>
+          </div>
+          <div class="gang-row">
+            <div class="avatar">寿光</div>
+            <div>
+              <div class="nm">寿光街头收油</div>
+              <div class="m">4 起 · 下游网络</div>
+            </div>
+            <div class="risk"><span class="s">0.58</span>风险</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========= STATUS BAR ========= -->
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div><!-- /app -->
+</div><!-- /stage -->
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk">
+    <label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)">
+  </div>
+  <div class="tk">
+    <label>密度</label>
+    <div class="seg" id="seg-density">
+      <button data-v="comfortable" class="on">宽松</button>
+      <button data-v="compact">紧凑</button>
+    </div>
+  </div>
+  <div class="tk">
+    <label>环境遥测</label>
+    <div class="seg" id="seg-telemetry">
+      <button data-v="on" class="on">显示</button>
+      <button data-v="off">收起</button>
+    </div>
+  </div>
+  <div class="tk">
+    <label>动效</label>
+    <div class="seg" id="seg-animation">
+      <button data-v="normal" class="on">正常</button>
+      <button data-v="subtle">轻微</button>
+      <button data-v="off">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script src="shell.js"></script>
+</body>
+</html>

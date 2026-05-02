@@ -1,0 +1,254 @@
+.intelligence-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.intel-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 26px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 12% 12%, oklch(0.72 0.12 78 / 0.20), transparent 30%),
+    radial-gradient(circle at 86% 18%, oklch(0.55 0.08 190 / 0.12), transparent 34%),
+    linear-gradient(135deg, oklch(0.18 0.018 245), oklch(0.10 0.012 245));
+}
+
+.intel-eyebrow {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.intel-hero h1 {
+  margin: 8px 0;
+  color: var(--ink-0);
+  font-family: var(--serif);
+  font-size: clamp(28px, 4vw, 44px);
+}
+
+.intel-hero p {
+  max-width: 820px;
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.8;
+}
+
+.intel-hero-card {
+  min-width: 210px;
+  padding: 18px;
+  border: 1px solid oklch(0.72 0.12 78 / 0.28);
+  background: oklch(0.13 0.015 245 / 0.78);
+}
+
+.intel-hero-card span,
+.intel-hero-card small {
+  display: block;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.intel-hero-card b {
+  display: block;
+  margin: 8px 0;
+  color: var(--accent);
+  font-size: 28px;
+}
+
+.intel-control-card,
+.intel-kpi-card,
+.intel-panel-card,
+.intel-inner-card {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.intel-kpi-card span,
+.intel-kpi-card small {
+  display: block;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.intel-kpi-card b {
+  display: block;
+  margin: 4px 0;
+  color: var(--accent);
+  font-size: 34px;
+  line-height: 1.1;
+}
+
+.intel-boundary {
+  border-radius: 0;
+}
+
+.intel-loading {
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--ink-2);
+}
+
+.intel-tabs .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.intel-tag-wall,
+.intel-chip-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.intel-tag {
+  margin-inline-end: 0;
+  padding: 4px 8px;
+  border-radius: 0;
+}
+
+.intel-tag-confidence {
+  margin-left: 6px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.intel-card-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.intel-similar-head,
+.intel-suggestion-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.intel-muted {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.intel-confidence,
+.intel-action {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.intel-section-mini {
+  margin: 12px 0 6px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.intel-counter-list {
+  display: grid;
+  gap: 10px;
+}
+
+.intel-counter-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 34px;
+  gap: 10px;
+  align-items: center;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.intel-counter-row b {
+  color: var(--accent);
+  font-family: var(--mono);
+  text-align: right;
+}
+
+.intel-counter-bar {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+}
+
+.intel-counter-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), oklch(0.70 0.09 100));
+}
+
+.intel-readiness-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.intel-readiness-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+.intel-readiness-item span {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.intel-readiness-item small {
+  grid-column: 2 / 4;
+  color: var(--ink-3);
+}
+
+.intel-readiness-item--blocked {
+  border-color: oklch(0.65 0.18 28 / 0.45);
+}
+
+.intel-readiness-item--ready {
+  border-color: oklch(0.72 0.13 150 / 0.35);
+}
+
+.intel-report {
+  max-height: 560px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.intel-context-prompt {
+  max-height: 420px;
+}
+
+@media (max-width: 780px) {
+  .intel-hero {
+    flex-direction: column;
+  }
+
+  .intel-hero-card {
+    min-width: auto;
+  }
+
+  .intel-counter-row {
+    grid-template-columns: 86px 1fr 30px;
+  }
+}

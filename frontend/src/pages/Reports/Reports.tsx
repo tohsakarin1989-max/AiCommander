@@ -1,16 +1,11 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import {
-  Card,
-  Descriptions,
-  Tag,
   Button,
-  Space,
   Modal,
-  Typography,
-  Divider,
-  Alert,
   Collapse,
   List,
+  Space,
+  Spin,
   message,
 } from 'antd'
 import {
@@ -20,70 +15,128 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   BulbOutlined,
+  TeamOutlined,
+  ArrowRightOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
-import { meetingApi } from '../../services/meetings'
+import { aiApi } from '../../services/ai'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-
-const { Title, Paragraph, Text } = Typography
-const { Panel } = Collapse
+import './Reports.css'
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
   const { data: meetings, isLoading } = useQuery({
     queryKey: ['meetings'],
-    queryFn: () => meetingApi.getMeetings(),
+    queryFn: () => aiApi.meeting.list(),
   })
 
   const completedMeetings = meetings?.filter((m) => m.status === 'completed') || []
 
   const handleExportReport = (meetingId: string, report: any) => {
     try {
-      const reportData = {
-        meeting_id: meetingId,
-        generated_at: new Date().toISOString(),
-        summary: report.content?.summary || '',
-        consensus_points: report.consensus_points || [],
-        disagreement_points: report.disagreement_points || [],
-        recommendations: report.content?.recommendations || [],
-        top_ranked_insights: report.content?.top_ranked_insights || [],
-        conclusions: report.content?.conclusions || '',
-      }
-      
-      const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' })
+      const content = typeof report.content === 'object' ? report.content : {}
+      const toList = (items?: string[]) =>
+        items && items.length > 0 ? items.map((item) => `- ${item}`).join('\n') : '- 暂无'
+      const markdown = [
+        `# AI 圆桌研判报告`,
+        '',
+        `- 会议编号：${meetingId}`,
+        `- 导出时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`,
+        '',
+        '## 执行摘要',
+        content.summary || report.summary || '暂无摘要',
+        '',
+        '## 综合结论',
+        content.conclusions || '暂无结论',
+        '',
+        '## 共识点',
+        toList(report.consensus_points),
+        '',
+        '## 分歧点',
+        toList(report.disagreement_points),
+        '',
+        '## 关键洞察',
+        toList(content.top_ranked_insights),
+        '',
+        '## 行动建议',
+        toList(content.recommendations),
+        '',
+      ].join('\n')
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `报告_${meetingId}_${dayjs().format('YYYYMMDD_HHmmss')}.json`
+      a.download = `报告_${meetingId}_${dayjs().format('YYYYMMDD_HHmmss')}.md`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      message.success('报告导出成功')
-    } catch (error) {
+      message.success('Markdown 报告导出成功')
+    } catch {
       message.error('导出失败')
     }
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <Title level={2}>分析报告</Title>
-        <Button onClick={() => navigate('/meetings')}>查看所有会议</Button>
+    <div className="page-scrollable">
+
+      {/* ── 页面标题 ── */}
+      <div className="page-title">
+        <h1>分析报告</h1>
+        <span className="sub">AI 圆桌会议 · 综合研判结果</span>
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn-ghost" onClick={() => navigate('/meetings')}>
+            <TeamOutlined style={{ marginRight: 6 }} />
+            查看所有会议
+          </button>
+        </div>
       </div>
 
+      {/* ── 统计条 ── */}
+      <div className="rp-stats-row">
+        <div className="kpill">
+          <div className="lbl">已完成报告</div>
+          <div className="val">{completedMeetings.length}</div>
+          <div className="sub">会议研判结果</div>
+        </div>
+        <div className="kpill">
+          <div className="lbl">覆盖案件</div>
+          <div className="val">
+            {completedMeetings.reduce((acc, m) => acc + (m.case_ids?.length || 0), 0)}
+          </div>
+          <div className="sub">已分析案件总数</div>
+        </div>
+      </div>
+
+      {/* ── 过滤标签行 ── */}
+      <div className="rp-filter-row">
+        <span className="rp-filter-chip rp-filter-chip--active">全部</span>
+        <span className="rp-filter-chip">待审核</span>
+        <span className="rp-filter-chip">已完成</span>
+      </div>
+
+      {/* ── 主内容 ── */}
       {isLoading ? (
-        <Card loading>加载中...</Card>
+        <div className="rp-skeleton-list">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skeleton rp-skeleton-card" />
+          ))}
+        </div>
       ) : completedMeetings.length === 0 ? (
-        <Alert
-          message="暂无报告"
-          description="请先创建并完成圆桌会议，完成后会在此显示分析报告。"
-          type="info"
-          showIcon
-        />
+        <div className="empty-state">
+          <div className="icon"><FileTextOutlined /></div>
+          <div>暂无分析报告</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'center', maxWidth: 280 }}>
+            请先创建并完成圆桌会议，完成后会在此显示研判结果
+          </div>
+          <button className="btn-primary" onClick={() => navigate('/meetings')}>
+            <ArrowRightOutlined style={{ marginRight: 6 }} />
+            前往会议管理
+          </button>
+        </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="rp-list">
           {completedMeetings.map((meeting) => (
             <ReportCard
               key={meeting.meeting_id}
@@ -99,6 +152,7 @@ const Reports: React.FC = () => {
   )
 }
 
+/* ── 报告卡片 ─────────────────────────────────────────────── */
 interface ReportCardProps {
   meetingId: string
   meeting?: any
@@ -108,319 +162,336 @@ interface ReportCardProps {
 
 const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, onViewDetail }) => {
   const [detailModalVisible, setDetailModalVisible] = useState(false)
+
   const { data: report, isLoading } = useQuery({
     queryKey: ['report', meetingId],
-    queryFn: () => meetingApi.getReport(meetingId),
+    queryFn: () => aiApi.meeting.getReport(meetingId),
   })
 
   const { data: analyses } = useQuery({
     queryKey: ['analyses', meetingId],
-    queryFn: () => meetingApi.getAnalyses(meetingId),
+    queryFn: () => aiApi.meeting.getAnalyses(meetingId),
     enabled: detailModalVisible,
   })
 
   const { data: rankings } = useQuery({
     queryKey: ['rankings', meetingId],
-    queryFn: () => meetingApi.getRankings(meetingId),
+    queryFn: () => aiApi.meeting.getRankings(meetingId),
     enabled: detailModalVisible,
   })
 
-  if (isLoading) return <Card loading>加载中...</Card>
+  if (isLoading) {
+    return (
+      <div className="card rp-card--loading">
+        <Spin size="small" />
+      </div>
+    )
+  }
+
   if (!report) return null
 
-  const reportContent = typeof report.content === 'string' 
-    ? report.content 
-    : report.content
+  const reportContent = typeof report.content === 'object' ? report.content : null
+  const displayDate = meeting
+    ? dayjs(meeting.completed_at || meeting.created_at).format('YYYY-MM-DD HH:mm')
+    : '—'
+
+  const consensusCount    = report.consensus_points?.length || 0
+  const disagreementCount = report.disagreement_points?.length || 0
+  const insightCount      = reportContent?.top_ranked_insights?.length || 0
+  const caseCount         = meeting?.case_ids?.length || 0
+
+  const summaryText: string =
+    reportContent?.summary || report.summary || '暂无摘要信息'
 
   return (
     <>
-      <Card
-        title={
-          <Space>
-            <FileTextOutlined />
-            <span>报告 - {meetingId}</span>
-            {meeting && (
-              <Tag color="blue">
-                {dayjs(meeting.completed_at || meeting.created_at).format('YYYY-MM-DD HH:mm')}
-              </Tag>
-            )}
-          </Space>
-        }
-        extra={
-          <Space>
-            <Button
-              type="primary"
-              icon={<EyeOutlined />}
-              onClick={() => setDetailModalVisible(true)}
-            >
-              查看详情
-            </Button>
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={() => onExport(meetingId, report)}
-            >
-              导出报告
-            </Button>
-            <Button icon={<EyeOutlined />} onClick={onViewDetail}>
-              查看会议
-            </Button>
-          </Space>
-        }
-      >
-        <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="执行摘要">
-            <Paragraph ellipsis={{ rows: 3, expandable: true }}>
-              {reportContent?.summary || reportContent || '无'}
-            </Paragraph>
-          </Descriptions.Item>
-          <Descriptions.Item label="共识点">
-            {report.consensus_points && report.consensus_points.length > 0 ? (
-              <List
-                size="small"
-                dataSource={report.consensus_points}
-                renderItem={(point: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                      <Text>{point}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无</Text>
-            )}
-          </Descriptions.Item>
-          <Descriptions.Item label="分歧点">
-            {report.disagreement_points && report.disagreement_points.length > 0 ? (
-              <List
-                size="small"
-                dataSource={report.disagreement_points}
-                renderItem={(point: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <ExclamationCircleOutlined style={{ color: '#faad14' }} />
-                      <Text>{point}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无</Text>
-            )}
-          </Descriptions.Item>
-          <Descriptions.Item label="关键洞察">
-            {reportContent?.top_ranked_insights && reportContent.top_ranked_insights.length > 0 ? (
-              <List
-                size="small"
-                dataSource={reportContent.top_ranked_insights}
-                renderItem={(insight: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <BulbOutlined style={{ color: '#1890ff' }} />
-                      <Text>{insight}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无</Text>
-            )}
-          </Descriptions.Item>
-          <Descriptions.Item label="建议">
-            {reportContent?.recommendations && reportContent.recommendations.length > 0 ? (
-              <List
-                size="small"
-                dataSource={reportContent.recommendations}
-                renderItem={(rec: string, i: number) => (
-                  <List.Item>
-                    <Text>• {rec}</Text>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无</Text>
-            )}
-          </Descriptions.Item>
-        </Descriptions>
-      </Card>
+      <div className="card rp-card">
+        {/* 卡片头 */}
+        <div className="card-head">
+          <span className="ico" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+            {meetingId.slice(0, 14)}…
+          </span>
+          <span className="tag t-d" style={{ marginLeft: 6 }}>已完成</span>
+          <span className="spacer" />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+            {displayDate}
+          </span>
+        </div>
 
+        {/* 卡片体 */}
+        <div className="card-body pad">
+          <p className="rp-summary">{summaryText}</p>
+          <div className="rp-tag-row">
+            {caseCount > 0 && (
+              <span className="tag t-o">
+                <FileTextOutlined style={{ marginRight: 3 }} />{caseCount} 件案件
+              </span>
+            )}
+            {consensusCount > 0 && (
+              <span className="tag t-d">
+                <CheckCircleOutlined style={{ marginRight: 3 }} />{consensusCount} 共识
+              </span>
+            )}
+            {disagreementCount > 0 && (
+              <span className="tag t-p">
+                <ExclamationCircleOutlined style={{ marginRight: 3 }} />{disagreementCount} 分歧
+              </span>
+            )}
+            {insightCount > 0 && (
+              <span className="tag t-r">
+                <BulbOutlined style={{ marginRight: 3 }} />{insightCount} 洞察
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* 卡片底部操作 */}
+        <div className="rp-card-footer">
+          <button className="btn-ghost-sm" onClick={() => setDetailModalVisible(true)}>
+            <EyeOutlined style={{ marginRight: 4 }} />报告详情
+          </button>
+          <button className="btn-ghost-sm" onClick={() => onExport(meetingId, report)}>
+            <DownloadOutlined style={{ marginRight: 4 }} />导出
+          </button>
+          <button className="btn-ghost-sm" onClick={onViewDetail}>
+            <ArrowRightOutlined style={{ marginRight: 4 }} />会议
+          </button>
+        </div>
+      </div>
+
+      {/* ── 详情 Modal ── */}
       <Modal
         title={
-          <Space>
-            <FileTextOutlined />
-            <span>报告详情 - {meetingId}</span>
-          </Space>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <FileTextOutlined style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--accent)', fontWeight: 500 }}>
+                报告详情
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)', letterSpacing: '0.06em', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {meetingId}
+              </div>
+            </div>
+          </div>
         }
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={[
-          <Button key="close" onClick={() => setDetailModalVisible(false)}>
-            关闭
-          </Button>,
-          <Button
-            key="export"
-            type="primary"
-            icon={<DownloadOutlined />}
-            onClick={() => {
-              onExport(meetingId, report)
-              setDetailModalVisible(false)
-            }}
-          >
+          <Button key="close" onClick={() => setDetailModalVisible(false)}>关闭</Button>,
+          <Button key="export" type="primary" icon={<DownloadOutlined />}
+            onClick={() => { onExport(meetingId, report); setDetailModalVisible(false) }}>
             导出报告
           </Button>,
-          <Button key="view" icon={<EyeOutlined />} onClick={onViewDetail}>
-            查看完整会议
-          </Button>,
+          <Button key="view" icon={<EyeOutlined />} onClick={onViewDetail}>查看完整会议</Button>,
         ]}
         width={900}
+        styles={{
+          content: { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 0 },
+          header:  { background: 'var(--bg-1)', borderBottom: '1px solid var(--line)' },
+          footer:  { borderTop: '1px solid var(--line)', background: 'var(--bg-1)' },
+        }}
       >
-        <Collapse defaultActiveKey={['summary', 'consensus', 'recommendations']}>
-          <Panel header="执行摘要" key="summary">
-            <Paragraph>{reportContent?.summary || reportContent || '无'}</Paragraph>
-          </Panel>
-          
-          {reportContent?.conclusions && (
-            <Panel header="综合结论" key="conclusions">
-              <Paragraph>{reportContent.conclusions}</Paragraph>
-            </Panel>
-          )}
+        {/* 执行摘要 */}
+        <div className="rp-modal-section">
+          <div className="rp-modal-section__title">执行摘要</div>
+          <p className="rp-modal-section__text">
+            {reportContent?.summary || report.summary || '无'}
+          </p>
+        </div>
 
-          <Panel header="共识点" key="consensus">
-            {report.consensus_points && report.consensus_points.length > 0 ? (
-              <List
-                dataSource={report.consensus_points}
-                renderItem={(point: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                      <Text>{point}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无共识点</Text>
-            )}
-          </Panel>
+        {/* 综合结论 */}
+        {reportContent?.conclusions && (
+          <div className="rp-modal-section">
+            <div className="rp-modal-section__title">综合结论</div>
+            <p className="rp-modal-section__text">{reportContent.conclusions}</p>
+          </div>
+        )}
 
-          <Panel header="分歧点" key="disagreement">
-            {report.disagreement_points && report.disagreement_points.length > 0 ? (
-              <List
-                dataSource={report.disagreement_points}
-                renderItem={(point: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <ExclamationCircleOutlined style={{ color: '#faad14' }} />
-                      <Text>{point}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无分歧点</Text>
-            )}
-          </Panel>
-
-          {reportContent?.top_ranked_insights && reportContent.top_ranked_insights.length > 0 && (
-            <Panel header="关键洞察（来自排名靠前的分析）" key="insights">
-              <List
-                dataSource={reportContent.top_ranked_insights}
-                renderItem={(insight: string, i: number) => (
-                  <List.Item>
-                    <Space>
-                      <BulbOutlined style={{ color: '#1890ff' }} />
-                      <Text>{insight}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Panel>
-          )}
-
-          <Panel header="建议" key="recommendations">
-            {reportContent?.recommendations && reportContent.recommendations.length > 0 ? (
-              <List
-                dataSource={reportContent.recommendations}
-                renderItem={(rec: string, i: number) => (
-                  <List.Item>
-                    <Text>• {rec}</Text>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Text type="secondary">无建议</Text>
-            )}
-          </Panel>
-
-          {analyses && analyses.length > 0 && (
-            <Panel header={`第一阶段分析（${analyses.length} 个独立回答）`} key="analyses">
-              <Alert
-                message="第一意见阶段"
-                description="以下是所有LLM模型的独立分析结果"
-                type="info"
-                style={{ marginBottom: 16 }}
-              />
-              <Collapse>
-                {analyses.map((analysis: any, index: number) => (
-                  <Panel
-                    header={`分析结果 ${index + 1}`}
-                    key={index}
-                  >
-                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px' }}>
-                      {typeof analysis.result_content === 'string'
-                        ? analysis.result_content
-                        : JSON.stringify(analysis.result_content, null, 2)}
-                    </pre>
-                  </Panel>
-                ))}
-              </Collapse>
-            </Panel>
-          )}
-
-          {rankings && rankings.length > 0 && (
-            <Panel header="第二阶段排名结果" key="rankings">
-              <Alert
-                message="审查和排名阶段"
-                description="以下是各LLM对其他分析的排名和评价"
-                type="info"
-                style={{ marginBottom: 16 }}
-              />
-              <Collapse>
-                {rankings.map((ranking: any, index: number) => (
-                  <Panel
-                    header={`评价者 ${index + 1} 的排名`}
-                    key={index}
-                  >
-                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px' }}>
-                      {JSON.stringify(ranking, null, 2)}
-                    </pre>
-                  </Panel>
-                ))}
-              </Collapse>
-            </Panel>
-          )}
-
-          {reportContent?.model_contributions && Object.keys(reportContent.model_contributions).length > 0 && (
-            <Panel header="各模型的独特贡献" key="contributions">
-              <List
-                dataSource={Object.entries(reportContent.model_contributions)}
-                renderItem={([model, contribution]: [string, any]) => (
-                  <List.Item>
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <Text strong>分析结果 {model}：</Text>
-                      <Text>{contribution}</Text>
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Panel>
-          )}
-        </Collapse>
+        {/* 共识 / 分歧 / 洞察 / 建议 */}
+        <Collapse
+          defaultActiveKey={['consensus', 'recommendations']}
+          style={{ background: 'transparent', border: 'none', marginBottom: 12 }}
+          items={[
+            {
+              key: 'consensus',
+              label: (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' }}>
+                  共识点 ({consensusCount})
+                </span>
+              ),
+              style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+              children: report.consensus_points && report.consensus_points.length > 0 ? (
+                <div>
+                  {report.consensus_points.map((point: string, idx: number) => (
+                    <div key={idx} className="rp-modal-list-item">
+                      <CheckCircleOutlined style={{ color: 'var(--ok)', flexShrink: 0, marginTop: 1 }} />
+                      <span>{point}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>无共识点</span>
+              ),
+            },
+            {
+              key: 'disagreement',
+              label: (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' }}>
+                  分歧点 ({disagreementCount})
+                </span>
+              ),
+              style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+              children: report.disagreement_points && report.disagreement_points.length > 0 ? (
+                <div>
+                  {report.disagreement_points.map((point: string, idx: number) => (
+                    <div key={idx} className="rp-modal-list-item">
+                      <ExclamationCircleOutlined style={{ color: 'var(--warn)', flexShrink: 0, marginTop: 1 }} />
+                      <span>{point}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>无分歧点</span>
+              ),
+            },
+            ...((reportContent?.top_ranked_insights?.length ?? 0) > 0
+              ? [{
+                  key: 'insights',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--info)', textTransform: 'uppercase' as const }}>
+                      关键洞察 ({insightCount})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <div>
+                      {(reportContent!.top_ranked_insights as string[]).map((insight: string, idx: number) => (
+                        <div key={idx} className="rp-modal-list-item">
+                          <BulbOutlined style={{ color: 'var(--info)', flexShrink: 0, marginTop: 1 }} />
+                          <span>{insight}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                }]
+              : []),
+            {
+              key: 'recommendations',
+              label: (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                  建议 ({reportContent?.recommendations?.length || 0})
+                </span>
+              ),
+              style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+              children: (reportContent?.recommendations?.length ?? 0) > 0 ? (
+                <div>
+                  {(reportContent!.recommendations as string[]).map((rec: string, idx: number) => (
+                    <div key={idx} className="rp-modal-list-item">
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', flexShrink: 0 }}>
+                        {String(idx + 1).padStart(2, '0')}
+                      </span>
+                      <span>{rec}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>无建议</span>
+              ),
+            },
+            ...(analyses && analyses.length > 0
+              ? [{
+                  key: 'analyses',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                      第一阶段分析 ({analyses.length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <Collapse
+                      size="small"
+                      style={{ background: 'transparent', border: 'none' }}
+                      items={analyses.map((analysis: any, index: number) => ({
+                        key: index,
+                        label: (
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)' }}>
+                            分析结果 {String(index + 1).padStart(2, '0')}
+                          </span>
+                        ),
+                        style: { background: 'var(--bg-1)', border: '1px solid var(--line-soft)', borderRadius: 0, marginBottom: 4 },
+                        children: (
+                          <pre className="rp-pre">
+                            {typeof analysis.result_content === 'string'
+                              ? analysis.result_content
+                              : JSON.stringify(analysis.result_content, null, 2)}
+                          </pre>
+                        ),
+                      }))}
+                    />
+                  ),
+                }]
+              : []),
+            ...(rankings && rankings.length > 0
+              ? [{
+                  key: 'rankings',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                      第二阶段排名 ({rankings.length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <Collapse
+                      size="small"
+                      style={{ background: 'transparent', border: 'none' }}
+                      items={rankings.map((ranking: any, index: number) => ({
+                        key: index,
+                        label: (
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)' }}>
+                            评价者 {String(index + 1).padStart(2, '0')}
+                          </span>
+                        ),
+                        style: { background: 'var(--bg-1)', border: '1px solid var(--line-soft)', borderRadius: 0, marginBottom: 4 },
+                        children: (
+                          <pre className="rp-pre">{JSON.stringify(ranking, null, 2)}</pre>
+                        ),
+                      }))}
+                    />
+                  ),
+                }]
+              : []),
+            ...(reportContent?.model_contributions && Object.keys(reportContent.model_contributions).length > 0
+              ? [{
+                  key: 'contributions',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                      各模型贡献 ({Object.keys(reportContent.model_contributions).length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <List
+                      size="small"
+                      dataSource={Object.entries(reportContent.model_contributions)}
+                      renderItem={([model, contribution]: [string, any]) => (
+                        <List.Item style={{ borderColor: 'var(--line-soft)' }}>
+                          <Space direction="vertical" style={{ width: '100%' }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--accent)', letterSpacing: '0.06em' }}>
+                              {model}
+                            </span>
+                            <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{contribution}</span>
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  ),
+                }]
+              : []),
+          ]}
+        />
       </Modal>
     </>
   )
 }
 
 export default Reports
-

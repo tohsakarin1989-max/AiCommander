@@ -27,6 +27,11 @@ def _fk_exists(table_name: str, fk_name: str) -> bool:
             return True
     return False
 
+def _supports_alter_fk() -> bool:
+    # SQLite cannot ALTER TABLE to add a foreign key after both sides exist.
+    # The FK is an integrity aid only; app logic does not depend on it locally.
+    return op.get_bind().dialect.name != "sqlite"
+
 def upgrade() -> None:
     if not _table_exists("cases"):
         op.create_table(
@@ -164,7 +169,11 @@ def upgrade() -> None:
             sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
         )
         op.create_index("ix_reports_meeting_id", "reports", ["meeting_id"])
-        if _table_exists("meetings") and not _fk_exists("meetings", "fk_meetings_final_report_id"):
+        if (
+            _supports_alter_fk()
+            and _table_exists("meetings")
+            and not _fk_exists("meetings", "fk_meetings_final_report_id")
+        ):
             op.create_foreign_key(
                 "fk_meetings_final_report_id",
                 "meetings",

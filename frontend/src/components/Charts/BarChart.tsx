@@ -2,9 +2,8 @@
  * 柱状图组件
  * 展示区域分布、热点排名等数据
  */
-import React, { useMemo } from 'react'
+import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
-import type { EChartsOption } from 'echarts'
 
 export interface BarDataItem {
   name: string
@@ -59,7 +58,7 @@ const BarChart: React.FC<BarChartProps> = ({
     [theme, color]
   )
 
-  const option: EChartsOption = useMemo(() => {
+  const option = useMemo(() => {
     const categories = displayData.map((d) => d.name)
     const values = displayData.map((d) => d.value)
 

@@ -4,11 +4,10 @@
 """
 from sqlalchemy.orm import Session
 from app.models.case import Case
-from app.utils.geo import haversine_km
+from app.utils.geo import haversine_km, calculate_bearing, destination_point
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
-import math
 from app.utils.logger import logger
 from app.ai.llm_providers import LLMProvider
 
@@ -107,13 +106,10 @@ class TrajectoryService:
                         speeds.append(speed)
                 
                 # 计算方向角
-                lat1, lon1 = math.radians(p1["latitude"]), math.radians(p1["longitude"])
-                lat2, lon2 = math.radians(p2["latitude"]), math.radians(p2["longitude"])
-                dlon = lon2 - lon1
-                y = math.sin(dlon) * math.cos(lat2)
-                x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-                bearing = math.degrees(math.atan2(y, x))
-                bearing = (bearing + 360) % 360
+                bearing = calculate_bearing(
+                    p1["latitude"], p1["longitude"],
+                    p2["latitude"], p2["longitude"]
+                )
                 directions.append(bearing)
         
         # 识别停留点（速度很低的点）
@@ -213,32 +209,22 @@ class TrajectoryService:
             time_diff_h = last_point["time_from_start"] - second_last["time_from_start"]
         
         # 计算方向
-        lat1, lon1 = math.radians(second_last["latitude"]), math.radians(second_last["longitude"])
-        lat2, lon2 = math.radians(last_point["latitude"]), math.radians(last_point["longitude"])
-        dlon = lon2 - lon1
-        y = math.sin(dlon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-        bearing = math.radians((math.degrees(math.atan2(y, x)) + 360) % 360)
-        
+        bearing_deg = calculate_bearing(
+            second_last["latitude"], second_last["longitude"],
+            last_point["latitude"], last_point["longitude"]
+        )
+
         # 简单线性外推（假设保持当前速度和方向）
         # 预测未来1小时的位置
         if time_diff_h and time_diff_h > 0:
             speed_kmh = dist_km / time_diff_h
             future_distance_km = speed_kmh * 1.0  # 1小时后
-            
-            # 计算预测点坐标（简单球面计算）
-            R = 6371  # 地球半径（km）
-            lat_pred = math.asin(
-                math.sin(lat2) * math.cos(future_distance_km / R) +
-                math.cos(lat2) * math.sin(future_distance_km / R) * math.cos(bearing)
+
+            # 使用共享的目标点计算函数
+            predicted_lat, predicted_lon = destination_point(
+                last_point["latitude"], last_point["longitude"],
+                bearing_deg, future_distance_km
             )
-            lon_pred = lon2 + math.atan2(
-                math.sin(bearing) * math.sin(future_distance_km / R) * math.cos(lat2),
-                math.cos(future_distance_km / R) - math.sin(lat2) * math.sin(lat_pred)
-            )
-            
-            predicted_lat = math.degrees(lat_pred)
-            predicted_lon = math.degrees(lon_pred)
             
             # 如果使用AI，可以进一步优化预测
             if use_ai:

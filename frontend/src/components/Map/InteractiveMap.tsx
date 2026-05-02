@@ -6,14 +6,8 @@
  * - 聚类展示
  * - 轨迹动画
  */
-import React, { useMemo, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
 import ReactECharts from 'echarts-for-react'
-import type { EChartsOption } from 'echarts'
-import * as echarts from 'echarts'
-
-// 注册中国地图（如果需要）
-// import chinaJson from './china.json'
-// echarts.registerMap('china', chinaJson as any)
 
 export interface MapCase {
   id: number
@@ -199,7 +193,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({
   )
 
   // ECharts 配置
-  const option: EChartsOption = useMemo(() => {
+  const option = useMemo(() => {
     const series: any[] = []
 
     // 1. 案件散点图（如果不使用聚类）

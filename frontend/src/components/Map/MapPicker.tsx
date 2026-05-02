@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { CachedTileLayer } from './CachedTileLayer'
 
 interface MapPickerProps {
   lat?: number | null
@@ -32,11 +33,11 @@ const MapPicker: React.FC<MapPickerProps> = ({
     })
     mapRef.current = map
 
-    L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    new CachedTileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
-        attribution: '© OpenStreetMap © CARTO',
-        subdomains: 'abcd',
+        attribution: '© OpenStreetMap contributors',
+        subdomains: 'abc',
         maxZoom: 19,
       }
     ).addTo(map)
@@ -74,6 +75,7 @@ const MapPicker: React.FC<MapPickerProps> = ({
     })
 
     return () => {
+      try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
       markerRef.current = null
