@@ -5,6 +5,5 @@
 - `AI_COMMANDER_UPGRADE_TODO.md`：系统升级路线图与待办。
 - `LLM_INTEGRATION_MAP.md`：大模型能力接入位置和功能边界。
 - `design-reference/`：静态页面原型、视觉参考，不参与构建。
-- `submission-materials/`：项目申报书、承诺书、汇报 PPT、竞赛通知等外部材料。
+- `submission-materials/`：本地私有材料目录，已在 `.gitignore` 中排除，不上传公开仓库。
 - `superpowers/`：历史设计规格和重构方案草稿。
-

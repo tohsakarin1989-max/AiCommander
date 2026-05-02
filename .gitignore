@@ -55,5 +55,8 @@ Thumbs.db
 # Local assistant/app settings
 .claude/settings.local.json
 
+# Private local materials
+docs/submission-materials/
+
 # Superpowers brainstorm sessions
 .superpowers/
