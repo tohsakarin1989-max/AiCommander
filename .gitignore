@@ -37,6 +37,8 @@ frontend/build/
 # Database
 *.db
 *.sqlite
+*.sqlite3
+backend/data/chroma_db/
 
 # Logs
 *.log
@@ -44,5 +46,17 @@ logs/
 
 # OS
 .DS_Store
+._*
+__MACOSX/
+.AppleDouble/
+.LSOverride
 Thumbs.db
 
+# Local assistant/app settings
+.claude/settings.local.json
+
+# Private local materials
+docs/submission-materials/
+
+# Superpowers brainstorm sessions
+.superpowers/

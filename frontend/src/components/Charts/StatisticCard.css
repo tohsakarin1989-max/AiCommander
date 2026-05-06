@@ -1,0 +1,212 @@
+/**
+ * 统计卡片样式
+ */
+.statistic-card {
+  position: relative;
+  padding: 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.statistic-card:hover {
+  transform: translateY(-2px);
+}
+
+/* 主题样式 */
+.statistic-card--light {
+  background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.statistic-card--light:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.statistic-card--dark {
+  background: linear-gradient(145deg, #1e1e3f 0%, #151528 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.statistic-card--dark:hover {
+  box-shadow: 0 4px 16px rgba(0, 212, 255, 0.15);
+}
+
+/* 尺寸 */
+.statistic-card--small {
+  padding: 12px 16px;
+}
+
+.statistic-card--small .statistic-card__title {
+  font-size: 12px;
+}
+
+.statistic-card--small .statistic-card__value {
+  font-size: 24px;
+}
+
+.statistic-card--medium .statistic-card__title {
+  font-size: 14px;
+}
+
+.statistic-card--medium .statistic-card__value {
+  font-size: 32px;
+}
+
+.statistic-card--large {
+  padding: 24px 28px;
+}
+
+.statistic-card--large .statistic-card__title {
+  font-size: 16px;
+}
+
+.statistic-card--large .statistic-card__value {
+  font-size: 42px;
+}
+
+/* 背景光效 */
+.statistic-card__glow {
+  position: absolute;
+  top: -50%;
+  right: -30%;
+  width: 200px;
+  height: 200px;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* 图标 */
+.statistic-card__icon {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 28px;
+  opacity: 0.8;
+}
+
+.statistic-card--small .statistic-card__icon {
+  font-size: 20px;
+  top: 12px;
+  right: 12px;
+}
+
+.statistic-card--large .statistic-card__icon {
+  font-size: 36px;
+}
+
+/* 内容 */
+.statistic-card__content {
+  position: relative;
+  z-index: 1;
+}
+
+.statistic-card__title {
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.statistic-card--light .statistic-card__title {
+  color: #666;
+}
+
+.statistic-card--dark .statistic-card__title {
+  color: #a0a0a0;
+}
+
+.statistic-card__value {
+  font-weight: 700;
+  font-family: 'DIN', 'Roboto Mono', monospace;
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+}
+
+.statistic-card__suffix {
+  font-size: 0.5em;
+  font-weight: 400;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+/* 页脚 */
+.statistic-card__footer {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.statistic-card__trend {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.statistic-card__trend--up {
+  background: rgba(82, 196, 26, 0.15);
+  color: #52c41a;
+}
+
+.statistic-card--dark .statistic-card__trend--up {
+  background: rgba(107, 203, 119, 0.15);
+  color: #6bcb77;
+}
+
+.statistic-card__trend--down {
+  background: rgba(255, 77, 79, 0.15);
+  color: #ff4d4f;
+}
+
+.statistic-card--dark .statistic-card__trend--down {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff6b6b;
+}
+
+.statistic-card__subtitle {
+  opacity: 0.6;
+}
+
+.statistic-card--light .statistic-card__subtitle {
+  color: #999;
+}
+
+.statistic-card--dark .statistic-card__subtitle {
+  color: #888;
+}
+
+/* 边框 */
+.statistic-card__border {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  pointer-events: none;
+}
+
+/* 动画效果 */
+.statistic-card--animated .statistic-card__value {
+  animation: valueGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes valueGlow {
+  from {
+    text-shadow: 0 0 0 transparent;
+  }
+  to {
+    text-shadow: 0 0 20px currentColor;
+  }
+}
+
+.statistic-card--animated.statistic-card--dark .statistic-card__border {
+  animation: borderPulse 3s ease-in-out infinite;
+}
+
+@keyframes borderPulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}

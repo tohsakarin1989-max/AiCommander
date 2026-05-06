@@ -1,19 +1,426 @@
-.dashboard-container {
-  padding: 24px;
-  background: #f0f2f5;
-  min-height: 100vh;
-}
+/* =========================================================
+   DASHBOARD — 实时指挥大屏
+   设计基准：docs/design-reference/aicommand/Dashboard.html + shell.css
+   使用 design-system.css 全局 token
+   ========================================================= */
 
-.dashboard-header {
+/* ── 页面容器 ─────────────────────────────────────────────── */
+.db-main {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding: var(--gap) var(--pad);
+  overflow: hidden;
+}
+
+/* ── 主网格：地图(1fr) + 右侧导轨(420px) ─────────────────── */
+.db-grid {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: var(--gap);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 地图卡片 ────────────────────────────────────────────── */
+/* 覆盖 .card 使地图撑满高度 */
+.db-grid > .map-card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.db-grid > .map-card .card-body {
+  padding: 0;
+  position: relative;
+  background: radial-gradient(ellipse at 50% 60%, oklch(0.20 0.015 250) 0%, var(--bg-0) 80%);
+  flex: 1;
+  min-height: 500px;
+}
+
+.map-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: oklch(0.175 0.012 250);
+}
+
+/* HUD（左上角浮层）*/
+.map-hud {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.map-hud .pod {
+  padding: 5px 10px;
+  background: oklch(0.12 0.012 250 / 0.72);
+  border: 1px solid var(--line);
+}
+
+.map-hud .pod .n {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 地图控件（右上角）*/
+.map-controls {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  display: flex;
+  gap: 4px;
+}
+
+.map-controls button {
+  width: 32px;
+  height: 32px;
+  background: oklch(0.12 0.012 250 / 0.72);
+  border: 1px solid var(--line);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.map-controls button:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.map-controls button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* KPI Pills（右上，紧贴控件下方）*/
+.map-kpis {
+  position: absolute;
+  top: 58px;
+  right: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  min-width: 440px;
+}
+
+/* 图例底部 */
+.map-legend-bottom {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 14px;
+  background: oklch(0.12 0.012 250 / 0.78);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.map-legend-bottom .sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  display: inline-block;
+  vertical-align: 0;
+}
+
+.map-legend-bottom .sw.sq {
+  border-radius: 0;
+}
+
+.map-legend-bottom .sw.dm {
+  transform: rotate(45deg);
+  border-radius: 0;
+}
+
+.map-legend-bottom .sw.tr {
+  background: transparent !important;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--warn);
+  width: 0;
+  height: 0;
+  border-radius: 0;
+}
+
+/* ── 右侧导轨 ─────────────────────────────────────────────── */
+.db-rail {
+  display: grid;
+  /* 趋势固定 / 饼图固定 / 警报固定 / 巡逻规划占满剩余 */
+  grid-template-rows: auto auto auto 1fr;
+  gap: var(--gap);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 确保每张卡片不会撑破导轨 */
+.db-rail > .card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 饼图卡片布局 ─────────────────────────────────────────── */
+.db-pie-card .db-pie-body {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  padding: 14px 16px 16px;
   align-items: center;
-  margin-bottom: 24px;
 }
 
-.dashboard-header h1 {
-  margin: 0;
-  font-size: 24px;
+/* ── 巡逻规划卡片 ────────────────────────────────────────── */
+.db-patrol-body {
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.patrol-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.patrol-row.active {
+  border-color: oklch(0.78 0.11 220 / 0.25);
+  background: oklch(0.78 0.11 220 / 0.05);
+}
+
+.patrol-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.patrol-dot--in_progress {
+  background: oklch(0.78 0.11 220);
+  box-shadow: 0 0 6px oklch(0.78 0.11 220 / 0.6);
+}
+
+.patrol-dot--planned {
+  background: var(--warn);
+  opacity: 0.7;
+}
+
+.patrol-dot--completed {
+  background: var(--ok);
+  opacity: 0.5;
+}
+
+.patrol-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.patrol-area {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.patrol-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-top: 1px;
+}
+
+.patrol-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 2px 7px;
+  border: 1px solid;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+.patrol-badge--in_progress {
+  color: oklch(0.78 0.11 220);
+  border-color: oklch(0.78 0.11 220 / 0.4);
+  background: oklch(0.78 0.11 220 / 0.08);
+}
+
+.patrol-badge--planned {
+  color: var(--warn);
+  border-color: oklch(0.80 0.16 75 / 0.4);
+  background: oklch(0.80 0.16 75 / 0.08);
+}
+
+.patrol-badge--completed {
+  color: var(--ink-3);
+  border-color: var(--line);
+  background: transparent;
+}
+
+.patrol-section-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-4);
+  text-transform: uppercase;
+  padding: 8px 8px 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.patrol-risk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+}
+
+.patrol-risk-bar {
+  width: 3px;
+  min-height: 12px;
+  max-height: 32px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.patrol-score {
+  font-family: var(--mono);
+  font-size: 14px;
   font-weight: 600;
+  color: var(--warn);
+  min-width: 28px;
+  text-align: right;
 }
 
+/* ── card-head 内的弹性间距 ─────────────────────────────────── */
+.db-spacer {
+  flex: 1;
+}
+
+/* ── 播放/暂停控件按钮 ────────────────────────────────────── */
+.db-ctrl-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--mono);
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.db-ctrl-btn:hover,
+.db-ctrl-btn--active {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* WS 断开 chip 样式 */
+.chip.db-ws-err {
+  color: var(--err);
+  border-color: oklch(0.70 0.20 25 / 0.4);
+}
+
+/* ── 叠加层模式切换按钮组 ─────────────────────────────────── */
+.db-overlay-btns {
+  display: flex;
+  gap: 1px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.db-overlay-btn {
+  padding: 0 10px;
+  height: 28px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  background: transparent;
+  border: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  border-right: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.db-overlay-btn:last-child {
+  border-right: none;
+}
+
+.db-overlay-btn:hover {
+  background: oklch(0.32 0.014 250 / 0.3);
+  color: var(--ink-1);
+}
+
+.db-overlay-btn.active {
+  background: oklch(0.78 0.14 45 / 0.12);
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+/* 全屏时，db-main 铺满屏幕 */
+:fullscreen .db-main,
+:-webkit-full-screen .db-main {
+  padding: var(--gap) var(--pad);
+  background: var(--bg-0);
+}
+
+/* 全屏激活时，全屏按钮高亮 */
+.map-controls button.active {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* ── 响应式收缩 ───────────────────────────────────────────── */
+@media (max-width: 1400px) {
+  .db-grid {
+    grid-template-columns: 1fr 380px;
+  }
+  .map-kpis {
+    min-width: 380px;
+    grid-template-columns: repeat(2, 1fr);
+    top: 58px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .db-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+  .db-rail {
+    grid-template-rows: auto auto;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .db-rail {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+}

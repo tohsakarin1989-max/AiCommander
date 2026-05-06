@@ -115,7 +115,14 @@ uvicorn app.main:app --reload
 
 ### 详细说明
 
-更多启动选项和故障排除，请查看 [QUICKSTART.md](./QUICKSTART.md)
+更多启动选项和故障排除，请查看 [QUICKSTART.md](./QUICKSTART.md)。
+
+## 文档入口
+
+- [QUICKSTART.md](./QUICKSTART.md)：本地启动、测试和常见问题。
+- [docs/README.md](./docs/README.md)：升级路线图、大模型接入边界和设计参考。
+
+`docs/submission-materials/` 为本地私有汇报材料目录，已从 Git 跟踪中排除，不随公开仓库发布。
 
 ## 项目结构
 
@@ -130,5 +137,3 @@ AiCommander/
 ## 开发指南
 
 详细开发指南请参考项目文档。
-
-# AiCommander

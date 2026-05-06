@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, List, Optional
 from app.utils.logger import logger
 from app.utils.mcp_helper import MCPHelper
@@ -82,11 +83,6 @@ class MapMCPService:
         keywords: str = "加油站|油库|管线|设施",
         radius: int = 1000
     ) -> Dict:
-        """
-        搜索周边POI（兴趣点）
-        用于案件分析：识别案件周边的关键设施
-        注意：此方法需要通过MCP客户端调用高德地图MCP工具
-        """
         """
         搜索周边POI（兴趣点）
         用于案件分析：识别案件周边的关键设施
@@ -243,50 +239,52 @@ class MapMCPService:
         """
         try:
             location_str = f"{longitude},{latitude}"
-            
-            # 1. 获取位置信息
-            location_info = await MapMCPService.get_location_info(latitude, longitude)
-            
-            # 2. 搜索周边村屯、社区（自适应半径，目标至少10个）
-            # 偏远地区可能村屯稀少，需要扩大范围
-            villages = await MapMCPService.search_with_adaptive_radius(
-                latitude,
-                longitude,
-                keywords="村庄|村|社区|居民区|小区|屯|镇|乡",
-                min_radius=min_village_radius,
-                max_radius=max_village_radius,
-                target_count=10,  # 目标找到至少10个村屯
-                step=10000  # 每次扩大10公里
-            )
-            
-            # 3. 搜索加油站（自适应半径，目标至少5个）
-            gas_stations = await MapMCPService.search_with_adaptive_radius(
-                latitude,
-                longitude,
-                keywords="加油站|加气站",
-                min_radius=min_gas_radius,
-                max_radius=max_gas_radius,
-                target_count=5,  # 目标找到至少5个加油站
-                step=10000
-            )
-            
-            # 4. 搜索炼化点、化工厂（自适应半径，目标至少3个）
-            refineries = await MapMCPService.search_with_adaptive_radius(
-                latitude,
-                longitude,
-                keywords="炼化|炼油|化工厂|石化|油库|储油|炼油厂",
-                min_radius=min_refinery_radius,
-                max_radius=max_refinery_radius,
-                target_count=3,  # 目标找到至少3个炼化点
-                step=15000  # 每次扩大15公里
-            )
-            
-            # 5. 搜索路口、道路（固定范围，因为路口相对较多）
-            intersections = await MapMCPService.search_nearby_pois(
-                latitude,
-                longitude,
-                keywords="路口|交叉口|道路|公路|国道|省道|高速|高速公路",
-                radius=20000  # 路口搜索20公里
+
+            # 并行执行所有 MCP 查询以提高性能
+            location_info, villages, gas_stations, refineries, intersections = await asyncio.gather(
+                # 1. 获取位置信息
+                MapMCPService.get_location_info(latitude, longitude),
+
+                # 2. 搜索周边村屯、社区（自适应半径，目标至少10个）
+                MapMCPService.search_with_adaptive_radius(
+                    latitude,
+                    longitude,
+                    keywords="村庄|村|社区|居民区|小区|屯|镇|乡",
+                    min_radius=min_village_radius,
+                    max_radius=max_village_radius,
+                    target_count=10,
+                    step=10000
+                ),
+
+                # 3. 搜索加油站（自适应半径，目标至少5个）
+                MapMCPService.search_with_adaptive_radius(
+                    latitude,
+                    longitude,
+                    keywords="加油站|加气站",
+                    min_radius=min_gas_radius,
+                    max_radius=max_gas_radius,
+                    target_count=5,
+                    step=10000
+                ),
+
+                # 4. 搜索炼化点、化工厂（自适应半径，目标至少3个）
+                MapMCPService.search_with_adaptive_radius(
+                    latitude,
+                    longitude,
+                    keywords="炼化|炼油|化工厂|石化|油库|储油|炼油厂",
+                    min_radius=min_refinery_radius,
+                    max_radius=max_refinery_radius,
+                    target_count=3,
+                    step=15000
+                ),
+
+                # 5. 搜索路口、道路（固定范围）
+                MapMCPService.search_nearby_pois(
+                    latitude,
+                    longitude,
+                    keywords="路口|交叉口|道路|公路|国道|省道|高速|高速公路",
+                    radius=20000
+                ),
             )
             
             # 计算实际使用的搜索范围统计

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>巡逻部署 · AiCommander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage"><div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="Dashboard.html">大屏 <span class="num">01</span></a>
+      <a href="Cases.html">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html">研判 <span class="num">04</span></a>
+      <a href="Gangs.html">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html" class="cur">巡逻 <span class="num">06</span></a>
+    </nav>
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+<div class="page page-patrol">
+  <div class="page-title">
+    <h1>巡逻部署</h1>
+    <div class="sub">PATROL COMMAND · 3 路在编 · 今日 11 班次 · 覆盖率 78%</div>
+    <div style="margin-left:auto;display:flex;gap:10px;">
+      <button class="btn-ghost">排班表</button>
+      <button class="btn-ghost">历史记录</button>
+      <button class="btn-accent">＋ 派遣新任务</button>
+    </div>
+  </div>
+
+  <div class="patrol-grid">
+    <!-- Squad roster -->
+    <div class="card">
+      <div class="card-head"><span class="ico">◎</span><span class="ti">巡逻班组 · 当前状态</span><span class="spacer"></span><span class="chip live"><span class="dot"></span>实时</span></div>
+      <div class="card-body" style="padding:0;overflow-y:auto;">
+        
+          <div class="squad-row on">
+            <div class="sq-id">巡-A3</div>
+            <div class="sq-members"><div class="sq-ct">4 人</div><div class="sq-names">赵海 · 王磊 · 李斌</div></div>
+            <div class="sq-area">滨城北 α 片区</div>
+            <div class="sq-status">
+              <div class="sq-st">执行中 · 2h 14m</div>
+              <div class="sq-loc">14:22 抵达 K112</div>
+            </div>
+            <div class="sq-action">
+              <button class="btn-ghost-sm">呼叫</button><button class="btn-ghost-sm">回传</button>
+              
+              
+              
+            </div>
+          </div>
+        
+          <div class="squad-row on">
+            <div class="sq-id">巡-B1</div>
+            <div class="sq-members"><div class="sq-ct">3 人</div><div class="sq-names">张伟 · 周强</div></div>
+            <div class="sq-area">G18 滨城北-广饶</div>
+            <div class="sq-status">
+              <div class="sq-st">执行中 · 1h 52m</div>
+              <div class="sq-loc">14:28 通过 K43</div>
+            </div>
+            <div class="sq-action">
+              <button class="btn-ghost-sm">呼叫</button><button class="btn-ghost-sm">回传</button>
+              
+              
+              
+            </div>
+          </div>
+        
+          <div class="squad-row idle">
+            <div class="sq-id">巡-C2</div>
+            <div class="sq-members"><div class="sq-ct">4 人</div><div class="sq-names">陈志 · 孙明 · 吴峰</div></div>
+            <div class="sq-area">垦利 β 片区</div>
+            <div class="sq-status">
+              <div class="sq-st">待命 · 15 分钟后出发</div>
+              <div class="sq-loc">基地 · 整备</div>
+            </div>
+            <div class="sq-action">
+              
+              <button class="btn-accent-sm">立即出发</button>
+              
+              
+            </div>
+          </div>
+        
+          <div class="squad-row done">
+            <div class="sq-id">巡-D4</div>
+            <div class="sq-members"><div class="sq-ct">2 人</div><div class="sq-names">郑涛 · 林浩</div></div>
+            <div class="sq-area">寿光 γ 片区</div>
+            <div class="sq-status">
+              <div class="sq-st">完成 · 11:40</div>
+              <div class="sq-loc">返回基地</div>
+            </div>
+            <div class="sq-action">
+              
+              
+              <button class="btn-ghost-sm">报告</button>
+              
+            </div>
+          </div>
+        
+          <div class="squad-row off">
+            <div class="sq-id">巡-E5</div>
+            <div class="sq-members"><div class="sq-ct">2 人</div><div class="sq-names">许诚 · 钱斌</div></div>
+            <div class="sq-area">机动</div>
+            <div class="sq-status">
+              <div class="sq-st">休整</div>
+              <div class="sq-loc">—</div>
+            </div>
+            <div class="sq-action">
+              
+              
+              
+              <button class="btn-ghost-sm">调派</button>
+            </div>
+          </div>
+        
+      </div>
+    </div>
+
+    <!-- Today's schedule -->
+    <div class="card">
+      <div class="card-head"><span class="ico">⏱</span><span class="ti">今日排班时间线</span><span class="spacer"></span><span class="chip">24h</span></div>
+      <div class="card-body" style="padding:18px 20px 14px;">
+        <div class="timeline-hours">
+          <span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>24:00</span>
+        </div>
+        <div class="timeline-lanes">
+          
+            <div class="lane">
+              <div class="lane-name">巡-A3</div>
+              <div class="lane-track">
+                <div class="lane-bar" style="left:8.333333333333332%;width:16.666666666666664%;background:oklch(0.78 0.14 45);">α片夜巡</div><div class="lane-bar" style="left:41.66666666666667%;width:16.666666666666664%;background:oklch(0.78 0.14 45);">α片午巡</div><div class="lane-bar" style="left:83.33333333333334%;width:8.333333333333332%;background:oklch(0.78 0.14 45);">α片补防</div>
+                <div class="now-line" style="left:60.20833333333333%"></div>
+              </div>
+            </div>
+          
+            <div class="lane">
+              <div class="lane-name">巡-B1</div>
+              <div class="lane-track">
+                <div class="lane-bar" style="left:25%;width:16.666666666666664%;background:oklch(0.78 0.11 220);">G18 早巡</div><div class="lane-bar" style="left:54.166666666666664%;width:16.666666666666664%;background:oklch(0.78 0.11 220);">G18 午巡</div>
+                <div class="now-line" style="left:60.20833333333333%"></div>
+              </div>
+            </div>
+          
+            <div class="lane">
+              <div class="lane-name">巡-C2</div>
+              <div class="lane-track">
+                <div class="lane-bar" style="left:0%;width:16.666666666666664%;background:oklch(0.78 0.14 155);">β片夜巡</div><div class="lane-bar" style="left:33.33333333333333%;width:16.666666666666664%;background:oklch(0.78 0.14 155);">β片晨巡</div><div class="lane-bar" style="left:62.5%;width:16.666666666666664%;background:oklch(0.78 0.14 155);">β片午巡</div>
+                <div class="now-line" style="left:60.20833333333333%"></div>
+              </div>
+            </div>
+          
+            <div class="lane">
+              <div class="lane-name">巡-D4</div>
+              <div class="lane-track">
+                <div class="lane-bar" style="left:29.166666666666668%;width:16.666666666666664%;background:oklch(0.80 0.16 75);">γ片巡查</div>
+                <div class="now-line" style="left:60.20833333333333%"></div>
+              </div>
+            </div>
+          
+            <div class="lane">
+              <div class="lane-name">巡-E5</div>
+              <div class="lane-track">
+                
+                <div class="now-line" style="left:60.20833333333333%"></div>
+              </div>
+            </div>
+          
+        </div>
+        <div class="timeline-footer">
+          <span class="chip live"><span class="dot"></span>当前 14:27</span>
+          <span>今日已完成 6 班次 · 进行中 2 · 待命 3</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coverage heatmap -->
+    <div class="card">
+      <div class="card-head"><span class="ico">◈</span><span class="ti">巡逻覆盖热力</span><span class="spacer"></span><span class="chip">近 7 天</span></div>
+      <div class="card-body" style="padding:16px;">
+        <div class="cov-grid">
+          
+            <div class="cov-row">
+              <div class="cov-day">周一</div>
+              <div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周一 0:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周一 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周一 2:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周一 3:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 4:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 5:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周一 6:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 7:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周一 8:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 9:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 10:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 11:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 12:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 13:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 14:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 15:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周一 17:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周一 19:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周一 20:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周一 21:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周一 22:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周一 23:00 · 0人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周二</div>
+              <div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周二 0:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周二 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周二 2:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 3:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周二 4:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 5:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 6:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 7:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 8:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 9:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 10:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 11:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 12:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 13:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 14:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 15:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周二 17:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周二 19:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周二 20:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周二 21:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周二 22:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周二 23:00 · 1人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周三</div>
+              <div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周三 0:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周三 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周三 2:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 3:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 4:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 5:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 6:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 7:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周三 8:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 9:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 10:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 11:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 12:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 13:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 14:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 15:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周三 16:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 17:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 19:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周三 20:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周三 21:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周三 22:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周三 23:00 · 1人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周四</div>
+              <div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周四 0:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周四 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周四 2:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周四 3:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 4:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 5:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 6:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 7:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 8:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 9:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 10:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 11:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 12:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 13:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 14:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 15:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周四 17:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周四 19:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周四 20:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 21:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周四 22:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周四 23:00 · 0人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周五</div>
+              <div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周五 0:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周五 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周五 2:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周五 3:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周五 4:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 5:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 6:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 7:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周五 8:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 9:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周五 10:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 11:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周五 12:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 13:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 14:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 15:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.85)" title="周五 17:00 · 4人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 18:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周五 19:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周五 20:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周五 21:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周五 22:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周五 23:00 · 1人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周六</div>
+              <div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周六 0:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周六 1:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 2:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 3:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 4:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 5:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 6:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 7:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 8:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 9:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 10:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 11:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 12:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 13:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 14:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 15:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周六 17:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周六 19:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周六 20:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 21:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周六 22:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周六 23:00 · 1人"></div>
+            </div>
+          
+            <div class="cov-row">
+              <div class="cov-day">周日</div>
+              <div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周日 0:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周日 1:00 · 0人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周日 2:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 3:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 4:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 5:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周日 6:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 7:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周日 8:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 9:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 10:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 11:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 12:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 13:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 14:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 15:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周日 16:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.55)" title="周日 17:00 · 3人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 18:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周日 19:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周日 20:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.18)" title="周日 21:00 · 1人"></div><div class="cov-cell" style="background:oklch(0.78 0.14 45 / 0.35)" title="周日 22:00 · 2人"></div><div class="cov-cell" style="background:oklch(0.20 0.014 250)" title="周日 23:00 · 0人"></div>
+            </div>
+          
+          <div class="cov-row header">
+            <div class="cov-day"></div>
+            <div class="cov-hdr" style="grid-column:span 2;">00</div><div class="cov-hdr" style="grid-column:span 2;">02</div><div class="cov-hdr" style="grid-column:span 2;">04</div><div class="cov-hdr" style="grid-column:span 2;">06</div><div class="cov-hdr" style="grid-column:span 2;">08</div><div class="cov-hdr" style="grid-column:span 2;">10</div><div class="cov-hdr" style="grid-column:span 2;">12</div><div class="cov-hdr" style="grid-column:span 2;">14</div><div class="cov-hdr" style="grid-column:span 2;">16</div><div class="cov-hdr" style="grid-column:span 2;">18</div><div class="cov-hdr" style="grid-column:span 2;">20</div><div class="cov-hdr" style="grid-column:span 2;">22</div>
+          </div>
+        </div>
+        <div class="cov-legend">
+          <span>低</span>
+          <span class="cov-sw" style="background:oklch(0.20 0.014 250)"></span><span class="cov-sw" style="background:oklch(0.78 0.14 45 / 0.18)"></span><span class="cov-sw" style="background:oklch(0.78 0.14 45 / 0.35)"></span><span class="cov-sw" style="background:oklch(0.78 0.14 45 / 0.55)"></span><span class="cov-sw" style="background:oklch(0.78 0.14 45 / 0.85)"></span>
+          <span>高</span>
+          <span style="margin-left:auto;color:var(--warn);">⚠ 夜间 01-04 仍有缺口</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI recommendations -->
+    <div class="card">
+      <div class="card-head"><span class="ico">⚡</span><span class="ti">AI 部署建议</span><span class="spacer"></span><span class="chip accent">基于最新研判</span></div>
+      <div class="card-body" style="padding:16px;">
+        <div class="rec-card p0">
+          <div class="rec-tag">P0 · 立即调整</div>
+          <div class="rec-title">滨城北 α 片区 · 夜间 02-04 增派 1 班</div>
+          <div class="rec-body">当前该时段覆盖为 0，与夜鹰作案峰值 100% 重合。建议 A3 班延长至 05:00，或新增 F6 班夜间专项。</div>
+          <div class="rec-foot"><span>预计拦截率 <b>+34%</b></span><button class="btn-accent-sm">采纳并排班</button></div>
+        </div>
+        <div class="rec-card p1">
+          <div class="rec-tag">P1 · 本周落地</div>
+          <div class="rec-title">G18 滨城北入口 · 夜间固定卡点</div>
+          <div class="rec-body">覆盖夜鹰惯用逃逸路线。建议与高速交警联动 02:00-05:00 值班。</div>
+          <div class="rec-foot"><span>预计拦截率 <b>+22%</b></span><button class="btn-ghost-sm">采纳</button></div>
+        </div>
+        <div class="rec-card p2">
+          <div class="rec-tag">P2 · 观察</div>
+          <div class="rec-title">寿光销赃点 · 潍坊分局联动</div>
+          <div class="rec-body">同步检查 3 家汽修厂，切断下游链路。</div>
+          <div class="rec-foot"><span>断链</span><button class="btn-ghost-sm">发函</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div></div>
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk"><label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)"></div>
+  <div class="tk"><label>密度</label><div class="seg" id="seg-density">
+    <button data-v="comfortable" class="on">宽松</button><button data-v="compact">紧凑</button></div></div>
+  <div class="tk"><label>环境遥测</label><div class="seg" id="seg-telemetry">
+    <button data-v="on" class="on">显示</button><button data-v="off">收起</button></div></div>
+  <div class="tk"><label>动效</label><div class="seg" id="seg-animation">
+    <button data-v="normal" class="on">正常</button><button data-v="subtle">轻微</button><button data-v="off">关闭</button></div></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

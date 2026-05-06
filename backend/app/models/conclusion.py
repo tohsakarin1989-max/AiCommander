@@ -8,6 +8,7 @@ class Conclusion(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     case_id = Column(Integer, nullable=False, index=True)
+    meeting_id = Column(String(50), nullable=True, index=True)  # 关联的会议ID
     status = Column(String(20), default="draft")  # draft/published/needs_review/rejected/flagged
     confidence = Column(Float, default=0.0)
     risk_level = Column(String(20), default="unknown")  # low/medium/high/unknown

@@ -60,7 +60,7 @@ def get_models(role: Optional[str] = None, db: Session = Depends(get_db)):
     models = AIModelService.get_models(db, role=role)
     return models
 
-@router.get("/{model_id}", response_model=ModelResponse)
+@router.get("/{model_id:int}", response_model=ModelResponse)
 def get_model(model_id: int, db: Session = Depends(get_db)):
     """获取单个模型"""
     model = AIModelService.get_model(db, model_id)
@@ -68,7 +68,7 @@ def get_model(model_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="模型不存在")
     return model
 
-@router.put("/{model_id}", response_model=ModelResponse)
+@router.put("/{model_id:int}", response_model=ModelResponse)
 def update_model(
     model_id: int,
     model_update: ModelUpdate,
@@ -81,7 +81,7 @@ def update_model(
         raise HTTPException(status_code=404, detail="模型不存在")
     return model
 
-@router.delete("/{model_id}")
+@router.delete("/{model_id:int}")
 def delete_model(model_id: int, db: Session = Depends(get_db)):
     """删除模型"""
     success = AIModelService.delete_model(db, model_id)
@@ -89,7 +89,7 @@ def delete_model(model_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="模型不存在")
     return {"message": "删除成功"}
 
-@router.post("/{model_id}/set-default")
+@router.post("/{model_id:int}/set-default")
 def set_default_moderator(model_id: int, db: Session = Depends(get_db)):
     """设置默认主持人模型"""
     success = AIModelService.set_default_moderator(db, model_id)
@@ -97,7 +97,7 @@ def set_default_moderator(model_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="设置失败")
     return {"message": "设置成功"}
 
-@router.post("/{model_id}/test")
+@router.post("/{model_id:int}/test")
 def test_model(model_id: int, db: Session = Depends(get_db)):
     """测试模型连接"""
     model = AIModelService.get_model(db, model_id)
@@ -105,4 +105,3 @@ def test_model(model_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="模型不存在")
     result = AIModelService.test_model_connection(model)
     return result
-

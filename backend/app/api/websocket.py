@@ -1,12 +1,12 @@
 """
 WebSocket实时通信API
-用于实时指挥大屏的数据推送
+用于实时指挥大屏的数据推送和会议进度推送
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import List, Dict
+from typing import List, Dict, Optional
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.utils.logger import logger
 from app.database import SessionLocal
 from app.models.case import Case
@@ -18,41 +18,41 @@ router = APIRouter()
 
 class ConnectionManager:
     """WebSocket连接管理器"""
-    
+
     def __init__(self):
         self.active_connections: List[WebSocket] = []
-    
+
     async def connect(self, websocket: WebSocket):
         """接受新的WebSocket连接"""
         await websocket.accept()
         self.active_connections.append(websocket)
         logger.info(f"新的WebSocket连接，当前连接数: {len(self.active_connections)}")
-    
+
     def disconnect(self, websocket: WebSocket):
         """断开WebSocket连接"""
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
         logger.info(f"WebSocket连接断开，当前连接数: {len(self.active_connections)}")
-    
+
     async def broadcast(self, message: Dict):
         """向所有连接的客户端广播消息"""
         if not self.active_connections:
             return
-        
+
         message_str = json.dumps(message, ensure_ascii=False, default=str)
         disconnected = []
-        
+
         for connection in self.active_connections:
             try:
                 await connection.send_text(message_str)
             except Exception as e:
                 logger.error(f"发送WebSocket消息失败: {e}")
                 disconnected.append(connection)
-        
+
         # 清理断开的连接
         for conn in disconnected:
             self.disconnect(conn)
-    
+
     async def send_personal_message(self, message: Dict, websocket: WebSocket):
         """向特定客户端发送消息"""
         try:
@@ -62,7 +62,83 @@ class ConnectionManager:
             logger.error(f"发送个人消息失败: {e}")
 
 
+class MeetingConnectionManager:
+    """会议WebSocket连接管理器 - 按会议ID分组管理连接"""
+
+    def __init__(self):
+        # {meeting_id: [WebSocket, ...]}
+        self.meeting_connections: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, meeting_id: str):
+        """接受新的会议WebSocket连接"""
+        await websocket.accept()
+        if meeting_id not in self.meeting_connections:
+            self.meeting_connections[meeting_id] = []
+        self.meeting_connections[meeting_id].append(websocket)
+        logger.info(f"会议 {meeting_id} 新连接，当前该会议连接数: {len(self.meeting_connections[meeting_id])}")
+
+    def disconnect(self, websocket: WebSocket, meeting_id: str):
+        """断开会议WebSocket连接"""
+        if meeting_id in self.meeting_connections:
+            if websocket in self.meeting_connections[meeting_id]:
+                self.meeting_connections[meeting_id].remove(websocket)
+            if not self.meeting_connections[meeting_id]:
+                del self.meeting_connections[meeting_id]
+        logger.info(f"会议 {meeting_id} 连接断开")
+
+    async def broadcast_to_meeting(self, meeting_id: str, message: Dict):
+        """向特定会议的所有连接广播消息"""
+        if meeting_id not in self.meeting_connections:
+            return
+
+        message_str = json.dumps(message, ensure_ascii=False, default=str)
+        disconnected = []
+
+        for connection in self.meeting_connections[meeting_id]:
+            try:
+                await connection.send_text(message_str)
+            except Exception as e:
+                logger.error(f"发送会议消息失败: {e}")
+                disconnected.append(connection)
+
+        # 清理断开的连接
+        for conn in disconnected:
+            self.disconnect(conn, meeting_id)
+
+    async def send_personal_message(self, message: Dict, websocket: WebSocket):
+        """向特定客户端发送消息"""
+        try:
+            message_str = json.dumps(message, ensure_ascii=False, default=str)
+            await websocket.send_text(message_str)
+        except Exception as e:
+            logger.error(f"发送个人消息失败: {e}")
+
+    def get_connection_count(self, meeting_id: str) -> int:
+        """获取会议连接数"""
+        return len(self.meeting_connections.get(meeting_id, []))
+
+
 manager = ConnectionManager()
+meeting_manager = MeetingConnectionManager()
+
+
+async def broadcast_meeting_progress(meeting_id: str, stage: int, stage_name: str,
+                                     status: str, progress: int,
+                                     details: Optional[Dict] = None):
+    """广播会议进度更新"""
+    message = {
+        "type": "meeting_progress",
+        "meeting_id": meeting_id,
+        "timestamp": datetime.now().isoformat(),
+        "data": {
+            "stage": stage,
+            "stage_name": stage_name,
+            "status": status,  # 'started', 'running', 'completed', 'failed'
+            "progress": progress,  # 0-100
+            "details": details or {}
+        }
+    }
+    await meeting_manager.broadcast_to_meeting(meeting_id, message)
 
 
 @router.websocket("/ws/dashboard")
@@ -186,6 +262,74 @@ async def send_dashboard_update(websocket: WebSocket):
         db.close()
 
 
+@router.websocket("/ws/meeting/{meeting_id}")
+async def websocket_meeting(websocket: WebSocket, meeting_id: str):
+    """
+    会议进度WebSocket端点
+    推送会议各阶段的进度信息
+    """
+    await meeting_manager.connect(websocket, meeting_id)
+
+    try:
+        # 发送连接确认
+        await meeting_manager.send_personal_message({
+            "type": "connected",
+            "meeting_id": meeting_id,
+            "timestamp": datetime.now().isoformat(),
+            "message": f"已连接到会议 {meeting_id} 的进度通道"
+        }, websocket)
+
+        # 获取当前会议状态
+        await send_meeting_status(websocket, meeting_id)
+
+        # 保持连接
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                message = json.loads(data)
+                if message.get("type") == "ping":
+                    await meeting_manager.send_personal_message({"type": "pong"}, websocket)
+                elif message.get("type") == "get_status":
+                    await send_meeting_status(websocket, meeting_id)
+            except asyncio.TimeoutError:
+                # 发送心跳
+                await meeting_manager.send_personal_message({"type": "heartbeat"}, websocket)
+            except WebSocketDisconnect:
+                break
+
+    except WebSocketDisconnect:
+        meeting_manager.disconnect(websocket, meeting_id)
+    except Exception as e:
+        logger.error(f"会议WebSocket错误: {e}")
+        meeting_manager.disconnect(websocket, meeting_id)
+
+
+async def send_meeting_status(websocket: WebSocket, meeting_id: str):
+    """发送会议当前状态"""
+    db = SessionLocal()
+    try:
+        from app.models.meeting import Meeting
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        if meeting:
+            await meeting_manager.send_personal_message({
+                "type": "meeting_status",
+                "meeting_id": meeting_id,
+                "timestamp": datetime.now().isoformat(),
+                "data": {
+                    "status": meeting.status,
+                    "created_at": meeting.created_at.isoformat() if meeting.created_at else None,
+                    "completed_at": meeting.completed_at.isoformat() if meeting.completed_at else None,
+                }
+            }, websocket)
+        else:
+            await meeting_manager.send_personal_message({
+                "type": "error",
+                "message": f"会议 {meeting_id} 不存在"
+            }, websocket)
+    finally:
+        db.close()
+
+
 @router.post("/ws/broadcast")
 async def broadcast_message(message: Dict):
     """
@@ -194,6 +338,19 @@ async def broadcast_message(message: Dict):
     """
     await manager.broadcast(message)
     return {"status": "broadcasted", "connections": len(manager.active_connections)}
+
+
+@router.post("/ws/meeting/{meeting_id}/broadcast")
+async def broadcast_meeting_message(meeting_id: str, message: Dict):
+    """
+    广播消息到特定会议的所有连接客户端
+    """
+    await meeting_manager.broadcast_to_meeting(meeting_id, message)
+    return {
+        "status": "broadcasted",
+        "meeting_id": meeting_id,
+        "connections": meeting_manager.get_connection_count(meeting_id)
+    }
 
 
 

@@ -5,6 +5,7 @@ from datetime import datetime, date, time
 from app.utils.geo import haversine_km, bounding_box
 from app.repositories.case_repository import CaseRepository
 from app.config import settings
+from app.services.case_quality_service import CaseQualityService
 
 class CaseService:
     
@@ -58,6 +59,22 @@ class CaseService:
         vehicle_info: dict = None,
         upstream_source: str = None,
         downstream_destination: str = None,
+        report_time: datetime = None,
+        report_unit: str = None,
+        source_type: str = None,
+        source_detail: str = None,
+        police_reported: bool = None,
+        case_filed: bool = None,
+        police_officer: str = None,
+        police_phone: str = None,
+        security_officers: list = None,
+        oil_nature: str = None,
+        water_cut: float = None,
+        vehicle_handling: str = None,
+        person_handling: str = None,
+        oil_handling: str = None,
+        operation_role: str = None,
+        current_stage: str = None,
     ) -> Case:
         """创建案件：
         - 如果未提供案件编号，则按日期+当天排序自动生成（YYYYMMDD-001）
@@ -88,8 +105,25 @@ class CaseService:
             vehicle_info=vehicle_info,
             upstream_source=upstream_source,
             downstream_destination=downstream_destination,
+            report_time=report_time,
+            report_unit=report_unit,
+            source_type=source_type,
+            source_detail=source_detail,
+            police_reported=police_reported,
+            case_filed=case_filed,
+            police_officer=police_officer,
+            police_phone=police_phone,
+            security_officers=security_officers,
+            oil_nature=oil_nature,
+            water_cut=water_cut,
+            vehicle_handling=vehicle_handling,
+            person_handling=person_handling,
+            oil_handling=oil_handling,
+            operation_role=operation_role,
+            current_stage=current_stage or "reported",
         )
         repo.add(case)
+        CaseQualityService.refresh_case_quality(db, case)
         
         # 自动索引到向量数据库（异步，不阻塞）
         if settings.ENABLE_VECTOR_DB:
@@ -107,6 +141,10 @@ class CaseService:
                         "vehicle_info": case.vehicle_info,
                         "location": case.location,
                         "occurred_time": case.occurred_time,
+                        "source_type": case.source_type,
+                        "oil_nature": case.oil_nature,
+                        "report_unit": case.report_unit,
+                        "quality_score": case.quality_score,
                     }
                     vector_db.add_case(case.id, case_dict)
             except Exception as e:
@@ -150,6 +188,7 @@ class CaseService:
         if not case:
             return None
         repo.update(case, **kwargs)
+        CaseQualityService.refresh_case_quality(db, case)
         
         # 更新向量数据库索引
         if settings.ENABLE_VECTOR_DB:
@@ -167,6 +206,10 @@ class CaseService:
                         "vehicle_info": case.vehicle_info,
                         "location": case.location,
                         "occurred_time": case.occurred_time,
+                        "source_type": case.source_type,
+                        "oil_nature": case.oil_nature,
+                        "report_unit": case.report_unit,
+                        "quality_score": case.quality_score,
                     }
                     vector_db.update_case(case.id, case_dict)
             except Exception as e:

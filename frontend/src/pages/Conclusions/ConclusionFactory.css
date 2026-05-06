@@ -1,0 +1,283 @@
+/* =============================================================
+   CONCLUSION FACTORY PAGE — 结论工厂
+   ============================================================= */
+
+/* ── 统计行 ───────────────────────────────────────────────── */
+.cf-stats-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: var(--gap);
+}
+
+.cf-stats-row .kpill {
+  min-width: 140px;
+}
+
+/* ── 生成面板 ─────────────────────────────────────────────── */
+.cf-generate-card {
+  margin-bottom: var(--gap);
+}
+
+/* 顶部 amber 高亮线 */
+.cf-generate-card .card-head {
+  border-left: 3px solid var(--accent);
+}
+
+.cf-generate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* OR 分隔符 */
+.cf-divider {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+/* Ant Design 输入框覆写 */
+.cf-generate-card .ant-input-number,
+.cf-generate-card .ant-input {
+  background: var(--bg-2) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-1) !important;
+  font-family: var(--mono) !important;
+  font-size: 12px !important;
+  border-radius: 0 !important;
+}
+.cf-generate-card .ant-input-number:hover,
+.cf-generate-card .ant-input:hover {
+  border-color: var(--accent-line) !important;
+}
+.cf-generate-card .ant-input-number:focus,
+.cf-generate-card .ant-input:focus,
+.cf-generate-card .ant-input-number-focused {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-soft) !important;
+}
+
+/* ── 过滤面板 ─────────────────────────────────────────────── */
+.cf-filter-card {
+  margin-bottom: var(--gap);
+}
+
+.cf-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* select 覆写 */
+.cf-filter-card .ant-select-selector {
+  background: var(--bg-2) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-1) !important;
+  font-family: var(--sans) !important;
+  font-size: 12px !important;
+  border-radius: 0 !important;
+}
+.cf-filter-card .ant-select-focused .ant-select-selector {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-soft) !important;
+}
+.cf-filter-card .ant-select-selection-placeholder { color: var(--ink-3) !important; }
+
+.cf-filter-card .ant-input-number {
+  background: var(--bg-2) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-1) !important;
+  font-family: var(--mono) !important;
+  font-size: 12px !important;
+  border-radius: 0 !important;
+}
+
+/* ── 置信度进度条 ─────────────────────────────────────────── */
+.cf-confidence {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 80px;
+}
+
+.cf-confidence__num {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 34px;
+  text-align: right;
+}
+
+.cf-confidence__bar {
+  flex: 1;
+  height: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.cf-confidence__fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/* ── 操作按钮组 ───────────────────────────────────────────── */
+.cf-action-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.cf-action-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.cf-action-btn--view {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.cf-action-btn--view:hover {
+  background: oklch(0.78 0.14 45 / 0.20);
+  border-color: var(--accent);
+}
+
+.cf-action-btn--approve {
+  color: var(--ok);
+  border-color: oklch(0.78 0.14 155 / 0.35);
+  background: oklch(0.78 0.14 155 / 0.08);
+}
+.cf-action-btn--approve:hover {
+  background: oklch(0.78 0.14 155 / 0.18);
+  border-color: var(--ok);
+}
+
+.cf-action-btn--reject {
+  color: var(--err);
+  border-color: oklch(0.70 0.20 25 / 0.35);
+  background: oklch(0.70 0.20 25 / 0.08);
+}
+.cf-action-btn--reject:hover {
+  background: oklch(0.70 0.20 25 / 0.18);
+  border-color: var(--err);
+}
+
+.cf-action-btn--flag {
+  color: var(--warn);
+  border-color: oklch(0.80 0.16 75 / 0.35);
+  background: oklch(0.80 0.16 75 / 0.08);
+}
+.cf-action-btn--flag:hover {
+  background: oklch(0.80 0.16 75 / 0.18);
+  border-color: var(--warn);
+}
+
+/* ── 抽屉内部节 ───────────────────────────────────────────── */
+.cf-drawer-section {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.cf-drawer-section__title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.cf-drawer-row {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+
+.cf-drawer-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cf-drawer-row__label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  width: 80px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.cf-drawer-row__value {
+  font-family: var(--sans);
+  color: var(--ink-1);
+  flex: 1;
+  line-height: 1.5;
+}
+
+.cf-drawer-row__value--mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+/* ── 证据列表项 ───────────────────────────────────────────── */
+.cf-evidence-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.cf-evidence-item:last-child {
+  border-bottom: none;
+}
+
+.cf-evidence-item__dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  flex-shrink: 0;
+  margin-top: 7px;
+}
+
+/* ── 原始证据 pre 块 ──────────────────────────────────────── */
+.cf-pre {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  background: var(--bg-0);
+  border: 1px solid var(--line-soft);
+  padding: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 0;
+}

@@ -1,6 +1,97 @@
 # 快速启动指南
 
-## 方式一：使用Docker（推荐）
+## 方式零：本地快速测试（最简单，推荐优先使用）
+
+> 使用内置 SQLite，**无需 Docker、PostgreSQL、Redis**，适合快速开发和测试。
+
+### 前提条件
+- Python 3.10+
+- Node.js 18+
+
+### 步骤
+
+**1. 启动后端**
+
+```bash
+cd backend
+
+# 首次：创建虚拟环境并安装依赖
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 首次：初始化数据库（生成 aicommander.db）
+python init_db.py
+
+# 启动（指定 SECRET_KEY，SQLite 为默认数据库）
+SECRET_KEY=dev-secret-key uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**2. 启动前端**（新开终端）
+
+```bash
+cd frontend
+npm install  # 首次
+npm run dev
+```
+
+### 访问地址
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:8000
+- API 文档：http://localhost:8000/docs
+
+### 配置 AI 模型（可选）
+
+在后端启动命令中添加 API Key：
+
+```bash
+SECRET_KEY=dev-secret-key ANTHROPIC_API_KEY=sk-ant-xxx uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 或
+SECRET_KEY=dev-secret-key OPENAI_API_KEY=sk-xxx uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+也可创建 `backend/.env` 文件避免每次输入：
+
+```bash
+# backend/.env
+SECRET_KEY=dev-secret-key
+ANTHROPIC_API_KEY=sk-ant-xxx
+# OPENAI_API_KEY=sk-xxx
+```
+
+然后直接运行：
+
+```bash
+cd backend && source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 运行测试
+
+```bash
+cd backend && source venv/bin/activate
+
+pytest                                              # 全部测试
+pytest -v                                           # 详细输出
+pytest tests/test_case_service.py                  # 单个文件
+pytest tests/test_case_service.py::test_case_number_generation_increments  # 单个函数
+```
+
+测试文件一览：
+
+| 文件 | 覆盖范围 |
+|------|---------|
+| `test_case_service.py` | 案件服务层逻辑 |
+| `test_geo_analysis.py` | 地理分析（热点、距离计算） |
+| `test_meeting_manager.py` | 圆桌会议流程 |
+| `test_analyst_prompts.py` | 分析师 Prompt 生成 |
+| `test_moderator_prompts.py` | 主持人 Prompt 生成 |
+
+> 所有测试使用内存 SQLite，无需外部数据库或 Redis。
+
+---
+
+## 方式一：使用Docker（推荐生产/集成测试）
 
 ### 前提条件
 1. Docker Desktop 已安装并运行
@@ -21,10 +112,10 @@ colima start
 
 2. **启动所有服务**
 ```bash
-./start.sh
+# 首次需要先添加执行权限
+chmod +x start.sh stop.sh
 
-# 或者
-docker-compose up -d
+./start.sh
 ```
 
 3. **查看服务状态**
@@ -57,7 +148,7 @@ docker-compose down
 
 ---
 
-## 方式二：本地开发（不使用Docker）
+## 方式二：本地开发（PostgreSQL + Redis，不使用Docker）
 
 ### 前提条件
 1. Python 3.10+ ✅ (已安装: 3.13.4)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.agent_task import AgentTask
 from app.services.agent_service import AgentService
@@ -8,11 +9,16 @@ from app.services.agent_service import AgentService
 router = APIRouter()
 
 
+class AgentRunRequest(BaseModel):
+    query: str
+    case_ids: Optional[List[int]] = None
+
+
 @router.post("/run")
-async def run_agent(query: str, case_ids: Optional[List[int]] = None, db: Session = Depends(get_db)):
-    if not query:
+async def run_agent(request: AgentRunRequest, db: Session = Depends(get_db)):
+    if not request.query:
         raise HTTPException(status_code=400, detail="query不能为空")
-    task = await AgentService.run_task(db, query=query, case_ids=case_ids)
+    task = await AgentService.run_task(db, query=request.query, case_ids=request.case_ids)
     return {
         "id": task.id,
         "query": task.query,

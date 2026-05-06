@@ -1,0 +1,43 @@
+/* Layout styles are defined in design-system.css */
+
+/* ── Sub-navigation bar ──────────────────────────────────────── */
+.sub-nav {
+  display: flex;
+  gap: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+  padding: 0 var(--pad);
+  position: sticky;
+  top: var(--topbar-h, 56px);
+  z-index: 100;
+}
+
+.sub-nav a {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  text-decoration: none;
+  padding: 7px 16px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.sub-nav a:hover {
+  color: var(--ink-1);
+  border-bottom-color: var(--line);
+}
+
+.sub-nav a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Ensure full-height inner pages work correctly */
+.app-main > .page-full {
+  height: 100%;
+  overflow: hidden;
+}

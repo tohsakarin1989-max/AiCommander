@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>智能研判 · AiCommander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage"><div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="Dashboard.html">大屏 <span class="num">01</span></a>
+      <a href="Cases.html">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html" class="cur">研判 <span class="num">04</span></a>
+      <a href="Gangs.html">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html">巡逻 <span class="num">06</span></a>
+    </nav>
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+<div class="page page-analysis">
+  <div class="page-title">
+    <h1>一键智能研判</h1>
+    <div class="sub">SMART ANALYSIS · 热点 · 团伙 · 模式 · 部署 · 四合一报告</div>
+    <div style="margin-left:auto;display:flex;gap:10px;">
+      <button class="btn-ghost">选择时段 · 近 30 天 ▾</button>
+      <button class="btn-accent">⚡ 一键生成研判报告</button>
+    </div>
+  </div>
+
+  <div class="an-grid">
+    <!-- Hotspot -->
+    <div class="card an-card">
+      <div class="card-head"><span class="ico">◉</span><span class="ti">热点区域识别</span><span class="spacer"></span><span class="chip accent">DBSCAN · eps=2km</span></div>
+      <div class="card-body" style="padding:16px;">
+        <div class="an-kpi-row">
+          <div class="an-kpi"><div class="v">3</div><div class="l">识别簇</div></div>
+          <div class="an-kpi"><div class="v" style="color:var(--err);">1</div><div class="l">高风险</div></div>
+          <div class="an-kpi"><div class="v">19</div><div class="l">簇内案件</div></div>
+          <div class="an-kpi"><div class="v">0.84</div><div class="l">聚类质量</div></div>
+        </div>
+        <table class="data mini">
+          <thead><tr><th>簇</th><th>中心</th><th>案件</th><th>密度</th><th>风险</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag" style="--tag-c:var(--err)">α</span></td><td>滨城北 K112 片区</td><td>9</td><td>4.2/km²</td><td style="color:var(--err);">高 0.91</td></tr>
+            <tr><td><span class="tag" style="--tag-c:var(--warn)">β</span></td><td>垦利中段 K22</td><td>6</td><td>2.8/km²</td><td style="color:var(--warn);">中 0.74</td></tr>
+            <tr><td><span class="tag" style="--tag-c:var(--ok)">γ</span></td><td>寿光沿海</td><td>4</td><td>1.6/km²</td><td style="color:var(--ok);">低 0.52</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Gang -->
+    <div class="card an-card">
+      <div class="card-head"><span class="ico">◈</span><span class="ti">团伙关联分析</span><span class="spacer"></span><span class="chip accent">图谱 · 节点 34</span></div>
+      <div class="card-body" style="padding:16px;">
+        <svg viewBox="0 0 400 180" style="width:100%;height:180px;display:block;">
+          <g stroke="oklch(0.42 0.014 250 / 0.5)" stroke-width="0.8" fill="none">
+            <line x1="100" y1="90" x2="180" y2="60"/><line x1="100" y1="90" x2="180" y2="120"/>
+            <line x1="100" y1="90" x2="220" y2="90"/><line x1="180" y1="60" x2="260" y2="40"/>
+            <line x1="180" y1="120" x2="260" y2="140"/><line x1="220" y1="90" x2="300" y2="80"/>
+            <line x1="220" y1="90" x2="320" y2="110"/><line x1="260" y1="40" x2="340" y2="50"/>
+            <line x1="260" y1="140" x2="340" y2="150"/>
+          </g>
+          <g>
+            <circle cx="100" cy="90" r="14" fill="oklch(0.70 0.20 25)" opacity="0.9"/>
+            <text x="100" y="94" font-family="JetBrains Mono" font-size="9" text-anchor="middle" fill="white" font-weight="600">夜鹰</text>
+            <circle cx="180" cy="60" r="8" fill="oklch(0.78 0.14 45)"/>
+            <circle cx="180" cy="120" r="8" fill="oklch(0.78 0.14 45)"/>
+            <circle cx="220" cy="90" r="9" fill="oklch(0.78 0.14 45)"/>
+            <circle cx="260" cy="40" r="6" fill="oklch(0.78 0.11 220)"/>
+            <circle cx="260" cy="140" r="6" fill="oklch(0.78 0.11 220)"/>
+            <circle cx="300" cy="80" r="6" fill="oklch(0.78 0.11 220)"/>
+            <circle cx="320" cy="110" r="6" fill="oklch(0.78 0.11 220)"/>
+            <circle cx="340" cy="50" r="4" fill="oklch(0.62 0.013 90)"/>
+            <circle cx="340" cy="150" r="4" fill="oklch(0.62 0.013 90)"/>
+          </g>
+          <g font-family="JetBrains Mono" font-size="9" fill="oklch(0.72 0.013 90)">
+            <text x="175" y="48">Pⅰ</text><text x="175" y="138">Pⅱ</text><text x="215" y="78">Pⅲ</text>
+            <text x="255" y="32">车辆</text><text x="295" y="72">销赃</text>
+          </g>
+        </svg>
+        <div class="an-bullets">
+          <div><b>核心团伙</b> 夜鹰 · 3 子组 · 9 个案件节点</div>
+          <div><b>关联销赃点</b> 潍坊寿光 3 汽修厂 · 东营废品站 2 处</div>
+          <div><b>跨市流窜</b> 滨州→东营→潍坊 · G18/G25 沿线</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pattern -->
+    <div class="card an-card">
+      <div class="card-head"><span class="ico">⎈</span><span class="ti">作案模式挖掘</span><span class="spacer"></span><span class="chip accent">FP-Growth</span></div>
+      <div class="card-body" style="padding:16px;">
+        <div class="pattern-row"><div class="rnk">01</div><div class="ptn"><b>夜间 01-04 + 管线低洼 + 软管接驳</b></div><div class="sup">支持度 68%</div></div>
+        <div class="pattern-row"><div class="rnk">02</div><div class="ptn"><b>蓝白罐车 + 套牌鲁B + G25 逃逸</b></div><div class="sup">支持度 54%</div></div>
+        <div class="pattern-row"><div class="rnk">03</div><div class="ptn"><b>案前 2 日有便衣踩点轨迹</b></div><div class="sup">支持度 42%</div></div>
+        <div class="pattern-row"><div class="rnk">04</div><div class="ptn"><b>销赃→寿光汽修厂 (3 家)</b></div><div class="sup">支持度 38%</div></div>
+        <div class="pattern-row"><div class="rnk">05</div><div class="ptn"><b>雨夜 + 监控死角</b></div><div class="sup">支持度 24%</div></div>
+      </div>
+    </div>
+
+    <!-- Deployment -->
+    <div class="card an-card">
+      <div class="card-head"><span class="ico">◇</span><span class="ti">巡逻部署建议</span><span class="spacer"></span><span class="chip accent">基于 30 天风险</span></div>
+      <div class="card-body" style="padding:16px;">
+        <div class="dep-rec">
+          <div class="rec-head">优先级 P0 · 滨城北 α 簇</div>
+          <div class="rec-body">
+            增派 <b>2 班次</b> 夜间巡逻 (01:00-05:00)·建议 <b>便衣观察 + 无人机</b>·预计拦截率 <b>+34%</b>
+          </div>
+        </div>
+        <div class="dep-rec p1">
+          <div class="rec-head">优先级 P1 · G18 滨城北入口</div>
+          <div class="rec-body">
+            设 <b>固定卡点</b>·联动高速交警·覆盖夜鹰惯用逃逸路线·预计拦截率 <b>+22%</b>
+          </div>
+        </div>
+        <div class="dep-rec p2">
+          <div class="rec-head">优先级 P2 · 寿光销赃点</div>
+          <div class="rec-body">
+            联动潍坊分局 <b>同步检查</b> 3 家汽修厂·切断下游链路
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Synthesized report -->
+  <div class="card an-report">
+    <div class="card-head">
+      <span class="ico">⌖</span>
+      <span class="ti">综合研判报告</span>
+      <span class="spacer"></span>
+      <span class="chip">2026-04-20 14:27 生成</span>
+      <span class="chip accent">4 AI 综合 · 置信 0.82</span>
+      <button class="btn-ghost-sm">导出 PDF</button>
+      <button class="btn-ghost-sm">推送企微</button>
+    </div>
+    <div class="card-body" style="padding:20px 26px;display:grid;grid-template-columns:1.4fr 1fr;gap:28px;">
+      <div>
+        <h3 class="rp-h">执行摘要</h3>
+        <p class="rp-p">近 30 天辖区涉油案件 <b>47 起</b>，同比持平但呈现明显 <b>空间聚集</b> 与 <b>团伙化</b> 特征。核心风险为"夜鹰"团伙 <b>Pⅱ 子组</b> 在滨城北管线沿线的系列作案 (9 起)，作案模式稳定 (置信 0.87)：夜间 01-04 时段 · 管线低洼段开孔 · 18m 长软管接驳 · 蓝白套牌罐车经 G25 寿光方向逃逸 · 销赃至寿光 3 家汽修厂。</p>
+
+        <h3 class="rp-h">关键发现</h3>
+        <ol class="rp-ol">
+          <li>α 热点簇 (滨城北 K112 片区) 案件密度 4.2/km²，<b>显著高于全辖区均值 0.3/km²</b></li>
+          <li>团伙作案时段 <b>100% 集中于夜间 02-04 时</b>，与现行巡线班次有 2 小时缺口</li>
+          <li>套牌鲁B·AX3 家族车辆在 <b>7 起案件</b> 监控中重复出现</li>
+          <li>下游销赃集中于潍坊寿光 <b>3 家汽修厂</b>，构成稳定销赃网络</li>
+        </ol>
+      </div>
+      <div>
+        <h3 class="rp-h">行动优先级</h3>
+        <div class="action-list">
+          <div class="ai-row"><span class="pri p0">P0</span><span class="ai-t">α 簇夜间增派 + 无人机</span><span class="ai-e">+34%</span></div>
+          <div class="ai-row"><span class="pri p1">P1</span><span class="ai-t">G18/G25 固定卡点</span><span class="ai-e">+22%</span></div>
+          <div class="ai-row"><span class="pri p1">P1</span><span class="ai-t">现场 DNA/指纹优先取证</span><span class="ai-e">时效</span></div>
+          <div class="ai-row"><span class="pri p2">P2</span><span class="ai-t">寿光 3 汽修厂同步检查</span><span class="ai-e">断链</span></div>
+          <div class="ai-row"><span class="pri p2">P2</span><span class="ai-t">套牌车 GPS 追踪授权</span><span class="ai-e">法务</span></div>
+          <div class="ai-row"><span class="pri p3">P3</span><span class="ai-t">月度风险模型重训</span><span class="ai-e">47→60 样本</span></div>
+        </div>
+
+        <h3 class="rp-h" style="margin-top:18px;">AI 共识度</h3>
+        <div class="consensus-bar">
+          <div class="cb-seg" style="flex:79;background:var(--ok);"></div>
+          <div class="cb-seg" style="flex:15;background:var(--warn);"></div>
+          <div class="cb-seg" style="flex:6;background:var(--err);"></div>
+        </div>
+        <div class="cb-legend">
+          <span><span class="sw" style="background:var(--ok)"></span>共识 79%</span>
+          <span><span class="sw" style="background:var(--warn)"></span>部分分歧 15%</span>
+          <span><span class="sw" style="background:var(--err)"></span>关键分歧 6%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div></div>
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk"><label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)"></div>
+  <div class="tk"><label>密度</label><div class="seg" id="seg-density">
+    <button data-v="comfortable" class="on">宽松</button><button data-v="compact">紧凑</button></div></div>
+  <div class="tk"><label>环境遥测</label><div class="seg" id="seg-telemetry">
+    <button data-v="on" class="on">显示</button><button data-v="off">收起</button></div></div>
+  <div class="tk"><label>动效</label><div class="seg" id="seg-animation">
+    <button data-v="normal" class="on">正常</button><button data-v="subtle">轻微</button><button data-v="off">关闭</button></div></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

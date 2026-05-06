@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圆桌会议 · AiCommander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage"><div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="Dashboard.html">大屏 <span class="num">01</span></a>
+      <a href="Cases.html">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html" class="cur">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html">研判 <span class="num">04</span></a>
+      <a href="Gangs.html">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html">巡逻 <span class="num">06</span></a>
+    </nav>
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+<div class="page page-roundtable">
+  <div class="rt-layout">
+    <!-- Left: meeting list -->
+    <aside class="rt-list">
+      <div class="rt-list-head">
+        <div class="page-title" style="border:0;padding:0;margin:0;display:block;">
+          <h1>圆桌会议</h1>
+          <div class="sub">MULTI-AGENT COUNCIL · 本月 23 场</div>
+        </div>
+        <button class="btn-accent" style="margin-top:12px;width:100%;">＋ 发起新会议</button>
+      </div>
+      <div class="rt-filters">
+        <div class="seg">
+          <button class="on">进行中 2</button>
+          <button>已完成 18</button>
+          <button>归档 3</button>
+        </div>
+      </div>
+      <div class="rt-meetings">
+        
+          <div class="rt-card live sel">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8432</span>
+              <span class="live-dot">● LIVE</span>
+            </div>
+            <div class="rt-c-title">JA-2026-0127 管线开孔研判</div>
+            <div class="rt-c-phase">阶段 2 · 匿名互评</div>
+            <div class="rt-c-foot"><span>13:15 · 18 分钟</span><span>4 路 AI</span></div>
+          </div>
+        
+          <div class="rt-card live">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8431</span>
+              <span class="live-dot">● LIVE</span>
+            </div>
+            <div class="rt-c-title">夜鹰团伙综合研判</div>
+            <div class="rt-c-phase">阶段 3 · 综合报告</div>
+            <div class="rt-c-foot"><span>12:40 · 53 分钟</span><span>4 路 AI</span></div>
+          </div>
+        
+          <div class="rt-card done">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8430</span>
+              
+            </div>
+            <div class="rt-c-title">寿光街头收油网络识别</div>
+            <div class="rt-c-phase">已完成 · 置信 0.82</div>
+            <div class="rt-c-foot"><span>今日 11:02 · 用时 41m</span><span>4 路 AI</span></div>
+          </div>
+        
+          <div class="rt-card done">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8429</span>
+              
+            </div>
+            <div class="rt-c-title">G25 沿线流窜案件串并</div>
+            <div class="rt-c-phase">已完成 · 置信 0.76</div>
+            <div class="rt-c-foot"><span>今日 09:14 · 用时 38m</span><span>4 路 AI</span></div>
+          </div>
+        
+          <div class="rt-card done">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8428</span>
+              
+            </div>
+            <div class="rt-c-title">罐车套牌模式识别</div>
+            <div class="rt-c-phase">已完成 · 置信 0.71</div>
+            <div class="rt-c-foot"><span>昨日 19:40 · 用时 47m</span><span>3 路 AI</span></div>
+          </div>
+        
+          <div class="rt-card done">
+            <div class="rt-c-head">
+              <span class="rt-id">M-8427</span>
+              
+            </div>
+            <div class="rt-c-title">夜间作案时段部署建议</div>
+            <div class="rt-c-phase">已完成 · 置信 0.88</div>
+            <div class="rt-c-foot"><span>昨日 15:20 · 用时 29m</span><span>4 路 AI</span></div>
+          </div>
+        
+      </div>
+    </aside>
+
+    <!-- Right: active meeting detail -->
+    <section class="rt-detail">
+      <div class="rt-detail-head card">
+        <div class="rt-title">
+          <div class="ti-row">
+            <span class="rt-id-big">M-8432</span>
+            <span class="live-dot">● LIVE</span>
+            <span style="margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--ink-3);">已用时 18:04 · 预计完成 14:23</span>
+          </div>
+          <h2>JA-2026-0127 · 滨城 K112 管线开孔 综合研判</h2>
+          <div class="rt-sub">发起人 刘警官 · 13:15 · 议题：作案手法 · 团伙关联 · 下一步部署</div>
+        </div>
+
+        <!-- 3-phase rail -->
+        <div class="phase-rail">
+          <div class="phase done">
+            <div class="num">01</div>
+            <div class="nm">独立分析</div>
+            <div class="t">13:15 – 13:24 · 9 分钟</div>
+          </div>
+          <div class="phase done">
+            <div class="num">02</div>
+            <div class="nm">匿名互评</div>
+            <div class="t">13:24 – 13:31 · 7 分钟</div>
+          </div>
+          <div class="phase active">
+            <div class="num">03</div>
+            <div class="nm">综合报告</div>
+            <div class="t">13:31 – · 进行中</div>
+          </div>
+          <div class="phase">
+            <div class="num">✓</div>
+            <div class="nm">人工复核</div>
+            <div class="t">待开始</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rt-grid">
+        <!-- AI columns -->
+        <div class="card rt-ai-col ai-gpt">
+          <div class="ai-head">
+            <div class="ai-badge" style="--c:oklch(0.78 0.14 155)">G</div>
+            <div>
+              <div class="ai-name">GPT-4.1</div>
+              <div class="ai-role">主审 · 逻辑推理</div>
+            </div>
+            <span class="ai-stat live">● 生成中</span>
+          </div>
+          <div class="ai-body">
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph">阶段 1 · 独立分析</span><span class="t">13:22</span></div>
+              <p>案件呈现典型的"组织化流窜盗油"特征。三项证据指向同一团伙：(1) 作案时段集中于 02:00-04:30，与过去 30 天 7 起同类案件 100% 重合；(2) 套牌蓝白罐车外形与 04-18、04-13 案件监控一致；(3) 开孔位置均选在管线地势低洼处，显示对管线压力特性的熟悉。综合置信 <b>0.87</b>。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--info);">阶段 2 · 互评回应</span><span class="t">13:28</span></div>
+              <p>同意 Claude 关于地形选择的判断。补充：接驳软管长度 18m 超过一般作案 (6-8m)，暗示接应车辆停靠位置距管线较远——<b>疑似作案团伙已警觉巡线规律</b>，建议调整巡线班次至不规律时段。</p>
+            </div>
+            <div class="msg-block gen">
+              <div class="mb-head"><span class="ph" style="color:var(--accent);">阶段 3 · 综合</span><span class="t">生成中</span></div>
+              <p class="typing">识别为"夜鹰"团伙 Pⅱ 子组作案。建议后续<span class="caret">▊</span></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card rt-ai-col ai-claude">
+          <div class="ai-head">
+            <div class="ai-badge" style="--c:oklch(0.78 0.14 45)">C</div>
+            <div>
+              <div class="ai-name">Claude 3.5</div>
+              <div class="ai-role">批判审阅</div>
+            </div>
+            <span class="ai-stat done">✓ 已提交</span>
+          </div>
+          <div class="ai-body">
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph">阶段 1</span><span class="t">13:21</span></div>
+              <p>时段、车型、手法三要素确凿；但存在两点需谨慎：(a) 鲁B·AX3 开头的套牌在 04-11 寿光案件中也出现，但当时作案时段为 04:16，与典型 02:30 中位不符；(b) 18m 软管在同类案件中仅出现 1 次，样本不足以作为关键特征。建议置信 <b>0.72</b>，待现场 DNA/指纹回传后再锁定。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--info);">阶段 2</span><span class="t">13:29</span></div>
+              <p>接受 GPT 关于巡线规律警觉的推断，但反对据此立即调整班次——若团伙处于侦察阶段，班次变动可能暴露我方调整节奏。建议维持现行班次 + 夜间增派便衣。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--accent);">阶段 3</span><span class="t">13:34</span></div>
+              <p>综合结论：<b>高置信 (0.79)</b> 指向夜鹰团伙作案。核心建议：① 现场证据优先取证；② G25 寿光方向设卡盘查；③ 不改变巡线班次，增派便衣观察哨。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card rt-ai-col ai-qwen">
+          <div class="ai-head">
+            <div class="ai-badge" style="--c:oklch(0.78 0.11 220)">Q</div>
+            <div>
+              <div class="ai-name">Qwen-Max</div>
+              <div class="ai-role">地方情报</div>
+            </div>
+            <span class="ai-stat done">✓ 已提交</span>
+          </div>
+          <div class="ai-body">
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph">阶段 1</span><span class="t">13:23</span></div>
+              <p>本地情报视角：K112+300 位于滨城-垦利管线 21 号标段，周边 5km 有 3 家汽修厂、2 个废品回收点，是典型下游销赃节点。本月 3 家汽修厂被列入监测。此外，案发地 2km 内有村道直通 G18，可 12 分钟上高速，是夜鹰惯用逃逸路线。置信 <b>0.81</b>。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--info);">阶段 2</span><span class="t">13:30</span></div>
+              <p>认同主审判断。补充：鲁B·AX3 车牌家族在 03 月曾于寿光黑市销赃记录中出现 2 次，车牌持有人为实名登记车辆于 2024 年注销，疑被克隆套用。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--accent);">阶段 3</span><span class="t">13:33</span></div>
+              <p>建议：① G18 滨城北入口 + 寿光南入口设固定卡点；② 联动潍坊分局对 3 家汽修厂开展同步检查。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card rt-ai-col ai-ds">
+          <div class="ai-head">
+            <div class="ai-badge" style="--c:oklch(0.72 0.14 285)">D</div>
+            <div>
+              <div class="ai-name">DeepSeek-V3</div>
+              <div class="ai-role">模式挖掘</div>
+            </div>
+            <span class="ai-stat done">✓ 已提交</span>
+          </div>
+          <div class="ai-body">
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph">阶段 1</span><span class="t">13:24</span></div>
+              <p>对 2025-01 至今 47 起管线开孔案件做聚类分析，本案与簇 C-3 高度吻合 (余弦相似度 0.91)，簇 C-3 共 14 起，均归因于夜鹰团伙。本案时间戳落在该簇 λ 置信区间 [0.76, 0.92] 内。风险评分 <b>0.84</b>。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--info);">阶段 2</span><span class="t">13:28</span></div>
+              <p>同意，且补充定量视角：Claude 提到的 04-11 案件实际属于簇 C-5 (孤立作案者)，不应混入。18m 软管异常值在簇 C-3 中尚无样本，建议标记为新特征待后续观测。</p>
+            </div>
+            <div class="msg-block">
+              <div class="mb-head"><span class="ph" style="color:var(--accent);">阶段 3</span><span class="t">13:35</span></div>
+              <p>归入簇 C-3。概率 (夜鹰 Pⅱ 子组) = <b>0.79</b>。建议触发团伙档案更新 + 申请 GPS 追踪授权。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Converging synthesis panel -->
+      <div class="card rt-synth">
+        <div class="card-head">
+          <span class="ico">⌖</span>
+          <span class="ti">综合报告 · 实时汇聚</span>
+          <span class="spacer"></span>
+          <span class="chip accent">4 AI 共识度 0.78</span>
+          <span class="chip">置信 0.79</span>
+          <button class="btn-ghost-sm">导出 PDF</button>
+          <button class="btn-accent-sm">人工复核</button>
+        </div>
+        <div class="card-body" style="padding:16px 20px;">
+          <div class="synth-grid">
+            <div class="synth-col">
+              <div class="sh">结论</div>
+              <ul>
+                <li>案件归因：<b>夜鹰团伙 Pⅱ 子组</b> (概率 0.79)</li>
+                <li>串并同类案件 <b>7 起</b>，簇 C-3</li>
+                <li>嫌疑车辆 <b>鲁B·AX3★★</b> (套牌)</li>
+                <li>销赃链路：<b>潍坊寿光汽修厂网络</b></li>
+              </ul>
+            </div>
+            <div class="synth-col">
+              <div class="sh">行动建议</div>
+              <ul>
+                <li>G18 滨城北 + 寿光南 <b>固定卡点</b></li>
+                <li>现场 DNA/指纹优先取证 (12h 内)</li>
+                <li>维持巡线班次 + <b>夜间便衣观察</b></li>
+                <li>联动潍坊分局同步检查 <b>3 家汽修厂</b></li>
+              </ul>
+            </div>
+            <div class="synth-col">
+              <div class="sh">分歧 / 待观察</div>
+              <ul>
+                <li>18m 软管是否为新作案特征 (1 样本)</li>
+                <li>04-11 寿光案件是否同团伙 (2:2)</li>
+                <li>是否公开巡线班次调整 (安全 vs 威慑)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div></div>
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk"><label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)"></div>
+  <div class="tk"><label>密度</label><div class="seg" id="seg-density">
+    <button data-v="comfortable" class="on">宽松</button><button data-v="compact">紧凑</button></div></div>
+  <div class="tk"><label>环境遥测</label><div class="seg" id="seg-telemetry">
+    <button data-v="on" class="on">显示</button><button data-v="off">收起</button></div></div>
+  <div class="tk"><label>动效</label><div class="seg" id="seg-animation">
+    <button data-v="normal" class="on">正常</button><button data-v="subtle">轻微</button><button data-v="off">关闭</button></div></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

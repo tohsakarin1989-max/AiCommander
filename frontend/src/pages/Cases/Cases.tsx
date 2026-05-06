@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
-  Table,
   Button,
   Modal,
   Form,
@@ -8,41 +7,205 @@ import {
   DatePicker,
   InputNumber,
   message,
-  Space,
-  Tag,
   Popconfirm,
   Upload,
   Alert,
+  Select,
+  Row,
+  Col,
+  Switch,
 } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, EnvironmentOutlined } from '@ant-design/icons'
+import {
+  EditOutlined,
+  DeleteOutlined,
+  ApiOutlined,
+  EnvironmentOutlined,
+  NodeIndexOutlined,
+  DatabaseOutlined,
+  DownOutlined,
+  UpOutlined,
+} from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { caseApi, Case, CaseCreate } from '../../services/cases'
+import { caseApi, type CaseImportResult } from '../../services/cases'
+import type { Case, CaseCreate } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
+import MapPicker from '../../components/Map/MapPicker'
+import './Cases.css'
 
 const { TextArea } = Input
+const { RangePicker } = DatePicker
+const { Option } = Select
+
+// 搜索筛选参数接口
+interface SearchFilters {
+  keyword?: string
+  status?: string
+  case_type?: string
+  oil_type?: string
+  start_date?: string
+  end_date?: string
+  has_geo?: boolean
+}
+
+// 状态映射
+const statusTagClass: Record<string, string> = {
+  pending:    't-p',
+  processing: 't-r',
+  completed:  't-d',
+  resolved:   't-d',
+  failed:     't-x',
+}
+
+const statusLabel: Record<string, string> = {
+  pending:    '待处理',
+  processing: '处理中',
+  completed:  '已完成',
+  resolved:   '已结案',
+  failed:     '失败',
+}
+
+// 油品类型颜色
+const oilTypeColor: Record<string, string> = {
+  柴油:  'var(--oil)',
+  汽油:  'oklch(0.74 0.13 55)',
+  润滑油: 'oklch(0.74 0.13 140)',
+  原油:  'oklch(0.65 0.05 250)',
+}
+
+const qualityColor: Record<string, string> = {
+  high: 'var(--ok)',
+  medium: 'var(--warn)',
+  low: 'var(--err)',
+}
+
+const qualityLabel: Record<string, string> = {
+  high: '信息完整',
+  medium: '需补充',
+  low: '缺项较多',
+}
+
+const sourceTypeOptions = ['巡逻发现', '群众举报', '领导指派', '公安机关线索', '技防预警', '红色网格上报', '作业区反馈', '其他']
+const oilNatureOptions = ['被盗原油', '落地原油', '收缴油品', '回收原油', '其他']
+const stageOptions = [
+  { value: 'reported', label: '已报送' },
+  { value: 'filed', label: '已立案' },
+  { value: 'investigating', label: '调查中' },
+  { value: 'transferred', label: '已移交' },
+  { value: 'closed', label: '已办结' },
+  { value: 'archived', label: '已归档' },
+]
+
+// 默认案件筛选状态（复选框）
+interface FilterState {
+  statuses: string[]
+  caseTypes: string[]
+  oilTypes: string[]
+  startDate: string
+  endDate: string
+}
+
+const defaultFilterState: FilterState = {
+  statuses: ['pending', 'processing', 'completed', 'resolved'],
+  caseTypes: [],
+  oilTypes: [],
+  startDate: '',
+  endDate: '',
+}
 
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
+  const [searchForm] = Form.useForm()
+  const watchedLat = Form.useWatch('latitude', form)
+  const watchedLng = Form.useWatch('longitude', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [selectedCase, setSelectedCase] = useState<Case | null>(null)
   const [importModalVisible, setImportModalVisible] = useState(false)
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
+  const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false)
+  const [filters, setFilters] = useState<SearchFilters>({})
+  const [keyword, setKeyword] = useState('')
+  const [sidebarFilter, setSidebarFilter] = useState<FilterState>(defaultFilterState)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
+  // 构建查询参数
+  const queryParams = useMemo(() => {
+    const params: Record<string, string | boolean> = {}
+    if (filters.keyword) params.keyword = filters.keyword
+    if (filters.status) params.status = filters.status
+    if (filters.case_type) params.case_type = filters.case_type
+    if (filters.oil_type) params.oil_type = filters.oil_type
+    if (filters.start_date) params.start_date = filters.start_date
+    if (filters.end_date) params.end_date = filters.end_date
+    if (filters.has_geo !== undefined) params.has_geo = filters.has_geo
+    return params
+  }, [filters])
+
   const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases'],
-    queryFn: () => caseApi.getCases(),
+    queryKey: ['cases', queryParams],
+    queryFn: () => caseApi.getCases(queryParams),
   })
+
+  const renderQualityBadge = (caseItem: Case) => {
+    if (caseItem.quality_score == null) {
+      return <span style={{ color: 'var(--ink-3)' }}>—</span>
+    }
+    const level = caseItem.quality_level || 'low'
+    return (
+      <span
+        className="tag"
+        style={{ '--tag-c': qualityColor[level] || 'var(--warn)' } as React.CSSProperties}
+        title={caseItem.quality_issues?.recommendations?.[0]}
+      >
+        {Math.round(caseItem.quality_score)} · {qualityLabel[level] || level}
+      </span>
+    )
+  }
+
+  // 案件类型和油品类型（用于侧边栏过滤选项）
+  const caseTypes = useMemo(() => {
+    const types = new Set<string>()
+    cases?.forEach(c => c.case_type && types.add(c.case_type))
+    return Array.from(types)
+  }, [cases])
+
+  const oilTypes = useMemo(() => {
+    const types = new Set<string>()
+    cases?.forEach(c => c.oil_type && types.add(c.oil_type))
+    return Array.from(types)
+  }, [cases])
+
+  // 侧边栏过滤后的案件列表
+  const filteredCases = useMemo(() => {
+    if (!cases) return []
+    return cases.filter(c => {
+      // 状态过滤
+      if (sidebarFilter.statuses.length > 0 && !sidebarFilter.statuses.includes(c.status)) return false
+      // 案件类型过滤
+      if (sidebarFilter.caseTypes.length > 0 && c.case_type && !sidebarFilter.caseTypes.includes(c.case_type)) return false
+      // 油品类型过滤
+      if (sidebarFilter.oilTypes.length > 0 && c.oil_type && !sidebarFilter.oilTypes.includes(c.oil_type)) return false
+      // 关键词过滤
+      if (keyword) {
+        const kw = keyword.toLowerCase()
+        const matchField = (val?: string | null) => val?.toLowerCase().includes(kw)
+        if (!matchField(c.case_number) && !matchField(c.location) && !matchField(c.description) && !matchField(c.case_type)) return false
+      }
+      return true
+    })
+  }, [cases, sidebarFilter, keyword])
 
   useEffect(() => {
     const caseIdFromUrl = searchParams.get('caseId')
     if (!caseIdFromUrl || !cases) return
     const targetId = parseInt(caseIdFromUrl, 10)
     if (!Number.isNaN(targetId)) {
-      setSelectedRowKeys([targetId])
+      const found = cases.find(c => c.id === targetId)
+      if (found) setSelectedCase(found)
     }
   }, [searchParams, cases])
 
@@ -78,6 +241,7 @@ const Cases: React.FC = () => {
     mutationFn: caseApi.deleteCase,
     onSuccess: () => {
       message.success('删除成功')
+      setSelectedCase(null)
       queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
   })
@@ -88,26 +252,31 @@ const Cases: React.FC = () => {
       message.success(data.message || '预处理任务已提交')
       queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
-    onError: (error: any) => {
-      message.error(`预处理失败: ${error.response?.data?.detail || error.message}`)
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`预处理失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const previewImportMutation = useMutation({
+    mutationFn: (file: File) => caseApi.previewImportCases(file),
+    onSuccess: (data) => {
+      setImportPreview(data)
+      if (data.errors?.length) {
+        message.warning(`预览完成：有效 ${data.valid ?? 0} 条，发现 ${data.errors.length} 条错误`)
+      } else {
+        message.success(`预览完成：可导入 ${data.valid ?? data.total} 条`)
+      }
+    },
+    onError: (error: Error) => {
+      setImportPreview(null)
+      message.error(`预览失败：${error.message}`)
     },
   })
 
   const importMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await fetch('/api/cases/import', {
-        method: 'POST',
-        body: formData,
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.detail || '导入失败')
-      }
-      return res.json()
-    },
-    onSuccess: async (data: any) => {
+    mutationFn: (file: File) => caseApi.importCases(file),
+    onSuccess: async (data) => {
       message.success(`导入成功：共 ${data.total} 条，成功 ${data.created} 条`)
       if (data.errors && data.errors.length) {
         message.warning('部分记录导入失败，详情请查看控制台')
@@ -115,16 +284,27 @@ const Cases: React.FC = () => {
         console.warn('导入错误详情：', data.errors)
       }
       setImportModalVisible(false)
+      setSelectedImportFile(null)
+      setImportPreview(null)
       await queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       message.error(`导入失败：${error.message}`)
     },
   })
 
+  const resetImportState = () => {
+    setImportModalVisible(false)
+    setSelectedImportFile(null)
+    setImportPreview(null)
+    previewImportMutation.reset()
+    importMutation.reset()
+  }
+
   const handleCreate = () => {
     setEditingCase(null)
     form.resetFields()
+    setShowAdvancedFields(false)
     setIsModalVisible(true)
   }
 
@@ -133,6 +313,7 @@ const Cases: React.FC = () => {
     form.setFieldsValue({
       ...caseItem,
       occurred_time: dayjs(caseItem.occurred_time),
+      report_time: caseItem.report_time ? dayjs(caseItem.report_time) : undefined,
     })
     setIsModalVisible(true)
   }
@@ -146,140 +327,104 @@ const Cases: React.FC = () => {
           data: {
             ...values,
             occurred_time: values.occurred_time?.toISOString(),
+            report_time: values.report_time?.toISOString(),
           },
         })
       } else {
         createMutation.mutate({
           ...values,
           occurred_time: values.occurred_time?.toISOString(),
+          report_time: values.report_time?.toISOString(),
         } as CaseCreate)
       }
-      setSelectedRowKeys([])
     } catch (error) {
       console.error('Validation failed:', error)
     }
   }
 
-  const columns = [
-    {
-      title: '案件编号',
-      dataIndex: 'case_number',
-      key: 'case_number',
-    },
-    {
-      title: '发生时间',
-      dataIndex: 'occurred_time',
-      key: 'occurred_time',
-      render: (time: string) => dayjs(time).format('YYYY-MM-DD HH:mm'),
-    },
-    {
-      title: '地点',
-      dataIndex: 'location',
-      key: 'location',
-    },
-    {
-      title: '纬度',
-      dataIndex: 'latitude',
-      key: 'latitude',
-      render: (lat: number | undefined) => (lat != null ? lat.toFixed(6) : ''),
-    },
-    {
-      title: '经度',
-      dataIndex: 'longitude',
-      key: 'longitude',
-      render: (lng: number | undefined) => (lng != null ? lng.toFixed(6) : ''),
-    },
-    {
-      title: '类型',
-      dataIndex: 'case_type',
-      key: 'case_type',
-    },
-    {
-      title: '油品类型',
-      dataIndex: 'oil_type',
-      key: 'oil_type',
-    },
-    {
-      title: '涉油数量',
-      dataIndex: 'oil_volume',
-      key: 'oil_volume',
-      render: (v: number | undefined) => (v != null ? v : ''),
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: string) => <Tag>{status}</Tag>,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_: any, record: Case) => (
-        <Space>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除"
-            onConfirm={() => deleteMutation.mutate(record.id)}
-          >
-            <Button type="link" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-          <Button
-            type="link"
-            icon={<ApiOutlined />}
-            loading={preprocessMutation.isPending}
-            onClick={() => preprocessMutation.mutate(record.id)}
-          >
-            预处理
-          </Button>
-          {record.latitude != null && record.longitude != null && (
-            <Button
-              type="link"
-              icon={<EnvironmentOutlined />}
-              onClick={() => {
-                // 跳转到地图页面，并传递案件ID作为查询参数
-                navigate(`/cases/map?caseId=${record.id}`)
-              }}
-            >
-              查看地图
-            </Button>
-          )}
-        </Space>
-      ),
-    },
-  ]
-
-  const rowSelection = {
-    selectedRowKeys,
-    onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
+  // 侧边栏状态复选框切换
+  const toggleStatus = (status: string) => {
+    setSidebarFilter(prev => {
+      const has = prev.statuses.includes(status)
+      return {
+        ...prev,
+        statuses: has ? prev.statuses.filter(s => s !== status) : [...prev.statuses, status],
+      }
+    })
   }
 
-  const handleBatchPreprocess = async () => {
-    if (!selectedRowKeys.length) {
-      message.warning('请先选择需要预处理的案件')
-      return
-    }
-    try {
-      await Promise.all(
-        selectedRowKeys.map((id) => caseApi.preprocessCase(id as number)),
-      )
-      message.success(`已提交 ${selectedRowKeys.length} 条预处理任务`)
-      setSelectedRowKeys([])
-    } catch (e: any) {
-      message.error(`批量预处理失败：${e.message || e}`)
-    }
+  // 侧边栏油品筛选切换
+  const toggleOilType = (oilType: string) => {
+    setSidebarFilter(prev => {
+      const has = prev.oilTypes.includes(oilType)
+      return {
+        ...prev,
+        oilTypes: has ? prev.oilTypes.filter(t => t !== oilType) : [...prev.oilTypes, oilType],
+      }
+    })
+  }
+
+  // 应用侧边栏日期筛选
+  const applyFilters = () => {
+    const newFilters: SearchFilters = {}
+    if (keyword) newFilters.keyword = keyword
+    if (sidebarFilter.startDate) newFilters.start_date = sidebarFilter.startDate
+    if (sidebarFilter.endDate) newFilters.end_date = sidebarFilter.endDate
+    setFilters(newFilters)
+  }
+
+  const resetFilters = () => {
+    setSidebarFilter(defaultFilterState)
+    setKeyword('')
+    setFilters({})
+    searchForm.resetFields()
+  }
+
+  // 统计各状态数量
+  const statusCount = useMemo(() => {
+    const count: Record<string, number> = {}
+    cases?.forEach(c => {
+      count[c.status] = (count[c.status] || 0) + 1
+    })
+    return count
+  }, [cases])
+
+  const caseTypeCount = useMemo(() => {
+    const count: Record<string, number> = {}
+    cases?.forEach(c => {
+      if (c.case_type) count[c.case_type] = (count[c.case_type] || 0) + 1
+    })
+    return count
+  }, [cases])
+
+  const oilTypeCount = useMemo(() => {
+    const count: Record<string, number> = {}
+    cases?.forEach(c => {
+      if (c.oil_type) count[c.oil_type] = (count[c.oil_type] || 0) + 1
+    })
+    return count
+  }, [cases])
+
+  // 发起圆桌分析
+  const handleStartRoundtable = () => {
+    if (!selectedCase) return
+    navigate(`/meetings/new?caseId=${selectedCase.id}`)
+  }
+
+  // 派遣巡逻
+  const handleDispatchPatrol = () => {
+    if (!selectedCase) return
+    navigate(`/patrols?caseId=${selectedCase.id}`)
   }
 
   return (
-    <div>
+    <div className="page page-cases">
+      {/* 预处理状态提醒 */}
       {preprocessStatus && (
         <Alert
           type="info"
           showIcon
-          style={{ marginBottom: 16 }}
+          className="cases-preprocess-alert"
           message={`预处理队列：排队 ${preprocessStatus.pending}，处理中 ${
             preprocessStatus.processing
           }，平均耗时 ${
@@ -290,40 +435,454 @@ const Cases: React.FC = () => {
         />
       )}
 
-      <div
-        style={{
-          marginBottom: '16px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <h2>案件管理</h2>
-        <Space>
-          <Button onClick={() => setImportModalVisible(true)}>导入 CSV/Excel</Button>
-          <Button
-            onClick={handleBatchPreprocess}
-            disabled={!selectedRowKeys.length}
-          >
-            批量预处理
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            添加案件
-          </Button>
-        </Space>
+      <div className="cases-layout">
+        {/* ── 左侧筛选栏 ── */}
+        <aside className="filters">
+          {/* 案件状态 */}
+          <div className="filter-group">
+            <div className="gh">案件状态</div>
+            {[
+              { value: 'pending',    label: '待处理' },
+              { value: 'processing', label: '处理中' },
+              { value: 'completed',  label: '已完成' },
+              { value: 'resolved',   label: '已结案' },
+              { value: 'failed',     label: '失败' },
+            ].map(({ value, label }) => (
+              <label key={value} className="chk">
+                <input
+                  type="checkbox"
+                  checked={sidebarFilter.statuses.includes(value)}
+                  onChange={() => toggleStatus(value)}
+                />
+                <span>{label}</span>
+                <span className="ct">{statusCount[value] || 0}</span>
+              </label>
+            ))}
+          </div>
+
+          {/* 案件类型 */}
+          {caseTypes.length > 0 && (
+            <div className="filter-group">
+              <div className="gh">案件类型</div>
+              {caseTypes.map(type => (
+                <label key={type} className="chk">
+                  <input
+                    type="checkbox"
+                    checked={sidebarFilter.caseTypes.includes(type)}
+                    onChange={() => setSidebarFilter(prev => {
+                      const has = prev.caseTypes.includes(type)
+                      return {
+                        ...prev,
+                        caseTypes: has ? prev.caseTypes.filter(t => t !== type) : [...prev.caseTypes, type],
+                      }
+                    })}
+                  />
+                  <span>{type}</span>
+                  <span className="ct">{caseTypeCount[type] || 0}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {/* 油品类型 */}
+          {oilTypes.length > 0 && (
+            <div className="filter-group">
+              <div className="gh">油品</div>
+              <div className="chip-row">
+                {oilTypes.map(oilType => (
+                  <span
+                    key={oilType}
+                    className={`chip-sm${sidebarFilter.oilTypes.length === 0 || sidebarFilter.oilTypes.includes(oilType) ? ' on' : ''}`}
+                    style={{ '--c': oilTypeColor[oilType] || 'var(--oil)' } as React.CSSProperties}
+                    onClick={() => toggleOilType(oilType)}
+                  >
+                    {oilType} {oilTypeCount[oilType] || 0}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 日期范围 */}
+          <div className="filter-group">
+            <div className="gh">日期范围</div>
+            <div className="date-range">
+              <input
+                type="date"
+                value={sidebarFilter.startDate}
+                onChange={e => setSidebarFilter(prev => ({ ...prev, startDate: e.target.value }))}
+              />
+              <span>→</span>
+              <input
+                type="date"
+                value={sidebarFilter.endDate}
+                onChange={e => setSidebarFilter(prev => ({ ...prev, endDate: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <button className="btn-primary" onClick={applyFilters}>
+            应用筛选 ({filteredCases.length})
+          </button>
+          <button className="btn-ghost" onClick={resetFilters}>重置</button>
+        </aside>
+
+        {/* ── 右侧主内容区 ── */}
+        <section className="cases-main">
+          {/* 工具栏 */}
+          <div className="tools-bar">
+            <div className="search">
+              <span className="ico">⌕</span>
+              <input
+                placeholder="搜索案件编号、地点、描述..."
+                value={keyword}
+                onChange={e => setKeyword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && applyFilters()}
+              />
+              <span className="kbd">⌘K</span>
+            </div>
+            <div className="tools-bar-right">
+              <button className="btn-ghost" onClick={() => setImportModalVisible(true)}>导入 ▾</button>
+              <button className="btn-primary" onClick={handleCreate}>
+                ＋ 新建案件
+              </button>
+            </div>
+          </div>
+
+          {/* 案件列表 + 详情分栏 */}
+          <div className="cases-split">
+            {/* 案件表格 */}
+            <div className="card cases-table-card">
+              {isLoading ? (
+                <div className="empty-state">
+                  <div className="icon">⌛</div>
+                  <span>加载中...</span>
+                </div>
+              ) : (
+                <table className="data cases-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 140 }}>案件编号</th>
+                      <th style={{ width: 130 }}>案发时间</th>
+                      <th>案发地点</th>
+                      <th style={{ width: 110 }}>类型</th>
+                      <th style={{ width: 90 }}>油品</th>
+                      <th style={{ width: 120 }}>信息质量</th>
+                      <th style={{ width: 110 }}>状态</th>
+                      <th style={{ width: 100 }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCases.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: '32px 0' }}>
+                          暂无案件数据
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCases.map(caseItem => (
+                        <tr
+                          key={caseItem.id}
+                          className={selectedCase?.id === caseItem.id ? 'selected' : ''}
+                          onClick={() => setSelectedCase(caseItem)}
+                        >
+                          <td>
+                            <span className="cno">{caseItem.case_number || `#${caseItem.id}`}</span>
+                          </td>
+                          <td className="time">
+                            {dayjs(caseItem.occurred_time).format('MM-DD HH:mm')}
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 12, color: 'var(--ink-1)' }}>
+                              {caseItem.location || '—'}
+                            </span>
+                          </td>
+                          <td>
+                            {caseItem.case_type ? (
+                              <span className="tag" style={{ '--tag-c': 'var(--accent)' } as React.CSSProperties}>
+                                {caseItem.case_type}
+                              </span>
+                            ) : <span style={{ color: 'var(--ink-3)' }}>—</span>}
+                          </td>
+                          <td>
+                            {caseItem.oil_type ? (
+                              <span
+                                className="tag"
+                                style={{ '--tag-c': oilTypeColor[caseItem.oil_type] || 'var(--oil)' } as React.CSSProperties}
+                              >
+                                {caseItem.oil_type}
+                              </span>
+                            ) : <span style={{ color: 'var(--ink-3)' }}>—</span>}
+                          </td>
+                          <td>{renderQualityBadge(caseItem)}</td>
+                          <td>
+                            <span className={`tag ${statusTagClass[caseItem.status] || ''}`}>
+                              {statusLabel[caseItem.status] || caseItem.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="cases-row-actions" onClick={e => e.stopPropagation()}>
+                              <button
+                                className="cases-act-btn"
+                                title="编辑"
+                                onClick={() => handleEdit(caseItem)}
+                              >
+                                <EditOutlined />
+                              </button>
+                              <button
+                                className="cases-act-btn"
+                                title="预处理"
+                                onClick={() => preprocessMutation.mutate(caseItem.id)}
+                              >
+                                <ApiOutlined />
+                              </button>
+                              <button
+                                className="cases-act-btn"
+                                title="案件研判"
+                                onClick={() => navigate(`/case-intelligence?caseId=${caseItem.id}`)}
+                              >
+                                <NodeIndexOutlined />
+                              </button>
+                              {caseItem.latitude != null && caseItem.longitude != null && (
+                                <button
+                                  className="cases-act-btn"
+                                  title="地图"
+                                  onClick={() => navigate(`/cases/map?caseId=${caseItem.id}`)}
+                                >
+                                  <EnvironmentOutlined />
+                                </button>
+                              )}
+                              <Popconfirm
+                                title="确认删除此案件？"
+                                onConfirm={() => deleteMutation.mutate(caseItem.id)}
+                                okText="删除"
+                                cancelText="取消"
+                              >
+                                <button className="cases-act-btn cases-act-btn--danger" title="删除">
+                                  <DeleteOutlined />
+                                </button>
+                              </Popconfirm>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 案件详情面板 */}
+            <aside className="case-detail">
+              {selectedCase ? (
+                <>
+                  {/* 详情头 */}
+                  <div className="detail-head">
+                    <div>
+                      <div className="cno-big">{selectedCase.case_number || `#${selectedCase.id}`}</div>
+                      <div className="cno-sub">
+                        {selectedCase.location || '—'}
+                        {selectedCase.case_type ? `  ·  ${selectedCase.case_type}` : ''}
+                      </div>
+                    </div>
+                    <span className={`tag ${statusTagClass[selectedCase.status] || ''}`}>
+                      {statusLabel[selectedCase.status] || selectedCase.status}
+                    </span>
+                  </div>
+
+                  <div className="detail-section">
+                    <div className="ds-head">信息质量与报送</div>
+                    <div className="detail-grid">
+                      <div className="kv">
+                        <span className="k">质量评分</span>
+                        <span className="v">{renderQualityBadge(selectedCase)}</span>
+                      </div>
+                      {selectedCase.report_time && (
+                        <div className="kv">
+                          <span className="k">报送时间</span>
+                          <span className="v">{dayjs(selectedCase.report_time).format('YYYY-MM-DD HH:mm')}</span>
+                        </div>
+                      )}
+                      {selectedCase.report_unit && (
+                        <div className="kv">
+                          <span className="k">责任单位</span>
+                          <span className="v">{selectedCase.report_unit}</span>
+                        </div>
+                      )}
+                      {selectedCase.source_type && (
+                        <div className="kv">
+                          <span className="k">线索来源</span>
+                          <span className="v">{selectedCase.source_type}</span>
+                        </div>
+                      )}
+                      {selectedCase.current_stage && (
+                        <div className="kv">
+                          <span className="k">办理阶段</span>
+                          <span className="v">{stageOptions.find(s => s.value === selectedCase.current_stage)?.label || selectedCase.current_stage}</span>
+                        </div>
+                      )}
+                      <div className="kv">
+                        <span className="k">报案/立案</span>
+                        <span className="v">
+                          {selectedCase.police_reported ? '已报案' : '未标注报案'}
+                          {selectedCase.case_filed ? ' · 已立案' : ''}
+                        </span>
+                      </div>
+                    </div>
+                    {selectedCase.quality_issues?.missing_required?.length ? (
+                      <p className="narr" style={{ color: 'var(--warn)' }}>
+                        缺项：{selectedCase.quality_issues.missing_required.slice(0, 4).map(i => i.label).join('、')}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {/* 关键信息 */}
+                  <div className="detail-grid">
+                    <div className="kv">
+                      <span className="k">案发时间</span>
+                      <span className="v">{dayjs(selectedCase.occurred_time).format('YYYY-MM-DD HH:mm')}</span>
+                    </div>
+                    {selectedCase.location && (
+                      <div className="kv">
+                        <span className="k">案发地点</span>
+                        <span className="v">{selectedCase.location}</span>
+                      </div>
+                    )}
+                    {selectedCase.case_type && (
+                      <div className="kv">
+                        <span className="k">案件类型</span>
+                        <span className="v">
+                          <span className="tag" style={{ '--tag-c': 'var(--accent)' } as React.CSSProperties}>
+                            {selectedCase.case_type}
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.oil_type && (
+                      <div className="kv">
+                        <span className="k">油品</span>
+                        <span className="v">
+                          <span
+                            className="tag"
+                            style={{ '--tag-c': oilTypeColor[selectedCase.oil_type] || 'var(--oil)' } as React.CSSProperties}
+                          >
+                            {selectedCase.oil_type}
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.oil_nature && (
+                      <div className="kv">
+                        <span className="k">原油性质</span>
+                        <span className="v">{selectedCase.oil_nature}</span>
+                      </div>
+                    )}
+                    {selectedCase.oil_volume != null && (
+                      <div className="kv">
+                        <span className="k">涉案油量</span>
+                        <span className="v" style={{ fontFamily: 'var(--mono)' }}>
+                          {selectedCase.oil_volume} 吨
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.water_cut != null && (
+                      <div className="kv">
+                        <span className="k">检斤含水</span>
+                        <span className="v" style={{ fontFamily: 'var(--mono)' }}>
+                          {selectedCase.water_cut}%
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.oil_value != null && (
+                      <div className="kv">
+                        <span className="k">涉案价值</span>
+                        <span className="v" style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                          ¥ {(selectedCase.oil_value / 10000).toFixed(1)} 万
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.loss_amount != null && (
+                      <div className="kv">
+                        <span className="k">损失金额</span>
+                        <span className="v" style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                          ¥ {(selectedCase.loss_amount / 10000).toFixed(2)} 万
+                        </span>
+                      </div>
+                    )}
+                    {selectedCase.facility_type && (
+                      <div className="kv">
+                        <span className="k">设施类型</span>
+                        <span className="v">{selectedCase.facility_type}</span>
+                      </div>
+                    )}
+                    {selectedCase.modus_operandi && (
+                      <div className="kv">
+                        <span className="k">作案手法</span>
+                        <span className="v">{selectedCase.modus_operandi}</span>
+                      </div>
+                    )}
+                    {selectedCase.latitude != null && selectedCase.longitude != null && (
+                      <div className="kv">
+                        <span className="k">坐标</span>
+                        <span className="v" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+                          {selectedCase.latitude.toFixed(5)}, {selectedCase.longitude.toFixed(5)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 案情描述 */}
+                  {selectedCase.description && (
+                    <div className="detail-section">
+                      <div className="ds-head">案情描述</div>
+                      <p className="narr">{selectedCase.description}</p>
+                    </div>
+                  )}
+
+                  {/* 底部操作 */}
+                  <div className="detail-actions">
+                    <button className="btn-primary" onClick={handleStartRoundtable}>
+                      发起圆桌研判
+                    </button>
+                    <button className="btn-ghost" onClick={() => handleEdit(selectedCase)}>
+                      编辑案件
+                    </button>
+                    <button className="btn-ghost" onClick={handleDispatchPatrol}>
+                      派遣巡逻
+                    </button>
+                    <Popconfirm
+                      title="确认删除此案件？"
+                      onConfirm={() => deleteMutation.mutate(selectedCase.id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <button className="btn-ghost cases-del-btn">删除</button>
+                    </Popconfirm>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state">
+                  <div className="icon">
+                    <DatabaseOutlined />
+                  </div>
+                  <span>选择左侧案件查看详情</span>
+                </div>
+              )}
+            </aside>
+          </div>
+        </section>
       </div>
 
-      <Table
-        rowSelection={rowSelection}
-        columns={columns}
-        dataSource={cases}
-        loading={isLoading}
-        rowKey="id"
-        pagination={{ pageSize: 10 }}
-      />
-
+      {/* ── 新建/编辑案件 Modal ── */}
       <Modal
-        title={editingCase ? '编辑案件' : '添加案件'}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <DatabaseOutlined style={{ color: 'var(--accent)' }} />
+            <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-0)', fontSize: 14, letterSpacing: '0.06em' }}>
+              {editingCase ? '编辑案件' : '新建案件'}
+            </span>
+          </div>
+        }
         open={isModalVisible}
         onOk={handleSubmit}
         onCancel={() => {
@@ -331,10 +890,17 @@ const Cases: React.FC = () => {
           setEditingCase(null)
           form.resetFields()
         }}
-        width={600}
+        width={620}
         confirmLoading={createMutation.isPending || updateMutation.isPending}
+        okText="确认"
+        cancelText="取消"
+        styles={{
+          content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
+          header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
+          footer:  { borderTop: '1px solid var(--line)' },
+        }}
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
           <Form.Item
             name="occurred_time"
             label="发生时间"
@@ -349,7 +915,7 @@ const Cases: React.FC = () => {
 
           <Form.Item label="经纬度（可选，用于地图与空间分析）" style={{ marginBottom: 0 }}>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Form.Item name="latitude" style={{ flex: 1, marginBottom: 0 }}>
+              <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
                 <InputNumber
                   style={{ width: '100%' }}
                   placeholder="纬度，例如 31.2304"
@@ -358,7 +924,7 @@ const Cases: React.FC = () => {
                   step={0.000001}
                 />
               </Form.Item>
-              <Form.Item name="longitude" style={{ flex: 1, marginBottom: 0 }}>
+              <Form.Item name="longitude" style={{ flex: 1, marginBottom: 8 }}>
                 <InputNumber
                   style={{ width: '100%' }}
                   placeholder="经度，例如 121.4737"
@@ -370,8 +936,18 @@ const Cases: React.FC = () => {
             </div>
           </Form.Item>
 
+          <Form.Item label="地图选点（可选）">
+            <MapPicker
+              lat={watchedLat}
+              lng={watchedLng}
+              onChange={(lat, lng) => {
+                form.setFieldsValue({ latitude: lat, longitude: lng })
+              }}
+            />
+          </Form.Item>
+
           <Form.Item name="case_type" label="类型（可选）">
-            <Input placeholder="如：盗窃、破坏生产经营等，如不清楚可留空" />
+            <Input placeholder="如：管线开孔、油库入侵、罐车劫持等" />
           </Form.Item>
 
           <Form.Item
@@ -382,22 +958,116 @@ const Cases: React.FC = () => {
             <TextArea rows={4} placeholder="请尽可能详细描述案情，其余结构化分析将由系统自动完成" />
           </Form.Item>
 
+          <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
+            业务管理字段（按细则用于报送、质量评分和后续研判）
+          </div>
+
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="report_time" label="报送时间">
+                <DatePicker showTime style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="report_unit" label="报送/责任单位">
+                <Input placeholder="如：××保卫班、××作业区" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="source_type" label="线索来源">
+                <Select allowClear placeholder="请选择线索来源">
+                  {sourceTypeOptions.map(option => (
+                    <Option key={option} value={option}>{option}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="current_stage" label="办理阶段">
+                <Select allowClear placeholder="请选择办理阶段">
+                  {stageOptions.map(option => (
+                    <Option key={option.value} value={option.value}>{option.label}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item name="source_detail" label="线索补充说明">
+            <TextArea rows={2} placeholder="如举报内容、技防预警来源、公安线索编号等" />
+          </Form.Item>
+
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="police_reported" label="是否报案" valuePropName="checked">
+                <Switch checkedChildren="是" unCheckedChildren="否" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="case_filed" label="是否立案" valuePropName="checked">
+                <Switch checkedChildren="是" unCheckedChildren="否" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="operation_role" label="联合行动角色">
+                <Select allowClear placeholder="主导/联合/配合/协助">
+                  {['主导', '联合', '配合', '协助'].map(option => (
+                    <Option key={option} value={option}>{option}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="police_officer" label="公安出警人">
+                <Input placeholder="姓名或警号" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="police_phone" label="公安联系电话">
+                <Input placeholder="联系电话" />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item name="loss_amount" label="损失金额（元，可选）">
             <InputNumber style={{ width: '100%' }} />
           </Form.Item>
 
-          {/* 高级涉油特征折叠区域：仅在需要人工纠正模型判断时使用 */}
-          <details style={{ marginTop: 16 }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 500 }}>
-              涉油案件特征（高级，可选，用于人工修正）
-            </summary>
-            <div style={{ marginTop: 8 }}>
+          {/* 高级涉油特征折叠区域 */}
+          <div
+            className="cases-advanced-toggle"
+            onClick={() => setShowAdvancedFields(!showAdvancedFields)}
+          >
+            {showAdvancedFields ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+            涉油案件特征（高级，可选）
+          </div>
+
+          {showAdvancedFields && (
+            <div className="cases-advanced-body">
               <Form.Item name="oil_type" label="油品类型">
                 <Input placeholder="如：汽油、柴油、原油、润滑油" />
               </Form.Item>
 
-              <Form.Item name="oil_volume" label="涉油数量（吨或升，按约定单位）">
+              <Form.Item name="oil_nature" label="原油性质">
+                <Select allowClear placeholder="请选择原油性质">
+                  {oilNatureOptions.map(option => (
+                    <Option key={option} value={option}>{option}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              <Form.Item name="oil_volume" label="涉油数量（吨或升）">
                 <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+
+              <Form.Item name="water_cut" label="检斤含水率（%）">
+                <InputNumber style={{ width: '100%' }} min={0} max={100} />
               </Form.Item>
 
               <Form.Item name="oil_value" label="估算价值（元）">
@@ -427,36 +1097,135 @@ const Cases: React.FC = () => {
               <Form.Item name="downstream_destination" label="疑似销赃去向">
                 <Input placeholder="如：黑加油点、工地、车队等" />
               </Form.Item>
+
+              <Form.Item name="vehicle_handling" label="涉案车辆处理方式">
+                <Input placeholder="如：扣押停放、移交公安、待处理" />
+              </Form.Item>
+
+              <Form.Item name="person_handling" label="抓获人员处理方式">
+                <Input placeholder="如：移交公安、教育放行、待核查" />
+              </Form.Item>
+
+              <Form.Item name="oil_handling" label="涉案原油处理方式">
+                <Input placeholder="如：检斤入库、移交、暂存" />
+              </Form.Item>
             </div>
-          </details>
+          )}
         </Form>
       </Modal>
 
+      {/* ── 导入 Modal ── */}
       <Modal
-        title="导入历史案件（CSV/Excel）"
+        title={
+          <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-0)', fontSize: 14, letterSpacing: '0.06em' }}>
+            导入历史案件（CSV / Excel）
+          </span>
+        }
         open={importModalVisible}
-        onCancel={() => setImportModalVisible(false)}
-        footer={null}
+        onCancel={resetImportState}
+        footer={[
+          <Button key="cancel" onClick={resetImportState}>
+            取消
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            loading={importMutation.isPending}
+            disabled={
+              !selectedImportFile ||
+              !importPreview ||
+              (importPreview.valid ?? importPreview.total) === 0 ||
+              previewImportMutation.isPending
+            }
+            onClick={() => selectedImportFile && importMutation.mutate(selectedImportFile)}
+          >
+            确认导入
+          </Button>,
+        ]}
+        styles={{
+          content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
+          header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
+        }}
       >
-        <p>
-          请选择包含以下列的文件：<b>occurred_time</b>（发生时间）、<b>description</b>（案件描述）。
+        <p className="cases-import-hint">
+          请选择包含以下列的文件：<strong>occurred_time</strong>（发生时间）、<strong>description</strong>（案件描述）。
         </p>
-        <p>
-          可选列：<b>location</b>、<b>latitude</b>、<b>longitude</b>。
+        <p className="cases-import-hint">
+          可选列：<strong>location</strong>、<strong>latitude</strong>、<strong>longitude</strong>。
         </p>
         <Upload.Dragger
           name="file"
           multiple={false}
           showUploadList={false}
+          disabled={previewImportMutation.isPending || importMutation.isPending}
           beforeUpload={(file) => {
-            importMutation.mutate(file)
+            setSelectedImportFile(file)
+            setImportPreview(null)
+            previewImportMutation.mutate(file)
             return false
           }}
+          style={{
+            background: 'var(--bg-2)',
+            border: '1px dashed var(--line)',
+            borderRadius: 0,
+          }}
         >
-          <p className="ant-upload-drag-icon">将文件拖到此处，或点击选择文件</p>
-          <p className="ant-upload-text">支持 CSV / Excel（.xlsx）文件</p>
+          <p className="ant-upload-drag-icon" style={{ color: 'var(--accent)' }}>
+            将文件拖到此处，或点击选择文件
+          </p>
+          <p className="ant-upload-text" style={{ color: 'var(--ink-2)' }}>
+            {selectedImportFile ? selectedImportFile.name : '支持 CSV / Excel（.xlsx）文件'}
+          </p>
         </Upload.Dragger>
+        {previewImportMutation.isPending && (
+          <div className="cases-import-status">正在解析并校验文件...</div>
+        )}
+        {importPreview && (
+          <div className="cases-import-preview">
+            <div className="cases-import-summary">
+              <span>总行数 <b>{importPreview.total}</b></span>
+              <span>有效 <b>{importPreview.valid ?? importPreview.total}</b></span>
+              <span>错误 <b>{importPreview.errors?.length ?? 0}</b></span>
+            </div>
+            {importPreview.errors?.length > 0 && (
+              <div className="cases-import-errors">
+                {importPreview.errors.slice(0, 5).map((err) => (
+                  <div key={`${err.row}-${err.error}`}>
+                    第 {err.row} 行：{err.error}
+                  </div>
+                ))}
+                {importPreview.errors.length > 5 && (
+                  <div>还有 {importPreview.errors.length - 5} 条错误未显示</div>
+                )}
+              </div>
+            )}
+            {(importPreview.preview?.length ?? 0) > 0 && (
+              <div className="cases-import-rows">
+                {importPreview.preview!.slice(0, 5).map((row, idx) => (
+                  <div key={idx} className="cases-import-row">
+                    {Object.entries(row).slice(0, 5).map(([key, value]) => (
+                      <span key={key}>
+                        <b>{key}</b>{String(value ?? '—')}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
+
+      {/* 搜索表单（隐藏，保留逻辑） */}
+      <Form form={searchForm} style={{ display: 'none' }}>
+        <Form.Item name="keyword"><Input /></Form.Item>
+        <Form.Item name="status"><Select><Option value="pending">待处理</Option></Select></Form.Item>
+        <Form.Item name="case_type"><Input /></Form.Item>
+        <Form.Item name="oil_type"><Input /></Form.Item>
+        <Form.Item name="dateRange"><RangePicker /></Form.Item>
+        <Form.Item name="has_geo" valuePropName="checked"><Switch /></Form.Item>
+        <Row><Col span={6}></Col></Row>
+      </Form>
     </div>
   )
 }

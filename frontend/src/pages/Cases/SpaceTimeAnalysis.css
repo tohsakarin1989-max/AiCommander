@@ -1,0 +1,161 @@
+/* ===================================================
+   SPACE TIME ANALYSIS PAGE — design-system.css 派生
+   =================================================== */
+
+/* 页面布局：固定高度，内部溢出滚动 */
+.sta-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  height: calc(100vh - 100px);
+  padding: var(--gap) var(--pad);
+}
+
+/* 筛选栏 */
+.sta-filter-bar {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.sta-filter-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* 计数 chip */
+.sta-count-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 2px 9px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Ant DatePicker 覆写 */
+.sta-filter-bar .ant-picker {
+  background: var(--bg-2) !important;
+  border-color: var(--line) !important;
+  border-radius: 0 !important;
+}
+.sta-filter-bar .ant-picker-input > input {
+  color: var(--ink-1) !important;
+  font-family: var(--mono) !important;
+  font-size: 11px !important;
+}
+.sta-filter-bar .ant-picker-separator,
+.sta-filter-bar .ant-picker-suffix { color: var(--ink-3) !important; }
+
+/* Radio 按钮覆写 */
+.sta-filter-bar .ant-radio-button-wrapper {
+  background: var(--bg-2) !important;
+  border-color: var(--line) !important;
+  border-radius: 0 !important;
+  color: var(--ink-3) !important;
+  font-family: var(--mono) !important;
+  font-size: 10.5px !important;
+  height: 28px !important;
+  line-height: 26px !important;
+  padding: 0 10px !important;
+}
+.sta-filter-bar .ant-radio-button-wrapper:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent-line) !important;
+}
+.sta-filter-bar .ant-radio-button-wrapper-checked {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent-line) !important;
+  color: var(--accent) !important;
+}
+.sta-filter-bar .ant-radio-button-wrapper-checked::before {
+  background-color: var(--accent-line) !important;
+}
+
+/* 主体：地图 + 右侧面板 */
+.sta-body {
+  flex: 1;
+  display: flex;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+/* 地图容器 */
+.sta-map-wrap {
+  flex: 3;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 右侧面板 */
+.sta-right-panel {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* 右侧面板内的卡片：禁止收缩，让内容自然撑高并触发面板滚动 */
+.sta-right-panel .card {
+  flex-shrink: 0;
+  overflow: visible;
+}
+.sta-right-panel .card-body {
+  overflow: visible;
+  flex: none;
+}
+
+/* 热点条目 */
+.sta-hotspot-item {
+  background: var(--bg-2);
+  padding: 10px 12px;
+  margin-bottom: 7px;
+  border-left: 3px solid var(--line);
+}
+.sta-hotspot-item:last-child { margin-bottom: 0; }
+.sta-hotspot-item--high   { border-left-color: var(--err); }
+.sta-hotspot-item--medium { border-left-color: var(--warn); }
+.sta-hotspot-item--low    { border-left-color: var(--ok); }
+
+.sta-hotspot-item__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 7px;
+}
+.sta-hotspot-item__name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-0);
+}
+.sta-hotspot-item__risk-high   { color: var(--err);  font-family: var(--mono); font-size: 10.5px; }
+.sta-hotspot-item__risk-medium { color: var(--warn); font-family: var(--mono); font-size: 10.5px; }
+.sta-hotspot-item__risk-low    { color: var(--ok);   font-family: var(--mono); font-size: 10.5px; }
+
+.sta-hotspot-item__rows { display: flex; flex-direction: column; gap: 4px; }
+.sta-hotspot-item__row  { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.sta-hotspot-item__row-key { color: var(--ink-3); }
+.sta-hotspot-item__row-val { font-family: var(--mono); font-size: 10.5px; color: var(--accent); }
+.sta-hotspot-item__row-geo { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+
+/* loading 居中 */
+.sta-spin-wrap {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

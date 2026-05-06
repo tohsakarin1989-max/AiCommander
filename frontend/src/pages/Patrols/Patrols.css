@@ -1,0 +1,454 @@
+/* ==========================================================================
+   PATROLS PAGE — 巡逻部署
+   基于 Patrol.html 设计稿重写，遵循 design-system.css token 体系
+   ========================================================================== */
+
+/* ── 页面布局 ─────────────────────────────────────────────── */
+.page-patrol {
+  padding: var(--gap) var(--pad);
+  overflow-y: auto;
+  display: block;
+}
+.page-patrol .page-title {
+  margin-bottom: var(--gap);
+}
+
+/* 左右两列：班组花名册 | 时间线+热力+AI建议 */
+.patrol-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: var(--gap);
+}
+
+/* ── 班组花名册行 (.squad-row) ──────────────────────────── */
+.squad-row {
+  display: grid;
+  grid-template-columns: 170px 1fr 180px 1fr auto;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: center;
+}
+.squad-row:last-child {
+  border-bottom: 0;
+}
+
+/* ID 徽章 */
+.sq-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 4px 6px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.squad-row.idle .sq-id {
+  color: var(--warn);
+  border-color: oklch(0.80 0.16 75 / 0.4);
+  background: oklch(0.80 0.16 75 / 0.10);
+}
+.squad-row.done .sq-id {
+  color: var(--ink-3);
+  border-color: var(--line);
+  background: var(--bg-2);
+}
+.squad-row.off .sq-id {
+  color: var(--ink-3);
+  border-color: var(--line);
+  background: var(--bg-2);
+  opacity: 0.65;
+}
+
+/* 人员信息 */
+.sq-members {
+  min-width: 0;
+}
+.sq-ct {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+}
+.sq-names {
+  font-size: 12.5px;
+  color: var(--ink-1);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 区域 */
+.sq-area {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+
+/* 状态 */
+.sq-status {}
+.sq-st {
+  font-size: 12.5px;
+  color: var(--ink-0);
+  font-weight: 500;
+}
+.squad-row.on   .sq-st { color: var(--ok); }
+.squad-row.idle .sq-st { color: var(--warn); }
+.squad-row.done .sq-st { color: var(--ink-2); }
+.squad-row.off  .sq-st { color: var(--ink-3); }
+
+.sq-loc {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+}
+
+/* 操作 */
+.sq-action {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── 时间线 ─────────────────────────────────────────────── */
+.timeline-hours {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+  padding-left: 170px;
+  letter-spacing: 0.06em;
+}
+.timeline-lanes {
+  display: grid;
+  gap: 4px;
+}
+.lane {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+.lane-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+.lane-track {
+  position: relative;
+  height: 26px;
+  background: repeating-linear-gradient(
+    to right,
+    var(--bg-2) 0, var(--bg-2) calc(100% / 6 - 1px),
+    var(--line-soft) calc(100% / 6 - 1px), var(--line-soft) calc(100% / 6)
+  );
+  border: 1px solid var(--line-soft);
+}
+.lane-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  color: oklch(0.15 0.03 90);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  border-radius: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.now-line {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  z-index: 2;
+}
+.now-line::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: -5px;
+  width: 12px;
+  height: 4px;
+  background: var(--accent);
+}
+.timeline-footer {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* ── 覆盖热力图 ─────────────────────────────────────────── */
+.cov-grid {
+  display: grid;
+  gap: 2px;
+}
+.cov-row {
+  display: grid;
+  grid-template-columns: 42px repeat(24, 1fr);
+  gap: 2px;
+}
+.cov-day {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+}
+.cov-cell {
+  height: 22px;
+  cursor: default;
+  transition: opacity 0.1s;
+}
+.cov-cell:hover {
+  opacity: 0.8;
+  outline: 1px solid var(--accent-line);
+}
+.cov-row.header {
+  margin-top: 4px;
+}
+.cov-hdr {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.cov-legend {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.cov-sw {
+  width: 16px;
+  height: 10px;
+  display: inline-block;
+  border: 1px solid var(--line-soft);
+}
+
+/* ── AI 部署建议 ─────────────────────────────────────────── */
+.rec-card {
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--err);
+  background: oklch(0.70 0.20 25 / 0.05);
+}
+.rec-card.p1 {
+  border-left-color: var(--warn);
+  background: oklch(0.80 0.16 75 / 0.04);
+}
+.rec-card.p2 {
+  border-left-color: var(--info);
+  background: oklch(0.78 0.11 220 / 0.04);
+}
+.rec-card:last-child {
+  margin-bottom: 0;
+}
+.rec-tag {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--err);
+  letter-spacing: 0.1em;
+  margin-bottom: 5px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.rec-card.p1 .rec-tag { color: var(--warn); }
+.rec-card.p2 .rec-tag { color: var(--info); }
+
+.rec-title {
+  font-size: 14px;
+  color: var(--ink-0);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.rec-body {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+.rec-body b { color: var(--accent); font-weight: 500; }
+
+.rec-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.rec-foot b { color: var(--accent); font-weight: 500; }
+
+/* ── 状态标签 ─────────────────────────────────────────────── */
+.patrol-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.patrol-risk-tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+/* ── 操作按钮 ─────────────────────────────────────────────── */
+.patrol-action-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  letter-spacing: 0.04em;
+}
+.patrol-action-btn:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.patrol-action-btn--cyan {
+  border-color: oklch(0.78 0.11 220 / 0.5);
+  color: var(--info);
+}
+.patrol-action-btn--cyan:hover {
+  background: oklch(0.78 0.11 220 / 0.08);
+  border-color: var(--info);
+}
+.patrol-action-btn--green {
+  border-color: oklch(0.78 0.14 155 / 0.5);
+  color: var(--ok);
+}
+.patrol-action-btn--green:hover {
+  background: oklch(0.78 0.14 155 / 0.08);
+  border-color: var(--ok);
+}
+.patrol-action-btn--accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.patrol-action-btn--accent:hover {
+  filter: brightness(1.08);
+}
+.patrol-action-btn--danger {
+  border-color: oklch(0.70 0.20 25 / 0.4);
+  color: var(--err);
+}
+.patrol-action-btn--danger:hover {
+  background: oklch(0.70 0.20 25 / 0.08);
+  border-color: var(--err);
+}
+
+/* ── AI 巡逻路线规划地图 ──────────────────────────────────── */
+.patrol-map-section {
+  margin-top: var(--gap);
+}
+.patrol-map-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: oklch(0.175 0.012 250);
+}
+.patrol-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.patrol-map-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.patrol-map-sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.patrol-map-sw.sq { border-radius: 0; }
+.patrol-map-sw.dashed {
+  border-radius: 0;
+  border: 1.5px dashed currentColor;
+  background: transparent !important;
+}
+
+/* ── 详情 Modal ───────────────────────────────────────────── */
+.patrol-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.patrol-detail-section {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+.patrol-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+.patrol-detail-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.patrol-detail-value {
+  font-size: 13px;
+  color: var(--ink-1);
+}
