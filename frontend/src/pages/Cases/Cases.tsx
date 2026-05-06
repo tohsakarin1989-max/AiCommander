@@ -27,7 +27,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caseApi, type CaseImportResult } from '../../services/cases'
-import type { Case, CaseCreate } from '../../types'
+import type { BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
@@ -85,6 +85,19 @@ const qualityLabel: Record<string, string> = {
   low: '缺项较多',
 }
 
+const materialStatusLabel: Record<string, string> = {
+  satisfied: '已齐',
+  partial: '待附件',
+  missing: '缺失',
+  not_required: '未触发',
+}
+
+const bonusGateLabel: Record<string, string> = {
+  ready: '可复核',
+  blocked_by_materials: '材料未齐',
+  rules_not_configured: '待配置细则',
+}
+
 const sourceTypeOptions = ['巡逻发现', '群众举报', '领导指派', '公安机关线索', '技防预警', '红色网格上报', '作业区反馈', '其他']
 const oilNatureOptions = ['被盗原油', '落地原油', '收缴油品', '回收原油', '其他']
 const stageOptions = [
@@ -115,6 +128,7 @@ const defaultFilterState: FilterState = {
 
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
+  const [evidenceForm] = Form.useForm()
   const [searchForm] = Form.useForm()
   const watchedLat = Form.useWatch('latitude', form)
   const watchedLng = Form.useWatch('longitude', form)
@@ -124,6 +138,7 @@ const Cases: React.FC = () => {
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
+  const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = useState(false)
   const [filters, setFilters] = useState<SearchFilters>({})
   const [keyword, setKeyword] = useState('')
@@ -215,6 +230,24 @@ const Cases: React.FC = () => {
     refetchInterval: 5000,
   })
 
+  const { data: bonusAssessment } = useQuery({
+    queryKey: ['case-bonus-assessment', selectedCase?.id],
+    queryFn: () => caseApi.getBonusAssessment(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
+  const { data: automationWorkbench } = useQuery({
+    queryKey: ['case-automation-workbench', selectedCase?.id],
+    queryFn: () => caseApi.getAutomationWorkbench(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
+  const { data: caseEvidence } = useQuery({
+    queryKey: ['case-evidence', selectedCase?.id],
+    queryFn: () => caseApi.getCaseEvidence(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
   const createMutation = useMutation({
     mutationFn: caseApi.createCase,
     onSuccess: () => {
@@ -234,6 +267,8 @@ const Cases: React.FC = () => {
       setEditingCase(null)
       form.resetFields()
       queryClient.invalidateQueries({ queryKey: ['cases'] })
+      queryClient.invalidateQueries({ queryKey: ['case-bonus-assessment'] })
+      queryClient.invalidateQueries({ queryKey: ['case-automation-workbench'] })
     },
   })
 
@@ -255,6 +290,41 @@ const Cases: React.FC = () => {
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
       message.error(`预处理失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const structureMutation = useMutation({
+    mutationFn: (text: string) => caseApi.structureCaseText(text),
+    onSuccess: (data) => {
+      const patch = { ...data.case_fields } as Record<string, unknown>
+      if (typeof patch.occurred_time === 'string') {
+        patch.occurred_time = dayjs(patch.occurred_time)
+      }
+      form.setFieldsValue(patch)
+      setShowAdvancedFields(true)
+      message.success(`已提取 ${Object.keys(data.case_fields).length} 个字段`)
+    },
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`自动提取失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const createEvidenceMutation = useMutation({
+    mutationFn: (data: { title?: string; file_path?: string; notes?: string }) =>
+      caseApi.createCaseEvidence(selectedCase!.id, data),
+    onSuccess: async () => {
+      message.success('材料已归档')
+      setEvidenceModalVisible(false)
+      evidenceForm.resetFields()
+      await queryClient.invalidateQueries({ queryKey: ['case-evidence', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-bonus-assessment', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-automation-workbench', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['cases'] })
+    },
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`材料归档失败: ${err.response?.data?.detail || err.message}`)
     },
   })
 
@@ -417,6 +487,164 @@ const Cases: React.FC = () => {
     navigate(`/patrols?caseId=${selectedCase.id}`)
   }
 
+  const handleStructureFromDescription = () => {
+    const text = form.getFieldValue('description')
+    if (!text || !String(text).trim()) {
+      message.warning('请先填写案情描述')
+      return
+    }
+    structureMutation.mutate(String(text))
+  }
+
+  const handleEvidenceSubmit = async () => {
+    if (!selectedCase) return
+    const values = await evidenceForm.validateFields()
+    createEvidenceMutation.mutate(values)
+  }
+
+  const renderBonusAssessment = (assessment?: BonusAssessment) => {
+    if (!assessment) {
+      return <p className="narr">正在读取考核材料状态...</p>
+    }
+    const requiredChecks = assessment.material_checks.filter(item => item.required)
+    const activeItems = assessment.bonus_items.filter(item => item.status !== 'not_applicable')
+    const distribution = assessment.distribution || []
+    const warnings = assessment.warnings || []
+    return (
+      <div className="bonus-panel">
+        <div className="bonus-summary">
+          <span className={`bonus-gate bonus-gate--${assessment.material_gate.status}`}>
+            {bonusGateLabel[assessment.material_gate.status] || assessment.material_gate.status}
+          </span>
+          <span>
+            材料 {assessment.material_gate.satisfied_count}/{assessment.material_gate.required_count}
+          </span>
+          <span>
+            测算 ¥{assessment.total_suggested_amount.toLocaleString()}
+          </span>
+        </div>
+        {assessment.primary_squad && (
+          <div className="bonus-meta">
+            <span>主控 {assessment.primary_squad}</span>
+            <span>{assessment.rules_version}</span>
+          </div>
+        )}
+        <div className="bonus-materials">
+          {requiredChecks.slice(0, 5).map(item => (
+            <div key={item.requirement_key} className={`bonus-row bonus-row--${item.status}`}>
+              <span>{item.label}</span>
+              <b>{materialStatusLabel[item.status] || item.status}</b>
+            </div>
+          ))}
+        </div>
+        <div className="bonus-items">
+          {activeItems.slice(0, 4).map(item => (
+            <div key={item.key} className="bonus-item">
+              <span>{item.label}</span>
+              <small>{item.basis}</small>
+              <b>{item.status === 'calculated' ? `¥${item.suggested_amount.toLocaleString()}` : '暂不计入'}</b>
+            </div>
+          ))}
+        </div>
+        {distribution.length > 0 && (
+          <div className="bonus-distribution">
+            {distribution.slice(0, 4).map(item => (
+              <div key={item.squad} className="bonus-item">
+                <span>{item.squad}</span>
+                <small>出警 {item.count} 人</small>
+                <b>{item.amount === null ? '待分配' : `¥${item.amount.toLocaleString()}`}</b>
+              </div>
+            ))}
+          </div>
+        )}
+        {assessment.material_gate.missing_materials.length > 0 && (
+          <p className="narr" style={{ color: 'var(--warn)' }}>
+            待补：{assessment.material_gate.missing_materials.slice(0, 4).join('、')}
+          </p>
+        )}
+        {warnings.length > 0 && (
+          <p className="narr" style={{ color: 'var(--warn)' }}>
+            提醒：{warnings.slice(0, 2).join('；')}
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  const renderAutomationPanel = (workbench?: CaseAutomationWorkbench) => {
+    const assessment = workbench?.bonus_assessment || bonusAssessment
+    const gate = assessment?.material_gate
+    const total = assessment?.total_suggested_amount ?? 0
+    const primarySquad = assessment?.primary_squad || selectedCase?.report_unit || '未选择'
+    const moduleByKey = new Map((workbench?.modules || []).map(item => [item.key, item]))
+    const conclusion = moduleByKey.get('conclusion_layering')
+    const card = moduleByKey.get('experience_card')
+    const gap = moduleByKey.get('gap_closure')
+    const actions = workbench?.gap_closure.actions || []
+    return (
+      <div className="cases-automation-panel">
+        <div className="cases-automation-head">
+          <span>案件自动化</span>
+          <b>{selectedCase ? selectedCase.case_number : '待选择案件'}</b>
+        </div>
+        <div className="cases-automation-metrics">
+          <div>
+            <span>主控班组</span>
+            <b>{primarySquad}</b>
+          </div>
+          <div>
+            <span>佐证材料</span>
+            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : '—'}</b>
+          </div>
+          <div>
+            <span>奖金测算</span>
+            <b>¥{total.toLocaleString()}</b>
+          </div>
+        </div>
+        <div className="cases-automation-actions">
+          <Button size="small" icon={<ApiOutlined />} onClick={handleCreate}>
+            录入提取
+          </Button>
+          <Button
+            size="small"
+            icon={<DatabaseOutlined />}
+            disabled={!selectedCase}
+            onClick={() => setEvidenceModalVisible(true)}
+          >
+            材料归档
+          </Button>
+          <Button
+            size="small"
+            icon={<NodeIndexOutlined />}
+            disabled={!selectedCase}
+            onClick={() => document.querySelector('.case-detail')?.scrollTo({ top: 0, behavior: 'smooth' })}
+          >
+            奖金测算
+          </Button>
+        </div>
+        <div className="cases-automation-modules">
+          <div className={`cases-automation-module cases-automation-module--${conclusion?.status || 'idle'}`}>
+            <span>4 结论分层</span>
+            <b>
+              事实 {workbench?.conclusion_layering.facts.length || 0} · 推断 {workbench?.conclusion_layering.inferences.length || 0}
+            </b>
+            <small>建议 {workbench?.conclusion_layering.suggestions.length || 0} · 缺口 {workbench?.conclusion_layering.information_gaps.length || 0}</small>
+          </div>
+          <div className={`cases-automation-module cases-automation-module--${card?.status || 'idle'}`}>
+            <span>5 经验卡</span>
+            <b>经验 {workbench?.experience_card.reusable_lessons.length || 0}</b>
+            <small>{workbench?.experience_card.how_it_was_found?.[0] || '选择案件后自动沉淀'}</small>
+          </div>
+          <div className={`cases-automation-module cases-automation-module--${gap?.status || 'idle'}`}>
+            <span>6 缺口闭环</span>
+            <b>待办 {actions.length}</b>
+            <small>{actions[0]?.title || '材料和信息缺口会自动汇总'}</small>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page page-cases">
       {/* 预处理状态提醒 */}
@@ -548,6 +776,8 @@ const Cases: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {renderAutomationPanel(automationWorkbench)}
 
           {/* 案件列表 + 详情分栏 */}
           <div className="cases-split">
@@ -736,6 +966,57 @@ const Cases: React.FC = () => {
                     ) : null}
                   </div>
 
+                  <div className="detail-section">
+                    <div className="ds-head">奖金考核测算</div>
+                    {renderBonusAssessment(bonusAssessment)}
+                  </div>
+
+                  {automationWorkbench && (
+                    <div className="detail-section">
+                      <div className="ds-head">AI 自动化复盘</div>
+                      <div className="automation-456-list">
+                        <div>
+                          <b>结论分层</b>
+                          <span>
+                            事实 {automationWorkbench.conclusion_layering.facts.length}，推断 {automationWorkbench.conclusion_layering.inferences.length}，建议 {automationWorkbench.conclusion_layering.suggestions.length}
+                          </span>
+                        </div>
+                        <div>
+                          <b>经验卡</b>
+                          <span>{automationWorkbench.experience_card.reusable_lessons[0] || automationWorkbench.experience_card.why_it_matters[0] || '待补充更多案件信息'}</span>
+                        </div>
+                        <div>
+                          <b>缺口闭环</b>
+                          <span>{automationWorkbench.gap_closure.actions[0]?.title || '暂无待补缺口'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="detail-section">
+                    <div className="ds-head ds-head--split">
+                      <span>佐证材料</span>
+                      <Button size="small" onClick={() => setEvidenceModalVisible(true)}>
+                        登记材料
+                      </Button>
+                    </div>
+                    {caseEvidence?.length ? (
+                      <div className="evidence-list">
+                        {caseEvidence.slice(0, 6).map(item => {
+                          const auto = item.meta?.auto_classification as { label?: string; confidence?: number } | undefined
+                          return (
+                            <div key={item.id} className="evidence-mini">
+                              <span>{item.title || item.file_path || `材料 ${item.id}`}</span>
+                              <b>{auto?.label || item.requirement_key || item.evidence_type || '其他材料'}</b>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="narr">暂无材料目录</p>
+                    )}
+                  </div>
+
                   {/* 关键信息 */}
                   <div className="detail-grid">
                     <div className="kv">
@@ -865,7 +1146,7 @@ const Cases: React.FC = () => {
                   <div className="icon">
                     <DatabaseOutlined />
                   </div>
-                  <span>选择左侧案件查看详情</span>
+                  <span>选择案件后查看材料门禁和奖金测算</span>
                 </div>
               )}
             </aside>
@@ -957,6 +1238,17 @@ const Cases: React.FC = () => {
           >
             <TextArea rows={4} placeholder="请尽可能详细描述案情，其余结构化分析将由系统自动完成" />
           </Form.Item>
+
+          <div className="cases-auto-extract">
+            <Button
+              size="small"
+              icon={<ApiOutlined />}
+              loading={structureMutation.isPending}
+              onClick={handleStructureFromDescription}
+            >
+              自动提取
+            </Button>
+          </div>
 
           <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
             业务管理字段（按细则用于报送、质量评分和后续研判）
@@ -1111,6 +1403,39 @@ const Cases: React.FC = () => {
               </Form.Item>
             </div>
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-0)', fontSize: 14, letterSpacing: '0.06em' }}>
+            登记佐证材料
+          </span>
+        }
+        open={evidenceModalVisible}
+        onOk={handleEvidenceSubmit}
+        onCancel={() => {
+          setEvidenceModalVisible(false)
+          evidenceForm.resetFields()
+        }}
+        okText="归档"
+        cancelText="取消"
+        confirmLoading={createEvidenceMutation.isPending}
+        styles={{
+          content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
+          header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
+        }}
+      >
+        <Form form={evidenceForm} layout="vertical" style={{ marginTop: 8 }}>
+          <Form.Item name="title" label="材料名称" rules={[{ required: true, message: '请输入材料名称' }]}>
+            <Input placeholder="如：检斤含水单据、车辆移交单据" />
+          </Form.Item>
+          <Form.Item name="file_path" label="文件路径或编号">
+            <Input placeholder="本地路径、档案号或纸质材料编号" />
+          </Form.Item>
+          <Form.Item name="notes" label="备注">
+            <TextArea rows={3} placeholder="补充说明" />
+          </Form.Item>
         </Form>
       </Modal>
 

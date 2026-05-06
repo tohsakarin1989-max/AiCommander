@@ -4,11 +4,15 @@
  */
 import api from './api'
 import type {
+  BonusAssessment,
   Case,
+  CaseAutomationWorkbench,
   CaseCreate,
   CaseEvidence,
+  CaseEvidenceClassification,
   CasePerson,
   CaseQuality,
+  CaseStructurePreview,
   CaseTip,
   CaseVehicle,
   GeoAnalysisResult,
@@ -40,6 +44,22 @@ export interface CaseImportResult {
 }
 
 export const caseApi = {
+  /**
+   * 从案情文本中预提取案件字段
+   */
+  structureCaseText: async (text: string): Promise<CaseStructurePreview> => {
+    const response = await api.post<CaseStructurePreview>('/cases/structure-preview', { text })
+    return response.data
+  },
+
+  /**
+   * 识别佐证材料类型
+   */
+  classifyEvidence: async (data: Partial<CaseEvidence>): Promise<CaseEvidenceClassification> => {
+    const response = await api.post<CaseEvidenceClassification>('/cases/evidence/classify', data)
+    return response.data
+  },
+
   /**
    * 获取案件统计数据
    */
@@ -170,6 +190,24 @@ export const caseApi = {
 
   createCaseEvidence: async (caseId: number, data: Partial<CaseEvidence>): Promise<CaseEvidence> => {
     const response = await api.post<CaseEvidence>(`/cases/${caseId}/evidence`, data)
+    return response.data
+  },
+
+  getBonusAssessment: async (caseId: number): Promise<BonusAssessment> => {
+    const response = await api.get<BonusAssessment>(`/cases/${caseId}/bonus-assessment`)
+    return response.data
+  },
+
+  getAutomationWorkbench: async (caseId: number): Promise<CaseAutomationWorkbench> => {
+    const response = await api.get<CaseAutomationWorkbench>(`/cases/${caseId}/automation-workbench`)
+    return response.data
+  },
+
+  calculateBonusAssessment: async (
+    caseId: number,
+    rules?: Record<string, unknown>
+  ): Promise<BonusAssessment> => {
+    const response = await api.post<BonusAssessment>(`/cases/${caseId}/bonus-assessment/calculate`, { rules })
     return response.data
   },
 

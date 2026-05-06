@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.services.case_service import CaseService
+from app.services.case_automation_service import CaseAutomationService
 from app.services.case_quality_service import CaseQualityService
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.preprocess_job import PreprocessJob
@@ -160,6 +161,22 @@ class CaseQualityResponse(BaseModel):
     warnings: List[Dict[str, str]]
     recommendations: List[str]
     facts: Dict[str, Any]
+
+
+class CaseStructureRequest(BaseModel):
+    text: str
+
+
+class EvidenceClassifyRequest(BaseModel):
+    title: Optional[str] = None
+    file_path: Optional[str] = None
+    evidence_type: Optional[str] = None
+    requirement_key: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BonusCalculationRequest(BaseModel):
+    rules: Optional[Dict[str, Any]] = None
 
 
 class CaseVehicleCreate(BaseModel):
@@ -384,6 +401,20 @@ def get_case_statistics(db: Session = Depends(get_db)):
     )
 
 
+@router.post("/structure-preview")
+def structure_case_text(payload: CaseStructureRequest):
+    """从案情文本中自动提取案件录入字段，供人工确认后写入。"""
+    if not payload.text or not payload.text.strip():
+        raise HTTPException(status_code=400, detail="案情文本不能为空")
+    return CaseAutomationService.structure_case_text(payload.text)
+
+
+@router.post("/evidence/classify")
+def classify_case_evidence(payload: EvidenceClassifyRequest):
+    """识别佐证材料类型，返回可写入 CaseEvidence.requirement_key 的归档建议。"""
+    return CaseAutomationService.classify_evidence_payload(payload.model_dump(exclude_unset=True))
+
+
 @router.post("/", response_model=CaseResponse)
 def create_case(case: CaseCreate, db: Session = Depends(get_db)):
     """创建案件"""
@@ -582,6 +613,31 @@ def recalculate_case_quality(case_id: int, db: Session = Depends(get_db)):
     return CaseQualityService.refresh_case_quality(db, case)
 
 
+@router.get("/{case_id:int}/bonus-assessment")
+def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
+    """获取案件奖金考核材料门禁和默认规则测算结果。"""
+    case = _get_case_or_404(db, case_id)
+    return CaseAutomationService.build_bonus_assessment(db, case)
+
+
+@router.get("/{case_id:int}/automation-workbench")
+def get_case_automation_workbench(case_id: int, db: Session = Depends(get_db)):
+    """获取案件自动化工作台：结论分层、经验卡和缺口闭环。"""
+    case = _get_case_or_404(db, case_id)
+    return CaseAutomationService.build_automation_workbench(db, case)
+
+
+@router.post("/{case_id:int}/bonus-assessment/calculate")
+def calculate_bonus_assessment(
+    case_id: int,
+    payload: BonusCalculationRequest,
+    db: Session = Depends(get_db),
+):
+    """按传入的奖金考核细则参数重新测算案件奖金。"""
+    case = _get_case_or_404(db, case_id)
+    return CaseAutomationService.build_bonus_assessment(db, case, rules=payload.rules)
+
+
 @router.get("/{case_id:int}/feature-profile")
 def get_case_feature_profile(case_id: int, db: Session = Depends(get_db)):
     """获取统一案件画像，供预处理、研判、巡逻、圆桌会议等模块复用。"""
@@ -653,7 +709,16 @@ def list_case_evidence(case_id: int, db: Session = Depends(get_db)):
 def create_case_evidence(case_id: int, payload: CaseEvidenceCreate, db: Session = Depends(get_db)):
     """新增证据材料目录项，并同步刷新信息质量评分。"""
     case = _get_case_or_404(db, case_id)
-    evidence = CaseEvidence(case_id=case_id, **payload.model_dump(exclude_unset=True))
+    evidence_data = payload.model_dump(exclude_unset=True)
+    classification = CaseAutomationService.classify_evidence_payload(evidence_data)
+    if not evidence_data.get("requirement_key") and classification.get("requirement_key"):
+        evidence_data["requirement_key"] = classification["requirement_key"]
+    if not evidence_data.get("evidence_type") and classification.get("evidence_type"):
+        evidence_data["evidence_type"] = classification["evidence_type"]
+    meta = evidence_data.get("meta") or {}
+    meta["auto_classification"] = classification
+    evidence_data["meta"] = meta
+    evidence = CaseEvidence(case_id=case_id, **evidence_data)
     db.add(evidence)
     db.commit()
     db.refresh(evidence)

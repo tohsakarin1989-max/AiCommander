@@ -118,6 +118,154 @@ export interface OilRecoveryRecord {
   updated_at?: string
 }
 
+export interface CaseStructurePreview {
+  case_fields: Partial<CaseCreate>
+  field_sources: Record<string, string>
+  entities: {
+    plate_numbers?: string[]
+    person_count?: number
+    material_hints?: string[]
+  }
+  suggested_evidence: Array<{
+    requirement_key: string
+    label: string
+    reason: string
+  }>
+  warnings: string[]
+  confidence: number
+  boundary: string
+}
+
+export interface CaseEvidenceClassification {
+  requirement_key?: string
+  label: string
+  evidence_type: string
+  confidence: number
+  matched_terms: string[]
+  source: string
+}
+
+export interface BonusMaterialCheck {
+  requirement_key: string
+  label: string
+  category: string
+  required: boolean
+  status: 'satisfied' | 'partial' | 'missing' | 'not_required'
+  trigger_reason?: string
+  note: string
+  evidence_id?: number
+}
+
+export interface BonusAssessmentItem {
+  key: string
+  label: string
+  basis: string
+  quantity: number
+  unit: string
+  formula: string
+  required_materials: string[]
+  blocked_by: string[]
+  status: 'calculated' | 'blocked_by_materials' | 'rules_not_configured' | 'not_applicable'
+  suggested_amount: number
+}
+
+export interface BonusSquadPerformance {
+  vehicle_actual: number
+  vehicle_target: number
+  vehicle_high: boolean
+  person_actual: number
+  person_target: number
+  person_high: boolean
+}
+
+export interface BonusDistribution {
+  squad: string
+  count: number
+  amount: number | null
+}
+
+export interface BonusAssessment {
+  case_id: number
+  case_number: string
+  rules_version: string
+  rules_configured: boolean
+  material_gate: {
+    status: 'ready' | 'blocked_by_materials' | 'rules_not_configured'
+    required_count: number
+    satisfied_count: number
+    missing_materials: string[]
+  }
+  material_checks: BonusMaterialCheck[]
+  bonus_items: BonusAssessmentItem[]
+  total_suggested_amount: number
+  primary_squad?: string | null
+  bonus_counts?: Record<string, number>
+  squad_performance?: Record<string, BonusSquadPerformance>
+  distribution?: BonusDistribution[]
+  warnings?: string[]
+  ready_for_review: boolean
+  manual_review_required: boolean
+  boundary: string
+}
+
+export interface CaseAutomationModule {
+  key: 'conclusion_layering' | 'experience_card' | 'gap_closure' | string
+  label: string
+  status: 'ready' | 'needs_data' | 'needs_completion' | string
+  metrics: Record<string, number>
+}
+
+export interface CaseAutomationWorkbench {
+  case_id: number
+  case_number: string
+  version: string
+  modules: CaseAutomationModule[]
+  conclusion_layering: {
+    facts: string[]
+    inferences: Array<{
+      claim: string
+      basis: string[]
+      confidence: string
+    }>
+    suggestions: Array<{
+      title?: string
+      action?: string
+      priority?: string
+      basis?: string[]
+      evidence?: unknown[]
+      confidence?: number
+    }>
+    information_gaps: string[]
+    evidence_index: Array<Record<string, unknown>>
+    boundary: string[]
+  }
+  experience_card: {
+    case_id: number
+    case_number: string
+    summary: string
+    what_happened: Record<string, unknown>
+    why_it_matters: string[]
+    how_it_was_found: string[]
+    reusable_lessons: string[]
+    next_attention_points: string[]
+    evidence_basis: Record<string, unknown>
+  }
+  gap_closure: {
+    material_gaps: string[]
+    information_gaps: string[]
+    actions: Array<{
+      source: 'material' | 'information' | string
+      priority: 'high' | 'medium' | 'low' | string
+      title: string
+      detail: string
+    }>
+    bonus_ready: boolean
+  }
+  bonus_assessment: BonusAssessment
+  ready_for_human_review: boolean
+  boundary: string
+}
+
 export interface CaseTip {
   id: number
   case_id?: number
