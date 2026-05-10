@@ -260,8 +260,9 @@ export interface CaseAutomationWorkbench {
       detail: string
     }>
     bonus_ready: boolean
+    review_ready?: boolean
   }
-  bonus_assessment: BonusAssessment
+  bonus_assessment?: BonusAssessment | null
   ready_for_human_review: boolean
   boundary: string
 }
@@ -942,6 +943,65 @@ export interface CaseStatistics {
   }>
 }
 
+// ============ 犯罪链条相关类型 ============
+
+export type ChainPosition = 'upstream' | 'midstream' | 'downstream' | 'unknown'
+export type ChainLinkStatus = 'inferred' | 'confirmed' | 'rejected'
+export type ChainLinkType = 'upstream_transport' | 'transport_storage' | string
+
+export interface ChainCaseBrief {
+  id: number
+  case_number: string
+  case_type?: string
+  facility_type?: string
+  chain_position: ChainPosition
+  chain_label: string
+  occurred_time?: string
+  location?: string
+  latitude?: number
+  longitude?: number
+}
+
+export interface ChainLink {
+  id: number
+  case_id_a: number
+  case_id_b: number
+  link_type: ChainLinkType
+  status: ChainLinkStatus
+  confidence: number
+  distance_km: number
+  time_diff_days: number
+  reasoning?: string
+  created_at?: string
+  confirmed_by?: string
+  confirmed_at?: string
+  from_case?: ChainCaseBrief
+  to_case?: ChainCaseBrief
+}
+
+export interface ChainLinkLine {
+  id: number
+  status: Exclude<ChainLinkStatus, 'rejected'>
+  confidence: number
+  distanceKm: number
+  timeDiffDays: number
+  reasoning?: string
+  from: {
+    id: number
+    lat: number
+    lng: number
+    caseNumber: string
+    chainPosition: ChainPosition
+  }
+  to: {
+    id: number
+    lat: number
+    lng: number
+    caseNumber: string
+    chainPosition: ChainPosition
+  }
+}
+
 // ============ 模型配置类型（从 config.ts 迁移，替换原有） ============
 
 export interface ModelCreate {
@@ -1204,6 +1264,7 @@ export interface CaseMarker {
   caseNumber: string
   caseType?: string
   riskLevel?: 'high' | 'medium' | 'low'
+  chainPosition?: ChainPosition
   occurredTime?: string
   modus?: string
 }

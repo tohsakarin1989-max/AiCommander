@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { CachedTileLayer } from '../../components/Map/CachedTileLayer'
 import type { JurisdictionAsset } from '../../services'
+import { escapeHtml } from '../../utils/html'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -37,15 +38,6 @@ const TYPE_COLORS: Record<string, string> = {
 
 function colorFor(type?: string | null): string {
   return type ? TYPE_COLORS[type] ?? '#94a3b8' : '#94a3b8'
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 }
 
 function makeAssetIcon(color: string, selected: boolean): L.DivIcon {

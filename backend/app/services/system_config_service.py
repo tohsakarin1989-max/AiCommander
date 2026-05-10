@@ -131,6 +131,30 @@ class SystemConfigService:
                 "description": "圆桌会议API服务地址（OpenRouter默认：https://openrouter.ai/api/v1）",
                 "extra_data": {}
             },
+            {
+                "config_key": "chain_radius_km",
+                "config_value": "20",
+                "config_type": "number",
+                "category": "chain_analysis",
+                "description": "链条推断空间搜索半径（公里），用于盗采、运输、囤储环节自动关联。",
+                "extra_data": {"min": 1, "max": 100}
+            },
+            {
+                "config_key": "chain_time_window_days",
+                "config_value": "180",
+                "config_type": "number",
+                "category": "chain_analysis",
+                "description": "链条推断时间窗口（天），超出窗口的案件不参与自动关联。",
+                "extra_data": {"min": 1, "max": 730}
+            },
+            {
+                "config_key": "chain_min_confidence",
+                "config_value": "0.3",
+                "config_type": "number",
+                "category": "chain_analysis",
+                "description": "链条推断最低展示置信度，低于阈值的推断不进入前端展示。",
+                "extra_data": {"min": 0, "max": 1}
+            },
         ]
         
         for config_data in default_configs:
@@ -140,4 +164,3 @@ class SystemConfigService:
                     db,
                     **config_data
                 )
-

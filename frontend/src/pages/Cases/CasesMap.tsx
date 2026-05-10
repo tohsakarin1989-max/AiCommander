@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Button, List, Spin, Switch } from 'antd'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   FireOutlined,
   LinkOutlined,
@@ -11,25 +11,33 @@ import {
 } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
 import LeafletMap from '../../components/Map/LeafletMap'
-import type { CaseMarker, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
+import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import type { Case } from '../../types'
+import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import './CasesMap.css'
 
 const RISK_LEVEL = (score: number): 'high' | 'medium' | 'low' =>
   score > 0.6 ? 'high' : score > 0.3 ? 'medium' : 'low'
 
-const LEGEND_ITEMS: Array<{ label: string; type: 'dot' | 'line'; color: string }> = [
-  { label: '高风险',  type: 'dot',  color: 'var(--c-danger)' },
-  { label: '中风险',  type: 'dot',  color: 'var(--c-warning)' },
-  { label: '低风险',  type: 'dot',  color: 'var(--c-success)' },
-  { label: '案件点',  type: 'dot',  color: 'var(--c-cyan)' },
-  { label: '串案连线', type: 'line', color: '#a78bfa' },
+const CHAIN_FILTERS: ChainPosition[] = ['upstream', 'midstream', 'downstream', 'unknown']
+
+const LEGEND_ITEMS: Array<{ label: string; type: 'dot' | 'line'; color: string; shape?: string }> = [
+  { label: '盗采环节',  type: 'dot',  color: chainPositionMeta.upstream.color, shape: 'hexagon' },
+  { label: '运输环节',  type: 'dot',  color: chainPositionMeta.midstream.color, shape: 'diamond' },
+  { label: '囤储环节',  type: 'dot',  color: chainPositionMeta.downstream.color, shape: 'square' },
+  { label: '未分类',  type: 'dot',  color: chainPositionMeta.unknown.color, shape: 'circle' },
+  { label: '链条推断', type: 'line', color: '#f59e0b' },
+  { label: '确认链条', type: 'line', color: '#22c55e' },
 ]
 
 const CasesMap: React.FC = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [showSerial, setShowSerial] = useState(true)
+  const [showChainLinks, setShowChainLinks] = useState(true)
+  const [visiblePositions, setVisiblePositions] = useState<ChainPosition[]>(['upstream', 'midstream', 'downstream', 'unknown'])
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
+  const selectedCaseId = Number(searchParams.get('caseId') || 0) || undefined
 
   const { data: cases, isLoading } = useQuery({
     queryKey: ['cases'],
@@ -47,20 +55,59 @@ const CasesMap: React.FC = () => {
     queryFn: () => caseApi.getSerialCases(undefined, 2.0, 30, false, true),
   })
 
+  const { data: chainMapData } = useQuery({
+    queryKey: ['chain-map-data', selectedCaseId],
+    queryFn: () => caseApi.getChainMapData({ case_id: selectedCaseId, min_confidence: 0.5 }),
+  })
+
   // 有坐标的案件 → LeafletMap markers
   const markers: CaseMarker[] = (cases || [])
     .filter((c) => c.latitude != null && c.longitude != null)
-    .map((c) => ({
-      id: c.id,
-      lat: c.latitude!,
-      lng: c.longitude!,
-      title: c.case_number,
-      caseNumber: c.case_number,
-      caseType: c.case_type,
-      riskLevel: 'medium' as const,
-      occurredTime: c.occurred_time,
-      modus: c.modus_operandi,
-    }))
+    .map((c) => {
+      const chainPosition = getChainPosition(c)
+      return {
+        id: c.id,
+        lat: c.latitude!,
+        lng: c.longitude!,
+        title: c.case_number,
+        caseNumber: c.case_number,
+        caseType: c.case_type,
+        riskLevel: 'medium' as const,
+        chainPosition,
+        occurredTime: c.occurred_time,
+        modus: c.modus_operandi,
+      }
+    })
+    .filter((marker) => visiblePositions.includes(marker.chainPosition || 'unknown'))
+
+  const chainLinks: ChainLinkLine[] = showChainLinks
+    ? (chainMapData?.chain_links || [])
+        .filter(link => link.from_case?.latitude != null && link.from_case.longitude != null && link.to_case?.latitude != null && link.to_case.longitude != null)
+        .map((link): ChainLinkLine => ({
+          id: link.id,
+          status: link.status === 'confirmed' ? 'confirmed' : 'inferred' as const,
+          confidence: link.confidence,
+          distanceKm: link.distance_km,
+          timeDiffDays: link.time_diff_days,
+          reasoning: link.reasoning,
+          from: {
+            id: link.from_case!.id,
+            lat: link.from_case!.latitude!,
+            lng: link.from_case!.longitude!,
+            caseNumber: link.from_case!.case_number,
+            chainPosition: link.from_case!.chain_position,
+          },
+          to: {
+            id: link.to_case!.id,
+            lat: link.to_case!.latitude!,
+            lng: link.to_case!.longitude!,
+            caseNumber: link.to_case!.case_number,
+            chainPosition: link.to_case!.chain_position,
+          },
+        }))
+        .filter(link => visiblePositions.includes(link.from.chainPosition) || visiblePositions.includes(link.to.chainPosition))
+        .slice(0, 50)
+    : []
 
   // 串案组
   const serialGroups: SerialGroup[] = showSerial
@@ -72,6 +119,20 @@ const CasesMap: React.FC = () => {
 
   // 热点列表（取前5）
   const topHotspots = (hotspots || []).slice(0, 5)
+
+  React.useEffect(() => {
+    if (!selectedCaseId || !cases) return
+    const found = cases.find(item => item.id === selectedCaseId)
+    if (found) setSelectedCase(found)
+  }, [selectedCaseId, cases])
+
+  const toggleChainPosition = (position: ChainPosition) => {
+    setVisiblePositions(prev => (
+      prev.includes(position)
+        ? prev.filter(item => item !== position)
+        : [...prev, position]
+    ))
+  }
 
   return (
     <div className="cases-map-wrap">
@@ -107,6 +168,24 @@ const CasesMap: React.FC = () => {
             onChange={setShowSerial}
           />
         </div>
+        <div className="cases-map-filter__layer">
+          <span className="cases-map-filter__layer-text">链条推断</span>
+          <Switch
+            size="small"
+            checked={showChainLinks}
+            onChange={setShowChainLinks}
+          />
+        </div>
+        {CHAIN_FILTERS.map(position => (
+          <button
+            key={position}
+            className={`cases-map-chain-filter${visiblePositions.includes(position) ? ' is-on' : ''}`}
+            style={{ '--chain-c': chainPositionMeta[position].color } as React.CSSProperties}
+            onClick={() => toggleChainPosition(position)}
+          >
+            {chainPositionMeta[position].shortLabel}
+          </button>
+        ))}
         <span className="cases-map-filter__label" style={{ marginLeft: 12 }}>
           <EnvironmentOutlined style={{ marginRight: 6 }} />
           标记点：{markers.length} / {(cases || []).length} 件含坐标
@@ -155,9 +234,9 @@ const CasesMap: React.FC = () => {
               {LEGEND_ITEMS.map(item => (
                 <div key={item.label} className="cases-map-legend__item">
                   {item.type === 'dot' ? (
-                    <div className="cases-map-legend__dot" style={{ background: item.color }} />
+                    <div className={`cases-map-legend__dot cases-map-legend__dot--${item.shape || 'circle'}`} style={{ background: item.color }} />
                   ) : (
-                    <div className="cases-map-legend__line" />
+                    <div className="cases-map-legend__line" style={{ '--line-c': item.color } as React.CSSProperties} />
                   )}
                   {item.label}
                 </div>
@@ -177,6 +256,7 @@ const CasesMap: React.FC = () => {
             <LeafletMap
               markers={markers}
               serialGroups={serialGroups}
+              chainLinks={chainLinks}
               height="100%"
               onMarkerClick={(m) => {
                 const found = (cases || []).find((c) => c.id === m.id)
@@ -226,30 +306,31 @@ const CasesMap: React.FC = () => {
             </div>
           </div>
 
-          {/* 串案关联 */}
+          {/* 链条关联 */}
           <div className="cases-map-card">
             <div className="cases-map-card__hdr">
               <LinkOutlined style={{ color: '#a78bfa', fontSize: 11 }} />
-              <span className="cases-map-card__title">串案关联</span>
+              <span className="cases-map-card__title">链条推断</span>
             </div>
             <div className="cases-map-card__body">
-              {(serialCases || []).length === 0 ? (
-                <span className="cases-map-serial__empty">未发现串案</span>
+              {chainLinks.length === 0 ? (
+                <span className="cases-map-serial__empty">未发现链条推断</span>
               ) : (
                 <>
                   <div className="cases-map-serial__count">
-                    发现 {(serialCases || []).length} 组串案
+                    显示 {chainLinks.length} 条链条
                   </div>
                   <List
                     size="small"
-                    dataSource={(serialCases || []).slice(0, 3)}
-                    renderItem={(group: SerialCaseGroup, i: number) => (
+                    dataSource={chainLinks.slice(0, 4)}
+                    renderItem={(link: ChainLinkLine) => (
                       <List.Item
-                        key={group.group_id}
+                        key={link.id}
                         style={{ padding: '4px 0', borderBottom: '1px solid var(--bd-0)' }}
                       >
                         <span className="cases-map-serial__item">
-                          组 {i + 1}：{(group.case_ids?.length ?? (group as unknown as Record<string, unknown>).case_count ?? '?')} 起案件
+                          {link.from.caseNumber} → {link.to.caseNumber}
+                          <small>{link.status === 'confirmed' ? '已确认' : `${Math.round(link.confidence * 100)}%`}</small>
                         </span>
                       </List.Item>
                     )}

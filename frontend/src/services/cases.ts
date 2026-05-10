@@ -10,6 +10,7 @@ import type {
   CaseCreate,
   CaseEvidence,
   CaseEvidenceClassification,
+  ChainLink,
   CasePerson,
   CaseQuality,
   CaseStructurePreview,
@@ -87,6 +88,7 @@ export const caseApi = {
     start_date?: string
     end_date?: string
     has_geo?: boolean
+    missing_location?: boolean
   }): Promise<Case[]> => {
     const response = await api.get<Case[]>('/cases', {
       params: {
@@ -119,6 +121,14 @@ export const caseApi = {
    */
   updateCase: async (id: number, data: Partial<CaseCreate>): Promise<Case> => {
     const response = await api.put<Case>(`/cases/${id}`, data)
+    return response.data
+  },
+
+  /**
+   * 仅补录案件坐标
+   */
+  updateCaseLocation: async (id: number, data: { latitude: number; longitude: number }): Promise<Case> => {
+    const response = await api.patch<Case>(`/cases/${id}/location`, data)
     return response.data
   },
 
@@ -200,6 +210,28 @@ export const caseApi = {
 
   getAutomationWorkbench: async (caseId: number): Promise<CaseAutomationWorkbench> => {
     const response = await api.get<CaseAutomationWorkbench>(`/cases/${caseId}/automation-workbench`)
+    return response.data
+  },
+
+  getChainLinks: async (caseId: number, includeRejected = false): Promise<ChainLink[]> => {
+    const response = await api.get<ChainLink[]>('/chain-links', {
+      params: { case_id: caseId, include_rejected: includeRejected },
+    })
+    return response.data
+  },
+
+  confirmChainLink: async (linkId: number, operator = '人工确认'): Promise<ChainLink> => {
+    const response = await api.post<ChainLink>(`/chain-links/${linkId}/confirm`, { operator })
+    return response.data
+  },
+
+  rejectChainLink: async (linkId: number): Promise<ChainLink> => {
+    const response = await api.post<ChainLink>(`/chain-links/${linkId}/reject`)
+    return response.data
+  },
+
+  getChainMapData: async (params?: { case_id?: number; min_confidence?: number }): Promise<{ chain_links: ChainLink[]; total: number }> => {
+    const response = await api.get<{ chain_links: ChainLink[]; total: number }>('/chain-links/map-data', { params })
     return response.data
   },
 

@@ -3,13 +3,14 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { configApi } from '../services/config'
 import type { AIModel } from '../types'
+import { bonusAccountingEnabled } from '../config/features'
 import './Layout.css'
 
 interface LayoutProps { children: React.ReactNode }
 
 const NAV_ITEMS = [
   { label: '大屏', num: '01', paths: ['/dashboard'] },
-  { label: '案件', num: '02', paths: ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
+  { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
   { label: '研判', num: '03', paths: ['/case-intelligence', '/area-analysis', '/jurisdiction', '/suggestions', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
   { label: '助手', num: '05', paths: ['/assistant', '/agents'] },
@@ -20,11 +21,12 @@ type SubNavItem = { label: string; path: string }
 
 const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
   {
-    paths: ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'],
+    paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'],
     items: [
       { label: '案件列表', path: '/cases' },
       { label: '地图视图', path: '/cases/map' },
       { label: '时空研判', path: '/cases/spacetime' },
+      ...(bonusAccountingEnabled ? [{ label: '奖金核算', path: '/cases/bonus' }] : []),
       { label: '特征提取', path: '/cases/features' },
       { label: '关系图谱', path: '/graphs/serial' },
     ],

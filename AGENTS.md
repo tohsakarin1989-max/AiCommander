@@ -1,15 +1,22 @@
 # Repository Guidelines
 
+## 项目边界
+- 本项目定位为“涉油案件数智研判与防控辅助系统”，功能迭代要先判断是否符合这个树干，再决定是否扩展枝叶。
+- 优先做案件分析、模式识别、时空规律、链条线索、热点区域、报告生成和部署建议。
+- 不要默认扩成巡逻执行平台、红色网格流程平台、警企联动闭环平台或通用综合管理平台。
+- 对已抓获、已处理案件的数据，关系研判优先围绕作案手法、地点条件和链条线索，不要机械套用“同人同车跨多案复现”。
+
 ## 项目结构与模块组织
 - 核心后端位于 `backend/app`：`api` 存放 FastAPI 路由，`services` 聚合业务逻辑，`repositories` 处理持久化，`models` 定义 SQLAlchemy 实体，`tasks`/`ai` 承载异步与大模型调用。数据库迁移配置在 `backend/alembic`。
 - 前端位于 `frontend/src`：`pages` 对应页面视图，`components` 复用组件，`services` 统一封装 HTTP/状态管理，样式入口 `index.css`。Vite 配置在 `vite.config.ts`。
-- 测试入口 `backend/tests/test_case_service.py`（基于 pytest，默认使用内存 SQLite），可按 `test_*.py` 扩展。
+- 测试入口位于 `backend/tests`；当前与本周链条研判迭代直接相关的用例包括 `test_case_service.py`、`test_chain_analysis.py`，默认使用内存 SQLite。
 
 ## 构建、测试与开发命令
 - 一键启动（Docker 全栈）：在仓库根目录执行 `./start.sh`（等价 `docker-compose up -d`），停止用 `./stop.sh` 或 `docker-compose down`。
-- 本地后端开发：`cd backend && source venv/bin/activate && uvicorn app.main:app --reload`。首次需要 `pip install -r requirements.txt` 并运行 `python init_db.py`。也可使用 `backend/start_backend.sh` 自动检查连接并初始化。
+- 本地后端开发：`cd backend && source venv/bin/activate && uvicorn app.main:app --reload`。首次需要 `pip install -r requirements.txt` 并运行 `python init_db.py`；如涉及模型或表结构改动，先执行 `alembic upgrade head`。也可使用 `backend/start_backend.sh` 自动检查连接并初始化。
 - 前端开发：`cd frontend && npm install && npm run dev`（默认 http://localhost:3000），构建产物 `npm run build`，本地预览 `npm run preview`。
 - 后端测试：`cd backend && source venv/bin/activate && pytest`。如依赖外部数据库，请先设置 `DATABASE_URL` 和 `REDIS_URL`。
+- 本周涉及链条研判、地图连线或相关回归时，先读 `docs/superpowers/specs/2026-05-08-upgrade-roadmap.md`，至少补跑 `pytest tests/test_chain_analysis.py -v` 与 `cd frontend && npm run build`。
 
 ## 编码风格与命名约定
 - Python 按 PEP 8 使用 4 空格缩进；路由模块 `app/api/<domain>.py`，服务层 `app/services/<domain>_service.py`，模型/仓库对应单复数保持一致；环境变量全大写下划线（如 `SECRET_KEY`、`DATABASE_URL`）。

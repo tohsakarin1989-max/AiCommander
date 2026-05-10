@@ -9,6 +9,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
 import { CachedTileLayer } from './CachedTileLayer'
+import { escapeHtml } from '../../utils/html'
 
 export interface HeatPoint {
   lat: number
@@ -123,7 +124,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
         dashArray: '8 5',
       })
         .addTo(map)
-        .bindPopup(`<div style="font-size:12px">${h.label}</div>`)
+        .bindPopup(`<div style="font-size:12px">${escapeHtml(h.label)}</div>`)
 
       // 编号标记
       const marker = L.marker([h.lat, h.lng], {

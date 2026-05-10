@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { CaseMarker, SerialGroup } from '../../types'
+import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup } from '../../types'
 import { CachedTileLayer } from './CachedTileLayer'
+import { escapeHtml } from '../../utils/html'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -15,6 +16,8 @@ L.Icon.Default.mergeOptions({
 interface LeafletMapProps {
   markers?: CaseMarker[]
   serialGroups?: SerialGroup[]
+  chainLinks?: ChainLinkLine[]
+  chainSearchRadiusKm?: number
   height?: number | string
   center?: [number, number]
   zoom?: number
@@ -28,11 +31,33 @@ const RISK_COLORS: Record<string, string> = {
   default: '#7dd3fc',
 }
 
-function makeCircleIcon(color: string): L.DivIcon {
+const CHAIN_COLORS: Record<ChainPosition, string> = {
+  upstream: '#ef4444',
+  midstream: '#f59e0b',
+  downstream: '#3b82f6',
+  unknown: '#94a3b8',
+}
+
+function markerHtml(position: ChainPosition | undefined, color: string, size: number): string {
+  const common = `width:${size}px;height:${size}px;background:${color};border:2px solid #fff;box-shadow:0 0 8px ${color},0 2px 4px rgba(0,0,0,0.42)`
+  if (position === 'upstream') {
+    return `<div style="${common};clip-path:polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%)"></div>`
+  }
+  if (position === 'midstream') {
+    return `<div style="${common};transform:rotate(45deg);border-radius:2px"></div>`
+  }
+  if (position === 'downstream') {
+    return `<div style="${common};border-radius:2px"></div>`
+  }
+  return `<div style="${common};border-radius:50%"></div>`
+}
+
+function makeCaseIcon(marker: CaseMarker): L.DivIcon {
   const size = 18
+  const color = marker.chainPosition ? CHAIN_COLORS[marker.chainPosition] : RISK_COLORS[marker.riskLevel || 'default']
   return L.divIcon({
     className: '',
-    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 8px ${color},0 2px 4px rgba(0,0,0,0.4)"></div>`,
+    html: markerHtml(marker.chainPosition, color, size),
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   })
@@ -41,6 +66,8 @@ function makeCircleIcon(color: string): L.DivIcon {
 const LeafletMap: React.FC<LeafletMapProps> = ({
   markers = [],
   serialGroups = [],
+  chainLinks = [],
+  chainSearchRadiusKm = 20,
   height = 500,
   center,
   zoom = 11,
@@ -49,6 +76,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const layersRef = useRef<L.Layer[]>([])
+  const highlightLayersRef = useRef<L.Layer[]>([])
 
   const defaultCenter: [number, number] = (() => {
     if (center) return center
@@ -88,7 +116,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 当 markers / serialGroups 变化时，更新图层
+  // 当 markers / serialGroups / chainLinks 变化时，更新图层
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -96,6 +124,78 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     // 清除旧图层
     layersRef.current.forEach((l) => map.removeLayer(l))
     layersRef.current = []
+    highlightLayersRef.current.forEach((l) => map.removeLayer(l))
+    highlightLayersRef.current = []
+
+    const clearHighlight = () => {
+      highlightLayersRef.current.forEach((l) => map.removeLayer(l))
+      highlightLayersRef.current = []
+    }
+
+    const addSearchRadius = (link: ChainLinkLine) => {
+      clearHighlight()
+      const color = link.status === 'confirmed' ? '#22c55e' : '#f59e0b'
+      const circles = [
+        L.circle([link.from.lat, link.from.lng], {
+          radius: chainSearchRadiusKm * 1000,
+          color,
+          weight: 1,
+          opacity: 0.45,
+          fillOpacity: 0.03,
+          dashArray: '6 6',
+        }).addTo(map),
+        L.circle([link.to.lat, link.to.lng], {
+          radius: chainSearchRadiusKm * 1000,
+          color,
+          weight: 1,
+          opacity: 0.28,
+          fillOpacity: 0.02,
+          dashArray: '6 6',
+        }).addTo(map),
+      ]
+      highlightLayersRef.current.push(...circles)
+    }
+
+    // 绘制链条推断连线
+    chainLinks.forEach((link) => {
+      const color = link.status === 'confirmed' ? '#22c55e' : '#f59e0b'
+      const line = L.polyline(
+        [[link.from.lat, link.from.lng], [link.to.lat, link.to.lng]],
+        {
+          color,
+          weight: link.status === 'confirmed' ? 3 : 2,
+          dashArray: link.status === 'confirmed' ? undefined : '7 5',
+          opacity: link.status === 'confirmed' ? 0.92 : 0.72,
+        }
+      ).addTo(map)
+      line.bindPopup(
+        `<div style="font-size:12px;line-height:1.8;min-width:220px">
+          <div style="font-weight:700;margin-bottom:4px">${link.status === 'confirmed' ? '已确认链条' : '疑似链条推断'}</div>
+          <div>${escapeHtml(link.from.caseNumber)} → ${escapeHtml(link.to.caseNumber)}</div>
+          <div>距离：${link.distanceKm.toFixed(1)} km · 时间差：${link.timeDiffDays} 天</div>
+          <div>置信度：${Math.round(link.confidence * 100)}%</div>
+          ${link.reasoning ? `<div>${escapeHtml(link.reasoning)}</div>` : ''}
+        </div>`,
+        { maxWidth: 280 }
+      )
+      line.on('click', () => addSearchRadius(link))
+      layersRef.current.push(line)
+
+      if (link.status === 'confirmed') {
+        const midLat = (link.from.lat + link.to.lat) / 2
+        const midLng = (link.from.lng + link.to.lng) / 2
+        const arrow = L.marker([midLat, midLng], {
+          icon: L.divIcon({
+            className: '',
+            html: `<div style="color:${color};font-size:18px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.5)">→</div>`,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+          interactive: false,
+        }).addTo(map)
+        layersRef.current.push(arrow)
+      }
+    })
 
     // 绘制串案连线
     serialGroups.forEach((group) => {
@@ -113,16 +213,16 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
 
     // 绘制案件标记
     markers.forEach((marker) => {
-      const color = RISK_COLORS[marker.riskLevel || 'default']
-      const icon = makeCircleIcon(color)
+      const icon = makeCaseIcon(marker)
       const m = L.marker([marker.lat, marker.lng], { icon })
         .addTo(map)
         .bindPopup(
           `<div style="font-size:12px;line-height:1.8;min-width:180px">
-            <div style="font-weight:700;margin-bottom:4px">${marker.caseNumber}</div>
-            <div>类型：${marker.caseType || '未知'}</div>
-            <div>时间：${marker.occurredTime ? marker.occurredTime.slice(0, 10) : '未知'}</div>
-            ${marker.modus ? `<div>手法：${marker.modus}</div>` : ''}
+            <div style="font-weight:700;margin-bottom:4px">${escapeHtml(marker.caseNumber)}</div>
+            <div>类型：${escapeHtml(marker.caseType || '未知')}</div>
+            ${marker.chainPosition ? `<div>链条：${marker.chainPosition === 'upstream' ? '盗采环节' : marker.chainPosition === 'midstream' ? '运输环节' : marker.chainPosition === 'downstream' ? '囤储环节' : '未分类'}</div>` : ''}
+            <div>时间：${escapeHtml(marker.occurredTime ? marker.occurredTime.slice(0, 10) : '未知')}</div>
+            ${marker.modus ? `<div>手法：${escapeHtml(marker.modus)}</div>` : ''}
           </div>`,
           { maxWidth: 240 }
         )
@@ -138,7 +238,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       const bounds = L.latLngBounds(markers.map((m) => [m.lat, m.lng]))
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 })
     }
-  }, [markers, serialGroups, onMarkerClick])
+  }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick])
 
   return (
     <div

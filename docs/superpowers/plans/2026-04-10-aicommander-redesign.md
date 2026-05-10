@@ -37,7 +37,7 @@
 - [ ] **Step 1: 安装依赖**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/frontend
+cd <repo>/frontend
 npm install leaflet react-leaflet react-leaflet-cluster
 npm install --save-dev @types/leaflet
 ```
@@ -54,7 +54,7 @@ cat node_modules/react-leaflet/package.json | grep '"version"'
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/package.json frontend/package-lock.json
 git commit -m "chore: 安装 react-leaflet 地图依赖"
 ```
@@ -114,7 +114,7 @@ import { ConfigProvider, theme } from 'antd'
 - [ ] **Step 2: 验证前端可启动**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/frontend
+cd <repo>/frontend
 npm run dev
 ```
 
@@ -123,7 +123,7 @@ npm run dev
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/App.tsx
 git commit -m "feat: 应用 Ant Design 全局深色主题"
 ```
@@ -309,7 +309,7 @@ export default Layout
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/components/Layout.tsx
 git commit -m "feat: Layout 深色主题 + 手风琴侧边栏"
 ```
@@ -324,7 +324,7 @@ git commit -m "feat: Layout 深色主题 + 手风琴侧边栏"
 - [ ] **Step 1: 创建目录（若不存在）**
 
 ```bash
-mkdir -p /Users/tohsakarin/work/AiCommander/frontend/src/components/Map
+mkdir -p <repo>/frontend/src/components/Map
 ```
 
 - [ ] **Step 2: 创建 LeafletMap.tsx**
@@ -510,7 +510,7 @@ export default LeafletMap
 - [ ] **Step 3: 验证无 TypeScript 错误**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/frontend
+cd <repo>/frontend
 npx tsc --noEmit 2>&1 | head -20
 ```
 
@@ -519,7 +519,7 @@ npx tsc --noEmit 2>&1 | head -20
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/components/Map/LeafletMap.tsx
 git commit -m "feat: 新增 LeafletMap 核心地图组件（CartoDB Dark 底图）"
 ```
@@ -704,7 +704,7 @@ import MapPicker from '../../components/Map/MapPicker'
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/components/Map/MapPicker.tsx frontend/src/pages/Cases/Cases.tsx
 git commit -m "feat: 新增案件表单地图拾取器（MapPicker）"
 ```
@@ -1006,7 +1006,7 @@ export default CasesMap
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/pages/Cases/CasesMap.tsx
 git commit -m "feat: 案件地图替换为 Leaflet（深色底图 + 热点 + 串案连线）"
 ```
@@ -1362,7 +1362,7 @@ import SpaceTimeAnalysis from './pages/Cases/SpaceTimeAnalysis'
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/pages/Cases/SpaceTimeAnalysis.tsx frontend/src/App.tsx
 git commit -m "feat: 新增时空研判页面（轨迹回放 + 时间统计图表）"
 ```
@@ -1420,7 +1420,7 @@ git commit -m "feat: 新增时空研判页面（轨迹回放 + 时间统计图�
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add frontend/src/pages/Home/Home.tsx
 git commit -m "feat: 首页统计卡片深色主题 + 彩色顶边线"
 ```
@@ -1479,7 +1479,7 @@ def test_all_specialties_produce_nonempty_prompt():
 - [ ] **Step 2: 运行测试，确认当前失败**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/backend
+cd <repo>/backend
 source venv/bin/activate
 pytest tests/test_analyst_prompts.py -v 2>&1 | head -30
 ```
@@ -1579,7 +1579,7 @@ elif self.specialty == "prevention":
 - [ ] **Step 6: 运行测试，确认通过**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/backend
+cd <repo>/backend
 pytest tests/test_analyst_prompts.py -v
 ```
 
@@ -1588,7 +1588,7 @@ pytest tests/test_analyst_prompts.py -v
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add backend/app/ai/agents/analyst.py backend/tests/test_analyst_prompts.py
 git commit -m "feat: analyst prompt 涉油专业化（管线、作案手法、联防联控）"
 ```
@@ -1636,7 +1636,7 @@ def test_final_report_prompt_contains_infrastructure_risks():
 - [ ] **Step 2: 运行测试，确认当前失败**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/backend
+cd <repo>/backend
 pytest tests/test_moderator_prompts.py -v
 ```
 
@@ -1706,7 +1706,7 @@ result = {
 - [ ] **Step 4: 运行测试，确认通过**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/backend
+cd <repo>/backend
 pytest tests/test_moderator_prompts.py -v
 ```
 
@@ -1715,7 +1715,7 @@ pytest tests/test_moderator_prompts.py -v
 - [ ] **Step 5: 运行全部后端测试**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander/backend
+cd <repo>/backend
 pytest tests/ -v 2>&1 | tail -20
 ```
 
@@ -1724,7 +1724,7 @@ pytest tests/ -v 2>&1 | tail -20
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/tohsakarin/work/AiCommander
+cd <repo>
 git add backend/app/ai/agents/moderator.py backend/tests/test_moderator_prompts.py
 git commit -m "feat: moderator 报告新增 risk_trend 和 infrastructure_risks 字段"
 ```

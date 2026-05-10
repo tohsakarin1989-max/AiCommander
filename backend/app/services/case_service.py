@@ -8,6 +8,17 @@ from app.config import settings
 from app.services.case_quality_service import CaseQualityService
 
 class CaseService:
+    @staticmethod
+    def _refresh_chain_links(db: Session, case_id: int) -> None:
+        try:
+            from app.services.chain_analysis_service import ChainAnalysisService
+
+            ChainAnalysisService.scan_chain_links(case_id, db)
+        except Exception as e:
+            from app.utils.logger import logger
+
+            logger.warning(f"链条关联扫描失败: {e}")
+
     
     @staticmethod
     def _generate_case_number(db: Session, occurred_time: datetime) -> str:
@@ -152,6 +163,7 @@ class CaseService:
                 logger.warning(f"自动索引案件到向量数据库失败: {e}")
         
         # 预处理改为由用户手动触发，不再自动执行
+        CaseService._refresh_chain_links(db, case.id)
         return case
     
     @staticmethod
@@ -215,7 +227,7 @@ class CaseService:
             except Exception as e:
                 from app.utils.logger import logger
                 logger.warning(f"更新向量数据库索引失败: {e}")
-        
+        CaseService._refresh_chain_links(db, case.id)
         return case
     
     @staticmethod

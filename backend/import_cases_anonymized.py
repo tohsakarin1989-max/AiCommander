@@ -4,10 +4,11 @@
 
 运行方式:
   cd backend
-  python import_cases_anonymized.py
+  AICOMMANDER_CASE_IMPORT_XLSX=/path/to/案件明细.xlsx python import_cases_anonymized.py
 """
 
 import json
+import os
 import random
 import re
 import sqlite3
@@ -18,7 +19,7 @@ from typing import Any
 import openpyxl
 
 # ── 路径配置 ───────────────────────────────────────────────────
-EXCEL_PATH = Path("/Users/tohsakarin/work/车辆核对/321.xlsx")
+EXCEL_PATH = Path(os.environ.get("AICOMMANDER_CASE_IMPORT_XLSX", "321.xlsx")).expanduser()
 DB_PATH    = Path(__file__).parent / "aicommander.db"
 
 # ── 脱敏名称池 ────────────────────────────────────────────────

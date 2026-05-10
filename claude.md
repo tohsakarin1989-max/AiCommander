@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AiCommander 是一个 AI 驱动的案件分析系统，专注于涉油案件分析，核心特性是"圆桌会议"模式——多个 AI 智能体协作研判案件。
+AiCommander 是一个 AI 驱动的案件分析系统，专注于涉油案件分析，核心特性是"圆桌会议"模式——多个 AI 智能体协作研判案件。系统还集成了辖区风险底座、时空研判、团伙分析、自动化告警等多个业务模块。
 
 ## 常用命令
 
@@ -75,10 +75,11 @@ npm run preview  # 预览构建结果
 关键文件：
 - `backend/app/ai/meeting_manager.py` - 会议协调器，管理三阶段流程
 - `backend/app/ai/agents/base_agent.py` - 智能体抽象基类
-- `backend/app/ai/agents/analyst.py` - 分析师智能体（支持 `config.specialty` 专业化）
-- `backend/app/ai/agents/moderator.py` - 主持人智能体
+- `backend/app/ai/agents/analyst.py` - 分析师智能体（支持 `config.specialty` 涉油专业化）
+- `backend/app/ai/agents/moderator.py` - 主持人智能体（报告含 `risk_trend`、`infrastructure_risks`）
 - `backend/app/ai/model_factory.py` - LLM 工厂（支持 OpenAI/Anthropic/兼容接口）
 - `backend/app/ai/anonymizer.py` - 匿名化处理器
+- `backend/app/ai/llm_providers.py` - LLM 提供商适配层
 
 ### 后端分层架构
 
@@ -89,27 +90,76 @@ backend/app/
 ├── repositories/  # 数据访问层
 ├── models/        # SQLAlchemy 实体
 ├── ai/            # AI/LLM 核心（智能体、模型工厂）
-└── tasks/         # Celery 异步任务
+├── tasks/         # Celery 异步任务
+└── utils/         # 工具函数（geo.py 等）
 ```
 
-路由注册在 `backend/app/main.py`，主要 API 模块：
-- `/api/cases` - 案件管理
-- `/api/meetings` - 圆桌会议
-- `/api/models` - AI 模型配置
-- `/api/reports` - 分析报告
-- `/api/assistant` - AI 助手
-- `/api/map-mcp` - 高德地图 MCP 集成
+路由注册在 `backend/app/main.py`，完整 API 模块：
+
+| 路径 | 功能 |
+|------|------|
+| `/api/cases` | 案件管理 |
+| `/api/meetings` | 圆桌会议 |
+| `/api/meeting-templates` | 会议模板 |
+| `/api/models` | AI 模型配置 |
+| `/api/reports` | 分析报告 |
+| `/api/assistant` | AI 助手 |
+| `/api/map-mcp` | 高德地图 MCP 集成 |
+| `/api/suggestions` | 工作建议 |
+| `/api/system-config` | 系统配置 |
+| `/api/deployment` | 部署建议（含一键智能研判） |
+| `/api/conclusions` | 结论工厂 |
+| `/api/agents` | 智能体中心 |
+| `/api/graphs` | 关系图谱 |
+| `/api/events` | 事件管理 |
+| `/api/patrols` | 巡逻记录 |
+| `/api/gangs` | 团伙分析 |
+| `/api/personnel` | 保卫人员管理 |
+| `/api/key-locations` | 重要部位管理 |
+| `/api/jurisdiction` | 辖区风险底座 |
+| `/api/case-intelligence` | 案件研判工作台 |
+| `/api/automation-alerts` | 数智自动化告警 |
+| `/api/websocket` | WebSocket 实时推送 |
 
 ### 前端结构
 
 ```
 frontend/src/
-├── pages/         # 页面视图（Cases, Meetings, Reports 等）
-├── components/    # 复用组件
+├── pages/         # 页面视图
+│   ├── Home/               # 首页（统计卡片深色主题）
+│   ├── Cases/              # 案件管理 + 案件地图（Leaflet）+ 时空研判
+│   ├── Meetings/           # 圆桌会议
+│   ├── Reports/            # 分析报告
+│   ├── Deployment/         # 部署建议
+│   ├── IntelliInspect/     # 一键智能研判
+│   ├── CaseIntelligence/   # 案件研判工作台
+│   ├── Events/             # 事件中心
+│   ├── Gangs/              # 团伙分析
+│   ├── Graphs/             # 关系图谱
+│   ├── Jurisdiction/       # 辖区风险底座 + 资产地图
+│   ├── Patrols/            # 巡逻记录
+│   ├── Agents/             # 智能体中心
+│   ├── Conclusions/        # 结论工厂
+│   ├── Assistant/          # AI 助手
+│   ├── AreaAnalysis/       # 区域分析
+│   ├── Suggestions/        # 工作建议
+│   └── Settings/           # 系统设置
+├── components/
+│   ├── Charts/     # BarChart, PieChart, TrendChart, StatisticCard, RealTimeCounter
+│   ├── Map/        # LeafletMap, MapPicker, SpaceTimeMap, ScatterMap, InteractiveMap
+│   └── TweaksPanel/
 └── services/      # API 调用封装
 ```
 
-技术栈：React 18 + TypeScript + Ant Design + Zustand（状态）+ React Query（数据请求）+ ECharts（图表）
+技术栈：React 18 + TypeScript + Ant Design + Zustand（状态）+ React Query（数据请求）+ ECharts（图表）+ **Leaflet**（地图，替换旧方案）
+
+### 地图组件说明
+
+地图层使用 Leaflet（深色底图 + 热点 + 串案连线），关键组件：
+- `LeafletMap.tsx` - 主地图容器
+- `MapPicker.tsx` - 案件表单地图拾取器（Form.useWatch 双向绑定）
+- `SpaceTimeMap.tsx` - 时空研判地图（含内存泄漏修复）
+- `CachedTileLayer.ts` / `tileCache.ts` - 瓦片缓存层
 
 ## 环境变量
 
@@ -160,6 +210,8 @@ frontend/src/
 
 涉油案件专用字段：油品类型、涉案数量/价值、设施类型（管线/油库/加油站/油罐车）、安全等级、作案手法、嫌疑人角色
 
+案件自动化工作流：`case_automation_service.py` 提供案件状态自动推进能力（最新功能）。
+
 ## 前端服务层结构
 
 ### 统一 API 服务风格
@@ -168,23 +220,33 @@ frontend/src/
 
 ```typescript
 // frontend/src/services/index.ts
-export { casesApi } from './cases'      // 案件管理
-export { eventApi } from './events'      // 事件管理
-export { patrolApi } from './patrols'    // 巡逻记录
-export { gangApi } from './gangs'        // 团伙分析
-export { analysisApi } from './analysis' // 分析报告（智能研判、部署建议、图谱）
-export { aiApi } from './ai'             // AI 服务（会议、助手、结论、智能体）
-export { configApi } from './config'     // 系统配置（模型、系统参数）
+export { caseApi } from './cases'               // 案件管理
+export { eventApi } from './events'              // 事件管理
+export { aiApi } from './ai'                     // AI 服务（会议、助手、结论、智能体）
+export { analysisApi } from './analysis'         // 分析报告（部署建议、图谱）
+export { configApi } from './config'             // 系统配置（模型、系统参数）
+export { mapMCPApi } from './mapMCP'             // 地图 MCP
+export { patrolApi } from './patrols'            // 巡逻记录
+export { gangApi } from './gangs'                // 团伙分析
+export { personnelApi } from './personnel'       // 保卫人员管理
+export { keyLocationApi } from './key_locations' // 重要部位管理
+export { jurisdictionApi } from './jurisdiction' // 辖区风险底座
+export { caseIntelligenceApi } from './caseIntelligence' // 案件研判工作台
+export { automationAlertApi } from './automationAlerts'  // 数智自动化告警
+export { suggestionsApi } from './suggestions'   // 工作建议
 ```
+
+> 注意：案件管理服务导出名为 `caseApi`（非 `casesApi`）。
 
 ### 类型定义
 
 所有共享类型集中定义在 `frontend/src/types/index.ts`，包括：
-- 案件相关：`Case`, `CaseStatistics`, `CaseCreateData`
+- 案件相关：`Case`, `CaseStatistics`, `CaseCreateData`, `CaseQuality`, `CaseVehicle`, `CasePerson`
 - 会议相关：`Meeting`, `MeetingTemplate`, `MeetingReport`
 - AI 相关：`AIModel`, `Conversation`, `ChatMessage`, `AgentConfig`
 - 分析相关：`SmartAnalysisReport`, `TrajectoryAnalysis`, `GangProfile`
 - 配置相关：`SystemConfig`, `Event`, `PatrolRecord`
+- 辖区相关：`JurisdictionAsset`, `AssetRiskProfile`, `RoundtableBriefing` 等（从 `./jurisdiction` 重导出）
 
 ## 后端工具模块
 
@@ -210,6 +272,17 @@ export { configApi } from './config'     // 系统配置（模型、系统参数
 | `TrajectoryService` | 时序轨迹分析（轨迹提取、模式分析、位置预测） |
 | `SmartAnalysisService` | 一键智能研判（融合热点、团伙、模式、部署建议） |
 | `GangAnalysisService` | 团伙识别与分析 |
+| `AreaAnalysisService` | 区域风险分析 |
+| `RelationAnalysisService` | 案件关联关系分析 |
+| `SemanticAnalysisService` | 语义相似度分析 |
+| `JurisdictionService` | 辖区风险底座管理 |
+| `CaseIntelligenceService` | 案件研判工作台 |
+| `AutomationAlertService` | 自动化告警规则引擎 |
+| `CaseAutomationService` | 案件状态自动化工作流 |
+| `CaseQualityService` | 案件质量评分 |
+| `ConclusionFactoryService` | 结论批量生成 |
+| `EmbeddingService` | 文本向量化 |
+| `VectorDbService` | 向量数据库检索 |
 
 ## 智能研判系统
 
@@ -231,3 +304,25 @@ export { configApi } from './config'     // 系统配置（模型、系统参数
     "recommendations": [...]    # 综合建议
 }
 ```
+
+## 数据模型（SQLAlchemy）
+
+主要实体模型（`backend/app/models/`）：
+
+| 模型文件 | 实体 |
+|----------|------|
+| `case.py` | 案件主体 |
+| `meeting.py` | 圆桌会议 |
+| `meeting_template.py` | 会议模板 |
+| `report.py` | 分析报告 |
+| `ai_model.py` | AI 模型配置 |
+| `event.py` | 事件 |
+| `patrol.py` | 巡逻记录 |
+| `personnel.py` | 保卫人员 |
+| `key_location.py` | 重要部位 |
+| `jurisdiction.py` | 辖区资产 |
+| `conclusion.py` / `conclusion_review.py` | 结论及审核 |
+| `agent_task.py` | 智能体任务 |
+| `automation_alert.py` | 自动化告警 |
+| `preprocess_job.py` | 预处理任务 |
+| `system_config.py` | 系统配置 |

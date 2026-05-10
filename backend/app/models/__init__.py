@@ -14,6 +14,7 @@ from app.models.personnel import SecurityPersonnel
 from app.models.key_location import KeyLocation
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.automation_alert import AutomationAlert
+from app.models.chain_link import ChainLink
 
 __all__ = [
     "AIModel",
@@ -52,4 +53,5 @@ __all__ = [
     "JurisdictionAsset",
     "JurisdictionFeedback",
     "AutomationAlert",
+    "ChainLink",
 ]

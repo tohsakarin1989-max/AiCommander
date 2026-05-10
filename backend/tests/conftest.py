@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker, Session
 # 设置测试环境变量
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing")
 os.environ.setdefault("ENABLE_VECTOR_DB", "false")
+os.environ.setdefault("ENABLE_BONUS_ACCOUNTING", "true")
 
 from app.database import Base
 from app.models.case import Case

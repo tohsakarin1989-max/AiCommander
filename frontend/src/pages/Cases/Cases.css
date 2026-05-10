@@ -410,6 +410,24 @@
   line-height: 1.4;
 }
 
+.chain-tag-row {
+  display: flex;
+  margin-top: 7px;
+}
+
+.chain-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in oklab, var(--chain-c) 48%, var(--line));
+  background: color-mix(in oklab, var(--chain-c) 11%, transparent);
+  color: color-mix(in oklab, var(--chain-c) 80%, var(--ink-0));
+  font-family: var(--mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
 /* KV 详情网格 */
 .detail-grid {
   padding: 16px 18px;
@@ -617,6 +635,94 @@
   line-height: 1.45;
 }
 
+.chain-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.chain-panel__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.chain-panel__boundary {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.chain-panel__group {
+  display: grid;
+  gap: 6px;
+}
+
+.chain-panel__group > b {
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.chain-link-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+}
+
+.chain-link-card--confirmed {
+  border-color: color-mix(in oklab, var(--ok) 42%, var(--line-soft));
+}
+
+.chain-link-card__main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chain-link-card__main b {
+  color: var(--ink-0);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chain-link-card__main span,
+.chain-link-card__main small,
+.chain-link-card__main p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.chain-link-card__main small {
+  color: var(--ink-3);
+  font-family: var(--mono);
+}
+
+.chain-link-card__side {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  justify-items: end;
+}
+
+.chain-link-card__side > span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.chain-link-card__side > div {
+  display: flex;
+  gap: 6px;
+}
+
 .ds-head--split {
   display: flex;
   align-items: center;
@@ -645,6 +751,103 @@
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 600;
+}
+
+.location-backfill {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 14px;
+  min-height: 460px;
+}
+
+.location-backfill__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.location-backfill__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 11px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.location-backfill__summary span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.location-backfill__summary b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.location-backfill__item {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.location-backfill__item.is-active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.location-backfill__item b {
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.location-backfill__item span,
+.location-backfill__item small {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-backfill__map {
+  min-width: 0;
+}
+
+.location-backfill__active {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.location-backfill__active b {
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.location-backfill__active span,
+.location-backfill__coord {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.location-backfill__coord {
+  margin-top: 8px;
+  font-family: var(--mono);
 }
 
 /* 导入区域 */

@@ -1,15 +1,17 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Layout from './components/Layout'
 import TweaksPanel from './components/TweaksPanel/TweaksPanel'
+import { bonusAccountingEnabled } from './config/features'
 
 const Home = lazy(() => import('./pages/Home/Home'))
 const Cases = lazy(() => import('./pages/Cases/Cases'))
 const CasesMap = lazy(() => import('./pages/Cases/CasesMap'))
 const CaseFeatures = lazy(() => import('./pages/Cases/CaseFeatures'))
+const CaseBonusAccounting = lazy(() => import('./pages/Cases/CaseBonusAccounting'))
 const CaseIntelligence = lazy(() => import('./pages/CaseIntelligence/CaseIntelligence'))
 const Meetings = lazy(() => import('./pages/Meetings/Meetings'))
 const Reports = lazy(() => import('./pages/Reports/Reports'))
@@ -89,6 +91,7 @@ function App() {
                 <Route path="/dashboard"       element={<Dashboard />} />
                 <Route path="/cases"           element={<Cases />} />
                 <Route path="/cases/map"       element={<CasesMap />} />
+                <Route path="/cases/bonus"     element={bonusAccountingEnabled ? <CaseBonusAccounting /> : <Navigate to="/cases" replace />} />
                 <Route path="/cases/features"  element={<CaseFeatures />} />
                 <Route path="/case-intelligence" element={<CaseIntelligence />} />
                 <Route path="/cases/spacetime" element={<SpaceTimeAnalysis />} />

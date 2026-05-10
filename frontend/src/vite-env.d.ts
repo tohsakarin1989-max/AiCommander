@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly MODE: string
   readonly BASE_URL: string
   readonly VITE_API_BASE_URL?: string
+  readonly VITE_ENABLE_BONUS_ACCOUNTING?: string
 }
 
 interface ImportMeta {

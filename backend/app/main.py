@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts
+from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links
 from app.database import engine, Base, SessionLocal
 from app.config import settings
 import app.models  # noqa: F401
@@ -71,6 +71,7 @@ app.include_router(key_locations.router, prefix="/api/key-locations", tags=["key
 app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["jurisdiction"])
 app.include_router(case_intelligence.router, prefix="/api/case-intelligence", tags=["case-intelligence"])
 app.include_router(automation_alerts.router, prefix="/api/automation-alerts", tags=["automation-alerts"])
+app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-links"])
 
 @app.get("/")
 async def root():

@@ -1,426 +1,560 @@
 /* =========================================================
-   DASHBOARD — 实时指挥大屏
-   设计基准：docs/design-reference/aicommand/Dashboard.html + shell.css
-   使用 design-system.css 全局 token
+   DASHBOARD — 领导研判指挥大屏
+   Uses global design-system.css tokens
    ========================================================= */
 
-/* ── 页面容器 ─────────────────────────────────────────────── */
-.db-main {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  padding: var(--gap) var(--pad);
-  overflow: hidden;
-}
-
-/* ── 主网格：地图(1fr) + 右侧导轨(420px) ─────────────────── */
-.db-grid {
+.db-command-main {
+  height: calc(100vh - 62px);
+  min-height: 620px;
   display: grid;
-  grid-template-columns: 1fr 420px;
-  gap: var(--gap);
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* ── 地图卡片 ────────────────────────────────────────────── */
-/* 覆盖 .card 使地图撑满高度 */
-.db-grid > .map-card {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.db-grid > .map-card .card-body {
-  padding: 0;
-  position: relative;
-  background: radial-gradient(ellipse at 50% 60%, oklch(0.20 0.015 250) 0%, var(--bg-0) 80%);
-  flex: 1;
-  min-height: 500px;
-}
-
-.map-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  background: oklch(0.175 0.012 250);
-}
-
-/* HUD（左上角浮层）*/
-.map-hud {
-  position: absolute;
-  top: 14px;
-  left: 18px;
-  display: flex;
+  grid-template-rows: 76px minmax(0, 1fr) 28px;
   gap: 10px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-3);
-}
-
-.map-hud .pod {
-  padding: 5px 10px;
-  background: oklch(0.12 0.012 250 / 0.72);
-  border: 1px solid var(--line);
-}
-
-.map-hud .pod .n {
-  color: var(--accent);
-  font-weight: 500;
-}
-
-/* 地图控件（右上角）*/
-.map-controls {
-  position: absolute;
-  top: 14px;
-  right: 18px;
-  display: flex;
-  gap: 4px;
-}
-
-.map-controls button {
-  width: 32px;
-  height: 32px;
-  background: oklch(0.12 0.012 250 / 0.72);
-  border: 1px solid var(--line);
-  color: var(--ink-1);
-  font-family: var(--mono);
-  font-size: 14px;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-
-.map-controls button:hover {
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-
-.map-controls button.active {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-
-/* KPI Pills（右上，紧贴控件下方）*/
-.map-kpis {
-  position: absolute;
-  top: 58px;
-  right: 18px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  min-width: 440px;
-}
-
-/* 图例底部 */
-.map-legend-bottom {
-  position: absolute;
-  left: 18px;
-  bottom: 18px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 8px 14px;
-  background: oklch(0.12 0.012 250 / 0.78);
-  border: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-2);
-}
-
-.map-legend-bottom .sw {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  margin-right: 6px;
-  display: inline-block;
-  vertical-align: 0;
-}
-
-.map-legend-bottom .sw.sq {
-  border-radius: 0;
-}
-
-.map-legend-bottom .sw.dm {
-  transform: rotate(45deg);
-  border-radius: 0;
-}
-
-.map-legend-bottom .sw.tr {
-  background: transparent !important;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 9px solid var(--warn);
-  width: 0;
-  height: 0;
-  border-radius: 0;
-}
-
-/* ── 右侧导轨 ─────────────────────────────────────────────── */
-.db-rail {
-  display: grid;
-  /* 趋势固定 / 饼图固定 / 警报固定 / 巡逻规划占满剩余 */
-  grid-template-rows: auto auto auto 1fr;
-  gap: var(--gap);
-  min-height: 0;
+  padding: 12px var(--pad);
   overflow: hidden;
 }
 
-/* 确保每张卡片不会撑破导轨 */
-.db-rail > .card {
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* ── 饼图卡片布局 ─────────────────────────────────────────── */
-.db-pie-card .db-pie-body {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  padding: 14px 16px 16px;
-  align-items: center;
-}
-
-/* ── 巡逻规划卡片 ────────────────────────────────────────── */
-.db-patrol-body {
-  padding: 10px 14px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-}
-
-.patrol-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  border: 1px solid transparent;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.patrol-row.active {
-  border-color: oklch(0.78 0.11 220 / 0.25);
-  background: oklch(0.78 0.11 220 / 0.05);
-}
-
-.patrol-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.patrol-dot--in_progress {
-  background: oklch(0.78 0.11 220);
-  box-shadow: 0 0 6px oklch(0.78 0.11 220 / 0.6);
-}
-
-.patrol-dot--planned {
-  background: var(--warn);
-  opacity: 0.7;
-}
-
-.patrol-dot--completed {
-  background: var(--ok);
-  opacity: 0.5;
-}
-
-.patrol-info {
-  flex: 1;
+.db-command-summary {
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 1.25fr) repeat(5, minmax(118px, 1fr));
+  gap: 10px;
 }
 
-.patrol-area {
+.db-command-title {
+  min-width: 0;
+  padding: 12px 14px;
+  overflow: hidden;
+}
+
+.db-command-title h1 {
+  margin: 0;
+  color: var(--ink-0);
+  font-family: var(--serif);
+  font-size: 23px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.db-command-title p {
+  margin: 7px 0 0;
+  color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--ink-1);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.patrol-meta {
+.db-command-kpi {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.db-command-kpi--empty .val {
+  color: var(--ink-2);
+  font-size: 20px;
+}
+
+.db-command-kpi--warn .val {
+  color: var(--warn);
+}
+
+.db-command-kpi--good .val {
+  color: var(--ok);
+}
+
+.db-command-kpi--ai .val {
+  color: var(--info);
+}
+
+.db-command-board {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.88fr) minmax(420px, 1.38fr) minmax(260px, 0.82fr);
+  grid-template-rows: minmax(0, 1.02fr) minmax(0, 0.86fr) minmax(0, 0.72fr);
+  gap: 10px;
+}
+
+.db-command-card {
+  min-width: 0;
+  min-height: 0;
+}
+
+.db-command-head {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.db-command-head .ti {
+  white-space: nowrap;
+}
+
+.db-head-meta {
+  color: var(--ink-3);
   font-family: var(--mono);
   font-size: 10px;
-  color: var(--ink-3);
-  margin-top: 1px;
-}
-
-.patrol-badge {
-  font-family: var(--mono);
-  font-size: 9px;
-  padding: 2px 7px;
-  border: 1px solid;
-  white-space: nowrap;
-  letter-spacing: 0.04em;
-}
-
-.patrol-badge--in_progress {
-  color: oklch(0.78 0.11 220);
-  border-color: oklch(0.78 0.11 220 / 0.4);
-  background: oklch(0.78 0.11 220 / 0.08);
-}
-
-.patrol-badge--planned {
-  color: var(--warn);
-  border-color: oklch(0.80 0.16 75 / 0.4);
-  background: oklch(0.80 0.16 75 / 0.08);
-}
-
-.patrol-badge--completed {
-  color: var(--ink-3);
-  border-color: var(--line);
-  background: transparent;
-}
-
-.patrol-section-label {
-  font-family: var(--mono);
-  font-size: 9px;
   letter-spacing: 0.08em;
-  color: var(--ink-4);
-  text-transform: uppercase;
-  padding: 8px 8px 4px;
-  border-top: 1px solid var(--line);
-  margin-top: 4px;
+  white-space: nowrap;
 }
 
-.patrol-risk-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+.db-command-body {
+  min-height: 0;
+  overflow: hidden;
 }
 
-.patrol-risk-bar {
-  width: 3px;
-  min-height: 12px;
-  max-height: 32px;
-  border-radius: 2px;
-  flex-shrink: 0;
-  align-self: stretch;
-}
-
-.patrol-score {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--warn);
-  min-width: 28px;
-  text-align: right;
-}
-
-/* ── card-head 内的弹性间距 ─────────────────────────────────── */
 .db-spacer {
   flex: 1;
 }
 
-/* ── 播放/暂停控件按钮 ────────────────────────────────────── */
-.db-ctrl-btn {
-  width: 28px;
-  height: 28px;
+.db-panel-trend { grid-column: 1; grid-row: 1; }
+.db-panel-risk { grid-column: 1; grid-row: 2; }
+.db-panel-material { grid-column: 1; grid-row: 3; }
+.db-panel-map { grid-column: 2; grid-row: 1 / span 2; }
+.db-panel-focus { grid-column: 2; grid-row: 3; }
+.db-panel-ai { grid-column: 3; grid-row: 1; }
+.db-panel-review { grid-column: 3; grid-row: 2; }
+.db-panel-quality { grid-column: 3; grid-row: 3; }
+
+/* ── trend ─────────────────────────────────────────────── */
+.db-trend-bars {
+  height: 100%;
   display: grid;
-  place-items: center;
-  font-size: 13px;
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--ink-2);
-  cursor: pointer;
-  font-family: var(--mono);
-  transition: border-color 0.15s, color 0.15s;
+  grid-template-columns: 24px repeat(7, minmax(0, 1fr));
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+  align-items: end;
+  padding: 14px 12px 12px;
 }
 
-.db-ctrl-btn:hover,
-.db-ctrl-btn--active {
+.db-trend-axis {
+  grid-row: 1;
+  height: 100%;
+  display: grid;
+  align-content: space-between;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.db-trend-bar-wrap {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  gap: 6px;
+}
+
+.db-trend-bar {
+  width: 100%;
+  min-height: 16px;
+  background: linear-gradient(180deg, var(--info), oklch(0.78 0.11 220 / 0.13));
+  border-top: 1px solid oklch(0.78 0.11 220 / 0.72);
+}
+
+.db-trend-bar--hot {
+  background: linear-gradient(180deg, var(--accent), oklch(0.78 0.14 var(--accent-hue) / 0.14));
+  border-top-color: var(--accent-line);
+}
+
+.db-trend-bar--warn {
+  background: linear-gradient(180deg, var(--err), oklch(0.70 0.20 25 / 0.15));
+  border-top-color: oklch(0.70 0.20 25 / 0.65);
+}
+
+.db-trend-bar-wrap span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-align: center;
+}
+
+/* ── auto lists ─────────────────────────────────────────── */
+.db-auto-list {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.db-auto-list::before,
+.db-auto-list::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.db-auto-list::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--bg-1), transparent);
+}
+
+.db-auto-list::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg-1), transparent);
+}
+
+.db-auto-track {
+  display: grid;
+  grid-auto-rows: max-content;
+  gap: 8px;
+  padding: 10px;
+  will-change: transform;
+  animation: dbAutoScroll var(--scroll-duration, 46s) linear infinite;
+}
+
+.db-auto-list:hover .db-auto-track {
+  animation-play-state: paused;
+}
+
+@keyframes dbAutoScroll {
+  0%, 16% { transform: translateY(0); }
+  84%, 100% { transform: translateY(-50%); }
+}
+
+.db-list-item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: oklch(0.12 0.012 250 / 0.5);
+}
+
+.db-list-item strong {
+  color: var(--ink-0);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-list-item span {
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.db-list-item--hot {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.db-list-item--ai {
+  border-color: oklch(0.78 0.11 220 / 0.34);
+  background: oklch(0.78 0.11 220 / 0.06);
+}
+
+.db-list-item--warn {
+  border-color: oklch(0.80 0.16 75 / 0.34);
+  background: oklch(0.80 0.16 75 / 0.06);
+}
+
+.db-list-item--good {
+  border-color: oklch(0.78 0.14 155 / 0.26);
+  background: oklch(0.78 0.14 155 / 0.05);
+}
+
+.db-list-item--empty {
+  border-color: var(--line-soft);
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-auto-list {
+    overflow-y: auto;
+  }
+  .db-auto-track {
+    animation: none;
+  }
+}
+
+/* ── map ───────────────────────────────────────────────── */
+.db-command-map {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 33% 42%, oklch(0.70 0.20 25 / 0.12), transparent 24%),
+    radial-gradient(circle at 68% 35%, oklch(0.78 0.11 220 / 0.1), transparent 24%),
+    linear-gradient(135deg, oklch(0.16 0.014 250), oklch(0.105 0.012 250));
+}
+
+.db-command-map-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+}
+
+.db-map-boundary {
+  fill: oklch(0.78 0.14 var(--accent-hue) / 0.035);
+  stroke: oklch(0.78 0.14 var(--accent-hue) / 0.26);
+  stroke-width: 2;
+  stroke-dasharray: 12 8;
+}
+
+.db-map-roads path {
+  fill: none;
+  stroke: oklch(0.82 0.01 90 / 0.18);
+  stroke-width: 2;
+  stroke-dasharray: 12 8;
+}
+
+.db-map-pipelines path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-dasharray: 14 7;
+  opacity: 0.72;
+}
+
+.db-map-fields circle {
+  fill: oklch(0.78 0.14 var(--accent-hue) / 0.06);
+  stroke: oklch(0.78 0.14 var(--accent-hue) / 0.28);
+  stroke-width: 1.3;
+  stroke-dasharray: 6 4;
+}
+
+.db-map-fields text,
+.db-map-heat text,
+.db-map-city-labels text,
+.db-chain-line text {
+  fill: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: oklch(0.12 0.012 250 / 0.84);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.db-map-city-labels text {
+  fill: var(--ink-3);
+  text-anchor: middle;
+}
+
+.db-map-case-points .db-map-point {
+  stroke: var(--ink-0);
+  stroke-width: 2;
+  opacity: 0.92;
+}
+
+.db-chain-line line {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.db-chain-line--confirmed line {
+  stroke: var(--accent);
+}
+
+.db-chain-line--inferred line {
+  stroke: oklch(0.78 0.11 220 / 0.58);
+  stroke-dasharray: 7 6;
+}
+
+.db-chain-line--confirmed text {
+  fill: var(--accent);
+}
+
+.db-chain-line--inferred text {
+  fill: var(--info);
+}
+
+.db-map-empty {
+  fill: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 18px;
+}
+
+.db-map-controls {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: oklch(0.12 0.012 250 / 0.9);
+}
+
+.db-map-controls button,
+.db-map-controls span {
+  height: 24px;
+  min-width: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.db-map-controls button:hover {
   border-color: var(--accent-line);
   color: var(--accent);
+  background: var(--accent-soft);
 }
 
-/* WS 断开 chip 样式 */
+.db-map-legend {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  background: oklch(0.12 0.012 250 / 0.86);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.db-map-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  vertical-align: middle;
+  background: var(--accent);
+}
+
+.db-map-legend .fact::before { background: var(--err); }
+.db-map-legend .infer::before { background: var(--info); }
+.db-map-legend .gap::before { background: var(--warn); }
+
+.db-map-source {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: auto repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--accent-line);
+  background: oklch(0.12 0.012 250 / 0.9);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.db-map-source strong {
+  color: var(--ink-0);
+  font-size: 11.5px;
+}
+
+.db-map-source span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── focus ─────────────────────────────────────────────── */
+.db-command-focus-grid {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.db-focus-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: oklch(0.12 0.012 250 / 0.5);
+}
+
+.db-focus-card span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+
+.db-focus-card strong {
+  margin-top: 5px;
+  color: var(--ink-0);
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── status ────────────────────────────────────────────── */
+.db-command-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  overflow: hidden;
+}
+
 .chip.db-ws-err {
   color: var(--err);
   border-color: oklch(0.70 0.20 25 / 0.4);
 }
 
-/* ── 叠加层模式切换按钮组 ─────────────────────────────────── */
-.db-overlay-btns {
-  display: flex;
-  gap: 1px;
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-
-.db-overlay-btn {
-  padding: 0 10px;
-  height: 28px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  background: transparent;
-  border: none;
-  color: var(--ink-3);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-  border-right: 1px solid var(--line);
-  white-space: nowrap;
-}
-
-.db-overlay-btn:last-child {
-  border-right: none;
-}
-
-.db-overlay-btn:hover {
-  background: oklch(0.32 0.014 250 / 0.3);
-  color: var(--ink-1);
-}
-
-.db-overlay-btn.active {
-  background: oklch(0.78 0.14 45 / 0.12);
-  color: var(--accent);
-  border-color: var(--accent-line);
-}
-
-/* 全屏时，db-main 铺满屏幕 */
-:fullscreen .db-main,
-:-webkit-full-screen .db-main {
-  padding: var(--gap) var(--pad);
+/* ── fullscreen / responsive ───────────────────────────── */
+:fullscreen .db-command-main,
+:-webkit-full-screen .db-command-main {
+  height: 100vh;
+  min-height: 720px;
   background: var(--bg-0);
 }
 
-/* 全屏激活时，全屏按钮高亮 */
-.map-controls button.active {
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-
-/* ── 响应式收缩 ───────────────────────────────────────────── */
-@media (max-width: 1400px) {
-  .db-grid {
-    grid-template-columns: 1fr 380px;
-  }
-  .map-kpis {
-    min-width: 380px;
-    grid-template-columns: repeat(2, 1fr);
-    top: 58px;
+@media (max-width: 1180px) {
+  .db-command-main {
+    min-width: 1080px;
+    overflow-x: auto;
   }
 }
 
 @media (max-width: 1100px) {
-  .db-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
+  .db-command-summary {
+    grid-template-columns: minmax(220px, 1.1fr) repeat(5, minmax(100px, 1fr));
   }
-  .db-rail {
-    grid-template-rows: auto auto;
-    grid-template-columns: 1fr 1fr;
-  }
-}
 
-@media (max-width: 700px) {
-  .db-rail {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto;
+  .db-command-board {
+    grid-template-columns: minmax(230px, 0.84fr) minmax(360px, 1.32fr) minmax(230px, 0.82fr);
+  }
+
+  .db-command-head {
+    min-height: 32px;
+    padding: 7px 10px;
+  }
+
+  .db-auto-track {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .db-list-item {
+    padding: 7px 8px;
   }
 }

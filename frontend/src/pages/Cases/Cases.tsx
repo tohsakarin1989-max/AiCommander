@@ -28,9 +28,12 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caseApi, type CaseImportResult } from '../../services/cases'
 import type { BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate } from '../../types'
+import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
+import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
+import { bonusAccountingEnabled } from '../../config/features'
 import './Cases.css'
 
 const { TextArea } = Input
@@ -139,6 +142,9 @@ const Cases: React.FC = () => {
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
   const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
+  const [locationModalVisible, setLocationModalVisible] = useState(false)
+  const [activeLocationCaseId, setActiveLocationCaseId] = useState<number | null>(null)
+  const [locationDraft, setLocationDraft] = useState<{ latitude?: number; longitude?: number }>({})
   const [showAdvancedFields, setShowAdvancedFields] = useState(false)
   const [filters, setFilters] = useState<SearchFilters>({})
   const [keyword, setKeyword] = useState('')
@@ -233,7 +239,7 @@ const Cases: React.FC = () => {
   const { data: bonusAssessment } = useQuery({
     queryKey: ['case-bonus-assessment', selectedCase?.id],
     queryFn: () => caseApi.getBonusAssessment(selectedCase!.id),
-    enabled: !!selectedCase,
+    enabled: bonusAccountingEnabled && !!selectedCase,
   })
 
   const { data: automationWorkbench } = useQuery({
@@ -247,6 +253,23 @@ const Cases: React.FC = () => {
     queryFn: () => caseApi.getCaseEvidence(selectedCase!.id),
     enabled: !!selectedCase,
   })
+
+  const { data: chainLinks } = useQuery({
+    queryKey: ['case-chain-links', selectedCase?.id],
+    queryFn: () => caseApi.getChainLinks(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
+  const { data: missingLocationCases, isLoading: missingLocationLoading } = useQuery({
+    queryKey: ['cases-missing-location'],
+    queryFn: () => caseApi.getCases({ missing_location: true, limit: 500 }),
+    enabled: locationModalVisible,
+  })
+
+  useEffect(() => {
+    if (!locationModalVisible || !missingLocationCases?.length || activeLocationCaseId) return
+    setActiveLocationCaseId(missingLocationCases[0].id)
+  }, [locationModalVisible, missingLocationCases, activeLocationCaseId])
 
   const createMutation = useMutation({
     mutationFn: caseApi.createCase,
@@ -325,6 +348,44 @@ const Cases: React.FC = () => {
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
       message.error(`材料归档失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const updateLocationMutation = useMutation({
+    mutationFn: (data: { id: number; latitude: number; longitude: number }) =>
+      caseApi.updateCaseLocation(data.id, { latitude: data.latitude, longitude: data.longitude }),
+    onSuccess: async (_, variables) => {
+      message.success('坐标已补录')
+      const remaining = (missingLocationCases || []).filter(item => item.id !== variables.id)
+      const nextCase = remaining[0]
+      setActiveLocationCaseId(nextCase?.id ?? null)
+      setLocationDraft({})
+      await queryClient.invalidateQueries({ queryKey: ['cases'] })
+      await queryClient.invalidateQueries({ queryKey: ['cases-missing-location'] })
+      await queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
+      await queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+    },
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`坐标保存失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const confirmChainMutation = useMutation({
+    mutationFn: (linkId: number) => caseApi.confirmChainLink(linkId),
+    onSuccess: async () => {
+      message.success('链条关联已确认')
+      await queryClient.invalidateQueries({ queryKey: ['case-chain-links', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
+    },
+  })
+
+  const rejectChainMutation = useMutation({
+    mutationFn: (linkId: number) => caseApi.rejectChainLink(linkId),
+    onSuccess: async () => {
+      message.success('链条推断已驳回')
+      await queryClient.invalidateQueries({ queryKey: ['case-chain-links', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
     },
   })
 
@@ -502,6 +563,103 @@ const Cases: React.FC = () => {
     createEvidenceMutation.mutate(values)
   }
 
+  const activeLocationCase = useMemo(() => {
+    return (missingLocationCases || []).find(item => item.id === activeLocationCaseId) || null
+  }, [missingLocationCases, activeLocationCaseId])
+
+  const handleLocationSave = () => {
+    if (!activeLocationCase || locationDraft.latitude == null || locationDraft.longitude == null) {
+      message.warning('请先在地图上选择坐标')
+      return
+    }
+    updateLocationMutation.mutate({
+      id: activeLocationCase.id,
+      latitude: locationDraft.latitude,
+      longitude: locationDraft.longitude,
+    })
+  }
+
+  const renderChainPositionTag = (caseItem: Case) => {
+    const position = getChainPosition(caseItem)
+    const meta = chainPositionMeta[position]
+    return (
+      <span
+        className={`chain-tag chain-tag--${position}`}
+        style={{ '--chain-c': meta.color } as React.CSSProperties}
+      >
+        {meta.label}
+      </span>
+    )
+  }
+
+  const renderChainLinkItem = (link: ChainLink, direction: 'upstream' | 'downstream') => {
+    const related = direction === 'upstream' ? link.from_case : link.to_case
+    const statusLabel = link.status === 'confirmed' ? '已确认' : '待确认'
+    return (
+      <div key={link.id} className={`chain-link-card chain-link-card--${link.status}`}>
+        <div className="chain-link-card__main">
+          <b>{related?.case_number || `案件 ${direction === 'upstream' ? link.case_id_a : link.case_id_b}`}</b>
+          <span>{related?.chain_label || '未知环节'} · {related?.location || '未标注地点'}</span>
+          <small>
+            距离 {link.distance_km.toFixed(1)} km · 时间差 {link.time_diff_days} 天 · 置信度 {Math.round(link.confidence * 100)}%
+          </small>
+          {link.reasoning && <p>{link.reasoning}</p>}
+        </div>
+        <div className="chain-link-card__side">
+          <span>{statusLabel}</span>
+          {link.status === 'inferred' && (
+            <div>
+              <Button
+                size="small"
+                type="primary"
+                loading={confirmChainMutation.isPending}
+                onClick={() => confirmChainMutation.mutate(link.id)}
+              >
+                确认
+              </Button>
+              <Button
+                size="small"
+                danger
+                loading={rejectChainMutation.isPending}
+                onClick={() => rejectChainMutation.mutate(link.id)}
+              >
+                驳回
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderChainPanel = (links?: ChainLink[]) => {
+    if (!selectedCase) return null
+    const upstreamLinks = (links || []).filter(item => item.case_id_b === selectedCase.id)
+    const downstreamLinks = (links || []).filter(item => item.case_id_a === selectedCase.id)
+    const hasLinks = upstreamLinks.length > 0 || downstreamLinks.length > 0
+    return (
+      <div className="chain-panel">
+        <div className="chain-panel__summary">
+          {renderChainPositionTag(selectedCase)}
+          <span>{hasLinks ? `发现 ${upstreamLinks.length + downstreamLinks.length} 条上下游关联` : '暂无链条推断'}</span>
+        </div>
+        <p className="chain-panel__boundary">链条关联是系统基于环节、距离和时间生成的辅助假设，确认前不作为定案依据。</p>
+        {upstreamLinks.length > 0 && (
+          <div className="chain-panel__group">
+            <b>上游关联</b>
+            {upstreamLinks.map(link => renderChainLinkItem(link, 'upstream'))}
+          </div>
+        )}
+        {downstreamLinks.length > 0 && (
+          <div className="chain-panel__group">
+            <b>下游关联</b>
+            {downstreamLinks.map(link => renderChainLinkItem(link, 'downstream'))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderBonusAssessment = (assessment?: BonusAssessment) => {
     if (!assessment) {
       return <p className="narr">正在读取考核材料状态...</p>
@@ -572,7 +730,7 @@ const Cases: React.FC = () => {
   }
 
   const renderAutomationPanel = (workbench?: CaseAutomationWorkbench) => {
-    const assessment = workbench?.bonus_assessment || bonusAssessment
+    const assessment = bonusAccountingEnabled ? (workbench?.bonus_assessment || bonusAssessment) : undefined
     const gate = assessment?.material_gate
     const total = assessment?.total_suggested_amount ?? 0
     const primarySquad = assessment?.primary_squad || selectedCase?.report_unit || '未选择'
@@ -594,11 +752,11 @@ const Cases: React.FC = () => {
           </div>
           <div>
             <span>佐证材料</span>
-            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : '—'}</b>
+            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : `${workbench?.gap_closure.material_gaps.length || 0} 缺口`}</b>
           </div>
           <div>
-            <span>奖金测算</span>
-            <b>¥{total.toLocaleString()}</b>
+            <span>{bonusAccountingEnabled ? '奖金测算' : '研判复核'}</span>
+            <b>{bonusAccountingEnabled ? `¥${total.toLocaleString()}` : (workbench?.ready_for_human_review ? '可复核' : '需补充')}</b>
           </div>
         </div>
         <div className="cases-automation-actions">
@@ -613,14 +771,16 @@ const Cases: React.FC = () => {
           >
             材料归档
           </Button>
-          <Button
-            size="small"
-            icon={<NodeIndexOutlined />}
-            disabled={!selectedCase}
-            onClick={() => document.querySelector('.case-detail')?.scrollTo({ top: 0, behavior: 'smooth' })}
-          >
-            奖金测算
-          </Button>
+          {bonusAccountingEnabled && (
+            <Button
+              size="small"
+              icon={<NodeIndexOutlined />}
+              disabled={!selectedCase}
+              onClick={() => document.querySelector('.case-detail')?.scrollTo({ top: 0, behavior: 'smooth' })}
+            >
+              奖金测算
+            </Button>
+          )}
         </div>
         <div className="cases-automation-modules">
           <div className={`cases-automation-module cases-automation-module--${conclusion?.status || 'idle'}`}>
@@ -770,6 +930,17 @@ const Cases: React.FC = () => {
               <span className="kbd">⌘K</span>
             </div>
             <div className="tools-bar-right">
+              <button className="btn-ghost" onClick={() => setLocationModalVisible(true)}>
+                <EnvironmentOutlined /> 坐标补录
+              </button>
+              {bonusAccountingEnabled && (
+                <button
+                  className="btn-ghost"
+                  onClick={() => navigate(selectedCase ? `/cases/bonus?caseId=${selectedCase.id}` : '/cases/bonus')}
+                >
+                  <DatabaseOutlined /> 奖金核算
+                </button>
+              )}
               <button className="btn-ghost" onClick={() => setImportModalVisible(true)}>导入 ▾</button>
               <button className="btn-primary" onClick={handleCreate}>
                 ＋ 新建案件
@@ -914,6 +1085,9 @@ const Cases: React.FC = () => {
                         {selectedCase.location || '—'}
                         {selectedCase.case_type ? `  ·  ${selectedCase.case_type}` : ''}
                       </div>
+                      <div className="chain-tag-row">
+                        {renderChainPositionTag(selectedCase)}
+                      </div>
                     </div>
                     <span className={`tag ${statusTagClass[selectedCase.status] || ''}`}>
                       {statusLabel[selectedCase.status] || selectedCase.status}
@@ -966,10 +1140,12 @@ const Cases: React.FC = () => {
                     ) : null}
                   </div>
 
-                  <div className="detail-section">
-                    <div className="ds-head">奖金考核测算</div>
-                    {renderBonusAssessment(bonusAssessment)}
-                  </div>
+                  {bonusAccountingEnabled && (
+                    <div className="detail-section">
+                      <div className="ds-head">奖金考核测算</div>
+                      {renderBonusAssessment(bonusAssessment)}
+                    </div>
+                  )}
 
                   {automationWorkbench && (
                     <div className="detail-section">
@@ -992,6 +1168,11 @@ const Cases: React.FC = () => {
                       </div>
                     </div>
                   )}
+
+                  <div className="detail-section">
+                    <div className="ds-head">链条关联</div>
+                    {renderChainPanel(chainLinks)}
+                  </div>
 
                   <div className="detail-section">
                     <div className="ds-head ds-head--split">
@@ -1093,7 +1274,9 @@ const Cases: React.FC = () => {
                     {selectedCase.facility_type && (
                       <div className="kv">
                         <span className="k">设施类型</span>
-                        <span className="v">{selectedCase.facility_type}</span>
+                        <span className="v">
+                          {selectedCase.facility_type} {renderChainPositionTag(selectedCase)}
+                        </span>
                       </div>
                     )}
                     {selectedCase.modus_operandi && (
@@ -1146,7 +1329,7 @@ const Cases: React.FC = () => {
                   <div className="icon">
                     <DatabaseOutlined />
                   </div>
-                  <span>选择案件后查看材料门禁和奖金测算</span>
+                  <span>{bonusAccountingEnabled ? '选择案件后查看材料门禁和奖金测算' : '选择案件后查看研判、材料和缺口闭环'}</span>
                 </div>
               )}
             </aside>
@@ -1404,6 +1587,102 @@ const Cases: React.FC = () => {
             </div>
           )}
         </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-0)', fontSize: 14, letterSpacing: '0.06em' }}>
+            批量补录坐标
+          </span>
+        }
+        open={locationModalVisible}
+        onCancel={() => {
+          setLocationModalVisible(false)
+          setActiveLocationCaseId(null)
+          setLocationDraft({})
+        }}
+        width={860}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => {
+              setLocationModalVisible(false)
+              setActiveLocationCaseId(null)
+              setLocationDraft({})
+            }}
+          >
+            关闭
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={updateLocationMutation.isPending}
+            disabled={!activeLocationCase || locationDraft.latitude == null || locationDraft.longitude == null}
+            onClick={handleLocationSave}
+          >
+            保存并下一条
+          </Button>,
+        ]}
+        styles={{
+          content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
+          header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
+          footer:  { borderTop: '1px solid var(--line)' },
+        }}
+      >
+        <div className="location-backfill">
+          <div className="location-backfill__list">
+            <div className="location-backfill__summary">
+              <span>待补录</span>
+              <b>{missingLocationCases?.length ?? 0}</b>
+            </div>
+            {missingLocationLoading ? (
+              <p className="narr">正在读取缺坐标案件...</p>
+            ) : (missingLocationCases || []).length === 0 ? (
+              <p className="narr">当前没有缺坐标案件。</p>
+            ) : (
+              (missingLocationCases || []).map(item => (
+                <button
+                  key={item.id}
+                  className={`location-backfill__item${activeLocationCaseId === item.id ? ' is-active' : ''}`}
+                  onClick={() => {
+                    setActiveLocationCaseId(item.id)
+                    setLocationDraft({})
+                  }}
+                >
+                  <b>{item.case_number}</b>
+                  <span>{item.location || '未标注地点'}</span>
+                  <small>{dayjs(item.occurred_time).format('YYYY-MM-DD')}</small>
+                </button>
+              ))
+            )}
+          </div>
+          <div className="location-backfill__map">
+            {activeLocationCase ? (
+              <>
+                <div className="location-backfill__active">
+                  <b>{activeLocationCase.case_number}</b>
+                  <span>{activeLocationCase.location || '未标注地点'} · {activeLocationCase.case_type || '未分类'}</span>
+                </div>
+                <MapPicker
+                  height={330}
+                  lat={locationDraft.latitude ?? activeLocationCase.latitude}
+                  lng={locationDraft.longitude ?? activeLocationCase.longitude}
+                  onChange={(latitude, longitude) => setLocationDraft({ latitude, longitude })}
+                />
+                <div className="location-backfill__coord">
+                  {locationDraft.latitude != null && locationDraft.longitude != null
+                    ? `${locationDraft.latitude.toFixed(6)}, ${locationDraft.longitude.toFixed(6)}`
+                    : '点击地图选择坐标'}
+                </div>
+              </>
+            ) : (
+              <div className="empty-state">
+                <div className="icon"><EnvironmentOutlined /></div>
+                <span>选择左侧案件后补录坐标</span>
+              </div>
+            )}
+          </div>
+        </div>
       </Modal>
 
       <Modal

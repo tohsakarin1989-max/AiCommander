@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from app.database import get_db
+from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_quality_service import CaseQualityService
@@ -18,6 +19,14 @@ import openpyxl
 router = APIRouter()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
+
+
+def _require_bonus_accounting_enabled() -> None:
+    if not settings.ENABLE_BONUS_ACCOUNTING:
+        raise HTTPException(
+            status_code=403,
+            detail="案件奖金核算属于内部复核事项，需启用 ENABLE_BONUS_ACCOUNTING 后访问",
+        )
 
 class CaseCreate(BaseModel):
     case_number: Optional[str] = None
@@ -177,6 +186,11 @@ class EvidenceClassifyRequest(BaseModel):
 
 class BonusCalculationRequest(BaseModel):
     rules: Optional[Dict[str, Any]] = None
+
+
+class CaseLocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
 
 
 class CaseVehicleCreate(BaseModel):
@@ -476,6 +490,7 @@ def get_cases(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     has_geo: Optional[bool] = None,
+    missing_location: Optional[bool] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -494,6 +509,7 @@ def get_cases(
         start_date: 开始日期
         end_date: 结束日期
         has_geo: 是否有地理坐标
+        missing_location: 是否缺少地理坐标（用于坐标补录）
     """
     query = db.query(Case)
 
@@ -542,7 +558,9 @@ def get_cases(
         query = query.filter(Case.occurred_time <= end_date)
 
     # 地理坐标筛选
-    if has_geo is True:
+    if missing_location is True:
+        query = query.filter((Case.latitude.is_(None)) | (Case.longitude.is_(None)))
+    elif has_geo is True:
         query = query.filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
     elif has_geo is False:
         query = query.filter((Case.latitude.is_(None)) | (Case.longitude.is_(None)))
@@ -550,6 +568,33 @@ def get_cases(
     # 排序和分页
     query = query.order_by(Case.occurred_time.desc())
     return query.offset(skip).limit(limit).all()
+
+
+@router.patch("/{case_id:int}/location", response_model=CaseResponse)
+def update_case_location(
+    case_id: int,
+    payload: CaseLocationUpdate,
+    db: Session = Depends(get_db),
+):
+    """补录案件经纬度，仅更新坐标字段。"""
+    if not (18 <= payload.latitude <= 53 and 73 <= payload.longitude <= 135):
+        raise HTTPException(status_code=400, detail="坐标超出中国区域范围，纬度需在18~53，经度需在73~135")
+
+    case = _get_case_or_404(db, case_id)
+    case.latitude = payload.latitude
+    case.longitude = payload.longitude
+    case.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(case)
+
+    try:
+        from app.services.chain_analysis_service import ChainAnalysisService
+
+        ChainAnalysisService.scan_chain_links(case.id, db)
+    except Exception:
+        pass
+
+    return case
 
 @router.get("/{case_id:int}", response_model=CaseResponse)
 def get_case(case_id: int, db: Session = Depends(get_db)):
@@ -616,6 +661,7 @@ def recalculate_case_quality(case_id: int, db: Session = Depends(get_db)):
 @router.get("/{case_id:int}/bonus-assessment")
 def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
     """获取案件奖金考核材料门禁和默认规则测算结果。"""
+    _require_bonus_accounting_enabled()
     case = _get_case_or_404(db, case_id)
     return CaseAutomationService.build_bonus_assessment(db, case)
 
@@ -624,7 +670,11 @@ def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
 def get_case_automation_workbench(case_id: int, db: Session = Depends(get_db)):
     """获取案件自动化工作台：结论分层、经验卡和缺口闭环。"""
     case = _get_case_or_404(db, case_id)
-    return CaseAutomationService.build_automation_workbench(db, case)
+    return CaseAutomationService.build_automation_workbench(
+        db,
+        case,
+        include_bonus=settings.ENABLE_BONUS_ACCOUNTING,
+    )
 
 
 @router.post("/{case_id:int}/bonus-assessment/calculate")
@@ -634,6 +684,7 @@ def calculate_bonus_assessment(
     db: Session = Depends(get_db),
 ):
     """按传入的奖金考核细则参数重新测算案件奖金。"""
+    _require_bonus_accounting_enabled()
     case = _get_case_or_404(db, case_id)
     return CaseAutomationService.build_bonus_assessment(db, case, rules=payload.rules)
 

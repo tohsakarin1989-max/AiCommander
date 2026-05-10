@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ENABLE_VECTOR_DB: bool = True
+    ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
     
     class Config:

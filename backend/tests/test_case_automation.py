@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
 from app.api import cases
+from app.config import settings
 from app.database import Base, get_db
 
 
@@ -40,6 +41,33 @@ def _add_required_bonus_evidence(client: TestClient, case_id: int) -> None:
             json={"title": title, "file_path": f"/tmp/{title}.pdf"},
         )
         assert evidence_response.status_code == 200
+
+
+def test_bonus_assessment_requires_internal_feature_flag(monkeypatch):
+    db = _session()
+    client = _client(db)
+    monkeypatch.setattr(settings, "ENABLE_BONUS_ACCOUNTING", False, raising=False)
+
+    case_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime.utcnow().isoformat(),
+            "location": "三号井场",
+            "case_type": "涉油盗窃",
+            "description": "巡逻发现车辆盗运原油，检斤入库。",
+        },
+    )
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+
+    blocked_get = client.get(f"/api/cases/{case_id}/bonus-assessment")
+    blocked_post = client.post(f"/api/cases/{case_id}/bonus-assessment/calculate", json={})
+    workbench = client.get(f"/api/cases/{case_id}/automation-workbench")
+
+    assert blocked_get.status_code == 403
+    assert blocked_post.status_code == 403
+    assert workbench.status_code == 200
+    assert workbench.json().get("bonus_assessment") is None
 
 
 def test_structure_preview_extracts_case_fields_and_material_hints():

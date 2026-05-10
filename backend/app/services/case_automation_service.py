@@ -367,9 +367,9 @@ class CaseAutomationService:
         }
 
     @staticmethod
-    def build_automation_workbench(db: Session, case: Case) -> Dict[str, Any]:
+    def build_automation_workbench(db: Session, case: Case, include_bonus: bool = True) -> Dict[str, Any]:
         """聚合 4-6 自动化能力：结论分层、经验卡、缺口闭环。"""
-        bonus = CaseAutomationService.build_bonus_assessment(db, case)
+        bonus = CaseAutomationService.build_bonus_assessment(db, case) if include_bonus else None
         context = CaseIntelligenceService.build_llm_context_pack(
             db,
             case_id=case.id,
@@ -383,10 +383,21 @@ class CaseAutomationService:
         inferences = context.get("pattern_inferences") or []
         suggestions = context.get("prevention_references") or []
         info_gaps = CaseAutomationService._filter_real_information_gaps(context.get("information_gaps") or [])
-        material_gaps = bonus.get("material_gate", {}).get("missing_materials") or []
+        if bonus:
+            material_gaps = bonus.get("material_gate", {}).get("missing_materials") or []
+            materials_ready = bonus.get("material_gate", {}).get("status") == "ready"
+        else:
+            related = CaseQualityService.get_related_data(db, case.id)
+            material_checks = CaseAutomationService._build_material_checks(case, related)
+            material_gaps = [
+                item["label"]
+                for item in material_checks
+                if item.get("required") and item.get("status") in {"missing", "partial"}
+            ]
+            materials_ready = not material_gaps
         actions = CaseAutomationService._build_gap_actions(material_gaps, info_gaps)
         ready_for_human_review = (
-            bonus.get("material_gate", {}).get("status") == "ready"
+            materials_ready
             and not actions
             and bool(facts)
         )
@@ -442,7 +453,8 @@ class CaseAutomationService:
                 "material_gaps": material_gaps,
                 "information_gaps": info_gaps,
                 "actions": actions,
-                "bonus_ready": bonus.get("material_gate", {}).get("status") == "ready",
+                "bonus_ready": bool(bonus) and materials_ready,
+                "review_ready": materials_ready,
             },
             "bonus_assessment": bonus,
             "ready_for_human_review": ready_for_human_review,
@@ -689,7 +701,7 @@ class CaseAutomationService:
                 "source": "material",
                 "priority": "high",
                 "title": f"补齐{label}",
-                "detail": "该材料影响案件奖金考核佐证链，补齐前不进入自动测算复核。",
+                "detail": "该材料影响案件复核佐证链，补齐前不进入自动复核。",
             })
         for gap in information_gaps:
             title = gap.split("：", 1)[0]
