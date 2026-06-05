@@ -21,6 +21,7 @@ import type {
   Hotspot,
   OilRecoveryRecord,
   SerialCaseGroup,
+  BatchReviewResult,
   PreprocessStatus,
   TrajectoryPoint,
   TrajectoryAnalysis,
@@ -277,6 +278,21 @@ export const caseApi = {
    */
   preprocessCase: async (id: number): Promise<{ message: string }> => {
     const response = await api.post<{ message: string }>(`/cases/${id}/preprocess`)
+    return response.data
+  },
+
+  batchReviewCases: async (payload?: {
+    case_ids?: number[]
+    only_missing?: boolean
+    limit?: number
+    use_llm?: boolean
+  }): Promise<BatchReviewResult> => {
+    const response = await api.post<BatchReviewResult>('/cases/batch-review', payload ?? {})
+    return response.data
+  },
+
+  getBatchReviewJob: async (jobId: string): Promise<BatchReviewResult> => {
+    const response = await api.get<BatchReviewResult>(`/cases/batch-review/${jobId}`)
     return response.data
   },
 

@@ -752,6 +752,54 @@ export interface PreprocessStatus {
   avg_duration_seconds: number | null
 }
 
+export interface PreprocessBatchResult {
+  message: string
+  total_candidates: number
+  processed: number
+  success: number
+  failed: number
+  skipped: number
+  llm_enabled: boolean
+  mode_counts: Record<string, number>
+  results: Array<{
+    case_id: number
+    case_number?: string
+    status: 'success' | 'failed' | string
+    preprocess_mode?: string
+    confidence?: number
+    error?: string
+  }>
+}
+
+export type BatchReviewIssueType = 'data_quality' | 'experience' | 'bonus' | 'report_quality' | 'preprocess' | 'system'
+export type BatchReviewIssuePriority = 'high' | 'medium' | 'low'
+
+export interface BatchReviewIssue {
+  case_id?: number
+  case_number?: string
+  target_type?: 'case' | string
+  target_id?: number | string
+  type: BatchReviewIssueType | string
+  priority: BatchReviewIssuePriority | string
+  title: string
+  detail: string
+  missing_items?: unknown[]
+  missing_materials?: unknown[]
+}
+
+export interface BatchReviewResult {
+  job_id: string
+  status: 'running' | 'completed' | 'failed' | string
+  progress: number
+  processed: number
+  failed: number
+  skipped: number
+  issues: BatchReviewIssue[]
+  started_at?: string
+  finished_at?: string | null
+  preprocess?: PreprocessBatchResult | null
+}
+
 // ============ AI 助手相关类型 ============
 
 export interface Conversation {

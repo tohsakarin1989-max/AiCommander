@@ -28,7 +28,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caseApi, type CaseImportResult } from '../../services/cases'
-import type { BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseUpdatePayload, CaseVehicle } from '../../types'
+import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -37,6 +37,7 @@ import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { bonusAccountingEnabled } from '../../config/features'
 import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
+import { summarizeBatchReview } from './batchReviewPresentation'
 import './Cases.css'
 
 const { TextArea } = Input
@@ -449,6 +450,7 @@ const Cases: React.FC = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const editRequestRef = useRef(0)
+  const [batchReviewResult, setBatchReviewResult] = useState<BatchReviewResult | null>(null)
 
   // 构建查询参数
   const queryParams = useMemo(() => {
@@ -516,6 +518,11 @@ const Cases: React.FC = () => {
       return true
     })
   }, [cases, sidebarFilter, keyword])
+
+  const batchReviewSummary = useMemo(
+    () => batchReviewResult ? summarizeBatchReview(batchReviewResult) : null,
+    [batchReviewResult],
+  )
 
   useEffect(() => {
     const caseIdFromUrl = searchParams.get('caseId')
@@ -610,6 +617,24 @@ const Cases: React.FC = () => {
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
       message.error(`预处理失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const batchReviewMutation = useMutation({
+    mutationFn: caseApi.batchReviewCases,
+    onSuccess: async (result) => {
+      const summary = summarizeBatchReview(result)
+      setBatchReviewResult(result)
+      message.open({
+        type: summary.severity,
+        content: `${summary.message}；${summary.description}`,
+      })
+      await queryClient.invalidateQueries({ queryKey: ['cases'] })
+      await queryClient.invalidateQueries({ queryKey: ['preprocess-status'] })
+    },
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`批量复核失败: ${err.response?.data?.detail || err.message}`)
     },
   })
 
@@ -915,6 +940,18 @@ const Cases: React.FC = () => {
     structureMutation.mutate(String(text))
   }
 
+  const handleBatchReview = () => {
+    if (!filteredCases.length) {
+      message.warning('当前筛选范围内没有可复核案件')
+      return
+    }
+    batchReviewMutation.mutate({
+      case_ids: filteredCases.map(caseItem => caseItem.id),
+      limit: filteredCases.length,
+      use_llm: false,
+    })
+  }
+
   const handleEvidenceSubmit = async () => {
     if (!selectedCase) return
     const values = await evidenceForm.validateFields()
@@ -1181,6 +1218,18 @@ const Cases: React.FC = () => {
         />
       )}
 
+      {batchReviewSummary && (
+        <Alert
+          type={batchReviewSummary.severity}
+          showIcon
+          closable
+          className="cases-preprocess-alert"
+          message={batchReviewSummary.message}
+          description={batchReviewSummary.description}
+          onClose={() => setBatchReviewResult(null)}
+        />
+      )}
+
       <div className="cases-layout">
         {/* ── 左侧筛选栏 ── */}
         <aside className="filters">
@@ -1288,6 +1337,13 @@ const Cases: React.FC = () => {
               <span className="kbd">⌘K</span>
             </div>
             <div className="tools-bar-right">
+              <button
+                className="btn-ghost"
+                disabled={batchReviewMutation.isPending || filteredCases.length === 0}
+                onClick={handleBatchReview}
+              >
+                <ApiOutlined /> {batchReviewMutation.isPending ? '复核中' : '批量复核'}
+              </button>
               <button className="btn-ghost" onClick={() => setLocationModalVisible(true)}>
                 <EnvironmentOutlined /> 坐标补录
               </button>

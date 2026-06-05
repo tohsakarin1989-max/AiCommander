@@ -4,21 +4,32 @@ from sqlalchemy import func
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+from uuid import uuid4
 from app.database import get_db
 from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_automation_service import CaseAutomationService
+from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.preprocess_service import CasePreprocessService
 from app.services.case_quality_service import CaseQualityService
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.preprocess_job import PreprocessJob
 from app.tasks.preprocess_tasks import preprocess_case_task
 import csv
 import io
+import logging
 import openpyxl
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
+BATCH_REVIEW_DEFAULT_LIMIT = 200
+BATCH_REVIEW_MAX_LIMIT = 200
+BATCH_REVIEW_JOB_LIMIT = 50
+BATCH_REVIEW_JOB_TTL_SECONDS = 3600
+BATCH_REVIEW_JOBS: Dict[str, Dict[str, Any]] = {}
+BATCH_REVIEW_JOB_TIMESTAMPS: Dict[str, datetime] = {}
 NULLABLE_CASE_UPDATE_FIELDS = {
     "location",
     "case_type",
@@ -260,6 +271,13 @@ class BonusCalculationRequest(BaseModel):
     rules: Optional[Dict[str, Any]] = None
 
 
+class BatchReviewRequest(BaseModel):
+    case_ids: Optional[List[int]] = None
+    only_missing: bool = False
+    limit: Optional[int] = None
+    use_llm: bool = False
+
+
 class CaseLocationUpdate(BaseModel):
     latitude: float
     longitude: float
@@ -398,6 +416,164 @@ class CaseStatistics(BaseModel):
     cases_with_geo: int
     case_type_distribution: dict
     daily_trend: List[dict]
+
+
+def _batch_issue(
+    case: Case,
+    issue_type: str,
+    priority: str,
+    title: str,
+    detail: str,
+    missing_items: Optional[List[Any]] = None,
+    missing_materials: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    issue = {
+        "case_id": case.id,
+        "case_number": case.case_number,
+        "target_type": "case",
+        "target_id": case.id,
+        "type": issue_type,
+        "priority": priority,
+        "title": title,
+        "detail": detail,
+    }
+    if missing_items:
+        issue["missing_items"] = missing_items
+    if missing_materials:
+        issue["missing_materials"] = missing_materials
+    return issue
+
+
+def _job_issue(
+    issue_type: str,
+    priority: str,
+    title: str,
+    detail: str,
+    case_id: Optional[int] = None,
+    case_number: Optional[str] = None,
+) -> Dict[str, Any]:
+    issue: Dict[str, Any] = {
+        "type": issue_type,
+        "priority": priority,
+        "title": title,
+        "detail": detail,
+    }
+    if case_id is not None:
+        issue["case_id"] = case_id
+        issue["target_type"] = "case"
+        issue["target_id"] = case_id
+    if case_number is not None:
+        issue["case_number"] = case_number
+    return issue
+
+
+def _prune_batch_review_jobs(now: Optional[datetime] = None) -> None:
+    now = now or datetime.utcnow()
+    expired = [
+        job_id
+        for job_id, stored_at in BATCH_REVIEW_JOB_TIMESTAMPS.items()
+        if (now - stored_at).total_seconds() > BATCH_REVIEW_JOB_TTL_SECONDS
+    ]
+    for job_id in expired:
+        BATCH_REVIEW_JOBS.pop(job_id, None)
+        BATCH_REVIEW_JOB_TIMESTAMPS.pop(job_id, None)
+
+    while len(BATCH_REVIEW_JOBS) > BATCH_REVIEW_JOB_LIMIT:
+        oldest_id = min(BATCH_REVIEW_JOB_TIMESTAMPS, key=BATCH_REVIEW_JOB_TIMESTAMPS.get)
+        BATCH_REVIEW_JOBS.pop(oldest_id, None)
+        BATCH_REVIEW_JOB_TIMESTAMPS.pop(oldest_id, None)
+
+
+def _append_quality_issues(issues: List[Dict[str, Any]], case: Case, quality: Dict[str, Any]) -> None:
+    missing = [
+        item.get("label")
+        for item in quality.get("missing_required", [])
+        if isinstance(item, dict) and item.get("label")
+    ]
+    warnings = [
+        item.get("message")
+        for item in quality.get("warnings", [])
+        if isinstance(item, dict) and item.get("message")
+    ]
+    level = quality.get("level")
+    if not missing and not warnings and level not in {"low", "medium"}:
+        return
+
+    priority = "high" if level == "low" or len(missing) >= 3 else "medium"
+    if missing:
+        detail = f"缺项：{'、'.join(missing[:4])}"
+    elif warnings:
+        detail = f"提醒：{'；'.join(warnings[:2])}"
+    else:
+        detail = "信息质量评分偏低，请复核关键案情字段。"
+    issues.append(_batch_issue(case, "data_quality", priority, "案件信息质量需补齐", detail, missing_items=missing[:4]))
+
+
+def _append_experience_issue(issues: List[Dict[str, Any]], case: Case, card: Dict[str, Any]) -> None:
+    evidence_gaps = [
+        str(item)
+        for item in card.get("evidence_gaps", [])
+        if item and not str(item).startswith("暂无明显")
+    ]
+    if card.get("manual_review_status") in {"confirmed", "approved"}:
+        return
+
+    detail = evidence_gaps[0] if evidence_gaps else "经验卡已生成，需人工确认事实、推断和可复用经验。"
+    issues.append(_batch_issue(case, "experience", "medium", "经验卡待人工复核", detail, missing_items=evidence_gaps[:4]))
+
+
+def _existing_experience_card_status(case: Case) -> Optional[str]:
+    features = case.features if isinstance(case.features, dict) else {}
+    intelligence = features.get("intelligence") if isinstance(features.get("intelligence"), dict) else {}
+    card = intelligence.get("experience_card") if isinstance(intelligence.get("experience_card"), dict) else {}
+    status = card.get("manual_review_status")
+    return str(status) if status else None
+
+
+def _append_bonus_issue(issues: List[Dict[str, Any]], case: Case, bonus: Dict[str, Any]) -> None:
+    material_gate = bonus.get("material_gate") or {}
+    calculation_gate = bonus.get("calculation_gate") or {}
+    missing_materials = material_gate.get("missing_materials") or []
+    missing_items = calculation_gate.get("missing_items") or []
+    warnings = bonus.get("warnings") or []
+    if bonus.get("ready_for_review") and not missing_materials and not missing_items and not warnings:
+        return
+
+    detail_parts = []
+    if missing_materials:
+        detail_parts.append(f"材料：{'、'.join(str(item) for item in missing_materials[:3])}")
+    if missing_items:
+        detail_parts.append(f"指标：{'、'.join(str(item) for item in missing_items[:3])}")
+    if not detail_parts and warnings:
+        detail_parts.append(str(warnings[0]))
+    detail = "；".join(detail_parts) if detail_parts else "奖金核算需人工复核规则、材料和指标完整性。"
+    issues.append(
+        _batch_issue(
+            case,
+            "bonus",
+            "high",
+            "奖金核算指标或材料待补齐",
+            detail,
+            missing_items=missing_items[:3],
+            missing_materials=missing_materials[:3],
+        )
+    )
+
+
+def _append_report_quality_issue(issues: List[Dict[str, Any]], case: Case) -> None:
+    features = case.features if isinstance(case.features, dict) else {}
+    management = features.get("management") if isinstance(features.get("management"), dict) else {}
+    level = management.get("report_quality_level")
+    missing = [
+        str(item)
+        for item in management.get("missing_fields", [])
+        if item
+    ]
+    if level not in {"low", "medium"} and not missing:
+        return
+
+    detail = f"报告缺口：{'、'.join(missing[:4])}" if missing else "报告质量需复核事实完整性和字段口径。"
+    issues.append(_batch_issue(case, "report_quality", "medium", "报告生成素材待补齐", detail, missing_items=missing[:4]))
 
 
 @router.get("/statistics", response_model=CaseStatistics)
@@ -642,6 +818,168 @@ def get_cases(
     # 排序和分页
     query = query.order_by(Case.occurred_time.desc())
     return query.offset(skip).limit(limit).all()
+
+
+@router.post("/batch-review")
+def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session = Depends(get_db)):
+    """同步打通批量预处理、信息质量、经验卡和奖金门禁，返回可查询的轻量 job。"""
+    payload = payload or BatchReviewRequest()
+    if payload.limit is not None and payload.limit <= 0:
+        raise HTTPException(status_code=400, detail="limit 必须大于 0")
+    if payload.limit is not None and payload.limit > BATCH_REVIEW_MAX_LIMIT:
+        raise HTTPException(status_code=400, detail=f"limit 不能超过 {BATCH_REVIEW_MAX_LIMIT}")
+
+    effective_limit = payload.limit or BATCH_REVIEW_DEFAULT_LIMIT
+    if payload.case_ids is not None and len(payload.case_ids) == 0:
+        candidates: List[Case] = []
+        total_candidates = 0
+    else:
+        query = db.query(Case).order_by(Case.occurred_time.desc(), Case.id.desc())
+        if payload.case_ids is not None:
+            query = query.filter(Case.id.in_(payload.case_ids))
+        total_candidates = query.count()
+        candidates = query.limit(effective_limit).all()
+    review_cases = list(candidates)
+    preprocess_cases = [
+        case
+        for case in candidates
+        if not payload.only_missing or not case.features
+    ]
+
+    job_id = str(uuid4())
+    now = datetime.utcnow()
+    started_at = now.isoformat()
+    job: Dict[str, Any] = {
+        "job_id": job_id,
+        "status": "running",
+        "progress": 0,
+        "processed": 0,
+        "failed": 0,
+        "skipped": max(0, total_candidates - len(review_cases)),
+        "issues": [],
+        "started_at": started_at,
+        "finished_at": None,
+        "preprocess": {
+            "message": "批量预处理完成",
+            "total_candidates": total_candidates,
+            "processed": 0,
+            "success": 0,
+            "failed": 0,
+            "skipped": max(0, total_candidates - len(preprocess_cases)),
+            "llm_enabled": payload.use_llm,
+            "mode_counts": {},
+            "results": [],
+        },
+    }
+    _prune_batch_review_jobs(now)
+    BATCH_REVIEW_JOBS[job_id] = job
+    BATCH_REVIEW_JOB_TIMESTAMPS[job_id] = now
+    _prune_batch_review_jobs(now)
+
+    preprocess_case_ids = {case.id for case in preprocess_cases}
+    total = len(review_cases)
+    preprocess = job["preprocess"]
+    for index, case in enumerate(review_cases, start=1):
+        if case.id in preprocess_case_ids:
+            preprocess_job = PreprocessJob(case_id=case.id, status="queued")
+            db.add(preprocess_job)
+            db.commit()
+            db.refresh(preprocess_job)
+            try:
+                preprocess_job.status = "processing"
+                preprocess_job.started_at = datetime.utcnow()
+                db.commit()
+                if payload.use_llm:
+                    preprocess_result = CasePreprocessService.preprocess_case(db, case.id)
+                else:
+                    data = CasePreprocessService._build_deterministic_features(db, case)
+                    preprocess_result = CasePreprocessService._write_features(db, case, data)
+                if preprocess_result is None:
+                    raise RuntimeError("preprocess returned no result")
+                mode = preprocess_result.get("preprocess_mode") or "deterministic_fallback"
+                preprocess_job.status = "success"
+                preprocess_job.finished_at = datetime.utcnow()
+                db.commit()
+                preprocess["processed"] += 1
+                preprocess["success"] += 1
+                preprocess["mode_counts"][mode] = preprocess["mode_counts"].get(mode, 0) + 1
+                preprocess["results"].append({
+                    "case_id": case.id,
+                    "case_number": case.case_number,
+                    "status": "success",
+                    "preprocess_mode": mode,
+                    "confidence": preprocess_result.get("confidence"),
+                })
+                db.refresh(case)
+            except Exception as exc:
+                db.rollback()
+                logger.warning("批量复核预处理失败 case_id=%s: %s", case.id, exc)
+                preprocess_job.status = "failed"
+                preprocess_job.finished_at = datetime.utcnow()
+                preprocess_job.error = "批量复核预处理失败"
+                db.commit()
+                preprocess["processed"] += 1
+                preprocess["failed"] += 1
+                job["failed"] += 1
+                preprocess["results"].append({
+                    "case_id": case.id,
+                    "case_number": case.case_number,
+                    "status": "failed",
+                })
+                job["issues"].append(_job_issue(
+                    "preprocess",
+                    "high",
+                    "结构化预处理失败",
+                    "该案件预处理未完成，请查看服务日志后人工复核。",
+                    case_id=case.id,
+                    case_number=case.case_number,
+                ))
+
+        try:
+            db.refresh(case)
+            quality = CaseQualityService.refresh_case_quality(db, case)
+            _append_quality_issues(job["issues"], case, quality)
+
+            experience_status = _existing_experience_card_status(case)
+            card = CaseIntelligenceService.build_experience_card(db, case.id)
+            if experience_status and not card.get("manual_review_status"):
+                card["manual_review_status"] = experience_status
+            _append_experience_issue(job["issues"], case, card)
+            db.refresh(case)
+
+            if settings.ENABLE_BONUS_ACCOUNTING:
+                bonus = CaseAutomationService.build_bonus_assessment(db, case)
+                _append_bonus_issue(job["issues"], case, bonus)
+
+            _append_report_quality_issue(job["issues"], case)
+            job["processed"] += 1
+        except Exception as exc:
+            db.rollback()
+            logger.warning("批量复核处理失败 case_id=%s: %s", case.id, exc)
+            job["failed"] += 1
+            job["issues"].append(_batch_issue(
+                case,
+                "system",
+                "high",
+                "批量复核处理失败",
+                "该案件批量复核未完成，请查看服务日志后人工复核。",
+            ))
+        finally:
+            job["progress"] = 100 if total == 0 else int(index / total * 100)
+
+    job["status"] = "completed"
+    job["progress"] = 100
+    job["finished_at"] = datetime.utcnow().isoformat()
+    return job
+
+
+@router.get("/batch-review/{job_id}")
+def get_batch_review_job(job_id: str):
+    _prune_batch_review_jobs()
+    job = BATCH_REVIEW_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="批量复核任务不存在")
+    return job
 
 
 @router.patch("/{case_id:int}/location", response_model=CaseResponse)
