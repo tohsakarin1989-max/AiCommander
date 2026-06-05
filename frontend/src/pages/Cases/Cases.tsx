@@ -518,6 +518,22 @@ const Cases: React.FC = () => {
     setIsModalVisible(true)
   }
 
+  const handleBonusVehicleScopeChange = (checked: boolean) => {
+    const rows = form.getFieldValue('initial_vehicles')
+    form.setFieldsValue({
+      bonus_has_vehicle: checked,
+      initial_vehicles: checked ? (Array.isArray(rows) && rows.length ? rows : [{}]) : [],
+    })
+  }
+
+  const handleBonusPersonScopeChange = (checked: boolean) => {
+    const rows = form.getFieldValue('initial_persons')
+    form.setFieldsValue({
+      bonus_has_person: checked,
+      initial_persons: checked ? (Array.isArray(rows) && rows.length ? rows : [{}]) : [],
+    })
+  }
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
@@ -1517,6 +1533,131 @@ const Cases: React.FC = () => {
               ))}
             </div>
           </div>
+
+          <div className="cases-bonus-scope-grid">
+            <div>
+              <Form.Item name="bonus_has_vehicle" valuePropName="checked" noStyle>
+                <Switch size="small" onChange={handleBonusVehicleScopeChange} />
+              </Form.Item>
+              <b>涉案车辆奖励</b>
+              <span>车辆类别、车牌和处置状态</span>
+            </div>
+            <div>
+              <Form.Item name="bonus_has_person" valuePropName="checked" noStyle>
+                <Switch size="small" onChange={handleBonusPersonScopeChange} />
+              </Form.Item>
+              <b>抓获人员奖励</b>
+              <span>人员处理类型和角色</span>
+            </div>
+            <div>
+              <Form.Item name="bonus_has_oil" valuePropName="checked" noStyle>
+                <Switch size="small" />
+              </Form.Item>
+              <b>涉油检斤处置</b>
+              <span>油量、含水率和入库/回收</span>
+            </div>
+            <div>
+              <Form.Item name="bonus_has_police" valuePropName="checked" noStyle>
+                <Switch size="small" />
+              </Form.Item>
+              <b>报案立案佐证</b>
+              <span>报案、立案和公安联系人</span>
+            </div>
+          </div>
+
+          {watchedBonusHasVehicle && (
+            <Form.List name="initial_vehicles">
+              {(fields, { add, remove }) => (
+                <div className="cases-bonus-draft">
+                  <div className="cases-bonus-draft-head">
+                    <span>涉案车辆</span>
+                    <Button size="small" onClick={() => add({})}>增加车辆</Button>
+                  </div>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <div key={key} className="cases-bonus-draft-row">
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'vehicle_type']}
+                        label="车辆考核类别"
+                      >
+                        <Select allowClear placeholder="请选择车辆类别">
+                          {['摩托车（电动车）', '5吨以下机动车', '5吨以上机动车', '重型挂车', '机动船', '3吨以下炼化油罐', '3吨以上炼化油罐'].map(option => (
+                            <Option key={option} value={option}>{option}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'plate_number']}
+                        label="车牌/编号"
+                      >
+                        <Input placeholder="可选" />
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'handling_status']}
+                        label="车辆处理"
+                      >
+                        <Select allowClear placeholder="请选择">
+                          {['移交公安', '扣押停放', '待处理', '返还'].map(option => (
+                            <Option key={option} value={option}>{option}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                      <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Form.List>
+          )}
+
+          {watchedBonusHasPerson && (
+            <Form.List name="initial_persons">
+              {(fields, { add, remove }) => (
+                <div className="cases-bonus-draft">
+                  <div className="cases-bonus-draft-head">
+                    <span>抓获/涉案人员</span>
+                    <Button size="small" onClick={() => add({})}>增加人员</Button>
+                  </div>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <div key={key} className="cases-bonus-draft-row">
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'name']}
+                        label="姓名/代称"
+                      >
+                        <Input placeholder="可选" />
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'handling_status']}
+                        label="人员处理类型"
+                      >
+                        <Select allowClear placeholder="请选择处理类型">
+                          {['刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
+                            <Option key={option} value={option}>{option}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'role']}
+                        label="人员角色"
+                      >
+                        <Input placeholder="如司机、协助人员" />
+                      </Form.Item>
+                      <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
+                        删除
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Form.List>
+          )}
 
           <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
             业务管理字段（按细则用于报送、质量评分和后续研判）
