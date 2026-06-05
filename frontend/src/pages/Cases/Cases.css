@@ -518,6 +518,65 @@
   margin: -8px 0 12px;
 }
 
+.case-entry-readiness {
+  border: 1px solid var(--line);
+  background: var(--panel, var(--bg-1));
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.case-entry-readiness-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--text, var(--ink-0));
+  font-size: 13px;
+}
+
+.case-entry-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.case-readiness-card {
+  border: 1px solid var(--line-soft);
+  padding: 10px;
+  min-height: 98px;
+}
+
+.case-readiness-card strong,
+.case-readiness-card span,
+.case-readiness-card small {
+  display: block;
+}
+
+.case-readiness-card strong {
+  color: var(--text, var(--ink-0));
+  margin-bottom: 6px;
+}
+
+.case-readiness-card span {
+  color: var(--muted, var(--ink-2));
+  line-height: 1.45;
+}
+
+.case-readiness-card small {
+  color: var(--muted-2, var(--ink-3));
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.case-readiness-card.ready {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.case-readiness-card.attention {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
 .bonus-panel {
   display: grid;
   gap: 10px;

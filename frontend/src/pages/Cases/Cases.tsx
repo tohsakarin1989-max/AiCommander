@@ -34,6 +34,7 @@ import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { bonusAccountingEnabled } from '../../config/features'
+import { buildCaseEntryReadiness } from './caseEntryReadiness'
 import './Cases.css'
 
 const { TextArea } = Input
@@ -135,6 +136,9 @@ const Cases: React.FC = () => {
   const [searchForm] = Form.useForm()
   const watchedLat = Form.useWatch('latitude', form)
   const watchedLng = Form.useWatch('longitude', form)
+  const watchedLocation = Form.useWatch('location', form)
+  const watchedCaseType = Form.useWatch('case_type', form)
+  const watchedDescription = Form.useWatch('description', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
@@ -199,6 +203,17 @@ const Cases: React.FC = () => {
     cases?.forEach(c => c.oil_type && types.add(c.oil_type))
     return Array.from(types)
   }, [cases])
+
+  const caseEntryReadiness = useMemo(() => buildCaseEntryReadiness({
+    latitude: watchedLat,
+    longitude: watchedLng,
+    location: watchedLocation,
+    case_type: watchedCaseType,
+    description: watchedDescription,
+  }), [watchedLat, watchedLng, watchedLocation, watchedCaseType, watchedDescription])
+
+  const readinessAttentionCount = caseEntryReadiness.filter(item => item.status === 'attention').length
+  const readinessReadyCount = caseEntryReadiness.filter(item => item.status === 'ready').length
 
   // 侧边栏过滤后的案件列表
   const filteredCases = useMemo(() => {
@@ -1431,6 +1446,22 @@ const Cases: React.FC = () => {
             >
               自动提取
             </Button>
+          </div>
+
+          <div className="case-entry-readiness">
+            <div className="case-entry-readiness-head">
+              <span>保存前预检</span>
+              <b>{readinessReadyCount} 项就绪 · {readinessAttentionCount} 项需关注</b>
+            </div>
+            <div className="case-entry-readiness-grid">
+              {caseEntryReadiness.map(item => (
+                <div key={item.key} className={`case-readiness-card ${item.status}`}>
+                  <strong>{item.label}</strong>
+                  <span>{item.impact}</span>
+                  <small>{item.action}</small>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
