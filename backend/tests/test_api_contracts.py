@@ -11,6 +11,7 @@ import app.models  # noqa: F401
 from app.api import agents, cases, conclusions, events, graphs, patrols, suggestions
 from app.database import Base
 from app.database import get_db
+from app.models.case import CasePerson, CaseVehicle
 from app.models.conclusion import Conclusion
 from app.models.event import Event
 from app.models.patrol import AreaRiskAssessment, PatrolRecord
@@ -93,6 +94,125 @@ def test_generate_conclusion_accepts_json_body(api_db_session: Session):
     assert payload["case_id"] == case.id
     assert payload["status"] in {"published", "needs_review"}
     assert payload["evidence"]["raw"]["case_intelligence"]["experience_card"]["case_id"] == case.id
+
+
+def test_case_create_accepts_initial_vehicle_and_person_drafts(api_db_session: Session):
+    client = _build_client(api_db_session)
+
+    response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": "2026-06-05T01:00:00",
+            "description": "现场查扣涉案车辆并抓获涉案人员。",
+            "initial_vehicles": [
+                {
+                    "vehicle_type": "5吨以下机动车",
+                    "plate_number": "黑E12345",
+                    "handling_status": "扣押停放",
+                }
+            ],
+            "initial_persons": [
+                {
+                    "name": "张某",
+                    "role": "司机",
+                    "handling_status": "行政拘留",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    case_id = response.json()["id"]
+    vehicle = api_db_session.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).one()
+    person = api_db_session.query(CasePerson).filter(CasePerson.case_id == case_id).one()
+    assert vehicle.vehicle_type == "5吨以下机动车"
+    assert vehicle.plate_number == "黑E12345"
+    assert person.name == "张某"
+    assert person.handling_status == "行政拘留"
+
+
+def test_case_update_replaces_bonus_drafts_and_clears_nullable_fields(api_db_session: Session):
+    client = _build_client(api_db_session)
+    case = CaseService.create_case(
+        db=api_db_session,
+        case_number=None,
+        occurred_time=datetime(2026, 6, 5, 1, 0, 0),
+        description="用于编辑清空合同测试的案件",
+        oil_nature="被盗原油",
+        oil_volume=2.5,
+        water_cut=12.0,
+        oil_handling="检斤入库",
+        police_reported=True,
+        case_filed=True,
+        police_officer="张警官",
+        police_phone="13800000000",
+        initial_vehicles=[{"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}],
+        initial_persons=[{"name": "张某", "handling_status": "行政拘留"}],
+    )
+    vehicle = api_db_session.query(CaseVehicle).filter(CaseVehicle.case_id == case.id).one()
+
+    response = client.put(
+        f"/api/cases/{case.id}",
+        json={
+            "oil_nature": None,
+            "oil_volume": None,
+            "water_cut": None,
+            "oil_handling": None,
+            "police_reported": False,
+            "case_filed": False,
+            "police_officer": None,
+            "police_phone": None,
+            "initial_vehicles": [
+                {
+                    "id": vehicle.id,
+                    "vehicle_type": "重型挂车",
+                    "plate_number": None,
+                    "handling_status": "移交公安",
+                }
+            ],
+            "initial_persons": [],
+        },
+    )
+
+    assert response.status_code == 200
+    api_db_session.refresh(case)
+    assert case.oil_nature is None
+    assert case.oil_volume is None
+    assert case.water_cut is None
+    assert case.oil_handling is None
+    assert case.police_reported is False
+    assert case.case_filed is False
+    assert case.police_officer is None
+    assert case.police_phone is None
+
+    vehicles = api_db_session.query(CaseVehicle).filter(CaseVehicle.case_id == case.id).all()
+    persons = api_db_session.query(CasePerson).filter(CasePerson.case_id == case.id).all()
+    assert len(vehicles) == 1
+    assert vehicles[0].id == vehicle.id
+    assert vehicles[0].vehicle_type == "重型挂车"
+    assert vehicles[0].plate_number is None
+    assert vehicles[0].handling_status == "移交公安"
+    assert persons == []
+
+
+def test_case_update_rejects_required_nulls_and_ignores_null_bonus_drafts(api_db_session: Session):
+    client = _build_client(api_db_session)
+    case = CaseService.create_case(
+        db=api_db_session,
+        case_number=None,
+        occurred_time=datetime(2026, 6, 5, 1, 0, 0),
+        description="用于空值边界测试的案件",
+        initial_vehicles=[{"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}],
+    )
+
+    required_null = client.put(f"/api/cases/{case.id}", json={"occurred_time": None})
+    assert required_null.status_code == 422
+
+    draft_null = client.put(f"/api/cases/{case.id}", json={"initial_vehicles": None})
+    assert draft_null.status_code == 200
+    vehicles = api_db_session.query(CaseVehicle).filter(CaseVehicle.case_id == case.id).all()
+    assert len(vehicles) == 1
+    assert vehicles[0].plate_number == "黑E12345"
 
 
 def test_review_conclusion_accepts_json_body(api_db_session: Session):

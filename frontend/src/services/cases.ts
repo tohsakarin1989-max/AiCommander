@@ -8,6 +8,7 @@ import type {
   Case,
   CaseAutomationWorkbench,
   CaseCreate,
+  CaseUpdatePayload,
   CaseEvidence,
   CaseEvidenceClassification,
   ChainLink,
@@ -119,7 +120,7 @@ export const caseApi = {
   /**
    * 更新案件
    */
-  updateCase: async (id: number, data: Partial<CaseCreate>): Promise<Case> => {
+  updateCase: async (id: number, data: CaseUpdatePayload): Promise<Case> => {
     const response = await api.put<Case>(`/cases/${id}`, data)
     return response.data
   },

@@ -95,24 +95,9 @@ function hasVehicleSignal(values: CaseBonusEntryValues, text: string): boolean {
     || containsAny(text, ['车辆', '车牌', '查扣车', '扣押车', '罐车', '皮卡', '面包车', '机动车', '摩托', '电动车', '一车', '1车'])
 }
 
-function hasVehicleCategory(values: CaseBonusEntryValues, text: string): boolean {
+function hasVehicleCategory(values: CaseBonusEntryValues): boolean {
   const rows = values.initial_vehicles || []
-  if (rows.some(row => hasText(row?.vehicle_type))) return true
-  return containsAny(text, [
-    '摩托车',
-    '电动车',
-    '5吨以下',
-    '五吨以下',
-    '5吨以上',
-    '五吨以上',
-    '重型挂车',
-    '半挂',
-    '机动船',
-    '3吨以下',
-    '三吨以下',
-    '3吨以上',
-    '三吨以上',
-  ])
+  return rows.some(row => hasText(row?.vehicle_type))
 }
 
 function hasPersonSignal(values: CaseBonusEntryValues, text: string): boolean {
@@ -123,11 +108,9 @@ function hasPersonSignal(values: CaseBonusEntryValues, text: string): boolean {
     || containsAny(text, ['抓获', '人员', '嫌疑人', '司机', '一人', '1人'])
 }
 
-function hasPersonDisposition(values: CaseBonusEntryValues, text: string): boolean {
+function hasPersonDisposition(values: CaseBonusEntryValues): boolean {
   const rows = values.initial_persons || []
-  if (rows.some(row => hasText(row?.handling_status))) return true
-  if (hasText(values.person_handling)) return true
-  return containsAny(text, ['刑事拘留', '刑拘', '行政拘留', '治安拘留', '行政处罚', '治安处罚', '教育放行', '待核查'])
+  return rows.some(row => hasText(row?.handling_status))
 }
 
 function missingOilFields(values: CaseBonusEntryValues): string[] {
@@ -157,21 +140,25 @@ export function buildBonusEntryHints(values: CaseBonusEntryValues): CaseBonusEnt
   ].filter(hasText).map(value => String(value)).join(' ')
   const hints: CaseBonusEntryHint[] = []
 
-  if (values.bonus_has_vehicle && hasVehicleSignal(values, text) && !hasVehicleCategory(values, text)) {
+  if (values.bonus_has_vehicle && !hasVehicleCategory(values)) {
     hints.push({
       key: 'vehicle_category',
       label: '车辆考核类别',
-      detail: '已出现车辆线索，但未明确摩托车、5吨以下、5吨以上等车辆考核类别。',
+      detail: hasVehicleSignal(values, text)
+        ? '已出现车辆线索，但未明确摩托车、5吨以下、5吨以上等车辆考核类别。'
+        : '已开启涉案车辆奖励，但未填写车辆考核类别。',
       action: '可在涉案车辆中选择车辆考核类别；不填写可以保存案件，但整案奖金暂不测算。',
       blocking: true,
     })
   }
 
-  if (values.bonus_has_person && hasPersonSignal(values, text) && !hasPersonDisposition(values, text)) {
+  if (values.bonus_has_person && !hasPersonDisposition(values)) {
     hints.push({
       key: 'person_disposition',
       label: '人员处理类型',
-      detail: '已出现抓获/涉案人员线索，但未明确行政拘留、刑事拘留等处理结果。',
+      detail: hasPersonSignal(values, text)
+        ? '已出现抓获/涉案人员线索，但未明确行政拘留、刑事拘留等处理结果。'
+        : '已开启抓获人员奖励，但未填写人员处理类型。',
       action: '可在抓获/涉案人员中选择人员处理类型；不填写可以保存案件，但整案奖金暂不测算。',
       blocking: true,
     })

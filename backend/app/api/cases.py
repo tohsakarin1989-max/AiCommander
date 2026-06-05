@@ -19,6 +19,43 @@ import openpyxl
 router = APIRouter()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
+NULLABLE_CASE_UPDATE_FIELDS = {
+    "location",
+    "case_type",
+    "description",
+    "latitude",
+    "longitude",
+    "involved_persons",
+    "involved_items",
+    "loss_amount",
+    "oil_type",
+    "oil_volume",
+    "oil_value",
+    "facility_type",
+    "facility_owner",
+    "security_level",
+    "modus_operandi",
+    "suspect_roles",
+    "vehicle_info",
+    "upstream_source",
+    "downstream_destination",
+    "report_time",
+    "report_unit",
+    "source_type",
+    "source_detail",
+    "police_reported",
+    "case_filed",
+    "police_officer",
+    "police_phone",
+    "security_officers",
+    "oil_nature",
+    "water_cut",
+    "vehicle_handling",
+    "person_handling",
+    "oil_handling",
+    "operation_role",
+    "current_stage",
+}
 
 
 def _require_bonus_accounting_enabled() -> None:
@@ -27,6 +64,37 @@ def _require_bonus_accounting_enabled() -> None:
             status_code=403,
             detail="案件奖金核算属于内部复核事项，需启用 ENABLE_BONUS_ACCOUNTING 后访问",
         )
+
+
+class CaseVehicleDraft(BaseModel):
+    id: Optional[int] = None
+    vehicle_type: Optional[str] = None
+    color: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    plate_number: Optional[str] = None
+    oil_volume: Optional[float] = None
+    water_cut: Optional[float] = None
+    custody_location: Optional[str] = None
+    current_location: Optional[str] = None
+    handling_status: Optional[str] = None
+    transferred_to_police: Optional[bool] = None
+    transfer_time: Optional[datetime] = None
+    transfer_document_no: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class CasePersonDraft(BaseModel):
+    id: Optional[int] = None
+    name: Optional[str] = None
+    gender: Optional[str] = None
+    id_number: Optional[str] = None
+    home_address: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    handling_status: Optional[str] = None
+    notes: Optional[str] = None
+
 
 class CaseCreate(BaseModel):
     case_number: Optional[str] = None
@@ -68,6 +136,8 @@ class CaseCreate(BaseModel):
     oil_handling: Optional[str] = None
     operation_role: Optional[str] = None
     current_stage: Optional[str] = None
+    initial_vehicles: Optional[List[CaseVehicleDraft]] = None
+    initial_persons: Optional[List[CasePersonDraft]] = None
 
 class CaseUpdate(BaseModel):
     case_number: Optional[str] = None
@@ -109,6 +179,8 @@ class CaseUpdate(BaseModel):
     oil_handling: Optional[str] = None
     operation_role: Optional[str] = None
     current_stage: Optional[str] = None
+    initial_vehicles: Optional[List[CaseVehicleDraft]] = None
+    initial_persons: Optional[List[CasePersonDraft]] = None
 
 class CaseResponse(BaseModel):
     id: int
@@ -471,6 +543,8 @@ def create_case(case: CaseCreate, db: Session = Depends(get_db)):
         oil_handling=case.oil_handling,
         operation_role=case.operation_role,
         current_stage=case.current_stage,
+        initial_vehicles=[item.model_dump(exclude_unset=True) for item in case.initial_vehicles or []],
+        initial_persons=[item.model_dump(exclude_unset=True) for item in case.initial_persons or []],
     )
 
 @router.get("/", response_model=List[CaseResponse])
@@ -612,9 +686,27 @@ def update_case(
 ):
     """更新案件"""
     update_data = case_update.model_dump(exclude_unset=True)
+    has_initial_vehicles = "initial_vehicles" in update_data and update_data["initial_vehicles"] is not None
+    has_initial_persons = "initial_persons" in update_data and update_data["initial_persons"] is not None
+    initial_vehicles = update_data.pop("initial_vehicles", None) or []
+    initial_persons = update_data.pop("initial_persons", None) or []
+    for field, value in update_data.items():
+        if value is None and field not in NULLABLE_CASE_UPDATE_FIELDS:
+            raise HTTPException(status_code=422, detail=f"{field} 不能为空")
     case = CaseService.update_case(db, case_id, **update_data)
     if not case:
         raise HTTPException(status_code=404, detail="案件不存在")
+    if has_initial_vehicles or has_initial_persons:
+        CaseService._sync_initial_bonus_records(
+            db,
+            case.id,
+            initial_vehicles=initial_vehicles,
+            initial_persons=initial_persons,
+            replace_vehicles=has_initial_vehicles,
+            replace_persons=has_initial_persons,
+        )
+        CaseQualityService.refresh_case_quality(db, case)
+        db.refresh(case)
     return case
 
 @router.delete("/{case_id:int}")

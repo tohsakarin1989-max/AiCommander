@@ -32,8 +32,7 @@ class CaseRepository:
 
     def update(self, case: Case, **kwargs) -> Case:
         for key, value in kwargs.items():
-            if value is not None:
-                setattr(case, key, value)
+            setattr(case, key, value)
         self.db.commit()
         self.db.refresh(case)
         return case

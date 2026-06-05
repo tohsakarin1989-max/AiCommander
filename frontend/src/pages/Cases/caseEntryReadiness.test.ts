@@ -52,4 +52,34 @@ describe('caseEntryReadiness', () => {
     expect(bonusItem?.impact).toContain('车辆考核类别')
     expect(bonusItem?.impact).not.toContain('人员处理类型')
   })
+
+  it('treats enabled empty vehicle and person scopes as bonus data gaps', () => {
+    const items = buildCaseEntryReadiness({
+      description: '现场发现涉油线索，准备补录奖励核算口径。',
+      bonus_has_vehicle: true,
+      bonus_has_person: true,
+      initial_vehicles: [{}],
+      initial_persons: [{}],
+    })
+
+    const bonusItem = items.find(item => item.key === 'bonus_accounting')
+    expect(bonusItem?.status).toBe('attention')
+    expect(bonusItem?.impact).toContain('车辆考核类别')
+    expect(bonusItem?.impact).toContain('人员处理类型')
+  })
+
+  it('does not let description keywords replace explicit bonus draft fields', () => {
+    const items = buildCaseEntryReadiness({
+      description: '现场查扣电动车1台，人员已行政拘留，准备录入核算口径。',
+      bonus_has_vehicle: true,
+      bonus_has_person: true,
+      initial_vehicles: [{}],
+      initial_persons: [{}],
+    })
+
+    const bonusItem = items.find(item => item.key === 'bonus_accounting')
+    expect(bonusItem?.status).toBe('attention')
+    expect(bonusItem?.impact).toContain('车辆考核类别')
+    expect(bonusItem?.impact).toContain('人员处理类型')
+  })
 })

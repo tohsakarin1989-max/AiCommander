@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.models.case import Case
+from app.models.case import Case, CasePerson, CaseVehicle
 from typing import List, Optional
 from datetime import datetime, date, time
 from app.utils.geo import haversine_km, bounding_box
@@ -86,6 +86,8 @@ class CaseService:
         oil_handling: str = None,
         operation_role: str = None,
         current_stage: str = None,
+        initial_vehicles: list = None,
+        initial_persons: list = None,
     ) -> Case:
         """创建案件：
         - 如果未提供案件编号，则按日期+当天排序自动生成（YYYYMMDD-001）
@@ -134,6 +136,12 @@ class CaseService:
             current_stage=current_stage or "reported",
         )
         repo.add(case)
+        CaseService._sync_initial_bonus_records(
+            db,
+            case.id,
+            initial_vehicles=initial_vehicles or [],
+            initial_persons=initial_persons or [],
+        )
         CaseQualityService.refresh_case_quality(db, case)
         
         # 自动索引到向量数据库（异步，不阻塞）
@@ -165,6 +173,112 @@ class CaseService:
         # 预处理改为由用户手动触发，不再自动执行
         CaseService._refresh_chain_links(db, case.id)
         return case
+
+    @staticmethod
+    def _sync_initial_bonus_records(
+        db: Session,
+        case_id: int,
+        initial_vehicles: list,
+        initial_persons: list,
+        *,
+        replace_vehicles: bool = False,
+        replace_persons: bool = False,
+    ) -> None:
+        vehicle_fields = {
+            "vehicle_type",
+            "color",
+            "brand",
+            "model",
+            "plate_number",
+            "oil_volume",
+            "water_cut",
+            "custody_location",
+            "current_location",
+            "handling_status",
+            "transferred_to_police",
+            "transfer_time",
+            "transfer_document_no",
+            "notes",
+        }
+        person_fields = {
+            "name",
+            "gender",
+            "id_number",
+            "home_address",
+            "phone",
+            "role",
+            "handling_status",
+            "notes",
+        }
+
+        seen_vehicle_ids = set()
+        for item in initial_vehicles:
+            raw = dict(item or {})
+            vehicle_id = raw.get("id")
+            payload = {key: value for key, value in raw.items() if key in vehicle_fields}
+            has_payload = any(key in vehicle_fields for key in raw)
+            if not has_payload:
+                if vehicle_id:
+                    seen_vehicle_ids.add(vehicle_id)
+                continue
+            if vehicle_id:
+                vehicle = db.query(CaseVehicle).filter(
+                    CaseVehicle.id == vehicle_id,
+                    CaseVehicle.case_id == case_id,
+                ).first()
+                if vehicle:
+                    seen_vehicle_ids.add(vehicle.id)
+                    for key, value in payload.items():
+                        setattr(vehicle, key, None if value == "" else value)
+                    continue
+            clean_payload = {key: value for key, value in payload.items() if value not in (None, "")}
+            if clean_payload:
+                vehicle = CaseVehicle(case_id=case_id, **clean_payload)
+                db.add(vehicle)
+                db.flush()
+                seen_vehicle_ids.add(vehicle.id)
+        if replace_vehicles:
+            query = db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id)
+            if seen_vehicle_ids:
+                query = query.filter(CaseVehicle.id.notin_(seen_vehicle_ids))
+            for vehicle in query.all():
+                db.delete(vehicle)
+
+        seen_person_ids = set()
+        for item in initial_persons:
+            raw = dict(item or {})
+            person_id = raw.get("id")
+            payload = {key: value for key, value in raw.items() if key in person_fields}
+            has_payload = any(key in person_fields for key in raw)
+            if not has_payload:
+                if person_id:
+                    seen_person_ids.add(person_id)
+                continue
+            if person_id:
+                person = db.query(CasePerson).filter(
+                    CasePerson.id == person_id,
+                    CasePerson.case_id == case_id,
+                ).first()
+                if person:
+                    seen_person_ids.add(person.id)
+                    for key, value in payload.items():
+                        setattr(person, key, None if value == "" else value)
+                    continue
+            clean_payload = {key: value for key, value in payload.items() if value not in (None, "")}
+            if clean_payload:
+                person = CasePerson(case_id=case_id, **clean_payload)
+                db.add(person)
+                db.flush()
+                seen_person_ids.add(person.id)
+        if replace_persons:
+            query = db.query(CasePerson).filter(CasePerson.case_id == case_id)
+            if seen_person_ids:
+                query = query.filter(CasePerson.id.notin_(seen_person_ids))
+            for person in query.all():
+                db.delete(person)
+
+        if initial_vehicles or initial_persons or replace_vehicles or replace_persons:
+            db.commit()
     
     @staticmethod
     def get_cases(

@@ -462,6 +462,80 @@ export interface CaseCreate {
   oil_handling?: string
   operation_role?: string
   current_stage?: string
+  initial_vehicles?: Array<Partial<CaseVehicle>>
+  initial_persons?: Array<Partial<CasePerson>>
+}
+
+export type CaseUpdatePayload = Partial<Omit<CaseCreate,
+  | 'occurred_time'
+  | 'report_time'
+  | 'oil_volume'
+  | 'oil_value'
+  | 'loss_amount'
+  | 'water_cut'
+  | 'police_reported'
+  | 'case_filed'
+  | 'location'
+  | 'latitude'
+  | 'longitude'
+  | 'case_type'
+  | 'description'
+  | 'oil_type'
+  | 'facility_type'
+  | 'facility_owner'
+  | 'security_level'
+  | 'modus_operandi'
+  | 'vehicle_info'
+  | 'upstream_source'
+  | 'downstream_destination'
+  | 'report_unit'
+  | 'source_type'
+  | 'source_detail'
+  | 'police_officer'
+  | 'police_phone'
+  | 'security_officers'
+  | 'oil_nature'
+  | 'vehicle_handling'
+  | 'person_handling'
+  | 'oil_handling'
+  | 'operation_role'
+  | 'current_stage'
+>> & {
+  occurred_time?: string | null
+  report_time?: string | null
+  oil_volume?: number | null
+  oil_value?: number | null
+  loss_amount?: number | null
+  water_cut?: number | null
+  police_reported?: boolean | null
+  case_filed?: boolean | null
+  location?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  case_type?: string | null
+  description?: string | null
+  oil_type?: OilType | null
+  facility_type?: FacilityType | null
+  facility_owner?: string | null
+  security_level?: SecurityLevel | null
+  modus_operandi?: string | null
+  vehicle_info?: VehicleInfo | null
+  upstream_source?: string | null
+  downstream_destination?: string | null
+  report_unit?: string | null
+  source_type?: CaseSourceType | string | null
+  source_detail?: string | null
+  police_officer?: string | null
+  police_phone?: string | null
+  security_officers?: string[] | null
+  oil_nature?: OilNature | string | null
+  vehicle_handling?: string | null
+  person_handling?: string | null
+  oil_handling?: string | null
+  operation_role?: string | null
+  current_stage?: string | null
+  initial_vehicles?: Array<Partial<CaseVehicle>>
+  initial_persons?: Array<Partial<CasePerson>>
 }
 
 // ============ 会议相关类型 ============

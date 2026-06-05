@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import {
   Button,
   Modal,
@@ -15,6 +15,7 @@ import {
   Col,
   Switch,
 } from 'antd'
+import type { FormInstance } from 'antd'
 import {
   EditOutlined,
   DeleteOutlined,
@@ -27,14 +28,15 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caseApi, type CaseImportResult } from '../../services/cases'
-import type { BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate } from '../../types'
+import type { BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { bonusAccountingEnabled } from '../../config/features'
-import { buildCaseEntryReadiness } from './caseEntryReadiness'
+import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
+import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import './Cases.css'
 
 const { TextArea } = Input
@@ -113,6 +115,24 @@ const stageOptions = [
   { value: 'archived', label: '已归档' },
 ]
 
+function vehicleDraftFromRecord(vehicle: CaseVehicle): Record<string, unknown> {
+  return {
+    id: vehicle.id,
+    vehicle_type: vehicle.vehicle_type,
+    plate_number: vehicle.plate_number,
+    handling_status: vehicle.handling_status,
+  }
+}
+
+function personDraftFromRecord(person: CasePerson): Record<string, unknown> {
+  return {
+    id: person.id,
+    name: person.name,
+    handling_status: person.handling_status,
+    role: person.role,
+  }
+}
+
 // 默认案件筛选状态（复选框）
 interface FilterState {
   statuses: string[]
@@ -130,10 +150,17 @@ const defaultFilterState: FilterState = {
   endDate: '',
 }
 
-const Cases: React.FC = () => {
-  const [form] = Form.useForm()
-  const [evidenceForm] = Form.useForm()
-  const [searchForm] = Form.useForm()
+interface CaseEntryPrecheckProps {
+  form: FormInstance
+  onBonusVehicleScopeChange: (checked: boolean) => void
+  onBonusPersonScopeChange: (checked: boolean) => void
+}
+
+const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
+  form,
+  onBonusVehicleScopeChange,
+  onBonusPersonScopeChange,
+}) => {
   const watchedLat = Form.useWatch('latitude', form)
   const watchedLng = Form.useWatch('longitude', form)
   const watchedLocation = Form.useWatch('location', form)
@@ -155,12 +182,261 @@ const Cases: React.FC = () => {
   const watchedCaseFiled = Form.useWatch('case_filed', form)
   const watchedPoliceOfficer = Form.useWatch('police_officer', form)
   const watchedPolicePhone = Form.useWatch('police_phone', form)
+
+  const bonusEntryHints = useMemo(() => buildBonusEntryHints({
+    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
+    bonus_has_person: Boolean(watchedBonusHasPerson),
+    bonus_has_oil: Boolean(watchedBonusHasOil),
+    bonus_has_police: Boolean(watchedBonusHasPolice),
+    description: watchedDescription,
+    vehicle_handling: watchedVehicleHandling,
+    person_handling: watchedPersonHandling,
+    oil_nature: watchedOilNature,
+    oil_volume: watchedOilVolume,
+    water_cut: watchedWaterCut,
+    oil_handling: watchedOilHandling,
+    police_reported: watchedPoliceReported,
+    case_filed: watchedCaseFiled,
+    police_officer: watchedPoliceOfficer,
+    police_phone: watchedPolicePhone,
+    initial_vehicles: watchedInitialVehicles,
+    initial_persons: watchedInitialPersons,
+  }), [
+    watchedBonusHasVehicle,
+    watchedBonusHasPerson,
+    watchedBonusHasOil,
+    watchedBonusHasPolice,
+    watchedDescription,
+    watchedVehicleHandling,
+    watchedPersonHandling,
+    watchedOilNature,
+    watchedOilVolume,
+    watchedWaterCut,
+    watchedOilHandling,
+    watchedPoliceReported,
+    watchedCaseFiled,
+    watchedPoliceOfficer,
+    watchedPolicePhone,
+    watchedInitialVehicles,
+    watchedInitialPersons,
+  ])
+
+  const caseEntryReadiness = useMemo(() => buildCaseEntryReadiness({
+    latitude: watchedLat,
+    longitude: watchedLng,
+    location: watchedLocation,
+    case_type: watchedCaseType,
+    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
+    bonus_has_person: Boolean(watchedBonusHasPerson),
+    bonus_has_oil: Boolean(watchedBonusHasOil),
+    bonus_has_police: Boolean(watchedBonusHasPolice),
+    description: watchedDescription,
+    vehicle_handling: watchedVehicleHandling,
+    person_handling: watchedPersonHandling,
+    oil_nature: watchedOilNature,
+    oil_volume: watchedOilVolume,
+    water_cut: watchedWaterCut,
+    oil_handling: watchedOilHandling,
+    police_reported: watchedPoliceReported,
+    case_filed: watchedCaseFiled,
+    police_officer: watchedPoliceOfficer,
+    police_phone: watchedPolicePhone,
+    initial_vehicles: watchedInitialVehicles,
+    initial_persons: watchedInitialPersons,
+  }, bonusEntryHints), [
+    bonusEntryHints,
+    watchedLat,
+    watchedLng,
+    watchedLocation,
+    watchedCaseType,
+    watchedBonusHasVehicle,
+    watchedBonusHasPerson,
+    watchedBonusHasOil,
+    watchedBonusHasPolice,
+    watchedDescription,
+    watchedVehicleHandling,
+    watchedPersonHandling,
+    watchedOilNature,
+    watchedOilVolume,
+    watchedWaterCut,
+    watchedOilHandling,
+    watchedPoliceReported,
+    watchedCaseFiled,
+    watchedPoliceOfficer,
+    watchedPolicePhone,
+    watchedInitialVehicles,
+    watchedInitialPersons,
+  ])
+
+  const readinessAttentionCount = caseEntryReadiness.filter(item => item.status === 'attention').length
+  const readinessReadyCount = caseEntryReadiness.filter(item => item.status === 'ready').length
+
+  return (
+    <>
+      <div className="case-entry-readiness">
+        <div className="case-entry-readiness-head">
+          <span>保存前预检</span>
+          <b>{readinessReadyCount} 项就绪 · {readinessAttentionCount} 项需关注</b>
+        </div>
+        <div className="case-entry-readiness-grid">
+          {caseEntryReadiness.map(item => (
+            <div key={item.key} className={`case-readiness-card ${item.status}`}>
+              <strong>{item.label}</strong>
+              <span>{item.impact}</span>
+              <small>{item.action}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="cases-bonus-scope-grid">
+        <div>
+          <Form.Item name="bonus_has_vehicle" valuePropName="checked" noStyle>
+            <Switch size="small" onChange={onBonusVehicleScopeChange} />
+          </Form.Item>
+          <b>涉案车辆奖励</b>
+          <span>车辆类别、车牌和处置状态</span>
+        </div>
+        <div>
+          <Form.Item name="bonus_has_person" valuePropName="checked" noStyle>
+            <Switch size="small" onChange={onBonusPersonScopeChange} />
+          </Form.Item>
+          <b>抓获人员奖励</b>
+          <span>人员处理类型和角色</span>
+        </div>
+        <div>
+          <Form.Item name="bonus_has_oil" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <b>涉油检斤处置</b>
+          <span>油量、含水率和入库/回收</span>
+        </div>
+        <div>
+          <Form.Item name="bonus_has_police" valuePropName="checked" noStyle>
+            <Switch size="small" />
+          </Form.Item>
+          <b>报案立案佐证</b>
+          <span>报案、立案和公安联系人</span>
+        </div>
+      </div>
+
+      {watchedBonusHasVehicle && (
+        <Form.List name="initial_vehicles">
+          {(fields, { add, remove }) => (
+            <div className="cases-bonus-draft">
+              <div className="cases-bonus-draft-head">
+                <span>涉案车辆</span>
+                <Button size="small" onClick={() => add({})}>增加车辆</Button>
+              </div>
+              {fields.map(({ key, name, ...restField }) => (
+                <div key={key} className="cases-bonus-draft-row">
+                  <Form.Item {...restField} name={[name, 'id']} hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'vehicle_type']}
+                    label="车辆考核类别"
+                  >
+                    <Select allowClear placeholder="请选择车辆类别">
+                      {['摩托车（电动车）', '5吨以下机动车', '5吨以上机动车', '重型挂车', '机动船', '3吨以下炼化油罐', '3吨以上炼化油罐'].map(option => (
+                        <Option key={option} value={option}>{option}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'plate_number']}
+                    label="车牌/编号"
+                  >
+                    <Input placeholder="可选" />
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'handling_status']}
+                    label="车辆处理"
+                  >
+                    <Select allowClear placeholder="请选择">
+                      {['移交公安', '扣押停放', '待处理', '返还'].map(option => (
+                        <Option key={option} value={option}>{option}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                  <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
+                    删除
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Form.List>
+      )}
+
+      {watchedBonusHasPerson && (
+        <Form.List name="initial_persons">
+          {(fields, { add, remove }) => (
+            <div className="cases-bonus-draft">
+              <div className="cases-bonus-draft-head">
+                <span>抓获/涉案人员</span>
+                <Button size="small" onClick={() => add({})}>增加人员</Button>
+              </div>
+              {fields.map(({ key, name, ...restField }) => (
+                <div key={key} className="cases-bonus-draft-row">
+                  <Form.Item {...restField} name={[name, 'id']} hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'name']}
+                    label="姓名/代称"
+                  >
+                    <Input placeholder="可选" />
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'handling_status']}
+                    label="人员处理类型"
+                  >
+                    <Select allowClear placeholder="请选择处理类型">
+                      {['刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
+                        <Option key={option} value={option}>{option}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'role']}
+                    label="人员角色"
+                  >
+                    <Input placeholder="如司机、协助人员" />
+                  </Form.Item>
+                  <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
+                    删除
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Form.List>
+      )}
+    </>
+  )
+}
+
+const Cases: React.FC = () => {
+  const [form] = Form.useForm()
+  const [evidenceForm] = Form.useForm()
+  const [searchForm] = Form.useForm()
+  const watchedLat = Form.useWatch('latitude', form)
+  const watchedLng = Form.useWatch('longitude', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
+  const [bonusDraftLoadState, setBonusDraftLoadState] = useState({ vehicles: true, persons: true })
+  const [bonusDraftTouched, setBonusDraftTouched] = useState({ vehicles: false, persons: false })
   const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
   const [locationModalVisible, setLocationModalVisible] = useState(false)
   const [activeLocationCaseId, setActiveLocationCaseId] = useState<number | null>(null)
@@ -172,6 +448,7 @@ const Cases: React.FC = () => {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const editRequestRef = useRef(0)
 
   // 构建查询参数
   const queryParams = useMemo(() => {
@@ -219,55 +496,6 @@ const Cases: React.FC = () => {
     cases?.forEach(c => c.oil_type && types.add(c.oil_type))
     return Array.from(types)
   }, [cases])
-
-  const caseEntryReadiness = useMemo(() => buildCaseEntryReadiness({
-    latitude: watchedLat,
-    longitude: watchedLng,
-    location: watchedLocation,
-    case_type: watchedCaseType,
-    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
-    bonus_has_person: Boolean(watchedBonusHasPerson),
-    bonus_has_oil: Boolean(watchedBonusHasOil),
-    bonus_has_police: Boolean(watchedBonusHasPolice),
-    description: watchedDescription,
-    vehicle_handling: watchedVehicleHandling,
-    person_handling: watchedPersonHandling,
-    oil_nature: watchedOilNature,
-    oil_volume: watchedOilVolume,
-    water_cut: watchedWaterCut,
-    oil_handling: watchedOilHandling,
-    police_reported: watchedPoliceReported,
-    case_filed: watchedCaseFiled,
-    police_officer: watchedPoliceOfficer,
-    police_phone: watchedPolicePhone,
-    initial_vehicles: watchedInitialVehicles,
-    initial_persons: watchedInitialPersons,
-  }), [
-    watchedLat,
-    watchedLng,
-    watchedLocation,
-    watchedCaseType,
-    watchedBonusHasVehicle,
-    watchedBonusHasPerson,
-    watchedBonusHasOil,
-    watchedBonusHasPolice,
-    watchedDescription,
-    watchedVehicleHandling,
-    watchedPersonHandling,
-    watchedOilNature,
-    watchedOilVolume,
-    watchedWaterCut,
-    watchedOilHandling,
-    watchedPoliceReported,
-    watchedCaseFiled,
-    watchedPoliceOfficer,
-    watchedPolicePhone,
-    watchedInitialVehicles,
-    watchedInitialPersons,
-  ])
-
-  const readinessAttentionCount = caseEntryReadiness.filter(item => item.status === 'attention').length
-  const readinessReadyCount = caseEntryReadiness.filter(item => item.status === 'ready').length
 
   // 侧边栏过滤后的案件列表
   const filteredCases = useMemo(() => {
@@ -351,7 +579,7 @@ const Cases: React.FC = () => {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Case> }) =>
+    mutationFn: ({ id, data }: { id: number; data: CaseUpdatePayload }) =>
       caseApi.updateCase(id, data),
     onSuccess: () => {
       message.success('更新成功')
@@ -502,23 +730,70 @@ const Cases: React.FC = () => {
   }
 
   const handleCreate = () => {
+    editRequestRef.current += 1
     setEditingCase(null)
     form.resetFields()
+    form.setFieldsValue({
+      bonus_has_vehicle: false,
+      bonus_has_person: false,
+      bonus_has_oil: false,
+      bonus_has_police: false,
+      initial_vehicles: [],
+      initial_persons: [],
+    })
+    setBonusDraftLoadState({ vehicles: true, persons: true })
+    setBonusDraftTouched({ vehicles: false, persons: false })
     setShowAdvancedFields(false)
     setIsModalVisible(true)
   }
 
-  const handleEdit = (caseItem: Case) => {
+  const handleEdit = async (caseItem: Case) => {
+    const requestId = editRequestRef.current + 1
+    editRequestRef.current = requestId
     setEditingCase(caseItem)
+    let vehicles: CaseVehicle[] = []
+    let persons: CasePerson[] = []
+    const [vehicleResult, personResult] = await Promise.allSettled([
+      caseApi.getCaseVehicles(caseItem.id),
+      caseApi.getCasePersons(caseItem.id),
+    ])
+    if (editRequestRef.current !== requestId) return
+    const vehiclesLoaded = vehicleResult.status === 'fulfilled'
+    const personsLoaded = personResult.status === 'fulfilled'
+    if (vehiclesLoaded) {
+      vehicles = vehicleResult.value
+    } else {
+      message.warning('涉案车辆台账加载失败，本次保存不会覆盖车辆台账')
+    }
+    if (personsLoaded) {
+      persons = personResult.value
+    } else {
+      message.warning('涉案人员台账加载失败，本次保存不会覆盖人员台账')
+    }
+    setBonusDraftLoadState({ vehicles: vehiclesLoaded, persons: personsLoaded })
+    setBonusDraftTouched({ vehicles: false, persons: false })
+    const vehicleDrafts = vehicles.map(vehicleDraftFromRecord)
+    const personDrafts = persons.map(personDraftFromRecord)
+    const hasVehicleBonus = vehicleDrafts.length > 0 || Boolean(caseItem.vehicle_handling)
+    const hasPersonBonus = personDrafts.length > 0 || Boolean(caseItem.person_handling)
+    const hasOilBonus = Boolean(caseItem.oil_volume != null || caseItem.water_cut != null || caseItem.oil_handling || caseItem.oil_nature)
+    const hasPoliceBonus = Boolean(caseItem.police_reported || caseItem.case_filed || caseItem.police_officer || caseItem.police_phone)
     form.setFieldsValue({
       ...caseItem,
       occurred_time: dayjs(caseItem.occurred_time),
       report_time: caseItem.report_time ? dayjs(caseItem.report_time) : undefined,
+      bonus_has_vehicle: hasVehicleBonus,
+      bonus_has_person: hasPersonBonus,
+      bonus_has_oil: hasOilBonus,
+      bonus_has_police: hasPoliceBonus,
+      initial_vehicles: hasVehicleBonus ? (vehicleDrafts.length ? vehicleDrafts : [{}]) : [],
+      initial_persons: hasPersonBonus ? (personDrafts.length ? personDrafts : [{}]) : [],
     })
     setIsModalVisible(true)
   }
 
   const handleBonusVehicleScopeChange = (checked: boolean) => {
+    setBonusDraftTouched(prev => ({ ...prev, vehicles: true }))
     const rows = form.getFieldValue('initial_vehicles')
     form.setFieldsValue({
       bonus_has_vehicle: checked,
@@ -527,6 +802,7 @@ const Cases: React.FC = () => {
   }
 
   const handleBonusPersonScopeChange = (checked: boolean) => {
+    setBonusDraftTouched(prev => ({ ...prev, persons: true }))
     const rows = form.getFieldValue('initial_persons')
     form.setFieldsValue({
       bonus_has_person: checked,
@@ -537,21 +813,18 @@ const Cases: React.FC = () => {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
+      const payload = buildCaseEntrySubmitPayload(values, {
+        mode: editingCase ? 'edit' : 'create',
+        includeVehicleDrafts: !editingCase || bonusDraftLoadState.vehicles || bonusDraftTouched.vehicles,
+        includePersonDrafts: !editingCase || bonusDraftLoadState.persons || bonusDraftTouched.persons,
+      })
       if (editingCase) {
         updateMutation.mutate({
           id: editingCase.id,
-          data: {
-            ...values,
-            occurred_time: values.occurred_time?.toISOString(),
-            report_time: values.report_time?.toISOString(),
-          },
+          data: payload as CaseUpdatePayload,
         })
       } else {
-        createMutation.mutate({
-          ...values,
-          occurred_time: values.occurred_time?.toISOString(),
-          report_time: values.report_time?.toISOString(),
-        } as CaseCreate)
+        createMutation.mutate(payload as CaseCreate)
       }
     } catch (error) {
       console.error('Validation failed:', error)
@@ -1518,146 +1791,11 @@ const Cases: React.FC = () => {
             </Button>
           </div>
 
-          <div className="case-entry-readiness">
-            <div className="case-entry-readiness-head">
-              <span>保存前预检</span>
-              <b>{readinessReadyCount} 项就绪 · {readinessAttentionCount} 项需关注</b>
-            </div>
-            <div className="case-entry-readiness-grid">
-              {caseEntryReadiness.map(item => (
-                <div key={item.key} className={`case-readiness-card ${item.status}`}>
-                  <strong>{item.label}</strong>
-                  <span>{item.impact}</span>
-                  <small>{item.action}</small>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="cases-bonus-scope-grid">
-            <div>
-              <Form.Item name="bonus_has_vehicle" valuePropName="checked" noStyle>
-                <Switch size="small" onChange={handleBonusVehicleScopeChange} />
-              </Form.Item>
-              <b>涉案车辆奖励</b>
-              <span>车辆类别、车牌和处置状态</span>
-            </div>
-            <div>
-              <Form.Item name="bonus_has_person" valuePropName="checked" noStyle>
-                <Switch size="small" onChange={handleBonusPersonScopeChange} />
-              </Form.Item>
-              <b>抓获人员奖励</b>
-              <span>人员处理类型和角色</span>
-            </div>
-            <div>
-              <Form.Item name="bonus_has_oil" valuePropName="checked" noStyle>
-                <Switch size="small" />
-              </Form.Item>
-              <b>涉油检斤处置</b>
-              <span>油量、含水率和入库/回收</span>
-            </div>
-            <div>
-              <Form.Item name="bonus_has_police" valuePropName="checked" noStyle>
-                <Switch size="small" />
-              </Form.Item>
-              <b>报案立案佐证</b>
-              <span>报案、立案和公安联系人</span>
-            </div>
-          </div>
-
-          {watchedBonusHasVehicle && (
-            <Form.List name="initial_vehicles">
-              {(fields, { add, remove }) => (
-                <div className="cases-bonus-draft">
-                  <div className="cases-bonus-draft-head">
-                    <span>涉案车辆</span>
-                    <Button size="small" onClick={() => add({})}>增加车辆</Button>
-                  </div>
-                  {fields.map(({ key, name, ...restField }) => (
-                    <div key={key} className="cases-bonus-draft-row">
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'vehicle_type']}
-                        label="车辆考核类别"
-                      >
-                        <Select allowClear placeholder="请选择车辆类别">
-                          {['摩托车（电动车）', '5吨以下机动车', '5吨以上机动车', '重型挂车', '机动船', '3吨以下炼化油罐', '3吨以上炼化油罐'].map(option => (
-                            <Option key={option} value={option}>{option}</Option>
-                          ))}
-                        </Select>
-                      </Form.Item>
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'plate_number']}
-                        label="车牌/编号"
-                      >
-                        <Input placeholder="可选" />
-                      </Form.Item>
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'handling_status']}
-                        label="车辆处理"
-                      >
-                        <Select allowClear placeholder="请选择">
-                          {['移交公安', '扣押停放', '待处理', '返还'].map(option => (
-                            <Option key={option} value={option}>{option}</Option>
-                          ))}
-                        </Select>
-                      </Form.Item>
-                      <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
-                        删除
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Form.List>
-          )}
-
-          {watchedBonusHasPerson && (
-            <Form.List name="initial_persons">
-              {(fields, { add, remove }) => (
-                <div className="cases-bonus-draft">
-                  <div className="cases-bonus-draft-head">
-                    <span>抓获/涉案人员</span>
-                    <Button size="small" onClick={() => add({})}>增加人员</Button>
-                  </div>
-                  {fields.map(({ key, name, ...restField }) => (
-                    <div key={key} className="cases-bonus-draft-row">
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'name']}
-                        label="姓名/代称"
-                      >
-                        <Input placeholder="可选" />
-                      </Form.Item>
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'handling_status']}
-                        label="人员处理类型"
-                      >
-                        <Select allowClear placeholder="请选择处理类型">
-                          {['刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
-                            <Option key={option} value={option}>{option}</Option>
-                          ))}
-                        </Select>
-                      </Form.Item>
-                      <Form.Item
-                        {...restField}
-                        name={[name, 'role']}
-                        label="人员角色"
-                      >
-                        <Input placeholder="如司机、协助人员" />
-                      </Form.Item>
-                      <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
-                        删除
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Form.List>
-          )}
+          <CaseEntryPrecheck
+            form={form}
+            onBonusVehicleScopeChange={handleBonusVehicleScopeChange}
+            onBonusPersonScopeChange={handleBonusPersonScopeChange}
+          />
 
           <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
             业务管理字段（按细则用于报送、质量评分和后续研判）
