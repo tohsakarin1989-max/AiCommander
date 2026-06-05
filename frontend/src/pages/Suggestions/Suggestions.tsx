@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { message } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -6,41 +6,23 @@ import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
 import { eventApi } from '../../services/events'
 import { suggestionsApi, type WorkSuggestion } from '../../services/suggestions'
+import {
+  ACTION_LABELS,
+  PRIORITY_META,
+  SUGGESTION_FILTERS,
+  TYPE_LABELS,
+  buildSuggestionStats,
+  filterSuggestions,
+  getSuggestionRoute,
+  numericTargetId,
+  type SuggestionTypeFilter,
+} from './suggestionPresentation'
 import './Suggestions.css'
-
-const PRIORITY_META: Record<string, { label: string; cls: string }> = {
-  high: { label: '高优先级', cls: 'high' },
-  medium: { label: '中优先级', cls: 'medium' },
-  low: { label: '低优先级', cls: 'low' },
-}
-
-const ACTION_LABELS: Record<string, string> = {
-  open_case: '查看案件',
-  preprocess_case: '执行预处理',
-  review_conclusion: '审核结论',
-  convert_event_to_case: '转为案件',
-  generate_conclusion_from_meeting: '生成结论',
-  create_patrol: '生成巡逻',
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  data_quality: '数据质量',
-  analysis: '智能分析',
-  review: '人工审核',
-  workflow: '流程推进',
-  patrol: '巡逻部署',
-}
-
-function numericTargetId(suggestion: WorkSuggestion) {
-  const value = typeof suggestion.target_id === 'number'
-    ? suggestion.target_id
-    : Number(suggestion.target_id)
-  return Number.isFinite(value) ? value : null
-}
 
 const Suggestions: React.FC = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [typeFilter, setTypeFilter] = useState<SuggestionTypeFilter>('all')
 
   const { data, isLoading } = useQuery({
     queryKey: ['suggestions'],
@@ -75,40 +57,27 @@ const Suggestions: React.FC = () => {
   })
 
   const suggestions = data?.suggestions ?? []
-  const stats = useMemo(() => {
-    return suggestions.reduce(
-      (acc, item) => {
-        acc.total += 1
-        acc[item.priority] += 1
-        return acc
-      },
-      { total: 0, high: 0, medium: 0, low: 0 } as Record<string, number>
-    )
-  }, [suggestions])
+  const visibleSuggestions = useMemo(() => filterSuggestions(suggestions, typeFilter), [suggestions, typeFilter])
+  const stats = useMemo(() => buildSuggestionStats(suggestions), [suggestions])
 
   const handleAction = (suggestion: WorkSuggestion) => {
     const targetId = numericTargetId(suggestion)
     switch (suggestion.action) {
-      case 'open_case':
-        if (targetId) navigate(`/cases?caseId=${targetId}`)
-        break
       case 'preprocess_case':
         if (targetId) preprocessMutation.mutate(targetId)
-        break
-      case 'review_conclusion':
-        navigate('/conclusions')
         break
       case 'convert_event_to_case':
         if (targetId) convertEventMutation.mutate(targetId)
         break
-      case 'generate_conclusion_from_meeting':
-        navigate(`/conclusions?meetingId=${encodeURIComponent(String(suggestion.target_id))}`)
-        break
-      case 'create_patrol':
-        navigate(`/patrols?area=${encodeURIComponent(String(suggestion.target_id))}`)
-        break
       default:
-        message.info('该建议暂未配置自动动作')
+        {
+          const route = getSuggestionRoute(suggestion)
+          if (route) {
+            navigate(route)
+          } else {
+            message.info('该待办仅支持人工复核，不自动创建执行记录')
+          }
+        }
     }
   }
 
@@ -117,41 +86,53 @@ const Suggestions: React.FC = () => {
   return (
     <div className="page suggestions-page">
       <div className="page-title">
-        <h1>建议中心</h1>
-        <span className="sub">跨模块待办 · 数据质量 · 研判流程 · 巡逻部署</span>
+        <h1>待办中心</h1>
+        <span className="sub">统一收纳研判相关待办 · 案件缺口 · 数智告警 · 结论复核 · 报告质量 · 经验沉淀</span>
       </div>
 
       <div className="sg-stats">
         <div className="sg-stat"><span>待处理</span><b>{stats.total}</b></div>
-        <div className="sg-stat high"><span>高优先级</span><b>{stats.high}</b></div>
-        <div className="sg-stat medium"><span>中优先级</span><b>{stats.medium}</b></div>
-        <div className="sg-stat low"><span>低优先级</span><b>{stats.low}</b></div>
+        <div className="sg-stat high"><span>高优先级</span><b>{stats.priority.high}</b></div>
+        <div className="sg-stat medium"><span>中优先级</span><b>{stats.priority.medium}</b></div>
+        <div className="sg-stat low"><span>低优先级</span><b>{stats.priority.low}</b></div>
       </div>
 
       <div className="card">
         <div className="card-head">
           <span className="ico">◎</span>
-          <span className="ti">智能工作队列</span>
+          <span className="ti">研判工作队列</span>
           <span className="spacer" />
           <span className="chip accent">
             {data ? `生成于 ${dayjs(data.generated_at).format('HH:mm:ss')}` : '自动刷新'}
           </span>
         </div>
+        <div className="sg-filter-row">
+          {SUGGESTION_FILTERS.map(filter => (
+            <button
+              key={filter.value}
+              className={`sg-filter${typeFilter === filter.value ? ' on' : ''}`}
+              onClick={() => setTypeFilter(filter.value)}
+            >
+              {filter.label}
+              {filter.value !== 'all' && <span>{stats.type[filter.value] || 0}</span>}
+            </button>
+          ))}
+        </div>
         <div className="card-body">
           {isLoading ? (
             <div className="empty-state" style={{ height: 260 }}>
               <div className="icon">⌛</div>
-              <div>正在生成建议</div>
+              <div>正在生成待办</div>
             </div>
-          ) : suggestions.length === 0 ? (
+          ) : visibleSuggestions.length === 0 ? (
             <div className="empty-state" style={{ height: 260 }}>
               <div className="icon">✓</div>
-              <div>当前没有待处理建议</div>
-              <span>案件、事件、会议、结论和巡逻风险均未触发开放待办。</span>
+              <div>当前没有待处理待办</div>
+              <span>案件、告警、会议、结论和报告质量均未触发当前分类待办。</span>
             </div>
           ) : (
             <div className="sg-list">
-              {suggestions.map((suggestion) => {
+              {visibleSuggestions.map((suggestion) => {
                 const priority = PRIORITY_META[suggestion.priority] ?? PRIORITY_META.medium
                 return (
                   <div key={suggestion.id} className={`sg-item ${priority.cls}`}>

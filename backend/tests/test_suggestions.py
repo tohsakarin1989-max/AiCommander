@@ -174,3 +174,99 @@ def test_suggestions_get_does_not_mutate_case_quality_or_experience_card():
         item["action"] == "generate_experience_card" and item["target_id"] == case.id
         for item in response.json()["suggestions"]
     )
+
+
+def test_suggestions_derives_bonus_data_gaps_from_bonus_items_without_gate(monkeypatch):
+    db = _session()
+    client = _client(db)
+    case = _seed_work_items(db)
+
+    def fake_bonus_assessment(_db, _case):
+        return {
+            "material_gate": {"status": "ready", "missing_materials": []},
+            "bonus_items": [
+                {
+                    "key": "small_vehicle_reward",
+                    "label": "5吨以下机动车奖励",
+                    "status": "blocked_by_data",
+                    "blocked_by": ["vehicle_count"],
+                },
+                {
+                    "key": "other_person_reward",
+                    "label": "其他处置人员奖励",
+                    "status": "blocked_by_data",
+                    "blocked_by": [],
+                },
+            ],
+        }
+
+    monkeypatch.setattr(
+        suggestions.CaseAutomationService,
+        "build_bonus_assessment",
+        fake_bonus_assessment,
+    )
+
+    response = client.get("/api/suggestions/", params={"limit": 50})
+
+    assert response.status_code == 200
+    items = response.json()["suggestions"]
+    bonus_item = next(
+        item
+        for item in items
+        if item["action"] == "review_bonus_data" and item["target_id"] == case.id
+    )
+    assert bonus_item["meta"]["missing_items"] == [
+        {
+            "key": "small_vehicle_reward",
+            "label": "5吨以下机动车奖励",
+            "blocked_by": ["vehicle_count"],
+        }
+    ]
+
+
+def test_suggestions_hides_bonus_exception_details(monkeypatch):
+    db = _session()
+    client = _client(db)
+    case = _seed_work_items(db)
+
+    def broken_bonus_assessment(_db, _case):
+        raise RuntimeError("internal-secret-token")
+
+    monkeypatch.setattr(
+        suggestions.CaseAutomationService,
+        "build_bonus_assessment",
+        broken_bonus_assessment,
+    )
+
+    response = client.get("/api/suggestions/", params={"limit": 50})
+
+    assert response.status_code == 200
+    bonus_item = next(
+        item
+        for item in response.json()["suggestions"]
+        if item["id"] == f"case-bonus-error-{case.id}"
+    )
+    assert bonus_item["description"] == "奖金门禁检查遇到异常，请进入案件页人工复核指标和材料。"
+    assert "internal-secret-token" not in str(bonus_item)
+
+
+def test_suggestions_hides_experience_exception_details(monkeypatch):
+    db = _session()
+    client = _client(db)
+    case = _seed_work_items(db)
+
+    def broken_existing_experience_card(_case):
+        raise RuntimeError("experience-secret-token")
+
+    monkeypatch.setattr(suggestions, "_existing_experience_card", broken_existing_experience_card)
+
+    response = client.get("/api/suggestions/", params={"limit": 50})
+
+    assert response.status_code == 200
+    experience_item = next(
+        item
+        for item in response.json()["suggestions"]
+        if item["id"] == f"case-experience-error-{case.id}"
+    )
+    assert experience_item["description"] == "经验卡待人工复核，请进入案件研判页重新生成或确认。"
+    assert "experience-secret-token" not in str(experience_item)

@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.config import settings
 from app.database import get_db
 from app.models.automation_alert import AutomationAlert
@@ -13,6 +16,7 @@ from app.services.case_automation_service import CaseAutomationService
 from app.services.case_quality_service import CaseQualityService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _iso(value, fallback: datetime) -> str:
@@ -37,6 +41,30 @@ def _has_experience_card_inputs(case: Case) -> bool:
         or case.case_type
         or case.features
     )
+
+
+def _derive_bonus_data_gaps_from_items(bonus_items) -> list[dict]:
+    gaps = []
+    for item in bonus_items or []:
+        if not isinstance(item, dict) or item.get("status") != "blocked_by_data":
+            continue
+        blocked_by = item.get("blocked_by") or []
+        if not blocked_by:
+            continue
+        gaps.append({
+            "key": item.get("key"),
+            "label": item.get("label") or item.get("key") or "关键指标",
+            "blocked_by": blocked_by,
+        })
+    return gaps
+
+
+def _bonus_calculation_gaps(bonus: dict) -> list:
+    calculation_gate = bonus.get("calculation_gate") if isinstance(bonus.get("calculation_gate"), dict) else {}
+    missing_items = calculation_gate.get("missing_items") or []
+    if missing_items:
+        return missing_items
+    return _derive_bonus_data_gaps_from_items(bonus.get("bonus_items"))
 
 
 @router.get("/")
@@ -130,11 +158,12 @@ def get_suggestions(
         if settings.ENABLE_BONUS_ACCOUNTING:
             try:
                 bonus = CaseAutomationService.build_bonus_assessment(db, case)
-                calculation_gate = bonus.get("calculation_gate") or {}
+                calculation_gate = bonus.get("calculation_gate") if isinstance(bonus.get("calculation_gate"), dict) else {}
                 material_gate = bonus.get("material_gate") or {}
-                calculation_gaps = calculation_gate.get("missing_items") or []
+                calculation_gaps = _bonus_calculation_gaps(bonus)
                 material_gaps = material_gate.get("missing_materials") or []
-                if calculation_gate.get("status") == "blocked_by_data" and calculation_gaps:
+                calculation_blocked = calculation_gate.get("status") == "blocked_by_data" or bool(calculation_gaps)
+                if calculation_blocked and calculation_gaps:
                     gap_labels = "、".join(item.get("label", "关键指标") for item in calculation_gaps[:3])
                     add_item(
                         item_id=f"case-bonus-data-{case.id}",
@@ -161,14 +190,15 @@ def get_suggestions(
                         created_at=case.updated_at or case.created_at,
                         meta={"missing_materials": material_gaps},
                     )
-            except Exception as exc:
+            except Exception:
                 db.rollback()
+                logger.exception("Failed to build bonus assessment for case %s", case.id)
                 add_item(
                     item_id=f"case-bonus-error-{case.id}",
                     item_type="bonus",
                     priority="medium",
                     title=f"复核奖金核算门禁：{case.case_number}",
-                    description=f"奖金门禁检查失败：{exc}",
+                    description="奖金门禁检查遇到异常，请进入案件页人工复核指标和材料。",
                     target_type="case",
                     target_id=case.id,
                     action="review_bonus_data",
@@ -204,14 +234,15 @@ def get_suggestions(
                     created_at=case.updated_at or case.created_at,
                     meta={"manual_review_status": "not_generated"},
                 )
-        except Exception as exc:
+        except Exception:
             db.rollback()
+            logger.exception("Failed to inspect experience card for case %s", case.id)
             add_item(
                 item_id=f"case-experience-error-{case.id}",
                 item_type="experience",
                 priority="low",
                 title=f"生成经验卡失败：{case.case_number}",
-                description=f"经验卡生成遇到异常：{exc}",
+                description="经验卡待人工复核，请进入案件研判页重新生成或确认。",
                 target_type="case",
                 target_id=case.id,
                 action="generate_experience_card",
