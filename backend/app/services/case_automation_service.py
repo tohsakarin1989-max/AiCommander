@@ -317,6 +317,8 @@ class CaseAutomationService:
             gate_status = "rules_not_configured"
 
         bonus_context = CaseAutomationService._build_bonus_context(db, case, related)
+        calculation_gaps = bonus_context["calculation_gaps"]
+        calculation_ready = not calculation_gaps
         bonus_items = CaseAutomationService._calculate_bonus_items(
             case,
             related,
@@ -324,6 +326,7 @@ class CaseAutomationService:
             normalized_rules,
             bonus_context,
             gate_ready,
+            calculation_ready,
         )
         total = sum(item["suggested_amount"] for item in bonus_items if item["status"] == "calculated")
         max_total = normalized_rules.get("max_total_amount")
@@ -334,6 +337,8 @@ class CaseAutomationService:
             bonus_context["officer_counts"],
         )
         warnings = list(bonus_context["warnings"])
+        if not calculation_ready:
+            warnings.append("核算指标未齐，整案暂不测算，避免遗漏应计奖金。")
         if total > 0 and not distribution:
             warnings.append("缺少保卫班出警人数，暂不能自动分配到班组。")
 
@@ -353,6 +358,10 @@ class CaseAutomationService:
                 "satisfied_count": sum(1 for check in material_checks if check["required"] and check["status"] == "satisfied"),
                 "missing_materials": missing_materials,
             },
+            "calculation_gate": {
+                "status": "ready" if calculation_ready else "blocked_by_data",
+                "missing_items": calculation_gaps,
+            },
             "material_checks": material_checks,
             "bonus_items": bonus_items,
             "total_suggested_amount": _round_amount(total),
@@ -361,7 +370,7 @@ class CaseAutomationService:
             "squad_performance": bonus_context["squad_performance"],
             "distribution": distribution,
             "warnings": warnings,
-            "ready_for_review": gate_status == "ready" and any(item["status"] == "calculated" for item in bonus_items),
+            "ready_for_review": calculation_ready and gate_status == "ready" and any(item["status"] == "calculated" for item in bonus_items),
             "manual_review_required": True,
             "boundary": "系统只做奖金考核测算和依据链整理，最终发放仍需人工按正式细则复核确认。",
         }
@@ -553,6 +562,7 @@ class CaseAutomationService:
         rules: Dict[str, Any],
         bonus_context: Dict[str, Any],
         gate_ready: bool,
+        calculation_ready: bool,
     ) -> List[Dict[str, Any]]:
         status_by_key = {item["requirement_key"]: item["status"] for item in material_checks}
         rules_configured = bool(rules.get("rules_configured"))
@@ -592,6 +602,7 @@ class CaseAutomationService:
                     rules_configured=rules_configured,
                     formula=f"{quantity} x {int(unit_price)} 元/{unit}",
                     gate_ready=gate_ready,
+                    calculation_ready=calculation_ready,
                 )
             )
 
@@ -615,6 +626,7 @@ class CaseAutomationService:
                     rules_configured=rules_configured,
                     formula=f"{quantity} x {int(unit_price)} 元/{unit}",
                     gate_ready=gate_ready,
+                    calculation_ready=calculation_ready,
                 )
             )
         return items
@@ -633,6 +645,7 @@ class CaseAutomationService:
         rules_configured: bool,
         formula: str,
         gate_ready: bool,
+        calculation_ready: bool,
     ) -> Dict[str, Any]:
         blocking = [
             key
@@ -647,6 +660,8 @@ class CaseAutomationService:
             ]
         if quantity <= 0:
             status = "not_applicable"
+        elif not calculation_ready:
+            status = "blocked_by_data"
         elif blocking:
             status = "blocked_by_materials"
         elif not rules_configured:
@@ -673,7 +688,7 @@ class CaseAutomationService:
         if not primary_squad:
             warnings.append("未识别主控班组，目标档位和金额分配需人工复核。")
 
-        counts, count_warnings = CaseAutomationService._extract_case_bonus_counts(case, related)
+        counts, count_warnings, calculation_gaps = CaseAutomationService._extract_case_bonus_counts(case, related)
         warnings.extend(count_warnings)
         officer_counts, officer_warnings = CaseAutomationService._extract_officer_counts(case, primary_squad)
         warnings.extend(officer_warnings)
@@ -683,6 +698,7 @@ class CaseAutomationService:
             "squad_performance": CaseAutomationService._build_squad_performance(db),
             "officer_counts": officer_counts,
             "warnings": warnings,
+            "calculation_gaps": calculation_gaps,
         }
 
     @staticmethod
@@ -731,7 +747,7 @@ class CaseAutomationService:
             if not squad or squad not in performance:
                 continue
             related = CaseQualityService.get_related_data(db, item.id)
-            counts, _ = CaseAutomationService._extract_case_bonus_counts(item, related)
+            counts, _, _ = CaseAutomationService._extract_case_bonus_counts(item, related)
             performance[squad]["vehicle_actual"] += (
                 counts["moto"] + counts["small"] + counts["big"] + counts["heavy"]
             )
@@ -764,7 +780,7 @@ class CaseAutomationService:
     def _extract_case_bonus_counts(
         case: Case,
         related: Dict[str, List[Any]],
-    ) -> Tuple[Dict[str, int], List[str]]:
+    ) -> Tuple[Dict[str, int], List[str], List[Dict[str, str]]]:
         counts = {
             "moto": 0,
             "small": 0,
@@ -777,6 +793,7 @@ class CaseAutomationService:
             "criminal": 0,
         }
         warnings: List[str] = []
+        calculation_gaps: List[Dict[str, str]] = []
         vehicles: List[CaseVehicle] = related["vehicles"]
         persons: List[CasePerson] = related["persons"]
 
@@ -788,6 +805,12 @@ class CaseAutomationService:
                 else:
                     label = vehicle.plate_number or vehicle.vehicle_type or vehicle.model or "未命名车辆"
                     warnings.append(f"车辆“{label}”未识别到考核类别，未自动计入奖金。")
+                    CaseAutomationService._add_calculation_gap(
+                        calculation_gaps,
+                        "vehicle_category",
+                        "车辆考核类别",
+                        "已记录涉案车辆，但缺少摩托车、5吨以下、5吨以上等考核类别，需补齐后整案测算。",
+                    )
         else:
             vehicle_text = _text_pool(case.description, case.vehicle_info, case.vehicle_handling, case.involved_items)
             text_counts = CaseAutomationService._extract_vehicle_counts_from_text(vehicle_text)
@@ -795,14 +818,28 @@ class CaseAutomationService:
                 counts[key] += value
             if not any(text_counts.values()) and (case.vehicle_info or not _is_blank(case.vehicle_handling)):
                 warnings.append("已填写车辆信息但未识别车辆类别，车辆奖励需补充车辆类型。")
+                CaseAutomationService._add_calculation_gap(
+                    calculation_gaps,
+                    "vehicle_category",
+                    "车辆考核类别",
+                    "已记录涉案车辆，但缺少摩托车、5吨以下、5吨以上等考核类别，需补齐后整案测算。",
+                )
 
         if persons:
             counts["people"] = len(persons)
-            counts["criminal"] = sum(
-                1
-                for person in persons
-                if _contains_any(_text_pool(person.handling_status, person.notes), ("刑事拘留", "刑拘"))
-            )
+            for person in persons:
+                person_text = _text_pool(person.handling_status, person.notes)
+                if _contains_any(person_text, ("刑事拘留", "刑拘")):
+                    counts["criminal"] += 1
+                elif _contains_any(person_text, ("行政拘留", "治安拘留", "行政处罚", "治安处罚", "处罚")):
+                    continue
+                else:
+                    CaseAutomationService._add_calculation_gap(
+                        calculation_gaps,
+                        "person_disposition",
+                        "人员处理类型",
+                        "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
+                    )
         else:
             person_text = _text_pool(case.description, case.person_handling, case.involved_persons)
             counts["people"] = CaseAutomationService._extract_person_count(person_text)
@@ -810,7 +847,29 @@ class CaseAutomationService:
                 counts["people"],
                 CaseAutomationService._extract_criminal_detention_count(person_text),
             )
-        return counts, warnings
+            has_other_disposition = _contains_any(
+                person_text,
+                ("行政拘留", "治安拘留", "行政处罚", "治安处罚", "处罚"),
+            )
+            if counts["people"] > 0 and counts["criminal"] < counts["people"] and not has_other_disposition:
+                CaseAutomationService._add_calculation_gap(
+                    calculation_gaps,
+                    "person_disposition",
+                    "人员处理类型",
+                    "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
+                )
+        return counts, warnings, calculation_gaps
+
+    @staticmethod
+    def _add_calculation_gap(
+        gaps: List[Dict[str, str]],
+        key: str,
+        label: str,
+        detail: str,
+    ) -> None:
+        if any(item["key"] == key for item in gaps):
+            return
+        gaps.append({"key": key, "label": label, "detail": detail})
 
     @staticmethod
     def _classify_bonus_vehicle(vehicle: CaseVehicle) -> Optional[str]:

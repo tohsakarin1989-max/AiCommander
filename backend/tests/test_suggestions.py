@@ -10,11 +10,12 @@ import app.models  # noqa: F401
 from app.api import suggestions
 from app.database import Base, get_db
 from app.models.automation_alert import AutomationAlert
-from app.models.case import Case, CaseVehicle
+from app.models.case import Case, CasePerson, CaseVehicle
 from app.models.conclusion import Conclusion
 from app.models.event import Event
 from app.models.meeting import Meeting
 from app.models.patrol import AreaRiskAssessment
+from app.services.case_automation_service import CaseAutomationService
 
 
 def _session() -> Session:
@@ -222,6 +223,63 @@ def test_suggestions_derives_bonus_data_gaps_from_bonus_items_without_gate(monke
             "blocked_by": ["vehicle_count"],
         }
     ]
+
+
+def test_suggestions_uses_real_bonus_calculation_gate_for_data_review():
+    db = _session()
+    client = _client(db)
+    now = datetime.utcnow()
+    case = Case(
+        case_number="SUG-BONUS-GATE",
+        occurred_time=now - timedelta(hours=1),
+        location="萨中作业区",
+        case_type="涉油盗窃",
+        description="案件一班现场发现一台5吨以下机动车盗运原油，抓获1人，车辆移交公安，检斤入库。",
+        report_unit="案件一班",
+        oil_type="原油",
+        oil_volume=1.0,
+        water_cut=8,
+        oil_nature="被盗原油",
+        oil_handling="检斤入库",
+        vehicle_handling="移交公安",
+        security_officers=["案件一班:张三"],
+        status="pending",
+    )
+    db.add(case)
+    db.commit()
+    db.refresh(case)
+    db.add(
+        CaseVehicle(
+            case_id=case.id,
+            vehicle_type="5吨以下机动车",
+            plate_number="黑A12345",
+            handling_status="移交公安",
+        )
+    )
+    db.add(CasePerson(case_id=case.id, name="王某"))
+    db.commit()
+
+    bonus = CaseAutomationService.build_bonus_assessment(db, case)
+
+    assert bonus["calculation_gate"]["status"] == "blocked_by_data"
+    assert bonus["calculation_gate"]["missing_items"] == [
+        {
+            "key": "person_disposition",
+            "label": "人员处理类型",
+            "detail": "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
+        }
+    ]
+    item_status = {item["key"]: item["status"] for item in bonus["bonus_items"]}
+    assert item_status["small_vehicle_reward"] == "blocked_by_data"
+    assert item_status["other_person_reward"] == "blocked_by_data"
+
+    response = client.get("/api/suggestions/", params={"limit": 50})
+
+    assert response.status_code == 200
+    assert any(
+        item["action"] == "review_bonus_data" and item["target_id"] == case.id
+        for item in response.json()["suggestions"]
+    )
 
 
 def test_suggestions_hides_bonus_exception_details(monkeypatch):
