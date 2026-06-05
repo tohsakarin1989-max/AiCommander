@@ -139,6 +139,22 @@ const Cases: React.FC = () => {
   const watchedLocation = Form.useWatch('location', form)
   const watchedCaseType = Form.useWatch('case_type', form)
   const watchedDescription = Form.useWatch('description', form)
+  const watchedVehicleHandling = Form.useWatch('vehicle_handling', form)
+  const watchedPersonHandling = Form.useWatch('person_handling', form)
+  const watchedInitialVehicles = Form.useWatch('initial_vehicles', form)
+  const watchedInitialPersons = Form.useWatch('initial_persons', form)
+  const watchedBonusHasVehicle = Form.useWatch('bonus_has_vehicle', form)
+  const watchedBonusHasPerson = Form.useWatch('bonus_has_person', form)
+  const watchedBonusHasOil = Form.useWatch('bonus_has_oil', form)
+  const watchedBonusHasPolice = Form.useWatch('bonus_has_police', form)
+  const watchedOilNature = Form.useWatch('oil_nature', form)
+  const watchedOilVolume = Form.useWatch('oil_volume', form)
+  const watchedWaterCut = Form.useWatch('water_cut', form)
+  const watchedOilHandling = Form.useWatch('oil_handling', form)
+  const watchedPoliceReported = Form.useWatch('police_reported', form)
+  const watchedCaseFiled = Form.useWatch('case_filed', form)
+  const watchedPoliceOfficer = Form.useWatch('police_officer', form)
+  const watchedPolicePhone = Form.useWatch('police_phone', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
@@ -209,8 +225,46 @@ const Cases: React.FC = () => {
     longitude: watchedLng,
     location: watchedLocation,
     case_type: watchedCaseType,
+    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
+    bonus_has_person: Boolean(watchedBonusHasPerson),
+    bonus_has_oil: Boolean(watchedBonusHasOil),
+    bonus_has_police: Boolean(watchedBonusHasPolice),
     description: watchedDescription,
-  }), [watchedLat, watchedLng, watchedLocation, watchedCaseType, watchedDescription])
+    vehicle_handling: watchedVehicleHandling,
+    person_handling: watchedPersonHandling,
+    oil_nature: watchedOilNature,
+    oil_volume: watchedOilVolume,
+    water_cut: watchedWaterCut,
+    oil_handling: watchedOilHandling,
+    police_reported: watchedPoliceReported,
+    case_filed: watchedCaseFiled,
+    police_officer: watchedPoliceOfficer,
+    police_phone: watchedPolicePhone,
+    initial_vehicles: watchedInitialVehicles,
+    initial_persons: watchedInitialPersons,
+  }), [
+    watchedLat,
+    watchedLng,
+    watchedLocation,
+    watchedCaseType,
+    watchedBonusHasVehicle,
+    watchedBonusHasPerson,
+    watchedBonusHasOil,
+    watchedBonusHasPolice,
+    watchedDescription,
+    watchedVehicleHandling,
+    watchedPersonHandling,
+    watchedOilNature,
+    watchedOilVolume,
+    watchedWaterCut,
+    watchedOilHandling,
+    watchedPoliceReported,
+    watchedCaseFiled,
+    watchedPoliceOfficer,
+    watchedPolicePhone,
+    watchedInitialVehicles,
+    watchedInitialPersons,
+  ])
 
   const readinessAttentionCount = caseEntryReadiness.filter(item => item.status === 'attention').length
   const readinessReadyCount = caseEntryReadiness.filter(item => item.status === 'ready').length
