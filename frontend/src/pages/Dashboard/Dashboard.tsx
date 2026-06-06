@@ -487,7 +487,7 @@ const Dashboard = () => {
     <div className="db-command-main" ref={dashRef}>
       <section className="db-command-summary">
         <div className="card db-command-title">
-          <h1>领导研判视图</h1>
+          <h1>指挥大屏</h1>
           <p>趋势研判 · 链条关联 · AI 产出复核 · 经验沉淀</p>
         </div>
         <KpiCard item={model.kpis.monthlyCases} />

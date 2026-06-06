@@ -17,8 +17,10 @@ import {
   buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
+  filterCasesForBonusPeriod,
   type BonusManagementDisplay,
   type BonusManagementMetricDisplay,
+  type BonusCasePeriodScope,
   type CaseBonusGateStatus,
   type CaseBonusRow,
 } from './caseBonusAccountingModel'
@@ -81,6 +83,7 @@ const CaseBonusAccounting: React.FC = () => {
   const [selectedId, setSelectedId] = useState<number | null>(Number.isFinite(queryCaseId) && queryCaseId > 0 ? queryCaseId : null)
   const [keyword, setKeyword] = useState('')
   const [gateFilter, setGateFilter] = useState<CaseBonusGateStatus | 'all'>('all')
+  const [periodScope, setPeriodScope] = useState<BonusCasePeriodScope>('quarter')
 
   if (!bonusAccountingEnabled) {
     return (
@@ -132,12 +135,22 @@ const CaseBonusAccounting: React.FC = () => {
     }
   }, [queryCaseId])
 
-  const rows = useMemo(() => buildCaseBonusRows(cases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [cases, selectedAssessment])
+  const managementContext = selectedAssessment?.management_context
+  const periodCases = useMemo(
+    () => filterCasesForBonusPeriod(cases, managementContext, periodScope),
+    [cases, managementContext, periodScope],
+  )
+  const rows = useMemo(() => buildCaseBonusRows(periodCases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [periodCases, selectedAssessment])
   const summary = useMemo(() => buildCaseBonusSummary(rows), [rows])
   const managementDisplay = useMemo(
-    () => buildBonusManagementDisplay(selectedAssessment?.management_context),
-    [selectedAssessment],
+    () => buildBonusManagementDisplay(managementContext),
+    [managementContext],
   )
+  const accountingScopeLabel = useMemo(() => {
+    if (!managementDisplay) return '当前案件列表'
+    const periodLabel = periodScope === 'annual' ? managementDisplay.annualLabel : managementDisplay.quarterLabel
+    return `${periodLabel} · ${managementDisplay.primarySquad}`
+  }, [managementDisplay, periodScope])
 
   const filteredRows = useMemo(() => {
     const kw = keyword.trim()
@@ -218,6 +231,9 @@ const CaseBonusAccounting: React.FC = () => {
             <span className="case-bonus-private"><DatabaseOutlined /> 周期指标</span>
             <h3>{display.primarySquad} · {display.quarterLabel} / {display.annualLabel}</h3>
             <p>{display.pricingBasis}</p>
+            <p className="case-bonus-management-scope">
+              下方“纳入核算”和案件列表当前对应：{accountingScopeLabel}，可在列表上方切换季度/年度案件。
+            </p>
           </div>
           <div className="case-bonus-management-amount">
             <span>{display.amountStatus}</span>
@@ -464,7 +480,7 @@ const CaseBonusAccounting: React.FC = () => {
         <div className="card case-bonus-kpi">
           <span>纳入核算</span>
           <b>{summary.total}</b>
-          <small>当前案件列表</small>
+          <small>{accountingScopeLabel}</small>
         </div>
         <div className="card case-bonus-kpi case-bonus-kpi--good">
           <span>材料齐全</span>
@@ -498,6 +514,15 @@ const CaseBonusAccounting: React.FC = () => {
               onChange={event => setKeyword(event.target.value)}
             />
             <Select
+              value={periodScope}
+              onChange={(value: BonusCasePeriodScope) => setPeriodScope(value)}
+              disabled={!managementDisplay}
+              options={[
+                { value: 'quarter', label: managementDisplay ? `${managementDisplay.quarterLabel}案件` : '当前季度案件' },
+                { value: 'annual', label: managementDisplay ? `${managementDisplay.annualLabel}案件` : '当前年度案件' },
+              ]}
+            />
+            <Select
               value={gateFilter}
               onChange={setGateFilter}
               options={[
@@ -510,7 +535,7 @@ const CaseBonusAccounting: React.FC = () => {
             />
           </div>
           <div className="case-bonus-list-head">
-            <span>案件</span>
+            <span>{accountingScopeLabel}</span>
             <span>{filteredRows.length} 起</span>
           </div>
           <div className="case-bonus-rows">

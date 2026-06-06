@@ -5,6 +5,7 @@ import {
   buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
+  filterCasesForBonusPeriod,
   getMissingRequiredCount,
   inferGateStatus,
 } from './caseBonusAccountingModel'
@@ -242,5 +243,60 @@ describe('caseBonusAccountingModel', () => {
     })
     expect(display?.annualMetrics[1].remaining).toBe(1)
     expect(display?.pricingBasis).toContain('不代表直接发放')
+  })
+
+  it('filters the accounting list to the selected squad and quarter period', () => {
+    const context = assessment(10, {
+      management_context: {
+        period_type: 'quarter',
+        rules_version: '2026_official_workbook',
+        pricing_basis: '按案件发生时间所属季度指标判断高低档，单案金额进入该周期人工复核，不代表直接发放。',
+        case_amount_status: 'provisional',
+        selected_case_amount: 4500,
+        primary_squad: '案件三班',
+        period: {
+          year: 2026,
+          quarter: 2,
+          quarter_label: '2026年Q2',
+          annual_label: '2026年度',
+        },
+        quarter: {
+          start: '2026-04-01T00:00:00',
+          end: '2026-07-01T00:00:00',
+          case_count: 2,
+          vehicle_actual: 2,
+          vehicle_target: 1,
+          vehicle_remaining: 0,
+          vehicle_high: true,
+          person_actual: 0,
+          person_target: 1,
+          person_remaining: 1,
+          person_high: false,
+        },
+        annual: {
+          start: '2026-01-01T00:00:00',
+          end: '2027-01-01T00:00:00',
+          case_count: 3,
+          vehicle_actual: 2,
+          vehicle_target: 4,
+          vehicle_remaining: 2,
+          vehicle_high: false,
+          person_actual: 0,
+          person_target: 4,
+          person_remaining: 4,
+          person_high: false,
+        },
+      },
+    }).management_context
+    const cases = [
+      baseCase(1, { occurred_time: '2026-04-15T08:00:00', report_unit: '案件三班' }),
+      baseCase(2, { occurred_time: '2026-02-10T08:00:00', report_unit: '案件三班' }),
+      baseCase(3, { occurred_time: '2026-05-20T08:00:00', report_unit: '案件二班' }),
+      baseCase(4, { occurred_time: '2026-06-01T08:00:00', description: '案件三班办理' }),
+      baseCase(5, { occurred_time: '2026-06-02T08:00:00', description: '案件三班联合泰来保卫班办理' }),
+    ]
+
+    expect(filterCasesForBonusPeriod(cases, context, 'quarter').map(item => item.id)).toEqual([1, 4])
+    expect(filterCasesForBonusPeriod(cases, context, 'annual').map(item => item.id)).toEqual([1, 2, 4])
   })
 })
