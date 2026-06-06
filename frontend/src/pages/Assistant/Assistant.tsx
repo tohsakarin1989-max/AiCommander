@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
-import type { ChatMessage, ChatResponse, SourceItem } from '../../types'
+import type { ChatMessage, ChatResponse, EvidenceQaResponse, SourceItem } from '../../types'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { Input } from 'antd'
@@ -60,6 +60,29 @@ const Assistant: React.FC = () => {
     },
   })
 
+  const evidenceQaMutation = useMutation({
+    mutationFn: aiApi.assistant.evidenceQa,
+    onSuccess: (response: EvidenceQaResponse) => {
+      const citationCount = response.citations?.length || 0
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: `${response.answer}\n\n引用来源：${citationCount} 条${response.insufficient_evidence ? '\n资料状态：不足' : ''}`,
+        timestamp: new Date().toISOString(),
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+      setIsLoading(false)
+    },
+    onError: (error: any) => {
+      const errorMessage: ChatMessage = {
+        role: 'assistant',
+        content: `证据问答失败：${error.response?.data?.detail || error.message || '未知错误'}`,
+        timestamp: new Date().toISOString(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+      setIsLoading(false)
+    },
+  })
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -86,6 +109,20 @@ const Assistant: React.FC = () => {
       query: content,
       conversation_history: messages,
     })
+  }
+
+  const handleEvidenceQa = () => {
+    const content = inputValue.trim()
+    if (!content || isLoading) return
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: `[证据问答] ${content}`,
+      timestamp: new Date().toISOString(),
+    }
+    setMessages((prev) => [...prev, userMessage])
+    setInputValue('')
+    setIsLoading(true)
+    evidenceQaMutation.mutate({ query: content })
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -259,6 +296,15 @@ const Assistant: React.FC = () => {
               >
                 <SendOutlined />
                 发送
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={handleEvidenceQa}
+                disabled={isLoading || !inputValue.trim()}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <DatabaseOutlined />
+                证据问答
               </button>
             </div>
             <div className="assistant-input-hint">

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links
+from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -73,6 +73,7 @@ app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["juris
 app.include_router(case_intelligence.router, prefix="/api/case-intelligence", tags=["case-intelligence"])
 app.include_router(automation_alerts.router, prefix="/api/automation-alerts", tags=["automation-alerts"])
 app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-links"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 
 @app.get("/")
 async def root():

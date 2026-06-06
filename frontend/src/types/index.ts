@@ -134,6 +134,175 @@ export interface CaseStructurePreview {
   warnings: string[]
   confidence: number
   boundary: string
+  candidates?: AiIntakeCandidate[]
+  evidence_anchors?: AiEvidenceAnchor[]
+  follow_up_questions?: string[]
+  material_recommendations?: Array<{
+    requirement_key: string
+    label: string
+    reason: string
+  }>
+  human_confirmation_required?: boolean
+  ai_intake_boundary?: string
+}
+
+export interface AiIntakeCandidate {
+  field: string
+  value: unknown
+  label: string
+  source: string
+  confidence: number
+  status: 'candidate' | string
+}
+
+export interface AiEvidenceAnchor {
+  id: string
+  field: string
+  text: string
+  source: string
+}
+
+export interface AiIntakeApplyResult {
+  case_id: number
+  applied_fields: string[]
+  rejected_fields: Array<{ field: string; reason: string }>
+  human_confirmation_required: boolean
+  boundary: string
+}
+
+export interface CaseProfile {
+  case: {
+    id: number
+    case_number: string
+    occurred_time?: string | null
+    location?: string | null
+    case_type?: string | null
+    description?: string | null
+    status?: string
+    report_unit?: string | null
+    source_type?: string | null
+  }
+  facts: Record<string, unknown>
+  related: {
+    vehicles: Array<Partial<CaseVehicle>>
+    persons: Array<Partial<CasePerson>>
+    evidence: Array<Partial<CaseEvidence>>
+    oil_recovery: Array<Partial<OilRecoveryRecord>>
+    tips: Array<Partial<CaseTip>>
+  }
+  quality: Partial<CaseQuality> & Record<string, unknown>
+  quality_gaps: Array<{ field?: string; label?: string; reason?: string }>
+  ai_summary: {
+    summary?: string | null
+    preprocess_mode?: string | null
+    analysis_readiness?: Record<string, unknown>
+    features?: Record<string, unknown>
+  }
+  tags: Array<Record<string, unknown>>
+  similar_cases: Record<string, unknown>
+  experience_card?: Record<string, unknown> | null
+  knowledge_refs: Record<string, unknown>
+  availability: {
+    has_geo: boolean
+    has_evidence: boolean
+    has_ai_features: boolean
+    has_quality: boolean
+    has_confirmed_experience: boolean
+    needs_human_review: boolean
+  }
+  source_map: Record<string, unknown>
+  boundary: string[]
+}
+
+export interface CaseProcessingCard {
+  case_id: number
+  case_number: string
+  status: 'ready' | 'needs_review' | string
+  priority: 'high' | 'medium' | 'low' | string
+  gap_groups: Array<{
+    key: string
+    label: string
+    severity: string
+    items: Array<Record<string, unknown>>
+    impacted_modules: string[]
+    route: string
+  }>
+  impacted_modules: string[]
+  suggested_actions: Array<{
+    key: string
+    label: string
+    route: string
+    mutation_allowed: boolean
+    reason: string
+  }>
+  manual_review_required: boolean
+  profile_snapshot: Record<string, unknown>
+  boundary: string
+}
+
+export interface KnowledgeSearchResult {
+  source_type: string
+  source_id: number | string
+  title: string
+  snippet: string
+  score: number
+  route: string
+  evidence_refs: Array<Record<string, unknown>>
+}
+
+export interface KnowledgeSearchResponse {
+  query: string
+  items: KnowledgeSearchResult[]
+  total: number
+  insufficient_evidence?: boolean
+  boundary?: string
+}
+
+export interface EvidenceQaResponse {
+  answer: string
+  facts: string[]
+  inferences: Array<Record<string, unknown>>
+  citations: Array<Record<string, unknown>>
+  insufficient_evidence: boolean
+  boundary: string
+}
+
+export interface ReportReviewResult {
+  report_id: number
+  findings: Array<{ type: string; severity: string; message: string }>
+  suggested_fixes: string[]
+  manual_review_required: boolean
+  boundary: string
+}
+
+export interface ConclusionDraft {
+  case_id: number
+  status: 'draft' | string
+  not_published: boolean
+  facts: string[]
+  inferences: Array<Record<string, unknown>>
+  recommendations: Array<Record<string, unknown>>
+  information_gaps: string[]
+  evidence_refs: Array<Record<string, unknown>>
+  ai_output?: Record<string, unknown>
+  manual_review_required: boolean
+}
+
+export interface CaseDiagram {
+  case_id: number
+  nodes: Array<{ id: string; type: string; label: string; detail?: string | null }>
+  edges: Array<{ from: string; to: string; label: string }>
+  boundary: string
+}
+
+export interface TagCurationResult {
+  case_id: number
+  recommended_tags: Array<Record<string, unknown>>
+  merge_suggestions: Array<Record<string, unknown>>
+  low_confidence_tags: Array<Record<string, unknown>>
+  human_confirmation_required: boolean
+  applied: boolean
+  boundary: string
 }
 
 export interface CaseEvidenceClassification {

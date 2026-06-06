@@ -244,6 +244,14 @@ class CaseAutomationService:
             })
 
         confidence = min(0.92, 0.35 + len(fields) * 0.06)
+        ai_intake = CaseAutomationService._build_ai_intake_preview(
+            text=text,
+            fields=fields,
+            field_sources=field_sources,
+            suggested_evidence=CaseAutomationService._dedupe_evidence_suggestions(suggested_evidence),
+            warnings=warnings,
+            confidence=round(confidence, 2),
+        )
         return {
             "case_fields": fields,
             "field_sources": field_sources,
@@ -252,7 +260,121 @@ class CaseAutomationService:
             "warnings": warnings,
             "confidence": round(confidence, 2),
             "boundary": "自动提取结果仅用于辅助录入，提交前需人工核对。",
+            **ai_intake,
         }
+
+    @staticmethod
+    def _build_ai_intake_preview(
+        *,
+        text: str,
+        fields: Dict[str, Any],
+        field_sources: Dict[str, str],
+        suggested_evidence: List[Dict[str, Any]],
+        warnings: List[str],
+        confidence: float,
+    ) -> Dict[str, Any]:
+        candidates = [
+            {
+                "field": field,
+                "value": value,
+                "label": CaseAutomationService._field_label(field),
+                "source": field_sources.get(field) or "案情文本",
+                "confidence": confidence,
+                "status": "candidate",
+            }
+            for field, value in fields.items()
+        ]
+        title_value = CaseAutomationService._standard_title(fields, text)
+        summary_value = CaseAutomationService._standard_summary(text)
+        if title_value:
+            candidates.insert(0, {
+                "field": "title",
+                "value": title_value,
+                "label": "标准化标题",
+                "source": "案情关键字段组合",
+                "confidence": min(0.88, confidence),
+                "status": "candidate",
+            })
+        if summary_value:
+            candidates.insert(1, {
+                "field": "description",
+                "value": summary_value,
+                "label": "案情摘要",
+                "source": "案情原文压缩",
+                "confidence": min(0.86, confidence),
+                "status": "candidate",
+            })
+        anchors = [
+            {
+                "id": f"anchor-{index}",
+                "field": item["field"],
+                "text": CaseAutomationService._anchor_text(text, item["value"]),
+                "source": item["source"],
+            }
+            for index, item in enumerate(candidates, start=1)
+            if item.get("field") != "title"
+        ]
+        follow_ups = [
+            "请确认发生时间、案发地点和报送单位是否与正式记录一致。",
+            "请补充公安报案、立案和处置结果，避免研判报告缺少事实依据。",
+        ]
+        follow_ups.extend(warnings)
+        if not suggested_evidence:
+            follow_ups.append("请上传现场照片、处置凭证或其他可支撑案情的佐证材料。")
+        return {
+            "candidates": candidates,
+            "evidence_anchors": anchors,
+            "follow_up_questions": follow_ups,
+            "material_recommendations": suggested_evidence,
+            "human_confirmation_required": True,
+            "ai_intake_boundary": "AI 只给候选字段、依据和追问，必须人工确认后才能写入案件。",
+        }
+
+    @staticmethod
+    def _field_label(field: str) -> str:
+        labels = {
+            "occurred_time": "发生时间",
+            "location": "案发地点",
+            "case_type": "案件类型",
+            "description": "案情描述",
+            "oil_nature": "油品性质",
+            "oil_type": "油品类型",
+            "oil_volume": "涉油数量",
+            "water_cut": "含水率",
+            "oil_value": "涉案价值",
+            "source_type": "线索来源",
+            "police_reported": "是否报案",
+            "case_filed": "是否立案",
+            "person_handling": "人员处置",
+            "vehicle_handling": "车辆处置",
+            "oil_handling": "油品处置",
+            "vehicle_info": "车辆信息",
+        }
+        return labels.get(field, field)
+
+    @staticmethod
+    def _standard_title(fields: Dict[str, Any], text: str) -> str:
+        location = fields.get("location")
+        case_type = fields.get("case_type") or ("涉油案件" if _contains_any(text, ("油", "井场", "管线")) else "案件")
+        if location:
+            return f"{location}{case_type}"
+        return str(case_type)
+
+    @staticmethod
+    def _standard_summary(text: str) -> str:
+        compact = re.sub(r"\s+", "", text or "")
+        if len(compact) <= 120:
+            return compact
+        return f"{compact[:117]}..."
+
+    @staticmethod
+    def _anchor_text(text: str, value: Any) -> str:
+        value_text = str(value or "")
+        if value_text and value_text in text:
+            return value_text
+        if not text:
+            return ""
+        return text[:80]
 
     @staticmethod
     def classify_evidence_payload(payload: Dict[str, Any]) -> Dict[str, Any]:

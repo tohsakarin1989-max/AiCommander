@@ -24,6 +24,7 @@ import {
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
 import type { Conclusion, ConclusionFilters } from '../../types'
+import type { ConclusionDraft } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
 import './ConclusionFactory.css'
@@ -71,6 +72,7 @@ const ConclusionFactory: React.FC = () => {
   const [filters, setFilters]     = useState<ConclusionFilters>({})
   const [detailId, setDetailId]   = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [draftPreview, setDraftPreview] = useState<ConclusionDraft | null>(null)
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -96,6 +98,15 @@ const ConclusionFactory: React.FC = () => {
     mutationFn: (id: string) => aiApi.conclusion.generateFromMeeting(id),
     onSuccess: () => { message.success('从会议生成结论完成'); setMeetingId(''); refetch() },
     onError: (error: any) => { message.error(error?.response?.data?.detail || '从会议生成结论失败') },
+  })
+
+  const draftMutation = useMutation({
+    mutationFn: (id: number) => aiApi.conclusion.draft(id),
+    onSuccess: (draft) => {
+      setDraftPreview(draft)
+      message.info('已生成未发布结论草稿，需人工确认')
+    },
+    onError: (error: any) => { message.error(error?.response?.data?.detail || '结论草稿生成失败') },
   })
 
   const reviewMutation = useMutation({
@@ -178,6 +189,16 @@ const ConclusionFactory: React.FC = () => {
               }}
             >
               {generateMutation.isPending ? '生成中…' : '从案件生成'}
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={draftMutation.isPending}
+              onClick={() => {
+                if (!caseId) { message.warning('请先输入案件 ID'); return }
+                draftMutation.mutate(caseId)
+              }}
+            >
+              {draftMutation.isPending ? '草拟中…' : '草稿预览'}
             </button>
 
             <span className="cf-divider">OR</span>
@@ -689,6 +710,36 @@ const ConclusionFactory: React.FC = () => {
             暂无证据数据
           </div>
         )}
+      </Drawer>
+
+      <Drawer
+        title="结论草稿预览"
+        open={!!draftPreview}
+        onClose={() => setDraftPreview(null)}
+        width={620}
+      >
+        {draftPreview ? (
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <div className="cf-detail-section">
+              <div className="cf-detail-section__title">草稿状态</div>
+              <p className="cf-detail-text">
+                案件 #{draftPreview.case_id} · {draftPreview.status} · {draftPreview.not_published ? '未发布' : '待确认'}
+              </p>
+            </div>
+            <div className="cf-detail-section">
+              <div className="cf-detail-section__title">事实</div>
+              <List size="small" dataSource={draftPreview.facts} renderItem={item => <List.Item>{item}</List.Item>} />
+            </div>
+            <div className="cf-detail-section">
+              <div className="cf-detail-section__title">待补资料</div>
+              <List size="small" dataSource={draftPreview.information_gaps} renderItem={item => <List.Item>{item}</List.Item>} />
+            </div>
+            <div className="cf-detail-section">
+              <div className="cf-detail-section__title">引用来源</div>
+              <p className="cf-detail-text">{draftPreview.evidence_refs.length} 条引用，需人工核对后才能生成正式结论。</p>
+            </div>
+          </Space>
+        ) : null}
       </Drawer>
     </div>
   )

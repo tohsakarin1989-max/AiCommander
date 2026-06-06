@@ -28,7 +28,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { caseApi, type CaseImportResult } from '../../services/cases'
-import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseUpdatePayload, CaseVehicle } from '../../types'
+import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -552,6 +552,24 @@ const Cases: React.FC = () => {
     enabled: !!selectedCase,
   })
 
+  const { data: caseProfile } = useQuery<CaseProfile>({
+    queryKey: ['case-profile', selectedCase?.id],
+    queryFn: () => caseApi.getCaseProfile(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
+  const { data: processingCard } = useQuery<CaseProcessingCard>({
+    queryKey: ['case-processing-card', selectedCase?.id],
+    queryFn: () => caseApi.getProcessingCard(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
+  const { data: caseDiagram } = useQuery({
+    queryKey: ['case-diagram', selectedCase?.id],
+    queryFn: () => caseApi.getCaseDiagram(selectedCase!.id),
+    enabled: !!selectedCase,
+  })
+
   const { data: caseEvidence } = useQuery({
     queryKey: ['case-evidence', selectedCase?.id],
     queryFn: () => caseApi.getCaseEvidence(selectedCase!.id),
@@ -582,6 +600,9 @@ const Cases: React.FC = () => {
       setIsModalVisible(false)
       form.resetFields()
       queryClient.invalidateQueries({ queryKey: ['cases'] })
+      queryClient.invalidateQueries({ queryKey: ['case-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
+      queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
     },
   })
 
@@ -596,6 +617,9 @@ const Cases: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['cases'] })
       queryClient.invalidateQueries({ queryKey: ['case-bonus-assessment'] })
       queryClient.invalidateQueries({ queryKey: ['case-automation-workbench'] })
+      queryClient.invalidateQueries({ queryKey: ['case-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
+      queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
     },
   })
 
@@ -613,6 +637,8 @@ const Cases: React.FC = () => {
     onSuccess: (data) => {
       message.success(data.message || '预处理任务已提交')
       queryClient.invalidateQueries({ queryKey: ['cases'] })
+      queryClient.invalidateQueries({ queryKey: ['case-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
@@ -665,6 +691,9 @@ const Cases: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['case-evidence', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['case-bonus-assessment', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['case-automation-workbench', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-profile', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-processing-card', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-diagram', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
     onError: (error: unknown) => {
@@ -1554,6 +1583,53 @@ const Cases: React.FC = () => {
                     ) : null}
                   </div>
 
+                  <div className="detail-section">
+                    <div className="ds-head">案件画像底座</div>
+                    <div className="detail-grid">
+                      <div className="kv">
+                        <span className="k">证据</span>
+                        <span className="v">{caseProfile?.related.evidence.length ?? caseEvidence?.length ?? 0} 项</span>
+                      </div>
+                      <div className="kv">
+                        <span className="k">车辆/人员</span>
+                        <span className="v">
+                          {caseProfile?.related.vehicles.length ?? 0}/{caseProfile?.related.persons.length ?? 0}
+                        </span>
+                      </div>
+                      <div className="kv">
+                        <span className="k">AI 特征</span>
+                        <span className="v">{caseProfile?.availability.has_ai_features ? '已沉淀' : '待提取'}</span>
+                      </div>
+                      <div className="kv">
+                        <span className="k">一案一图</span>
+                        <span className="v">{caseDiagram ? `${caseDiagram.nodes.length} 节点` : '待生成'}</span>
+                      </div>
+                    </div>
+                    <p className="narr">
+                      {caseProfile?.ai_summary.summary || selectedCase.description || '画像会聚合案件事实、材料、质量缺口和经验卡状态。'}
+                    </p>
+                  </div>
+
+                  {processingCard && (
+                    <div className="detail-section">
+                      <div className="ds-head">智能处理卡</div>
+                      <div className="automation-456-list">
+                        {processingCard.gap_groups.slice(0, 4).map(group => (
+                          <div key={group.key}>
+                            <b>{group.label}</b>
+                            <span>{group.items.slice(0, 2).map(item => String(item.label || item.field || item.reason || '待复核')).join('、') || '暂无缺口'}</span>
+                          </div>
+                        ))}
+                        {processingCard.gap_groups.length === 0 && (
+                          <div>
+                            <b>暂无归并缺口</b>
+                            <span>当前案件画像、经验卡和报告复核未发现阻断项。</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {bonusAccountingEnabled && (
                     <div className="detail-section">
                       <div className="ds-head">奖金考核测算</div>
@@ -1846,6 +1922,29 @@ const Cases: React.FC = () => {
               自动提取
             </Button>
           </div>
+
+          {structureMutation.data?.candidates?.length ? (
+            <div className="cases-ai-intake">
+              <div className="cases-ai-intake__head">
+                <span>AI 录入副驾驶</span>
+                <b>需人工确认</b>
+              </div>
+              <div className="cases-ai-intake__list">
+                {structureMutation.data.candidates.slice(0, 6).map(item => (
+                  <div key={`${item.field}-${String(item.value)}`} className="cases-ai-intake__item">
+                    <span>{item.label}</span>
+                    <b>{String(item.value || '待确认')}</b>
+                    <small>{item.source}</small>
+                  </div>
+                ))}
+              </div>
+              {structureMutation.data.follow_up_questions?.length ? (
+                <p className="narr" style={{ color: 'var(--warn)' }}>
+                  追问：{structureMutation.data.follow_up_questions.slice(0, 2).join('；')}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <CaseEntryPrecheck
             form={form}

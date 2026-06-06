@@ -30,6 +30,10 @@ import type {
   TrajectoryReplayFrame,
   SemanticSearchResult,
   CaseStatistics,
+  AiIntakeApplyResult,
+  CaseDiagram,
+  CaseProcessingCard,
+  CaseProfile,
 } from '../types'
 
 export interface CaseImportError {
@@ -173,6 +177,32 @@ export const caseApi = {
    */
   getFeatureProfile: async (caseId: number): Promise<Record<string, unknown>> => {
     const response = await api.get<Record<string, unknown>>(`/cases/${caseId}/feature-profile`)
+    return response.data
+  },
+
+  getCaseProfile: async (caseId: number): Promise<CaseProfile> => {
+    const response = await api.get<CaseProfile>(`/cases/${caseId}/profile`)
+    return response.data
+  },
+
+  getProcessingCard: async (caseId: number): Promise<CaseProcessingCard> => {
+    const response = await api.get<CaseProcessingCard>(`/cases/${caseId}/processing-card`)
+    return response.data
+  },
+
+  getCaseDiagram: async (caseId: number): Promise<CaseDiagram> => {
+    const response = await api.get<CaseDiagram>(`/cases/${caseId}/diagram`)
+    return response.data
+  },
+
+  applyAiIntake: async (
+    caseId: number,
+    payload: {
+      confirmed_fields: Array<{ field: string; value: unknown }>
+      confirmed_field_names: string[]
+    },
+  ): Promise<AiIntakeApplyResult> => {
+    const response = await api.post<AiIntakeApplyResult>(`/cases/${caseId}/ai-intake-apply`, payload)
     return response.data
   },
 

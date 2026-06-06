@@ -12,6 +12,8 @@ import type {
   Conversation,
   ChatRequest,
   ChatResponse,
+  ConclusionDraft,
+  EvidenceQaResponse,
   AgentTask,
   Conclusion,
   ConclusionFilters,
@@ -146,6 +148,11 @@ export const aiApi = {
       }>('/assistant/stats')
       return response.data
     },
+
+    evidenceQa: async (payload: { query: string; case_id?: number }): Promise<EvidenceQaResponse> => {
+      const response = await api.post<EvidenceQaResponse>('/assistant/evidence-qa', payload)
+      return response.data
+    },
   },
 
   // ---------- 智能体 ----------
@@ -202,6 +209,11 @@ export const aiApi = {
     /** 提交审核反馈 */
     review: async (id: number, data: { action: 'approve' | 'reject' | 'flag'; note?: string }) => {
       const response = await api.post(`/conclusions/${id}/review`, data)
+      return response.data
+    },
+
+    draft: async (caseId: number): Promise<ConclusionDraft> => {
+      const response = await api.post<ConclusionDraft>('/conclusions/draft', { case_id: caseId })
       return response.data
     },
   },

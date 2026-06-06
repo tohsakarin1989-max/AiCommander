@@ -33,7 +33,7 @@ import {
   SafetyCertificateOutlined,
   TagsOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
@@ -382,6 +382,19 @@ const CaseIntelligence: React.FC = () => {
     enabled: !casesQuery.isLoading,
   })
 
+  const diagramQuery = useQuery({
+    queryKey: ['case-diagram', selectedCaseId],
+    queryFn: () => caseApi.getCaseDiagram(selectedCaseId as number),
+    enabled: !!selectedCaseId,
+  })
+
+  const tagCurationMutation = useMutation({
+    mutationFn: () => caseIntelligenceApi.curateTags(selectedCaseId as number, false),
+    onSuccess: (result) => {
+      message.info(`已生成 ${result.recommended_tags.length} 个候选标签，需人工确认后写入`)
+    },
+  })
+
   const workbench = workbenchQuery.data
   const contextPack = contextPackQuery.data
   const cases = casesQuery.data || []
@@ -473,6 +486,14 @@ const CaseIntelligence: React.FC = () => {
               >
                 刷新
               </Button>
+              <Button
+                icon={<TagsOutlined />}
+                disabled={!selectedCaseId}
+                loading={tagCurationMutation.isPending}
+                onClick={() => tagCurationMutation.mutate()}
+              >
+                标签策展
+              </Button>
             </Space>
           </Col>
         </Row>
@@ -518,6 +539,16 @@ const CaseIntelligence: React.FC = () => {
               </Card>
             </Col>
           </Row>
+
+          {selectedCaseId && diagramQuery.data && (
+            <Alert
+              type="success"
+              showIcon
+              className="intel-boundary"
+              message="一案一图已生成"
+              description={`当前案件图谱包含 ${diagramQuery.data.nodes.length} 个节点、${diagramQuery.data.edges.length} 条关系，覆盖时间、地点、车辆、人员、证据和经验卡。`}
+            />
+          )}
 
           <Alert
             type="info"

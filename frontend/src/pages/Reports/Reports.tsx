@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
+import { knowledgeApi } from '../../services/knowledge'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { buildReportPresentation, getReportDraftMeta, getReportExportMarkdown } from './reportPresentationModel'
@@ -177,6 +178,12 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
 
   const summaryText = presentation.summary
 
+  const { data: citationAssist } = useQuery({
+    queryKey: ['report-citation-assist', meetingId, summaryText],
+    queryFn: () => knowledgeApi.citationAssist({ query: summaryText || meetingId }),
+    enabled: detailModalVisible && !!summaryText,
+  })
+
   return (
     <>
       <div className="card rp-card">
@@ -283,6 +290,20 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             <p className="rp-modal-section__text">{presentation.conclusions}</p>
           </div>
         )}
+
+        {citationAssist?.citations?.length ? (
+          <div className="rp-modal-section">
+            <div className="rp-modal-section__title">引用助手</div>
+            {citationAssist.citations.slice(0, 4).map((item, index) => (
+              <div key={`${item.source_type}-${item.source_id}-${index}`} className="rp-modal-list-item">
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+                  Q{index + 1}
+                </span>
+                <span>{item.snippet}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {/* 共识 / 分歧 / 洞察 / 建议 */}
         <Collapse

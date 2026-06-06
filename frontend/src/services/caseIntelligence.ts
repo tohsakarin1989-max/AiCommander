@@ -1,5 +1,5 @@
 import api from './api'
-import type { Case, CaseQuality } from '../types'
+import type { Case, CaseQuality, TagCurationResult } from '../types'
 
 export interface IntelligenceTag {
   key: string
@@ -294,6 +294,14 @@ export const caseIntelligenceApi = {
     const response = await api.put<IntelligenceWorkbench['feature_tags']>(
       `/case-intelligence/cases/${caseId}/tag-overrides`,
       data,
+    )
+    return response.data
+  },
+
+  curateTags: async (caseId: number, confirm = false): Promise<TagCurationResult> => {
+    const response = await api.post<TagCurationResult>(
+      `/case-intelligence/cases/${caseId}/tag-curation`,
+      { confirm },
     )
     return response.data
   },

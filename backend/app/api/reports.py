@@ -1,11 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_knowledge_service import CaseKnowledgeService
 
 router = APIRouter()
+
+
+class CitationAssistRequest(BaseModel):
+    query: str
+    case_id: Optional[int] = None
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -97,3 +104,22 @@ def get_report(report_id: int, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
     return _serialize_report(report)
+
+
+@router.post("/citation-assist")
+def citation_assist(payload: CitationAssistRequest, db: Session = Depends(get_db)):
+    """报告引用助手：返回可回溯案件/经验卡/结论引用。"""
+    if not payload.query.strip():
+        raise HTTPException(status_code=400, detail="检索内容不能为空")
+    return CaseKnowledgeService.citation_assist(db, payload.query, case_id=payload.case_id)
+
+
+@router.post("/{report_id:int}/review")
+def review_report(report_id: int, db: Session = Depends(get_db)):
+    """报告审稿官：只输出复核问题，不自动改写报告。"""
+    try:
+        return CaseKnowledgeService.review_report(db, report_id)
+    except ValueError as exc:
+        if str(exc) == "report_not_found":
+            raise HTTPException(status_code=404, detail="报告不存在")
+        raise HTTPException(status_code=400, detail=str(exc))
