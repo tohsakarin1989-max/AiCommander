@@ -26,8 +26,6 @@ export interface CaseBonusSummary {
   suggestedAmount: number
 }
 
-export type BonusCasePeriodScope = 'quarter' | 'annual'
-
 export interface MissingMaterialDetail {
   key: string
   label: string
@@ -93,82 +91,6 @@ export function buildCaseBonusRows(
       assessmentLoaded: Boolean(assessment),
     }
   })
-}
-
-const squadNames = [
-  '案件一班',
-  '案件二班',
-  '案件三班',
-  '案件四班',
-  '防范一班',
-  '防范二班',
-  '防范三班',
-  '龙虎泡保卫班',
-  '葡西保卫班',
-  '敖古拉保卫班',
-  '新站保卫班',
-  '新肇保卫班',
-  '敖南保卫班',
-  '齐家保卫班',
-  '泰来保卫班',
-  '龙西保卫班',
-  '页岩油保卫班',
-]
-
-const squadAliasEntries: Array<[string, string]> = [
-  ...squadNames.map((name): [string, string] => [name, name]),
-  ['龙虎泡', '龙虎泡保卫班'],
-  ['葡西', '葡西保卫班'],
-  ['敖古拉', '敖古拉保卫班'],
-  ['新站', '新站保卫班'],
-  ['新肇', '新肇保卫班'],
-  ['敖南', '敖南保卫班'],
-  ['齐家', '齐家保卫班'],
-  ['泰来', '泰来保卫班'],
-  ['龙西', '龙西保卫班'],
-  ['页岩油', '页岩油保卫班'],
-] as Array<[string, string]>
-squadAliasEntries.sort((left, right) => right[0].length - left[0].length)
-
-function isWithinBonusPeriod(caseItem: Case, start: string, end: string): boolean {
-  const occurredAt = Date.parse(caseItem.occurred_time)
-  const startAt = Date.parse(start)
-  const endAt = Date.parse(end)
-  if (!Number.isFinite(occurredAt) || !Number.isFinite(startAt) || !Number.isFinite(endAt)) {
-    return false
-  }
-  return occurredAt >= startAt && occurredAt < endAt
-}
-
-function matchesBonusSquad(caseItem: Case, primarySquad?: string | null): boolean {
-  if (!primarySquad) return true
-  const fields = [
-    caseItem.report_unit,
-    caseItem.operation_role,
-    caseItem.description,
-  ].filter((value): value is string => Boolean(value))
-  for (const value of fields) {
-    const text = value.trim()
-    for (const [alias, squad] of squadAliasEntries) {
-      if (text === alias || text.includes(alias)) {
-        return squad === primarySquad
-      }
-    }
-  }
-  return false
-}
-
-export function filterCasesForBonusPeriod(
-  cases: Case[],
-  context: BonusManagementContext | undefined,
-  scope: BonusCasePeriodScope = 'quarter',
-): Case[] {
-  if (!context) return cases
-  const period = scope === 'annual' ? context.annual : context.quarter
-  return cases.filter(caseItem => (
-    isWithinBonusPeriod(caseItem, period.start, period.end)
-    && matchesBonusSquad(caseItem, context.primary_squad)
-  ))
 }
 
 export function buildCaseBonusSummary(rows: CaseBonusRow[]): CaseBonusSummary {

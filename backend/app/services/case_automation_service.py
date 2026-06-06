@@ -481,6 +481,32 @@ class CaseAutomationService:
         }
 
     @staticmethod
+    def list_bonus_period_cases(
+        db: Session,
+        case: Case,
+        scope: str = "quarter",
+    ) -> List[Case]:
+        quarter_start, quarter_end, year_start, year_end = CaseAutomationService._bonus_period_bounds(case)
+        if scope == "annual":
+            start_at, end_at = year_start, year_end
+        else:
+            start_at, end_at = quarter_start, quarter_end
+        primary_squad = CaseAutomationService._resolve_primary_squad(case)
+        cases = (
+            db.query(Case)
+            .filter(Case.occurred_time >= start_at, Case.occurred_time < end_at)
+            .order_by(Case.occurred_time.desc())
+            .all()
+        )
+        if not primary_squad:
+            return cases
+        return [
+            item
+            for item in cases
+            if CaseAutomationService._resolve_primary_squad(item) == primary_squad
+        ]
+
+    @staticmethod
     def _build_material_checks(case: Case, related: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
         vehicles: List[CaseVehicle] = related["vehicles"]
         persons: List[CasePerson] = related["persons"]

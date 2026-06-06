@@ -17,14 +17,14 @@ import {
   buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
-  filterCasesForBonusPeriod,
   type BonusManagementDisplay,
   type BonusManagementMetricDisplay,
-  type BonusCasePeriodScope,
   type CaseBonusGateStatus,
   type CaseBonusRow,
 } from './caseBonusAccountingModel'
 import './CaseBonusAccounting.css'
+
+type BonusCasePeriodScope = 'quarter' | 'annual'
 
 const gateLabel: Record<CaseBonusGateStatus, string> = {
   ready: '材料齐全',
@@ -104,11 +104,6 @@ const CaseBonusAccounting: React.FC = () => {
     refetchInterval: 60_000,
   })
 
-  const selectedCase = useMemo(
-    () => cases.find(caseItem => caseItem.id === selectedId) ?? null,
-    [cases, selectedId],
-  )
-
   const {
     data: selectedAssessment,
     isLoading: assessmentLoading,
@@ -136,12 +131,20 @@ const CaseBonusAccounting: React.FC = () => {
   }, [queryCaseId])
 
   const managementContext = selectedAssessment?.management_context
-  const periodCases = useMemo(
-    () => filterCasesForBonusPeriod(cases, managementContext, periodScope),
-    [cases, managementContext, periodScope],
+  const { data: periodCases = [], isLoading: periodCasesLoading } = useQuery<Case[]>({
+    queryKey: ['case-bonus-period-cases', selectedId, periodScope],
+    queryFn: () => caseApi.getBonusPeriodCases(selectedId!, periodScope),
+    enabled: selectedId != null && !!managementContext,
+    refetchInterval: 60_000,
+  })
+  const scopedCases = managementContext ? periodCases : cases
+  const selectedCase = useMemo(
+    () => scopedCases.find(caseItem => caseItem.id === selectedId) ?? cases.find(caseItem => caseItem.id === selectedId) ?? null,
+    [cases, scopedCases, selectedId],
   )
-  const rows = useMemo(() => buildCaseBonusRows(periodCases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [periodCases, selectedAssessment])
+  const rows = useMemo(() => buildCaseBonusRows(scopedCases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [scopedCases, selectedAssessment])
   const summary = useMemo(() => buildCaseBonusSummary(rows), [rows])
+  const rowsLoading = managementContext ? periodCasesLoading : casesLoading
   const managementDisplay = useMemo(
     () => buildBonusManagementDisplay(managementContext),
     [managementContext],
@@ -539,7 +542,7 @@ const CaseBonusAccounting: React.FC = () => {
             <span>{filteredRows.length} 起</span>
           </div>
           <div className="case-bonus-rows">
-            {casesLoading ? <Spin /> : filteredRows.length > 0 ? filteredRows.map(renderRow) : <Empty description="暂无匹配案件" />}
+            {rowsLoading ? <Spin /> : filteredRows.length > 0 ? filteredRows.map(renderRow) : <Empty description="暂无匹配案件" />}
           </div>
         </aside>
 

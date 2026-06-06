@@ -211,6 +211,13 @@ export const caseApi = {
     return response.data
   },
 
+  getBonusPeriodCases: async (caseId: number, scope: 'quarter' | 'annual'): Promise<Case[]> => {
+    const response = await api.get<Case[]>(`/cases/${caseId}/bonus-period-cases`, {
+      params: { scope },
+    })
+    return response.data
+  },
+
   getAutomationWorkbench: async (caseId: number): Promise<CaseAutomationWorkbench> => {
     const response = await api.get<CaseAutomationWorkbench>(`/cases/${caseId}/automation-workbench`)
     return response.data

@@ -1096,6 +1096,20 @@ def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
     return CaseAutomationService.build_bonus_assessment(db, case)
 
 
+@router.get("/{case_id:int}/bonus-period-cases", response_model=List[CaseResponse])
+def get_bonus_period_cases(
+    case_id: int,
+    scope: str = "quarter",
+    db: Session = Depends(get_db),
+):
+    """获取与选中案件同一奖金考核周期、同一主控班组的案件列表。"""
+    _require_bonus_accounting_enabled()
+    if scope not in {"quarter", "annual"}:
+        raise HTTPException(status_code=400, detail="scope must be quarter or annual")
+    case = _get_case_or_404(db, case_id)
+    return CaseAutomationService.list_bonus_period_cases(db, case, scope=scope)
+
+
 @router.get("/{case_id:int}/automation-workbench")
 def get_case_automation_workbench(case_id: int, db: Session = Depends(get_db)):
     """获取案件自动化工作台：结论分层、经验卡和缺口闭环。"""

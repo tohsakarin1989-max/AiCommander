@@ -619,6 +619,55 @@ def test_bonus_assessment_uses_case_quarter_for_management_targets():
     assert "单案金额进入该周期人工复核" in management["pricing_basis"]
 
 
+def test_bonus_period_cases_use_full_backend_period_and_primary_squad_scope():
+    db = _session()
+    client = _client(db)
+
+    q1_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 1, 15, 9, 0).isoformat(),
+            "location": "一季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+        },
+    )
+    q1_id = q1_response.json()["id"]
+
+    q2_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 4, 6, 9, 30).isoformat(),
+            "location": "二季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+        },
+    )
+    q2_id = q2_response.json()["id"]
+
+    other_squad_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 5, 2, 8, 0).isoformat(),
+            "location": "联合案件",
+            "case_type": "涉油盗窃",
+            "description": "案件三班联合泰来保卫班办理，车辆移交公安，检斤入库。",
+        },
+    )
+    other_squad_id = other_squad_response.json()["id"]
+
+    annual_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=annual")
+    quarter_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=quarter")
+
+    assert annual_response.status_code == 200
+    assert quarter_response.status_code == 200
+    assert [item["id"] for item in annual_response.json()] == [q2_id, q1_id]
+    assert [item["id"] for item in quarter_response.json()] == [q2_id]
+    assert other_squad_id not in {item["id"] for item in annual_response.json()}
+
+
 def test_case_automation_workbench_surfaces_456_modules():
     db = _session()
     client = _client(db)
