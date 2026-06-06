@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { automationAlertApi } from '../../services/automationAlerts'
 import type { AutomationAlert, AutomationAlertTriagePack } from '../../services/automationAlerts'
+import { buildAutomationAlertTriageMarkdown } from './intelliTriagePresentation'
 import './IntelliInspect.css'
 
 const { Text } = Typography
@@ -123,6 +124,7 @@ const IntelliInspect: React.FC = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [triagePack, setTriagePack] = useState<AutomationAlertTriagePack | null>(null)
+  const [copyFallbackMarkdown, setCopyFallbackMarkdown] = useState('')
   const alertsQuery = useQuery({
     queryKey: ['automation-alerts', 'simulated'],
     queryFn: automationAlertApi.seedSimulated,
@@ -175,6 +177,19 @@ const IntelliInspect: React.FC = () => {
     onError: (error: Error) => message.error(`打开研判包失败：${error.message}`),
   })
 
+  const handleCopyTriagePack = async () => {
+    if (!triagePack) return
+    const markdown = buildAutomationAlertTriageMarkdown(triagePack)
+    try {
+      await navigator.clipboard.writeText(markdown)
+      setCopyFallbackMarkdown('')
+      message.success('研判包 Markdown 已复制')
+    } catch (error) {
+      setCopyFallbackMarkdown(markdown)
+      message.warning('浏览器未开放剪贴板，已打开可复制文本')
+    }
+  }
+
   const actionBusy =
     createEventMutation.isPending ||
     verificationMutation.isPending ||
@@ -210,7 +225,7 @@ const IntelliInspect: React.FC = () => {
       </div>
       <div className="card-body" style={{ padding: '20px 16px 16px' }}>
         <div className="ii-flow-wrap">
-          <svg className="ii-flow-svg" viewBox="0 0 1100 200" preserveAspectRatio="xMidYMid meet">
+          <svg className="ii-flow-svg" viewBox="0 0 1100 230" preserveAspectRatio="xMidYMid meet">
             <defs>
               <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
                 <path d="M0,0 L0,6 L8,3 z" fill="oklch(0.78 0.14 45 / 0.6)" />
@@ -257,14 +272,23 @@ const IntelliInspect: React.FC = () => {
             ))}
 
             {/* 判断菱形（AI研判后分支：有异常→报警 / 无异常→忽略） */}
-            <g transform="translate(605, 148)">
+            <line
+              x1="605"
+              y1="160"
+              x2="605"
+              y2="174"
+              stroke="oklch(0.78 0.14 45 / 0.35)"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+            <g transform="translate(605, 190)">
               <polygon points="0,-16 24,0 0,16 -24,0"
                 fill="oklch(0.78 0.14 45 / 0.12)" stroke="oklch(0.78 0.14 45 / 0.45)" strokeWidth="1" />
               <text y="4" textAnchor="middle" fontSize="8.5"
                 fontFamily="JetBrains Mono, monospace" fill="oklch(0.72 0.013 90)">研判</text>
             </g>
-            <text x="516" y="174" fontSize="9" fontFamily="JetBrains Mono, monospace" fill="var(--ok)">无异常→忽略</text>
-            <text x="630" y="174" fontSize="9" fontFamily="JetBrains Mono, monospace" fill="var(--err)">有异常→报警</text>
+            <text x="514" y="218" fontSize="9" fontFamily="JetBrains Mono, monospace" fill="var(--ok)">无异常→忽略</text>
+            <text x="632" y="218" fontSize="9" fontFamily="JetBrains Mono, monospace" fill="var(--err)">有异常→报警</text>
           </svg>
         </div>
       </div>
@@ -399,7 +423,7 @@ const IntelliInspect: React.FC = () => {
               <Empty description="暂无数智自动化告警" />
             )}
             <div style={{ marginTop: 8, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', textAlign: 'center' }}>
-              模拟告警会写入事件中心；转案件会复用事件转案件接口并回写关联，不直接派发巡逻或跨部门任务。
+              模拟告警会写入事件中心；转案件会复用事件转案件接口并回写关联，不直接创建外勤或跨部门任务。
             </div>
           </div>
         </div>
@@ -407,11 +431,25 @@ const IntelliInspect: React.FC = () => {
       </div>
     </div>
     <Modal
+      className="ii-triage-modal"
       title="数智告警研判包"
       open={!!triagePack}
-      onCancel={() => setTriagePack(null)}
+      onCancel={() => {
+        setTriagePack(null)
+        setCopyFallbackMarkdown('')
+      }}
+      style={{ top: 24 }}
       width={880}
       footer={[
+        triagePack ? (
+          <button
+            key="copy"
+            className="btn-ghost"
+            onClick={handleCopyTriagePack}
+          >
+            复制研判包
+          </button>
+        ) : null,
         triagePack?.alert.related_case_id ? (
           <button
             key="case"
@@ -419,12 +457,22 @@ const IntelliInspect: React.FC = () => {
             onClick={() => {
               navigate(`/case-intelligence?caseId=${triagePack.alert.related_case_id}`)
               setTriagePack(null)
+              setCopyFallbackMarkdown('')
             }}
           >
             进入案件研判
           </button>
         ) : null,
-        <button key="close" className="btn-ghost" onClick={() => setTriagePack(null)}>关闭</button>,
+        <button
+          key="close"
+          className="btn-ghost"
+          onClick={() => {
+            setTriagePack(null)
+            setCopyFallbackMarkdown('')
+          }}
+        >
+          关闭
+        </button>,
       ]}
     >
       {triagePack && (
@@ -480,6 +528,27 @@ const IntelliInspect: React.FC = () => {
           </div>
         </div>
       )}
+    </Modal>
+    <Modal
+      className="ii-triage-modal"
+      title="研判包 Markdown"
+      open={!!copyFallbackMarkdown}
+      onCancel={() => setCopyFallbackMarkdown('')}
+      style={{ top: 24 }}
+      footer={[
+        <button key="close" className="btn-primary" onClick={() => setCopyFallbackMarkdown('')}>关闭</button>,
+      ]}
+      width={760}
+    >
+      <textarea
+        className="ii-copy-fallback"
+        readOnly
+        value={copyFallbackMarkdown}
+        onFocus={event => event.currentTarget.select()}
+      />
+      <div className="ii-card-sub" style={{ marginTop: 8 }}>
+        当前浏览器未开放剪贴板权限，可直接选中文本复制；内容为研判辅助材料，转案件前仍需人工确认。
+      </div>
     </Modal>
   </div>
   )

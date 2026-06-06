@@ -22,6 +22,7 @@ import { useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
+import { buildReportPresentation, getReportDraftMeta, getReportExportMarkdown } from './reportPresentationModel'
 import './Reports.css'
 
 const Reports: React.FC = () => {
@@ -35,34 +36,7 @@ const Reports: React.FC = () => {
 
   const handleExportReport = (meetingId: string, report: any) => {
     try {
-      const content = typeof report.content === 'object' ? report.content : {}
-      const toList = (items?: string[]) =>
-        items && items.length > 0 ? items.map((item) => `- ${item}`).join('\n') : '- 暂无'
-      const markdown = [
-        `# AI 圆桌研判报告`,
-        '',
-        `- 会议编号：${meetingId}`,
-        `- 导出时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`,
-        '',
-        '## 执行摘要',
-        content.summary || report.summary || '暂无摘要',
-        '',
-        '## 综合结论',
-        content.conclusions || '暂无结论',
-        '',
-        '## 共识点',
-        toList(report.consensus_points),
-        '',
-        '## 分歧点',
-        toList(report.disagreement_points),
-        '',
-        '## 关键洞察',
-        toList(content.top_ranked_insights),
-        '',
-        '## 行动建议',
-        toList(content.recommendations),
-        '',
-      ].join('\n')
+      const markdown = getReportExportMarkdown(meetingId, report, dayjs().format('YYYY-MM-DD HH:mm:ss'))
       const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -190,18 +164,18 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
 
   if (!report) return null
 
-  const reportContent = typeof report.content === 'object' ? report.content : null
+  const presentation = buildReportPresentation(report)
+  const reportMeta = getReportDraftMeta(report)
   const displayDate = meeting
     ? dayjs(meeting.completed_at || meeting.created_at).format('YYYY-MM-DD HH:mm')
     : '—'
 
-  const consensusCount    = report.consensus_points?.length || 0
-  const disagreementCount = report.disagreement_points?.length || 0
-  const insightCount      = reportContent?.top_ranked_insights?.length || 0
+  const consensusCount    = presentation.consensusPoints.length
+  const disagreementCount = presentation.disagreementPoints.length
+  const insightCount      = presentation.keyInsights.length + presentation.chainCorrelations.length
   const caseCount         = meeting?.case_ids?.length || 0
 
-  const summaryText: string =
-    reportContent?.summary || report.summary || '暂无摘要信息'
+  const summaryText = presentation.summary
 
   return (
     <>
@@ -212,6 +186,9 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             {meetingId.slice(0, 14)}…
           </span>
           <span className="tag t-d" style={{ marginLeft: 6 }}>已完成</span>
+          <span className="tag" style={{ marginLeft: 6 }}>{reportMeta.draftStatus}</span>
+          <span className="tag t-p" style={{ marginLeft: 6 }}>{reportMeta.reviewStatus}</span>
+          <span className="tag t-o" style={{ marginLeft: 6 }}>{reportMeta.modelStatus}</span>
           <span className="spacer" />
           <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
             {displayDate}
@@ -295,15 +272,15 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
         <div className="rp-modal-section">
           <div className="rp-modal-section__title">执行摘要</div>
           <p className="rp-modal-section__text">
-            {reportContent?.summary || report.summary || '无'}
+            {presentation.summary}
           </p>
         </div>
 
         {/* 综合结论 */}
-        {reportContent?.conclusions && (
+        {presentation.conclusions !== '暂无' && (
           <div className="rp-modal-section">
             <div className="rp-modal-section__title">综合结论</div>
-            <p className="rp-modal-section__text">{reportContent.conclusions}</p>
+            <p className="rp-modal-section__text">{presentation.conclusions}</p>
           </div>
         )}
 
@@ -320,9 +297,9 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                 </span>
               ),
               style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
-              children: report.consensus_points && report.consensus_points.length > 0 ? (
+              children: presentation.consensusPoints.length > 0 ? (
                 <div>
-                  {report.consensus_points.map((point: string, idx: number) => (
+                  {presentation.consensusPoints.map((point, idx) => (
                     <div key={idx} className="rp-modal-list-item">
                       <CheckCircleOutlined style={{ color: 'var(--ok)', flexShrink: 0, marginTop: 1 }} />
                       <span>{point}</span>
@@ -341,9 +318,9 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                 </span>
               ),
               style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
-              children: report.disagreement_points && report.disagreement_points.length > 0 ? (
+              children: presentation.disagreementPoints.length > 0 ? (
                 <div>
-                  {report.disagreement_points.map((point: string, idx: number) => (
+                  {presentation.disagreementPoints.map((point, idx) => (
                     <div key={idx} className="rp-modal-list-item">
                       <ExclamationCircleOutlined style={{ color: 'var(--warn)', flexShrink: 0, marginTop: 1 }} />
                       <span>{point}</span>
@@ -354,21 +331,67 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                 <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>无分歧点</span>
               ),
             },
-            ...((reportContent?.top_ranked_insights?.length ?? 0) > 0
+            ...(presentation.keyInsights.length > 0
               ? [{
                   key: 'insights',
                   label: (
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--info)', textTransform: 'uppercase' as const }}>
-                      关键洞察 ({insightCount})
+                      关键洞察 ({presentation.keyInsights.length})
                     </span>
                   ),
                   style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
                   children: (
                     <div>
-                      {(reportContent!.top_ranked_insights as string[]).map((insight: string, idx: number) => (
+                      {presentation.keyInsights.map((insight, idx) => (
                         <div key={idx} className="rp-modal-list-item">
                           <BulbOutlined style={{ color: 'var(--info)', flexShrink: 0, marginTop: 1 }} />
                           <span>{insight}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                }]
+              : []),
+            ...(presentation.areaRisks.length > 0
+              ? [{
+                  key: 'areaRisks',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' as const }}>
+                      风险区域 ({presentation.areaRisks.length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <div>
+                      {presentation.areaRisks.map((item, idx) => (
+                        <div key={idx} className="rp-modal-list-item">
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--warn)', flexShrink: 0 }}>
+                            R{idx + 1}
+                          </span>
+                          <span>{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                }]
+              : []),
+            ...(presentation.chainCorrelations.length > 0
+              ? [{
+                  key: 'correlations',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--accent)', textTransform: 'uppercase' as const }}>
+                      链条关系 ({presentation.chainCorrelations.length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <div>
+                      {presentation.chainCorrelations.map((item, idx) => (
+                        <div key={idx} className="rp-modal-list-item">
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+                            C{idx + 1}
+                          </span>
+                          <span>{item}</span>
                         </div>
                       ))}
                     </div>
@@ -379,13 +402,13 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               key: 'recommendations',
               label: (
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
-                  建议 ({reportContent?.recommendations?.length || 0})
+                  建议 ({presentation.actionSuggestions.length})
                 </span>
               ),
               style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
-              children: (reportContent?.recommendations?.length ?? 0) > 0 ? (
+              children: presentation.actionSuggestions.length > 0 ? (
                 <div>
-                  {(reportContent!.recommendations as string[]).map((rec: string, idx: number) => (
+                  {presentation.actionSuggestions.map((rec, idx) => (
                     <div key={idx} className="rp-modal-list-item">
                       <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', flexShrink: 0 }}>
                         {String(idx + 1).padStart(2, '0')}
@@ -398,6 +421,29 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                 <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>无建议</span>
               ),
             },
+            ...(presentation.experienceCards.length > 0
+              ? [{
+                  key: 'experience',
+                  label: (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' as const }}>
+                      经验沉淀 ({presentation.experienceCards.length})
+                    </span>
+                  ),
+                  style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
+                  children: (
+                    <div>
+                      {presentation.experienceCards.map((item, idx) => (
+                        <div key={idx} className="rp-modal-list-item">
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ok)', flexShrink: 0 }}>
+                            E{idx + 1}
+                          </span>
+                          <span>{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                }]
+              : []),
             ...(analyses && analyses.length > 0
               ? [{
                   key: 'analyses',
@@ -460,26 +506,26 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                   ),
                 }]
               : []),
-            ...(reportContent?.model_contributions && Object.keys(reportContent.model_contributions).length > 0
+            ...(presentation.modelContributions.length > 0
               ? [{
                   key: 'contributions',
                   label: (
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
-                      各模型贡献 ({Object.keys(reportContent.model_contributions).length})
+                      各模型贡献 ({presentation.modelContributions.length})
                     </span>
                   ),
                   style: { background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 0, marginBottom: 6 },
                   children: (
                     <List
                       size="small"
-                      dataSource={Object.entries(reportContent.model_contributions)}
-                      renderItem={([model, contribution]: [string, any]) => (
+                      dataSource={presentation.modelContributions}
+                      renderItem={(item) => (
                         <List.Item style={{ borderColor: 'var(--line-soft)' }}>
                           <Space direction="vertical" style={{ width: '100%' }}>
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--accent)', letterSpacing: '0.06em' }}>
-                              {model}
+                              {item.model}
                             </span>
-                            <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{contribution}</span>
+                            <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{item.contribution}</span>
                           </Space>
                         </List.Item>
                       )}

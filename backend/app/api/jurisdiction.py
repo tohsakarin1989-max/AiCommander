@@ -4,6 +4,7 @@ import io
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import httpx
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -22,7 +23,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 class JurisdictionAssetCreate(BaseModel):
     external_id: Optional[str] = None
     name: str = Field(..., description="要素名称")
-    asset_type: str = Field(..., description="要素类型，如 road/village/well/camera/patrol_point")
+    asset_type: str = Field(..., description="要素类型，如 well/camera/patrol_point；road/village 应优先来自地图参考数据")
     geometry_type: str = Field("point", description="point/line/polygon")
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -64,6 +65,17 @@ class JurisdictionAssetBulkCreate(BaseModel):
 class GeoJsonImportRequest(BaseModel):
     geojson: Dict[str, Any]
     source: str = "map"
+
+
+class PublicMapSyncRequest(BaseModel):
+    south: Optional[float] = Field(None, description="南边界纬度")
+    west: Optional[float] = Field(None, description="西边界经度")
+    north: Optional[float] = Field(None, description="北边界纬度")
+    east: Optional[float] = Field(None, description="东边界经度")
+    center_lat: Optional[float] = Field(None, description="中心点纬度；不填则按已有案件/资产坐标推断")
+    center_lng: Optional[float] = Field(None, description="中心点经度；不填则按已有案件/资产坐标推断")
+    radius_km: float = Field(6.0, ge=0.2, le=20.0, description="自动拉取半径，默认 6 公里")
+    max_features: int = Field(160, ge=1, le=500, description="最多入库的公共地图要素数")
 
 
 class JurisdictionAssetResponse(BaseModel):
@@ -136,7 +148,7 @@ async def create_asset(
     payload: JurisdictionAssetCreate,
     db: Session = Depends(get_db),
 ) -> JurisdictionAsset:
-    """录入道路、村屯、井口、技防设施等辖区基础要素。"""
+    """录入油区业务资产、防控设施和内部路线；道路、村屯优先走地图参考导入。"""
     return JurisdictionService.create_asset(db, payload.dict())
 
 
@@ -145,11 +157,35 @@ async def bulk_create_assets(
     payload: JurisdictionAssetBulkCreate,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """批量导入地图/GIS/内部台账要素，作为阶段 1 数据底座入口。"""
+    """批量导入地图/GIS/内部台账要素，形成公共地图参考和油区业务资产。"""
     return JurisdictionService.bulk_create_assets(
         db,
         [item.dict() for item in payload.items],
     )
+
+
+@router.post("/assets/sync-public-map")
+async def sync_public_map_assets(
+    payload: PublicMapSyncRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """按已有案件/资产坐标自动拉取公共地图参考要素，并去重入库。"""
+    try:
+        return JurisdictionService.sync_public_map_references(
+            db,
+            south=payload.south,
+            west=payload.west,
+            north=payload.north,
+            east=payload.east,
+            center_lat=payload.center_lat,
+            center_lng=payload.center_lng,
+            radius_km=payload.radius_km,
+            max_features=payload.max_features,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"公共地图服务暂不可用: {exc}") from exc
 
 
 @router.post("/assets/import-geojson")
@@ -247,7 +283,7 @@ async def get_assets_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
 
 @router.get("/data-quality")
 async def get_data_quality(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """审计底座完整度、坐标缺失、重复点和校验状态。"""
+    """审计业务资产完整度、坐标缺失、重复点、校验状态和公共地图参考缺口。"""
     return JurisdictionService.audit_data_quality(db)
 
 
@@ -271,7 +307,7 @@ async def get_case_risk_context(
     case_id: int,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """基于辖区要素为案件生成道路、村屯、目标和防控条件画像。"""
+    """基于地图参考和油区业务资产为案件生成道路、村屯、目标和防控条件画像。"""
     try:
         return JurisdictionService.build_case_risk_context(db, case_id)
     except ValueError as exc:

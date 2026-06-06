@@ -538,8 +538,8 @@ class SmartAnalysisService:
         if isinstance(coverage_score, (int, float)) and coverage_score < 80:
             actions.append({
                 "priority": 5,
-                "action": "补齐辖区底座缺口",
-                "description": "优先治理缺坐标、未校验和重复的道路、村屯、井口、技防点位",
+                "action": "补齐业务资产和地图参考缺口",
+                "description": "优先治理缺坐标、未校验和重复的井点、管线节点、技防点位；道路村屯走地图参考导入",
                 "category": "jurisdiction",
             })
 

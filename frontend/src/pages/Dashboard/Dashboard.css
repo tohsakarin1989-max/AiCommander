@@ -4,12 +4,12 @@
    ========================================================= */
 
 .db-command-main {
-  height: calc(100vh - 62px);
-  min-height: 620px;
+  height: calc(100dvh - 104px);
+  min-height: 0;
   display: grid;
-  grid-template-rows: 76px minmax(0, 1fr) 28px;
-  gap: 10px;
-  padding: 12px var(--pad);
+  grid-template-rows: 70px minmax(0, 1fr) 24px;
+  gap: 8px;
+  padding: 10px var(--pad);
   overflow: hidden;
 }
 
@@ -22,7 +22,7 @@
 
 .db-command-title {
   min-width: 0;
-  padding: 12px 14px;
+  padding: 10px 14px;
   overflow: hidden;
 }
 
@@ -30,13 +30,13 @@
   margin: 0;
   color: var(--ink-0);
   font-family: var(--serif);
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 500;
   line-height: 1.1;
 }
 
 .db-command-title p {
-  margin: 7px 0 0;
+  margin: 5px 0 0;
   color: var(--ink-3);
   font-family: var(--mono);
   font-size: 10.5px;
@@ -70,12 +70,23 @@
   color: var(--info);
 }
 
+.db-command-kpi .scope {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .db-command-board {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(260px, 0.88fr) minmax(420px, 1.38fr) minmax(260px, 0.82fr);
   grid-template-rows: minmax(0, 1.02fr) minmax(0, 0.86fr) minmax(0, 0.72fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .db-command-card {
@@ -241,6 +252,19 @@
   line-height: 1.45;
 }
 
+.db-list-link {
+  justify-self: start;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-decoration: none;
+  border-bottom: 1px solid var(--accent-line);
+}
+
+.db-list-link:hover {
+  color: var(--ink-0);
+}
+
 .db-list-item--hot {
   border-color: var(--accent-line);
   background: var(--accent-soft);
@@ -282,8 +306,8 @@
   min-height: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 33% 42%, oklch(0.70 0.20 25 / 0.12), transparent 24%),
-    radial-gradient(circle at 68% 35%, oklch(0.78 0.11 220 / 0.1), transparent 24%),
+    radial-gradient(circle at 35% 42%, oklch(0.70 0.20 25 / 0.16), transparent 28%),
+    radial-gradient(circle at 70% 34%, oklch(0.78 0.11 220 / 0.14), transparent 30%),
     linear-gradient(135deg, oklch(0.16 0.014 250), oklch(0.105 0.012 250));
 }
 
@@ -296,25 +320,38 @@
 
 .db-map-boundary {
   fill: oklch(0.78 0.14 var(--accent-hue) / 0.035);
-  stroke: oklch(0.78 0.14 var(--accent-hue) / 0.26);
+  stroke: oklch(0.78 0.14 var(--accent-hue) / 0.28);
   stroke-width: 2;
   stroke-dasharray: 12 8;
+}
+
+.db-map-corridor {
+  fill: oklch(0.78 0.14 var(--accent-hue) / 0.055);
+  stroke: oklch(0.78 0.14 var(--accent-hue) / 0.24);
+  stroke-width: 2.2;
+}
+
+.db-map-corridor--inner {
+  fill: oklch(0.78 0.11 220 / 0.045);
+  stroke: oklch(0.78 0.11 220 / 0.2);
+  stroke-width: 1.4;
+  stroke-dasharray: 10 7;
 }
 
 .db-map-roads path {
   fill: none;
-  stroke: oklch(0.82 0.01 90 / 0.18);
-  stroke-width: 2;
-  stroke-dasharray: 12 8;
+  stroke: oklch(0.82 0.01 90 / 0.23);
+  stroke-width: 1.6;
+  stroke-dasharray: 11 8;
 }
 
 .db-map-pipelines path {
   fill: none;
-  stroke: var(--accent);
-  stroke-width: 3.5;
+  stroke: oklch(0.82 0.16 var(--accent-hue) / 0.82);
+  stroke-width: 4;
   stroke-linecap: round;
-  stroke-dasharray: 14 7;
-  opacity: 0.72;
+  stroke-dasharray: 15 7;
+  filter: drop-shadow(0 0 7px oklch(0.78 0.14 var(--accent-hue) / 0.26));
 }
 
 .db-map-fields circle {
@@ -327,7 +364,8 @@
 .db-map-fields text,
 .db-map-heat text,
 .db-map-city-labels text,
-.db-chain-line text {
+.db-chain-line text,
+.db-map-case-label text {
   fill: var(--ink-2);
   font-family: var(--mono);
   font-size: 11px;
@@ -337,6 +375,19 @@
   stroke-linejoin: round;
 }
 
+.db-map-hotspot circle:nth-child(2) {
+  fill: oklch(0.74 0.18 28 / 0.42);
+  stroke: oklch(0.82 0.18 35 / 0.82);
+  stroke-width: 2;
+}
+
+.db-map-hotspot rect,
+.db-map-case-label rect {
+  fill: oklch(0.12 0.012 250 / 0.84);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
 .db-map-city-labels text {
   fill: var(--ink-3);
   text-anchor: middle;
@@ -344,8 +395,25 @@
 
 .db-map-case-points .db-map-point {
   stroke: var(--ink-0);
-  stroke-width: 2;
-  opacity: 0.92;
+  stroke-width: 2.2;
+  opacity: 0.96;
+  filter: url("#dashboard-point-glow");
+}
+
+.db-map-case-label path {
+  fill: none;
+  stroke: oklch(0.78 0.11 220 / 0.28);
+  stroke-width: 1;
+  stroke-dasharray: 5 5;
+}
+
+.db-map-case-label text {
+  fill: var(--ink-1);
+  font-size: 10px;
+}
+
+.db-map-case-label:nth-child(n+7) {
+  opacity: 0.72;
 }
 
 .db-chain-line line {
@@ -370,10 +438,18 @@
   fill: var(--info);
 }
 
-.db-map-empty {
+.db-map-empty-state text:first-child {
+  fill: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 22px;
+  text-anchor: middle;
+}
+
+.db-map-empty-state text:last-child {
   fill: var(--ink-3);
   font-family: var(--mono);
-  font-size: 18px;
+  font-size: 13px;
+  text-anchor: middle;
 }
 
 .db-map-controls {
@@ -386,7 +462,8 @@
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--line);
-  background: oklch(0.12 0.012 250 / 0.9);
+  background: oklch(0.10 0.012 250 / 0.88);
+  backdrop-filter: blur(10px);
 }
 
 .db-map-controls button,
@@ -419,7 +496,8 @@
   gap: 7px;
   padding: 7px 8px;
   border: 1px solid var(--line);
-  background: oklch(0.12 0.012 250 / 0.86);
+  background: oklch(0.10 0.012 250 / 0.86);
+  backdrop-filter: blur(10px);
   color: var(--ink-2);
   font-family: var(--mono);
   font-size: 9.5px;
@@ -451,7 +529,8 @@
   gap: 8px;
   padding: 8px 9px;
   border: 1px solid var(--accent-line);
-  background: oklch(0.12 0.012 250 / 0.9);
+  background: oklch(0.10 0.012 250 / 0.9);
+  backdrop-filter: blur(10px);
   color: var(--ink-2);
   font-size: 9.5px;
   line-height: 1.35;

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links
+from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
 import app.models  # noqa: F401
@@ -41,7 +42,7 @@ def startup() -> None:
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=build_cors_origins(settings.FRONTEND_URL, settings.CORS_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

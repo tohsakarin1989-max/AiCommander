@@ -184,6 +184,48 @@ export interface BonusDistribution {
   amount: number | null
 }
 
+export interface BonusCalculationGap {
+  key: string
+  label: string
+  detail: string
+}
+
+export interface BonusCalculationGate {
+  status: 'ready' | 'blocked_by_data'
+  missing_items: BonusCalculationGap[]
+}
+
+export interface BonusManagementPeriodMetrics {
+  start: string
+  end: string
+  case_count: number
+  vehicle_actual: number
+  vehicle_target: number
+  vehicle_remaining: number
+  vehicle_high: boolean
+  person_actual: number
+  person_target: number
+  person_remaining: number
+  person_high: boolean
+}
+
+export interface BonusManagementContext {
+  period_type: 'quarter' | string
+  rules_version?: string
+  pricing_basis: string
+  case_amount_status: 'provisional' | 'not_calculated' | string
+  selected_case_amount: number
+  primary_squad?: string | null
+  period: {
+    year: number
+    quarter: number
+    quarter_label: string
+    annual_label: string
+  }
+  quarter: BonusManagementPeriodMetrics
+  annual: BonusManagementPeriodMetrics
+}
+
 export interface BonusAssessment {
   case_id: number
   case_number: string
@@ -195,6 +237,7 @@ export interface BonusAssessment {
     satisfied_count: number
     missing_materials: string[]
   }
+  calculation_gate: BonusCalculationGate
   material_checks: BonusMaterialCheck[]
   bonus_items: BonusAssessmentItem[]
   total_suggested_amount: number
@@ -202,6 +245,7 @@ export interface BonusAssessment {
   bonus_counts?: Record<string, number>
   squad_performance?: Record<string, BonusSquadPerformance>
   distribution?: BonusDistribution[]
+  management_context?: BonusManagementContext
   warnings?: string[]
   ready_for_review: boolean
   manual_review_required: boolean
@@ -580,6 +624,44 @@ export interface MeetingReportContent {
   ranking_summary?: string
 }
 
+export interface StructuredAiInference {
+  claim: string
+  basis: string[]
+  confidence: string | number
+}
+
+export interface StructuredAiRecommendation {
+  title: string
+  action: string
+  basis: string[]
+  evidence: unknown[]
+  confidence?: number | null
+  priority?: string
+}
+
+export interface StructuredAiEvidenceRef {
+  id: string
+  kind: string
+  summary: string
+  basis?: string[]
+}
+
+export interface StructuredAiOutput {
+  title: string
+  output_type: string
+  draft_status: 'draft' | string
+  review_status: 'pending_review' | 'approved' | 'rejected' | 'flagged' | string
+  model_status: 'deterministic_fallback' | 'llm_success' | 'llm_failed' | string
+  generated_at: string
+  facts: string[]
+  inferences: StructuredAiInference[]
+  recommendations: StructuredAiRecommendation[]
+  information_gaps: string[]
+  evidence_refs: StructuredAiEvidenceRef[]
+  boundary: string[]
+  markdown: string
+}
+
 export interface MeetingReport {
   meeting_id: string
   summary: string
@@ -595,6 +677,10 @@ export interface MeetingReport {
   content?: MeetingReportContent | string
   consensus_points?: string[]
   disagreement_points?: string[]
+  draft_status?: string
+  review_status?: string
+  model_status?: string
+  ai_output?: StructuredAiOutput
 }
 
 // 分析结果类型（第一阶段）
@@ -877,17 +963,22 @@ export interface Conclusion {
   meeting_id?: string
   meeting_info?: MeetingInfo
   status: string
+  draft_status?: string
+  review_status?: string
+  model_status?: string
+  ai_output?: StructuredAiOutput
   confidence: number
   risk_level: string
   summary?: string
   evidence?: {
     key_evidence?: string[]
     recommendations?: string[]
+    ai_output?: StructuredAiOutput
     raw?: {
       case?: { case_number?: string }
       similar_cases?: Array<{ case_id: number; similarity: number; metadata?: { case_type?: string } }>
       related_meetings?: Array<{ meeting_id: string; status: string }>
-      related_reports?: Array<{ report_id: string; title?: string }>
+      related_reports?: Array<{ report_id: string; title?: string; report_type?: string; meeting_id?: string }>
       meeting?: { meeting_id: string; status: string; case_ids: number[] }
       report?: { content?: string; report_type?: string }
     }
@@ -1023,6 +1114,21 @@ export interface TrajectoryAnalysis {
   time_span_days: number
   average_speed_km_per_day: number
   direction_trend?: string
+}
+
+export interface TrajectoryReview {
+  case_ids: number[]
+  method: 'path_condition_review' | string
+  facts: Array<Record<string, unknown>>
+  path_conditions: Array<Record<string, unknown>>
+  inferences: Array<Record<string, unknown>>
+  information_gaps: string[]
+  reusable_suggestions: string[]
+  analysis?: TrajectoryAnalysis | Record<string, unknown>
+  boundary: string
+  deprecated?: boolean
+  compatibility_note?: string
+  use_ai_requested?: boolean
 }
 
 export interface TrajectoryPrediction {

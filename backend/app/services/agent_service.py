@@ -149,7 +149,7 @@ class AgentService:
 必须遵守：
 1. 区分 facts、inferences、recommendations、information_gaps；
 2. recommendations 只能是防控参考或信息补齐建议，不能写成已执行任务；
-3. 不做犯罪预测，不自动派发巡逻，不编造未掌握的人车链条或销赃链条；
+3. 不做犯罪预测，不自动创建外勤任务，不编造未掌握的人车链条或销赃链条；
 4. confidence 为 0-1，依据不足时降低置信度。
 
 JSON字段：

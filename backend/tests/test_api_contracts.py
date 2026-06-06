@@ -455,7 +455,7 @@ def test_suggestions_route_returns_queue_shape(api_db_session: Session):
     assert "generated_at" in payload
 
 
-def test_suggestions_hide_area_after_active_patrol_created(api_db_session: Session):
+def test_suggestions_expose_area_reference_without_patrol_execution_task(api_db_session: Session):
     client = _build_client(api_db_session)
     api_db_session.add(
         AreaRiskAssessment(
@@ -468,7 +468,12 @@ def test_suggestions_hide_area_after_active_patrol_created(api_db_session: Sessi
     api_db_session.commit()
 
     before = client.get("/api/suggestions/").json()["suggestions"]
-    assert any(item["id"].startswith("area-patrol-") for item in before)
+    assert any(
+        item["id"].startswith("area-reference-")
+        and item["action"] == "review_prevention_reference"
+        for item in before
+    )
+    assert not any(item["id"].startswith("area-patrol-") for item in before)
 
     api_db_session.add(
         PatrolRecord(
@@ -481,6 +486,7 @@ def test_suggestions_hide_area_after_active_patrol_created(api_db_session: Sessi
     api_db_session.commit()
 
     after = client.get("/api/suggestions/").json()["suggestions"]
+    assert any(item["id"].startswith("area-reference-") for item in after)
     assert not any(item["id"].startswith("area-patrol-") for item in after)
 
 

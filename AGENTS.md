@@ -17,11 +17,13 @@
 - 前端开发：`cd frontend && npm install && npm run dev`（默认 http://localhost:3000），构建产物 `npm run build`，本地预览 `npm run preview`。
 - 后端测试：`cd backend && source venv/bin/activate && pytest`。如依赖外部数据库，请先设置 `DATABASE_URL` 和 `REDIS_URL`。
 - 本周涉及链条研判、地图连线或相关回归时，先读 `docs/superpowers/specs/2026-05-08-upgrade-roadmap.md`，至少补跑 `pytest tests/test_chain_analysis.py -v` 与 `cd frontend && npm run build`。
+- 本周如改指挥大屏、自动轮播列表、链条地图投屏展示，先读 `docs/superpowers/specs/2026-05-10-dashboard-command-screen-design.md` 和 `docs/superpowers/plans/2026-05-10-dashboard-command-screen.md`，至少补跑 `cd frontend && npm run test -- src/pages/Dashboard/dashboardCommandModel.test.ts` 与 `npm run build`。
 
 ## 编码风格与命名约定
 - Python 按 PEP 8 使用 4 空格缩进；路由模块 `app/api/<domain>.py`，服务层 `app/services/<domain>_service.py`，模型/仓库对应单复数保持一致；环境变量全大写下划线（如 `SECRET_KEY`、`DATABASE_URL`）。
 - TypeScript/React 组件使用 PascalCase 文件名（如 `CaseList.tsx`），hooks/store 采用 camelCase 导出；保持类型声明完善，API 调用封装在 `frontend/src/services`，避免组件内散落硬编码路径。
 - 当前未强制格式化工具，提交前请自行运行格式化（如 black/ruff 或 prettier）并保持 import 有序。
+- 处理 Dashboard 时，优先复用现有 SVG 地图缩放/拖拽和纯 TypeScript model helper，不要把大屏需求扩成新的业务后端或额外 schema。
 
 ## 测试指南
 - 使用 pytest，新增用例放置于 `backend/tests`，文件与函数命名 `test_*.py`/`test_*`。优先通过 in-memory SQLite/fixtures 隔离数据库，必要时模拟外部服务。

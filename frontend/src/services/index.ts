@@ -60,6 +60,8 @@ export { aiApi } from './ai'
 
 // 分析报告（部署建议、图谱）
 export { analysisApi } from './analysis'
+export { reportApi } from './reports'
+export type { ReportListItem } from './reports'
 
 // 系统配置（模型、参数）
 export { configApi } from './config'

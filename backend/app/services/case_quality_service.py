@@ -401,7 +401,7 @@ class CaseQualityService:
         patrol_actions: List[str] = []
         if not has_location:
             patrol_blockers.append("缺少巡逻区域")
-            patrol_actions.append("补充案发地点或责任区域，才能生成巡逻区域建议。")
+            patrol_actions.append("补充案发地点或责任区域，才能生成区域防控参考。")
         if not has_geo:
             patrol_actions.append("补充经纬度后可生成更准确路线顺序。")
         if has_geo and has_location:

@@ -26,6 +26,7 @@ import type { ColumnsType } from 'antd/es/table'
 import {
   AimOutlined,
   ClusterOutlined,
+  CloudDownloadOutlined,
   EnvironmentOutlined,
   RadarChartOutlined,
   UploadOutlined,
@@ -47,23 +48,140 @@ const ASSET_TYPE_LABELS: Record<string, string> = {
   station: '站点',
   valve: '阀室',
   storage: '储油点',
+  oil_depot: '站库/油库',
+  pipeline_node: '管线节点',
+  key_location: '重点部位',
   road: '道路/便道',
+  path: '小路',
+  access_road: '通达道路',
   village: '村屯',
+  residential: '居民区',
+  settlement: '聚落',
+  river: '河流',
+  bridge: '桥梁',
+  intersection: '路口',
   camera: '监控',
   lighting: '照明',
+  alarm: '报警器',
+  fence: '围栏',
   checkpoint: '卡口',
   patrol_point: '关注点',
   production_target: '生产目标',
   tech: '技防设施',
+  internal_route: '内部便道/临时通道',
+  temporary_route: '临时通道',
+  abandoned_road: '废弃路',
+  risk_route: '盗采高发路线',
+  blind_spot: '盲区',
+  high_risk_area: '历史高风险点',
 }
 
 const SOURCE_LABELS: Record<string, string> = {
   manual: '人工标注',
   map: '地图获取',
   import: '批量导入',
+  ledger: '内部台账',
 }
 
 type AssetFormValues = JurisdictionAssetCreate
+
+const PUBLIC_MAP_TYPES = new Set([
+  'road',
+  'path',
+  'access_road',
+  'village',
+  'residential',
+  'settlement',
+  'river',
+  'bridge',
+  'intersection',
+])
+
+const BUSINESS_ASSET_TYPES = [
+  ['well', '井口'],
+  ['pipeline_node', '管线节点'],
+  ['valve', '阀室'],
+  ['station', '站点'],
+  ['storage', '储油点'],
+  ['oil_depot', '站库/油库'],
+  ['key_location', '重点部位'],
+  ['production_target', '生产目标'],
+]
+
+const DEFENSE_ASSET_TYPES = [
+  ['camera', '监控'],
+  ['checkpoint', '卡口'],
+  ['lighting', '照明'],
+  ['alarm', '报警器'],
+  ['fence', '围栏'],
+  ['tech', '技防设施'],
+  ['patrol_point', '巡逻关注点'],
+]
+
+const SPECIAL_ROUTE_TYPES = [
+  ['internal_route', '内部便道/临时通道'],
+  ['temporary_route', '临时通道'],
+  ['abandoned_road', '废弃路'],
+  ['risk_route', '盗采高发路线'],
+  ['blind_spot', '监控/照明盲区'],
+  ['high_risk_area', '历史高风险点'],
+]
+
+const PUBLIC_REFERENCE_OPTIONS = [
+  ['road', '道路/便道'],
+  ['village', '村屯'],
+  ['bridge', '桥梁'],
+  ['intersection', '路口'],
+]
+
+function assetLayer(asset: Pick<JurisdictionAsset, 'asset_type' | 'source'>): 'public' | 'business' | 'derived' {
+  if (asset.asset_type?.startsWith('derived_')) return 'derived'
+  if (PUBLIC_MAP_TYPES.has(asset.asset_type)) return 'public'
+  return 'business'
+}
+
+function assetLayerLabel(asset: Pick<JurisdictionAsset, 'asset_type' | 'source'>): string {
+  const layer = assetLayer(asset)
+  if (layer === 'public') return '地图参考'
+  if (layer === 'derived') return '研判派生'
+  return '业务资产'
+}
+
+function assetLayerColor(asset: Pick<JurisdictionAsset, 'asset_type' | 'source'>): string {
+  const layer = assetLayer(asset)
+  if (layer === 'public') return 'blue'
+  if (layer === 'derived') return 'purple'
+  return 'gold'
+}
+
+function renderAssetTypeOptions(allowPublicManual = false) {
+  return (
+    <>
+      <Select.OptGroup label="油区业务资产">
+        {BUSINESS_ASSET_TYPES.map(([value, label]) => (
+          <Select.Option key={value} value={value}>{label}</Select.Option>
+        ))}
+      </Select.OptGroup>
+      <Select.OptGroup label="防控设施">
+        {DEFENSE_ASSET_TYPES.map(([value, label]) => (
+          <Select.Option key={value} value={value}>{label}</Select.Option>
+        ))}
+      </Select.OptGroup>
+      <Select.OptGroup label="内部路线 / 盲区">
+        {SPECIAL_ROUTE_TYPES.map(([value, label]) => (
+          <Select.Option key={value} value={value}>{label}</Select.Option>
+        ))}
+      </Select.OptGroup>
+      <Select.OptGroup label="公共地图参考">
+        {PUBLIC_REFERENCE_OPTIONS.map(([value, label]) => (
+          <Select.Option key={value} value={value} disabled={!allowPublicManual}>
+            {allowPublicManual ? label : `${label}（从地图导入）`}
+          </Select.Option>
+        ))}
+      </Select.OptGroup>
+    </>
+  )
+}
 
 function typeLabel(type?: string | null): string {
   if (!type) return '未知'
@@ -109,6 +227,11 @@ const assetColumns: ColumnsType<JurisdictionAsset> = [
     dataIndex: 'asset_type',
     width: 120,
     render: (value: string) => <Tag color="gold">{typeLabel(value)}</Tag>,
+  },
+  {
+    title: '数据层',
+    width: 110,
+    render: (_, record) => <Tag color={assetLayerColor(record)}>{assetLayerLabel(record)}</Tag>,
   },
   {
     title: '来源',
@@ -299,6 +422,21 @@ export default function Jurisdiction() {
     },
   })
 
+  const publicMapSyncMutation = useMutation({
+    mutationFn: () => jurisdictionApi.syncPublicMapReferences(),
+    onSuccess: result => {
+      if (result.errors?.length) {
+        message.warning(`公共地图拉取完成，部分要素未入库：${result.errors.length} 条错误`)
+      } else {
+        message.success(`公共地图补全完成：拉取 ${result.pulled} 条，可用 ${result.usable} 条，新增 ${result.created}，更新 ${result.updated}`)
+      }
+      invalidateJurisdiction()
+    },
+    onError: () => {
+      message.error('公共地图服务暂不可用，稍后重试或使用离线 GeoJSON 导入')
+    },
+  })
+
   const tablePreviewMutation = useMutation({
     mutationFn: (file: File) => jurisdictionApi.importAssetTable(file, true),
     onSuccess: result => {
@@ -324,9 +462,10 @@ export default function Jurisdiction() {
   const context = contextQuery.data
   const assets = assetsQuery.data ?? []
   const summary = summaryQuery.data
-  const byType = summary?.by_type ?? {}
-  const mapCount = summary?.by_source?.map ?? 0
-  const manualCount = summary?.by_source?.manual ?? 0
+  const layerCounts = summary?.by_layer ?? {}
+  const publicReferenceCount = layerCounts.public_map_reference ?? assets.filter(asset => assetLayer(asset) === 'public').length
+  const businessAssetCount = layerCounts.oil_business_asset ?? assets.filter(asset => assetLayer(asset) === 'business').length
+  const derivedConditionCount = (context?.risk_conditions.length ?? 0) + (context?.prevention_opportunities.length ?? 0)
   const dataQuality = dataQualityQuery.data
   const workbench = workbenchQuery.data
   const availableAssetTypes = useMemo(
@@ -372,8 +511,8 @@ export default function Jurisdiction() {
           <div className="eyebrow">Jurisdiction Risk Foundation</div>
           <h1>辖区风险底座</h1>
           <p>
-            把地图获取的道路、村屯和人工补充的井口、技防、重点区域统一沉淀为辖区环境要素，
-            让已破案件可以反推出“相似条件”和“现场薄弱点”。
+            公共地图参考、油区业务资产和研判派生条件分层沉淀，
+            用已破案件反推“作案条件”“相似风险点”和“现场薄弱点”。
           </p>
         </div>
         <div className="hero-metric">
@@ -391,23 +530,23 @@ export default function Jurisdiction() {
         </Col>
         <Col xs={24} md={6}>
           <Card className="jurisdiction-card">
-            <Statistic title="地图来源" value={mapCount} prefix={<EnvironmentOutlined />} />
+            <Statistic title="地图参考" value={publicReferenceCount} prefix={<EnvironmentOutlined />} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card className="jurisdiction-card">
-            <Statistic title="人工标注" value={manualCount} prefix={<AimOutlined />} />
+            <Statistic title="业务资产" value={businessAssetCount} prefix={<AimOutlined />} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card className="jurisdiction-card">
-            <Statistic title="生产目标" value={(byType.well ?? 0) + (byType.station ?? 0) + (byType.storage ?? 0)} prefix={<RadarChartOutlined />} />
+            <Statistic title="派生条件" value={derivedConditionCount} prefix={<RadarChartOutlined />} />
           </Card>
         </Col>
       </Row>
 
       <Card
-        title="地图图层管理 · 可视化维护辖区底座"
+        title="地图参考与业务资产图层"
         className="jurisdiction-card jurisdiction-map-card"
         extra={<Tag>{mapAssets.length} / {assets.length} 个可见</Tag>}
       >
@@ -428,25 +567,40 @@ export default function Jurisdiction() {
           onAssetClick={openEditAsset}
         />
         <div className="jurisdiction-muted jurisdiction-map-hint">
-          点击地图上的点、线、面要素可打开编辑；无坐标要素仍可在下方表格双击维护。
+          道路、村屯为地图参考；井点、管线节点、技防设施、盲区和内部路线为业务资产。
         </div>
       </Card>
 
       <Row gutter={[16, 16]} className="jurisdiction-section">
         <Col xs={24} lg={10}>
-          <Card title="生产化导入 · GeoJSON / 地图底座" className="jurisdiction-card">
+          <Card title="公共地图参考导入 · GeoJSON / 离线地图" className="jurisdiction-card">
             <Alert
-              type="warning"
+              type="info"
               showIcon
-              message="完整功能要求先把底座数据导进来"
-              description="支持 FeatureCollection；Point/LineString/Polygon 会自动计算中心点，按 properties.id/external_id 去重更新。"
+              message="道路、村屯不作为人工必填"
+              description="系统可按已有案件和业务资产坐标自动拉取公共地图参考；也支持导入离线道路、村屯、河流、路口等 GeoJSON。"
               style={{ marginBottom: 12 }}
             />
+            <div className="jurisdiction-auto-sync">
+              <Button
+                type="primary"
+                icon={<CloudDownloadOutlined />}
+                loading={publicMapSyncMutation.isPending}
+                onClick={() => publicMapSyncMutation.mutate()}
+              >
+                自动拉取公共地图参考
+              </Button>
+              <span>
+                来源 OpenStreetMap / Overpass，默认按案件和资产坐标推断约 6 公里范围，自动去重更新。
+              </span>
+            </div>
+            <div className="jurisdiction-import-divider" />
+            <div className="jurisdiction-subtitle">离线 GeoJSON 导入</div>
             <Input.TextArea
               rows={7}
               value={geoJsonInput}
               onChange={event => setGeoJsonInput(event.target.value)}
-              placeholder='{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"id":"road-001","name":"东侧便道","asset_type":"road"},"geometry":{"type":"LineString","coordinates":[[116.4,39.9],[116.404,39.904]]}}]}'
+              placeholder='{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"id":"road-001","name":"东侧道路","asset_type":"road"},"geometry":{"type":"LineString","coordinates":[[116.4,39.9],[116.404,39.904]]}}]}'
             />
             <Button
               type="primary"
@@ -459,7 +613,7 @@ export default function Jurisdiction() {
             </Button>
 
             <div className="jurisdiction-import-divider" />
-            <div className="jurisdiction-subtitle">CSV / Excel 台账导入</div>
+            <div className="jurisdiction-subtitle">油区业务资产台账导入</div>
             <Upload.Dragger
               multiple={false}
               showUploadList={false}
@@ -473,7 +627,7 @@ export default function Jurisdiction() {
             >
               <p className="ant-upload-drag-icon"><UploadOutlined /></p>
               <p className="ant-upload-text">
-                {selectedTableFile ? selectedTableFile.name : '支持 CSV / Excel，表头可用 name、asset_type、latitude、longitude'}
+                {selectedTableFile ? selectedTableFile.name : '支持 CSV / Excel，表头可用 name、asset_type、latitude、longitude；适合井点、管线节点、监控、卡口'}
               </p>
             </Upload.Dragger>
             {tableImportPreview && (
@@ -534,12 +688,12 @@ export default function Jurisdiction() {
 
       <Row gutter={[16, 16]} className="jurisdiction-section">
         <Col xs={24} xl={10}>
-          <Card title="录入辖区要素" className="jurisdiction-card">
+          <Card title="录入油区业务资产" className="jurisdiction-card">
             <Alert
               type="info"
               showIcon
-              message="地图数据是底座，业务标注是价值"
-              description="道路、村屯可来自地图；井口、技防盲区、临时便道、隐蔽区域等需要人工或内部台账持续补充。"
+              message="只维护公共地图没有或业务含义特殊的数据"
+              description="井点、管线节点、阀室、站库、监控、卡口、盲区、内部便道和盗采高发路线可人工录入；普通道路、村屯建议走地图参考导入。"
               style={{ marginBottom: 16 }}
             />
             <Form
@@ -557,9 +711,7 @@ export default function Jurisdiction() {
                 <Col xs={24} md={12}>
                   <Form.Item name="asset_type" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
                     <Select placeholder="选择要素类型">
-                      {Object.entries(ASSET_TYPE_LABELS).map(([value, label]) => (
-                        <Select.Option key={value} value={value}>{label}</Select.Option>
-                      ))}
+                      {renderAssetTypeOptions(false)}
                     </Select>
                   </Form.Item>
                 </Col>
@@ -577,8 +729,8 @@ export default function Jurisdiction() {
                   <Form.Item name="source" label="来源">
                     <Select>
                       <Select.Option value="manual">人工标注</Select.Option>
-                      <Select.Option value="map">地图获取</Select.Option>
                       <Select.Option value="import">批量导入</Select.Option>
+                      <Select.Option value="ledger">内部台账</Select.Option>
                     </Select>
                   </Form.Item>
                 </Col>
@@ -594,7 +746,7 @@ export default function Jurisdiction() {
                 </Col>
               </Row>
               <Button type="primary" htmlType="submit" loading={createAssetMutation.isPending}>
-                录入到底座
+                录入业务资产
               </Button>
             </Form>
           </Card>
@@ -634,7 +786,7 @@ export default function Jurisdiction() {
 
             {contextQuery.isFetching && <Spin />}
             {!context && !contextQuery.isFetching && (
-              <Empty description="输入案件 ID 后生成道路、村屯、技防覆盖和现场条件画像" />
+              <Empty description="输入案件 ID 后生成地图参考、业务资产和现场条件画像" />
             )}
             {context && (
               <div className="risk-context">
@@ -688,7 +840,7 @@ export default function Jurisdiction() {
                 )}
               />
             ) : (
-              <Empty description="暂无相似目标，需先录入案件周边道路/村屯/生产目标" />
+              <Empty description="暂无相似目标，需先补齐案件坐标和周边生产目标/防控设施" />
             )}
           </Card>
         </Col>
@@ -879,9 +1031,7 @@ export default function Jurisdiction() {
             <Col xs={24} md={12}>
               <Form.Item name="asset_type" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
                 <Select>
-                  {Object.entries(ASSET_TYPE_LABELS).map(([value, label]) => (
-                    <Select.Option key={value} value={value}>{label}</Select.Option>
-                  ))}
+                  {renderAssetTypeOptions(true)}
                 </Select>
               </Form.Item>
             </Col>

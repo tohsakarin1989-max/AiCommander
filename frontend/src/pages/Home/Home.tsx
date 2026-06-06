@@ -42,7 +42,7 @@ const MODULES = [
   { path: '/case-intelligence', icon: '◈', label: '案件研判', desc: '相似条件与防控参考' },
   { path: '/cases/features', icon: '◇', label: '特征提取', desc: '案件质量与结构化画像' },
   { path: '/cases/spacetime', icon: '◉', label: '时空研判', desc: '时间和空间规律分析' },
-  { path: '/jurisdiction',  icon: '▦',  label: '辖区底座',   desc: '道路村屯井口空间基础' },
+  { path: '/jurisdiction',  icon: '▦',  label: '辖区底座',   desc: '地图参考与油区资产' },
   { path: '/reports',       icon: '▤',  label: '研判报告',   desc: '沉淀复盘和专题材料' },
   { path: '/assistant',     icon: '◎',  label: '智能助手',   desc: '自然语言问答分析' },
 ]
@@ -50,7 +50,7 @@ const MODULES = [
 const INTELLIGENCE_ACTIONS = [
   { title: '进入案件研判工作台', desc: '从单案出发生成标签、相似条件、区域画像和报告', path: '/case-intelligence' },
   { title: '补齐案件结构化字段', desc: '提升时空、相似条件和现场要素分析质量', path: '/cases/features' },
-  { title: '维护辖区底座', desc: '道路、村屯、井口和重点区域是判断条件类似的基础', path: '/jurisdiction' },
+  { title: '维护油区业务资产', desc: '井点、管线节点、技防设施和盲区支撑相似条件研判', path: '/jurisdiction' },
   { title: '查看阶段性研判报告', desc: '把分析结果转为可复用材料', path: '/reports' },
 ]
 

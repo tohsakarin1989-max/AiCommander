@@ -308,6 +308,20 @@
   color: var(--ink-1);
 }
 
+.ii-triage-modal .ant-modal-content {
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+
+.ii-triage-modal .ant-modal-body {
+  overflow-y: auto;
+}
+
+.ii-triage-modal .ant-modal-footer {
+  flex-shrink: 0;
+}
+
 .ii-triage-head {
   display: flex;
   justify-content: space-between;
@@ -346,6 +360,25 @@
   font-size: 12px;
   line-height: 1.55;
   padding: 5px 0 !important;
+}
+
+.ii-copy-fallback {
+  width: 100%;
+  min-height: 360px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-0);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  outline: none;
+}
+
+.ii-copy-fallback:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 28%, transparent);
 }
 
 @media (max-width: 900px) {

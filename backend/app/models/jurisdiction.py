@@ -6,7 +6,7 @@ from app.database import Base
 
 
 class JurisdictionAsset(Base):
-    """道路、村屯、井口、技防设施等辖区风险底座要素。"""
+    """公共地图参考、油区业务资产和防控设施等空间研判要素。"""
 
     __tablename__ = "jurisdiction_assets"
     __table_args__ = (

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { Link } from 'react-router-dom'
 import type { DashboardListItem } from './dashboardCommandModel'
 
 interface AutoScrollListProps {
@@ -20,6 +21,11 @@ const AutoScrollList: React.FC<AutoScrollListProps> = ({ items, durationSeconds 
           <div className={`db-list-item db-list-item--${item.tone || 'normal'}`} key={`${item.title}-${index}`}>
             <strong>{item.title}</strong>
             <span>{item.detail}</span>
+            {item.route && (
+              <Link className="db-list-link" to={item.route}>
+                查看
+              </Link>
+            )}
           </div>
         ))}
       </div>

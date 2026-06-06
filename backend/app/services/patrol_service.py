@@ -18,7 +18,7 @@ class PatrolService:
 
     @staticmethod
     def generate_patrol_number() -> str:
-        """生成巡逻编号"""
+        """生成外勤记录编号"""
         timestamp = datetime.now().strftime("%Y%m%d%H%M")
         unique_id = uuid.uuid4().hex[:4].upper()
         return f"XL-{timestamp}-{unique_id}"

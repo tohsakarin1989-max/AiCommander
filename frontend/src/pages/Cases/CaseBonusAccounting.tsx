@@ -13,8 +13,12 @@ import { caseApi } from '../../services/cases'
 import type { BonusAssessment, Case } from '../../types'
 import { bonusAccountingEnabled } from '../../config/features'
 import {
+  buildBonusManagementDisplay,
+  buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
+  type BonusManagementDisplay,
+  type BonusManagementMetricDisplay,
   type CaseBonusGateStatus,
   type CaseBonusRow,
 } from './caseBonusAccountingModel'
@@ -22,6 +26,7 @@ import './CaseBonusAccounting.css'
 
 const gateLabel: Record<CaseBonusGateStatus, string> = {
   ready: '材料齐全',
+  blocked_by_data: '指标缺失',
   blocked_by_materials: '材料未齐',
   rules_not_configured: '细则待配置',
   unknown: '待核验',
@@ -34,9 +39,17 @@ const materialStatusLabel: Record<string, string> = {
   not_required: '未触发',
 }
 
+const materialCategoryLabel: Record<string, string> = {
+  oil: '涉油材料',
+  person: '人员处理',
+  vehicle: '车辆处置',
+  police: '公安材料',
+}
+
 const bonusStatusLabel: Record<string, string> = {
   calculated: '已测算',
-  blocked_by_materials: '材料阻断',
+  blocked_by_data: '指标缺失',
+  blocked_by_materials: '佐证未齐',
   rules_not_configured: '细则待配置',
   not_applicable: '未触发',
 }
@@ -121,6 +134,10 @@ const CaseBonusAccounting: React.FC = () => {
 
   const rows = useMemo(() => buildCaseBonusRows(cases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [cases, selectedAssessment])
   const summary = useMemo(() => buildCaseBonusSummary(rows), [rows])
+  const managementDisplay = useMemo(
+    () => buildBonusManagementDisplay(selectedAssessment?.management_context),
+    [selectedAssessment],
+  )
 
   const filteredRows = useMemo(() => {
     const kw = keyword.trim()
@@ -167,12 +184,87 @@ const CaseBonusAccounting: React.FC = () => {
     </button>
   )
 
+  const renderManagementMetric = (item: BonusManagementMetricDisplay) => (
+    <div key={item.label} className={`case-bonus-management-metric${item.high ? ' high' : ''}`}>
+      <span>{item.label}</span>
+      <b>{item.actual}/{item.target}</b>
+      <small>
+        {item.high
+          ? '已超指标，适用高档测算'
+          : item.remaining > 0
+            ? `距目标 ${item.remaining}`
+            : '达标未超，仍按普通档'}
+      </small>
+    </div>
+  )
+
+  const renderManagementPanel = (display: BonusManagementDisplay | null) => {
+    if (!display) {
+      return (
+        <section className="card case-bonus-management case-bonus-management--empty">
+          <div>
+            <span className="case-bonus-private"><DatabaseOutlined /> 周期指标</span>
+            <h3>选择案件后显示季度/年度管理口径</h3>
+            <p>奖金金额必须落到案件发生时间对应的考核周期内，再结合班组指标、材料门禁和人工复核确认。</p>
+          </div>
+        </section>
+      )
+    }
+
+    return (
+      <section className="card case-bonus-management">
+        <div className="case-bonus-management-head">
+          <div>
+            <span className="case-bonus-private"><DatabaseOutlined /> 周期指标</span>
+            <h3>{display.primarySquad} · {display.quarterLabel} / {display.annualLabel}</h3>
+            <p>{display.pricingBasis}</p>
+          </div>
+          <div className="case-bonus-management-amount">
+            <span>{display.amountStatus}</span>
+            <b>{formatMoney(display.selectedCaseAmount)}</b>
+            <small>本案只进入周期复核池</small>
+          </div>
+        </div>
+
+        <div className="case-bonus-management-grid">
+          <div className="case-bonus-management-period">
+            <div className="case-bonus-management-period-head">
+              <b>季度指标</b>
+              <span>{display.quarterLabel} · {display.quarterCases} 起案件</span>
+            </div>
+            <div className="case-bonus-management-metrics">
+              {display.quarterMetrics.map(renderManagementMetric)}
+            </div>
+          </div>
+          <div className="case-bonus-management-period">
+            <div className="case-bonus-management-period-head">
+              <b>年度折算指标</b>
+              <span>{display.annualLabel} · {display.annualCases} 起案件</span>
+            </div>
+            <div className="case-bonus-management-metrics">
+              {display.annualMetrics.map(renderManagementMetric)}
+            </div>
+          </div>
+        </div>
+
+        <div className="case-bonus-management-note">
+          规则版本：{display.rulesVersion}。页面金额是按当前周期指标和案件条目生成的建议测算额，不能绕过周期指标、材料佐证和人工复核直接发放。
+        </div>
+      </section>
+    )
+  }
+
   const renderAssessment = () => {
     if (!selectedCase) {
       return <Empty description="请选择左侧案件" />
     }
     if (assessmentLoading) {
-      return <Spin tip="加载奖金测算结果..." />
+      return (
+        <div className="case-bonus-loading">
+          <Spin />
+          <span>加载奖金测算结果...</span>
+        </div>
+      )
     }
     if (assessmentError || !selectedAssessment) {
       return (
@@ -187,6 +279,9 @@ const CaseBonusAccounting: React.FC = () => {
 
     const activeItems = selectedAssessment.bonus_items.filter(item => item.status !== 'not_applicable')
     const blocked = selectedAssessment.material_gate.status === 'blocked_by_materials'
+    const calculationBlocked = selectedAssessment.calculation_gate?.status === 'blocked_by_data'
+    const calculationGaps = selectedAssessment.calculation_gate?.missing_items || []
+    const missingMaterialDetails = buildMissingMaterialDetails(selectedAssessment)
 
     return (
       <>
@@ -197,7 +292,7 @@ const CaseBonusAccounting: React.FC = () => {
             <p>{selectedCase.location || '未填写地点'} · {selectedCase.report_unit || '未填写责任单位'}</p>
           </div>
           <div className="case-bonus-total">
-            <span>建议测算额</span>
+            <span>本周期单案建议测算额</span>
             <strong>{formatMoney(selectedAssessment.total_suggested_amount)}</strong>
           </div>
         </div>
@@ -214,14 +309,74 @@ const CaseBonusAccounting: React.FC = () => {
           </span>
         </div>
 
+        {calculationBlocked && (
+          <Alert
+            type="error"
+            showIcon
+            className="case-bonus-alert"
+            message="核算指标未齐，整案暂不测算"
+            description="存在会影响奖金金额的关键字段缺口。请先补齐车辆考核类别、人员处理类型等指标，再重新测算，避免漏算某一部分奖金。"
+          />
+        )}
+
+        {calculationBlocked && (
+          <section className="case-bonus-gap-panel case-bonus-gap-panel--data">
+            <div className="case-bonus-gap-head">
+              <span><WarningOutlined /> 待补核算指标</span>
+              <b>{calculationGaps.length} 项</b>
+            </div>
+            <div className="case-bonus-gap-list">
+              {calculationGaps.map(item => (
+                <div key={item.key} className="case-bonus-gap case-bonus-gap--data">
+                  <div className="case-bonus-gap-title">
+                    <b>{item.label}</b>
+                    <span>必填</span>
+                  </div>
+                  <strong>需补指标：{item.detail}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {blocked && (
           <Alert
             type="warning"
             showIcon
             className="case-bonus-alert"
-            message="材料未齐，暂不建议进入奖金计算"
-            description={selectedAssessment.material_gate.missing_materials.join('、') || '缺少奖金考核关键佐证材料。'}
+            message="佐证材料未齐，测算金额仅作预估"
+            description="案件数据已用于奖金测算；下方单据用于复核佐证，补齐前不能进入发放确认。"
           />
+        )}
+
+        {blocked && (
+          <section className="case-bonus-gap-panel">
+            <div className="case-bonus-gap-head">
+              <span><WarningOutlined /> 待补佐证材料</span>
+              <b>{missingMaterialDetails.length || selectedAssessment.material_gate.missing_materials.length} 项</b>
+            </div>
+            <div className="case-bonus-gap-list">
+              {missingMaterialDetails.length > 0 ? missingMaterialDetails.map(item => (
+                <div key={item.key} className={`case-bonus-gap case-bonus-gap--${item.status}`}>
+                  <div className="case-bonus-gap-title">
+                    <b>{item.label}</b>
+                    <span>{materialStatusLabel[item.status]}</span>
+                  </div>
+                  <small>类别：{materialCategoryLabel[item.category] || item.category || '其他材料'}</small>
+                  <small>核验依据：{item.reason}</small>
+                  <strong>需补佐证：{item.action}</strong>
+                </div>
+              )) : selectedAssessment.material_gate.missing_materials.map(label => (
+                <div key={label} className="case-bonus-gap case-bonus-gap--missing">
+                  <div className="case-bonus-gap-title">
+                    <b>{label}</b>
+                    <span>缺失</span>
+                  </div>
+                  <strong>需补佐证：请补录该项奖金考核关键佐证材料。</strong>
+                </div>
+              ))}
+            </div>
+          </section>
         )}
 
         <section className="case-bonus-section">
@@ -241,13 +396,13 @@ const CaseBonusAccounting: React.FC = () => {
           <div className="case-bonus-section-head">奖金细则测算</div>
           <div className="case-bonus-items">
             {activeItems.length === 0 ? (
-              <Empty description="暂无可测算条目" />
+              <Empty description={calculationBlocked ? '核算指标补齐前不生成测算条目' : '暂无可测算条目'} />
             ) : activeItems.map(item => (
               <div key={item.key} className={`case-bonus-item case-bonus-item--${item.status}`}>
                 <div>
                   <b>{item.label}</b>
                   <span>{item.formula}</span>
-                  {item.blocked_by.length > 0 && <small>阻断材料：{item.blocked_by.join('、')}</small>}
+                  {item.blocked_by.length > 0 && <small>待补佐证：{item.blocked_by.join('、')}</small>}
                 </div>
                 <strong>{item.status === 'calculated' ? formatMoney(item.suggested_amount) : bonusStatusLabel[item.status]}</strong>
               </div>
@@ -293,7 +448,7 @@ const CaseBonusAccounting: React.FC = () => {
         <div>
           <span className="case-bonus-private"><DatabaseOutlined /> 案件内业</span>
           <h1>案件奖金核算</h1>
-          <p>按案件材料齐全情况和奖金考核细则做测算，结果保留人工复核边界。</p>
+          <p>先按案件发生时间归入季度/年度指标，再按材料齐全情况和奖金考核细则做周期内测算。</p>
         </div>
         <div className="case-bonus-hero-actions">
           <Button onClick={() => navigate('/cases')}>返回案件列表</Button>
@@ -302,6 +457,8 @@ const CaseBonusAccounting: React.FC = () => {
           </Button>
         </div>
       </header>
+
+      {renderManagementPanel(managementDisplay)}
 
       <section className="case-bonus-kpis">
         <div className="card case-bonus-kpi">
@@ -315,9 +472,9 @@ const CaseBonusAccounting: React.FC = () => {
           <small>可进入测算</small>
         </div>
         <div className="card case-bonus-kpi case-bonus-kpi--warn">
-          <span>材料阻断</span>
+          <span>待补缺口</span>
           <b>{summary.blocked}</b>
-          <small>需补佐证</small>
+          <small>指标或佐证未齐</small>
         </div>
         <div className="card case-bonus-kpi">
           <span>已加载测算</span>
@@ -346,6 +503,7 @@ const CaseBonusAccounting: React.FC = () => {
               options={[
                 { value: 'all', label: '全部状态' },
                 { value: 'ready', label: '材料齐全' },
+                { value: 'blocked_by_data', label: '指标缺失' },
                 { value: 'blocked_by_materials', label: '材料未齐' },
                 { value: 'rules_not_configured', label: '细则待配置' },
               ]}

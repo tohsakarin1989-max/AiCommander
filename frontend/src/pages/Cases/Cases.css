@@ -154,6 +154,15 @@
   overflow: hidden;
 }
 
+.cases-toolbar-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.case-batch-review-alert {
+  margin: 0;
+}
+
 /* 工具栏 */
 .tools-bar {
   display: grid;
@@ -577,6 +586,118 @@
   border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
 }
 
+.cases-bonus-entry-alert {
+  margin: 10px 0 12px;
+}
+
+.cases-entry-precheck {
+  display: grid;
+  gap: 10px;
+}
+
+.cases-entry-readiness {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.cases-entry-readiness-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.cases-entry-readiness-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cases-entry-readiness-item b {
+  overflow: hidden;
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cases-entry-readiness-item span {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.cases-entry-readiness-item p,
+.cases-entry-readiness-item small,
+.cases-entry-precheck-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.cases-entry-readiness-item small {
+  color: var(--ink-3);
+}
+
+.cases-entry-readiness-item--ready {
+  border-color: color-mix(in oklab, var(--ok) 42%, var(--line-soft));
+  background: color-mix(in oklab, var(--ok) 6%, var(--bg-1));
+}
+
+.cases-entry-readiness-item--ready span {
+  color: var(--ok);
+}
+
+.cases-entry-readiness-item--attention {
+  border-color: color-mix(in oklab, var(--warn) 48%, var(--line-soft));
+  background: color-mix(in oklab, var(--warn) 7%, var(--bg-1));
+}
+
+.cases-entry-readiness-item--attention span,
+.cases-entry-readiness-item--attention small {
+  color: var(--warn);
+}
+
+.cases-entry-readiness-item--idle {
+  opacity: 0.82;
+}
+
+.cases-bonus-entry-hints {
+  display: grid;
+  gap: 8px;
+}
+
+.cases-bonus-entry-hints div {
+  display: grid;
+  gap: 3px;
+}
+
+.cases-bonus-entry-hints b {
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.cases-bonus-entry-hints span,
+.cases-bonus-entry-hints small {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.cases-bonus-entry-hints small {
+  color: var(--warn);
+}
+
 .cases-bonus-scope-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -619,57 +740,6 @@
   white-space: nowrap;
 }
 
-.cases-bonus-draft {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line-soft);
-  background: var(--bg-1);
-}
-
-.cases-bonus-draft-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.cases-bonus-draft-head span {
-  color: var(--ink-1);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-.cases-bonus-draft-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 1.1fr) minmax(120px, 0.85fr) minmax(150px, 1fr) auto;
-  gap: 8px;
-  align-items: end;
-  padding: 10px;
-  border: 1px solid var(--line-soft);
-  background: var(--bg-0);
-}
-
-.cases-bonus-draft-row .ant-form-item {
-  margin-bottom: 0;
-}
-
-.cases-bonus-draft-row .ant-btn {
-  margin-bottom: 1px;
-}
-
-@media (max-width: 760px) {
-  .cases-bonus-scope-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .cases-bonus-draft-row {
-    grid-template-columns: 1fr;
-  }
-}
-
 .bonus-panel {
   display: grid;
   gap: 10px;
@@ -702,6 +772,12 @@
   color: var(--warn);
   border-color: color-mix(in oklab, var(--warn) 45%, var(--line));
   background: color-mix(in oklab, var(--warn) 10%, transparent);
+}
+
+.bonus-gate--blocked_by_data {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 45%, var(--line));
+  background: color-mix(in oklab, var(--err) 9%, transparent);
 }
 
 .bonus-gate--rules_not_configured {
@@ -785,6 +861,133 @@
   color: var(--ink-2);
   font-size: 11.5px;
   line-height: 1.45;
+}
+
+.automation-review {
+  display: grid;
+  gap: 10px;
+}
+
+.automation-review-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 8px;
+}
+
+.automation-review-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+}
+
+.automation-review-card--wide {
+  background: color-mix(in oklab, var(--bg-2) 86%, var(--accent) 8%);
+}
+
+.automation-review-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.automation-review-card-head b {
+  overflow: hidden;
+  color: var(--ink-0);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-review-card-head span {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.automation-review-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 15px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.automation-review-list li::marker {
+  color: var(--accent);
+}
+
+.automation-review-claims {
+  display: grid;
+  gap: 7px;
+}
+
+.automation-review-claims > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+}
+
+.automation-review-claims b {
+  color: var(--ink-0);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.automation-review-claims span,
+.automation-review-claims small,
+.automation-review-empty,
+.automation-review-summary,
+.automation-review-boundary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.automation-review-claims small {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.automation-review-empty {
+  color: var(--ink-3);
+}
+
+.automation-review-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.automation-review-columns > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.automation-review-columns > div > span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.automation-review-boundary {
+  color: var(--warn);
 }
 
 .chain-panel {
@@ -1092,4 +1295,61 @@
   color: var(--ink-3);
   font-family: var(--mono);
   font-size: 10px;
+}
+
+/* 创建案件时前置录入奖金核算指标 */
+.cases-bonus-draft {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+
+.cases-bonus-draft-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cases-bonus-draft-head span {
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.cases-bonus-draft-head small {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.cases-bonus-draft-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(120px, 0.85fr) minmax(150px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+}
+
+.cases-bonus-draft-row .ant-form-item {
+  margin-bottom: 0;
+}
+
+.cases-bonus-draft-row .ant-btn {
+  margin-bottom: 1px;
+}
+
+@media (max-width: 760px) {
+  .cases-bonus-scope-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cases-bonus-draft-row {
+    grid-template-columns: 1fr;
+  }
 }

@@ -320,6 +320,65 @@ class AutomationAlertService:
                 )
             except Exception:
                 related_case_context = None
+        boundary = [
+            "告警研判包只用于人工核查和模型辅助解释。",
+            "不得把告警建议写成已执行任务，不自动派发巡逻任务。",
+            "转案件前不生成案件结论；转案件后仍需按案件研判工作台复核。",
+        ]
+        ai_output_boundary = [
+            "告警研判包只用于人工核查和模型辅助解释。",
+            "不得把告警建议写成已执行任务，不自动创建外勤任务。",
+            "转案件前不生成案件结论；转案件后仍需按案件研判工作台复核。",
+        ]
+        ai_output = CaseIntelligenceService.build_structured_ai_output(
+            title=f"数智告警研判包：{alert.alert_number}",
+            output_type="automation_alert_triage_pack",
+            facts=facts,
+            inferences=[
+                {
+                    "claim": f"告警研判结果：{ai_assessment.get('result') or 'needs_manual_review'}",
+                    "basis": ai_assessment.get("basis") or ["规则侧告警字段完整性检查"],
+                    "confidence": ai_assessment.get("confidence") or "medium",
+                }
+            ],
+            recommendations=[
+                {
+                    "title": f"核查步骤 {index}",
+                    "action": step,
+                    "basis": ["告警状态、关联事件/案件状态和字段完整性"],
+                    "evidence": [alert.alert_number],
+                    "confidence": None,
+                    "priority": "medium",
+                }
+                for index, step in enumerate(next_steps, start=1)
+            ],
+            information_gaps=information_gaps,
+            evidence_refs=[
+                {
+                    "id": f"alert:{alert.alert_number}",
+                    "kind": "automation_alert",
+                    "summary": alert.title,
+                    "basis": facts[:5],
+                },
+                *([
+                    {
+                        "id": f"event:{related_event.event_number}",
+                        "kind": "event",
+                        "summary": related_event.handling_result or "已生成事件",
+                        "basis": [related_event.description or related_event.title or ""],
+                    }
+                ] if related_event else []),
+                *([
+                    {
+                        "id": f"case:{alert.related_case_id}",
+                        "kind": "case",
+                        "summary": "告警已转案件，可进入案件研判上下文",
+                        "basis": related_case_context.get("facts", [])[:4] if related_case_context else [],
+                    }
+                ] if alert.related_case_id else []),
+            ],
+            boundary=ai_output_boundary,
+        )
 
         return {
             "alert": {
@@ -345,11 +404,8 @@ class AutomationAlertService:
                 "handling_result": related_event.handling_result,
             } if related_event else None,
             "related_case_context": related_case_context,
-            "boundary": [
-                "告警研判包只用于人工核查和模型辅助解释。",
-                "不得把告警建议写成已执行任务，不自动派发巡逻任务。",
-                "转案件前不生成案件结论；转案件后仍需按案件研判工作台复核。",
-            ],
+            "boundary": boundary,
+            "ai_output": ai_output,
         }
 
     @staticmethod

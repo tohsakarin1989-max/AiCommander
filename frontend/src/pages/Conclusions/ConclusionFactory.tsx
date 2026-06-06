@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   InputNumber,
   Space,
@@ -19,11 +19,13 @@ import {
   CheckOutlined,
   CloseOutlined,
   FlagOutlined,
+  CopyOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
 import type { Conclusion, ConclusionFilters } from '../../types'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
 import './ConclusionFactory.css'
 
 /* ── 状态标签辅助 ─────────────────────────────────────────── */
@@ -70,6 +72,14 @@ const ConclusionFactory: React.FC = () => {
   const [detailId, setDetailId]   = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
+  useEffect(() => {
+    const conclusionId = Number(searchParams.get('conclusionId'))
+    if (!Number.isFinite(conclusionId) || conclusionId <= 0) return
+    setDetailId(conclusionId)
+    setDetailOpen(true)
+  }, [searchParams])
 
   const { data, refetch, isFetching } = useQuery({
     queryKey: ['conclusions', filters],
@@ -103,6 +113,22 @@ const ConclusionFactory: React.FC = () => {
 
   const rows = data || []
   const pendingCount = rows.filter((c: any) => c.status === 'needs_review').length
+  const detailMeta = getConclusionDraftMeta(detail)
+  const detailMarkdown = getConclusionMarkdown(detail)
+
+  const handleCopyConclusionMarkdown = async () => {
+    if (!detailMarkdown) {
+      message.warning('暂无可复制草稿')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(detailMarkdown)
+      message.success('已复制标准化结论草稿')
+    } catch {
+      message.error('复制失败，请手动选择文本复制')
+    }
+  }
 
   return (
     <div className="page-scrollable">
@@ -343,9 +369,13 @@ const ConclusionFactory: React.FC = () => {
 
                     {/* 状态 */}
                     <td>
-                      <span className={STATUS_TAG_CLASS[record.status] || 'tag'}>
-                        {STATUS_LABEL[record.status] || record.status}
-                      </span>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <span className={STATUS_TAG_CLASS[record.status] || 'tag'}>
+                          {STATUS_LABEL[record.status] || record.status}
+                        </span>
+                        <span className="tag">{getConclusionDraftMeta(record).reviewStatus}</span>
+                        <span className="tag">{getConclusionDraftMeta(record).modelStatus}</span>
+                      </div>
                     </td>
 
                     {/* 操作 */}
@@ -393,6 +423,13 @@ const ConclusionFactory: React.FC = () => {
             <span style={{ fontFamily: 'var(--serif)', fontSize: 14, color: 'var(--accent)', fontWeight: 500 }}>
               证据链详情
             </span>
+            <span style={{ flex: 1 }} />
+            {detail && (
+              <button className="btn-ghost-sm" onClick={handleCopyConclusionMarkdown}>
+                <CopyOutlined style={{ marginRight: 4 }} />
+                复制草稿
+              </button>
+            )}
           </div>
         }
         open={detailOpen}
@@ -418,6 +455,9 @@ const ConclusionFactory: React.FC = () => {
                 { label: '结论 ID',  value: String(detail.id),        mono: true },
                 { label: '案件 ID',  value: String(detail.case_id),   mono: true },
                 { label: '状态',     value: detail.status },
+                { label: '草稿状态', value: detailMeta.draftStatus },
+                { label: '复核状态', value: detailMeta.reviewStatus },
+                { label: '模型状态', value: detailMeta.modelStatus },
                 { label: '置信度',   value: detail.confidence != null ? `${(detail.confidence * 100).toFixed(1)}%` : '—', mono: true },
                 { label: '风险等级', value: detail.risk_level || '—' },
                 { label: '摘要',     value: detail.summary || '—' },
@@ -448,6 +488,20 @@ const ConclusionFactory: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* 标准化草稿 */}
+            <div className="cf-drawer-section">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div className="cf-drawer-section__title" style={{ marginBottom: 0, flex: 1 }}>
+                  标准化研判草稿
+                </div>
+                <button className="btn-ghost-sm" onClick={handleCopyConclusionMarkdown}>
+                  <CopyOutlined style={{ marginRight: 4 }} />
+                  复制 Markdown
+                </button>
+              </div>
+              <pre className="cf-pre">{detailMarkdown || '暂无标准化草稿'}</pre>
             </div>
 
             {/* 处置建议 */}

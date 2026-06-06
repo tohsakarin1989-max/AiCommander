@@ -302,7 +302,7 @@ const CasesMap: React.FC = () => {
               <span className="cases-map-card__title">AI 巡逻建议</span>
             </div>
             <div className="cases-map-card__body">
-              <span className="cases-map-empty">请前往「区域研判」生成巡逻建议</span>
+              <span className="cases-map-empty">请前往「区域研判」生成防控参考</span>
             </div>
           </div>
 

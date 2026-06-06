@@ -47,6 +47,7 @@ import {
   caseIntelligenceApi,
 } from '../../services/caseIntelligence'
 import type { Case } from '../../types'
+import { getReportDraftMeta, getReportMarkdown } from './caseIntelligencePresentation'
 import './CaseIntelligence.css'
 
 const { Paragraph, Text, Title } = Typography
@@ -388,10 +389,12 @@ const CaseIntelligence: React.FC = () => {
   const tags = workbench?.feature_tags.tags || []
   const qualityScore = workbench?.quality?.score ?? selectedCase?.quality_score ?? 0
   const qualityLevel = workbench?.quality?.level || selectedCase?.quality_level || 'unknown'
+  const reportMarkdown = getReportMarkdown(workbench?.report)
+  const reportMeta = getReportDraftMeta(workbench?.report)
 
   const copyReport = async () => {
-    if (!workbench?.report.markdown) return
-    await navigator.clipboard.writeText(workbench.report.markdown)
+    if (!reportMarkdown) return
+    await navigator.clipboard.writeText(reportMarkdown)
     message.success('研判报告 Markdown 已复制')
   }
 
@@ -476,7 +479,7 @@ const CaseIntelligence: React.FC = () => {
       </Card>
 
       {workbenchQuery.isLoading ? (
-        <div className="intel-loading"><Spin /> 正在汇聚案件与辖区底座数据…</div>
+        <div className="intel-loading"><Spin /> 正在汇聚案件、地图参考与油区业务资产…</div>
       ) : !workbench ? (
         <Empty description="暂无研判数据" />
       ) : (
@@ -678,7 +681,7 @@ const CaseIntelligence: React.FC = () => {
                           <AreaProfileCard key={profile.asset.id} profile={profile} />
                         ))
                       ) : (
-                        <Empty description="辖区底座或案件坐标不足，暂不能形成区域画像" />
+                        <Empty description="业务资产或案件坐标不足，暂不能形成区域画像" />
                       )}
                     </div>
                   </Card>
@@ -744,9 +747,16 @@ const CaseIntelligence: React.FC = () => {
                       <Card
                         title={workbench.report.title}
                         className="intel-panel-card"
-                        extra={<Button size="small" onClick={copyReport}>复制报告</Button>}
+                        extra={(
+                          <Space>
+                            <Tag>{reportMeta.draftStatus}</Tag>
+                            <Tag color="gold">{reportMeta.reviewStatus}</Tag>
+                            <Tag color="blue">{reportMeta.modelStatus}</Tag>
+                            <Button size="small" onClick={copyReport}>复制报告</Button>
+                          </Space>
+                        )}
                       >
-                        <pre className="intel-report">{workbench.report.markdown}</pre>
+                        <pre className="intel-report">{reportMarkdown}</pre>
                       </Card>
                     </Col>
                   </Row>

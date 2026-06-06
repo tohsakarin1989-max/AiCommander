@@ -320,7 +320,7 @@ class CaseIntelligenceService:
             "updated_at": datetime.utcnow().isoformat(),
         }
         features["intelligence"] = intelligence
-        case.features = features
+        case.features = CaseIntelligenceService._json_safe(features)
         db.commit()
         db.refresh(case)
         return CaseIntelligenceService.build_case_tags(db, case)
@@ -684,7 +684,7 @@ class CaseIntelligenceService:
             "case_id": case_id,
             "suggestion_count": len(deduped),
             "items": deduped[:limit],
-            "boundary": "这些是防控参考草案，不自动派发巡逻任务，也不替代人工研判结论。",
+            "boundary": "这些是防控参考草案，不自动创建执行任务，也不替代人工研判结论。",
         }
 
     @staticmethod
@@ -697,11 +697,31 @@ class CaseIntelligenceService:
         vehicle_tools = [tag["label"] for tag in tags if tag["category"] in {"vehicle", "tool"}]
         weaknesses = [tag["label"] for tag in tags if tag["category"] == "defense"]
         capture_tags = [tag["label"] for tag in tags if tag["category"] == "capture"]
+        quality = case.quality_issues or CaseQualityService.refresh_case_quality(db, case)
+        missing_fields = [
+            item.get("label")
+            for item in quality.get("missing_required", [])
+            if isinstance(item, dict) and item.get("label")
+        ]
+        existing_features = dict(case.features or {})
+        intelligence = dict(existing_features.get("intelligence") or {})
+        existing_card = intelligence.get("experience_card") or {}
+        manual_review_status = existing_card.get("manual_review_status") or "pending"
 
-        return {
+        card = {
             "case_id": case.id,
+            "source_case_id": case.id,
             "case_number": case.case_number,
+            "generated_at": datetime.utcnow().isoformat(),
+            "manual_review_status": manual_review_status,
             "summary": case.description or case.location or case.case_type or "未填写案情摘要",
+            "operation_conditions": conditions or ["作案条件信息不足，需补齐时间、地点和现场环境。"],
+            "discovery_method": capture_tags or [case.source_type or "发现方式未明确"],
+            "protection_shortcomings": weaknesses or ["防护短板未明确，需结合现场照片、监控和防护设施核实。"],
+            "evidence_gaps": missing_fields or ["暂无明显必填字段缺口，仍需人工核验证据完整性。"],
+            "reusable_suggestions": scene.get("reusable_rules", []),
+            "referenced_cases": [case.case_number],
+            "boundary": "经验卡区分事实、推断和建议；仅沉淀已发生案件经验，不做犯罪预测，不替代人工确认。",
             "what_happened": {
                 "time": case.occurred_time.isoformat() if case.occurred_time else None,
                 "location": case.location,
@@ -720,6 +740,12 @@ class CaseIntelligenceService:
                 "spatial_context": tags_payload.get("context"),
             },
         }
+        intelligence["experience_card"] = card
+        existing_features["intelligence"] = intelligence
+        case.features = CaseIntelligenceService._json_safe(existing_features)
+        db.commit()
+        db.refresh(case)
+        return card
 
     @staticmethod
     def build_report(
@@ -830,6 +856,58 @@ class CaseIntelligenceService:
                 markdown.append(f"- {item}")
             markdown.append("")
 
+        fact_section = next((section for section in sections if section.get("type") == "facts"), {})
+        gap_section = next((section for section in sections if section.get("type") == "gaps"), {})
+        inference_items = (pattern_section or {}).get("items", [])
+        evidence_refs: List[Dict[str, Any]] = []
+        if selected_case:
+            evidence_refs.append({
+                "id": f"case:{selected_case.case_number}",
+                "kind": "case",
+                "summary": f"案件 {selected_case.case_number}",
+                "basis": [selected_case.location or "地点未填写"],
+            })
+        for profile in area_profiles.get("items", [])[:5]:
+            asset = profile.get("asset", {})
+            evidence_refs.append({
+                "id": f"area:{asset.get('id')}",
+                "kind": "area_profile",
+                "summary": f"{asset.get('name', '未命名区域')}，风险画像分 {profile.get('risk_score')}",
+                "basis": profile.get("risk_reasons", []),
+            })
+        report_boundary = [
+            "只基于已录入案件、辖区底座和结构化研判结果生成草稿。",
+            "必须区分事实依据、模式推断、防控参考和信息缺口。",
+            "不得把防控参考写成已执行任务，不自动创建外勤或跨部门处置。",
+            "不得编造未掌握的人车链条、销赃链条或未破案件线索。",
+        ]
+        ai_output = CaseIntelligenceService.build_structured_ai_output(
+            title=title,
+            output_type="case_intelligence_report",
+            facts=fact_section.get("items", []),
+            inferences=[
+                {
+                    "claim": item,
+                    "basis": ["规则侧报告章节"],
+                    "confidence": "medium",
+                }
+                for item in inference_items
+            ],
+            recommendations=[
+                {
+                    "title": item.get("title"),
+                    "action": item.get("action"),
+                    "basis": item.get("reason", [])[:4],
+                    "evidence": item.get("evidence", [])[:6],
+                    "confidence": item.get("confidence"),
+                }
+                for item in suggestions.get("items", [])[:limit]
+            ],
+            information_gaps=gap_section.get("items", []),
+            evidence_refs=evidence_refs,
+            boundary=report_boundary,
+        )
+
         return {
             "title": title,
             "generated_at": datetime.utcnow().isoformat(),
@@ -837,7 +915,60 @@ class CaseIntelligenceService:
             "days": days,
             "sections": sections,
             "markdown": "\n".join(markdown).strip(),
+            "ai_output": ai_output,
         }
+
+    @staticmethod
+    def build_structured_ai_output(
+        *,
+        title: str,
+        output_type: str,
+        facts: List[Any],
+        inferences: List[Dict[str, Any]],
+        recommendations: List[Dict[str, Any]],
+        information_gaps: List[Any],
+        evidence_refs: List[Dict[str, Any]],
+        boundary: List[str],
+        model_status: str = "deterministic_fallback",
+    ) -> Dict[str, Any]:
+        """统一 AI 草稿输出结构。
+
+        第一版只整合规则侧材料，作为未配置模型或模型失败时的稳定兜底。
+        """
+        normalized = {
+            "title": title,
+            "output_type": output_type,
+            "draft_status": "draft",
+            "review_status": "pending_review",
+            "model_status": model_status,
+            "generated_at": datetime.utcnow().isoformat(),
+            "facts": [CaseIntelligenceService._structured_text(item) for item in facts if item],
+            "inferences": [
+                CaseIntelligenceService._normalize_structured_inference(item)
+                for item in inferences
+                if item
+            ],
+            "recommendations": [
+                CaseIntelligenceService._normalize_structured_recommendation(item)
+                for item in recommendations
+                if item
+            ],
+            "information_gaps": [
+                CaseIntelligenceService._structured_text(item)
+                for item in information_gaps
+                if item
+            ],
+            "evidence_refs": [
+                CaseIntelligenceService._normalize_structured_evidence_ref(item)
+                for item in evidence_refs
+                if item
+            ],
+            "boundary": boundary,
+        }
+        if not normalized["information_gaps"]:
+            normalized["information_gaps"] = ["暂无明显信息缺口，仍需人工复核事实完整性。"]
+        normalized["markdown"] = CaseIntelligenceService._render_structured_ai_markdown(normalized)
+        return normalized
 
     @staticmethod
     def _build_llm_context_from_workbench(workbench: Dict[str, Any]) -> Dict[str, Any]:
@@ -952,7 +1083,7 @@ class CaseIntelligenceService:
         boundary = [
             "只基于已录入案件、辖区底座和结构化研判结果回答。",
             "必须区分事实依据、模式推断、防控参考和信息缺口。",
-            "不得把防控参考写成已执行任务，不自动派发巡逻或跨部门处置。",
+            "不得把防控参考写成已执行任务，不自动创建外勤或跨部门处置。",
             "不得编造未掌握的人车链条、销赃链条或未破案件线索。",
         ]
         recommended_questions = [
@@ -979,6 +1110,20 @@ class CaseIntelligenceService:
             "【信息缺口】",
             *[f"- {item}" for item in information_gaps],
         ]
+        structured_output = CaseIntelligenceService.build_structured_ai_output(
+            title=(
+                f"{selected_case.get('case_number')} AI研判上下文草稿"
+                if selected_case
+                else "全局 AI研判上下文草稿"
+            ),
+            output_type="case_intelligence_context_pack",
+            facts=facts,
+            inferences=pattern_inferences,
+            recommendations=prevention_references,
+            information_gaps=information_gaps,
+            evidence_refs=evidence_index,
+            boundary=boundary,
+        )
 
         return {
             "scope": scope,
@@ -986,11 +1131,17 @@ class CaseIntelligenceService:
             "system_boundary": boundary,
             "facts": facts,
             "pattern_inferences": pattern_inferences,
+            "inferences": structured_output["inferences"],
             "prevention_references": prevention_references,
+            "recommendations": structured_output["recommendations"],
             "information_gaps": information_gaps,
             "evidence_index": evidence_index,
+            "evidence_refs": structured_output["evidence_refs"],
+            "boundary": boundary,
             "recommended_questions": recommended_questions,
             "llm_prompt": "\n".join(prompt_lines).strip(),
+            "markdown": structured_output["markdown"],
+            "ai_output": structured_output,
             "generated_at": datetime.utcnow().isoformat(),
         }
 
@@ -1328,6 +1479,123 @@ class CaseIntelligenceService:
         if not case:
             raise ValueError("case_not_found")
         return case
+
+    @staticmethod
+    def _structured_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, dict):
+            label = value.get("summary") or value.get("title") or value.get("claim") or value.get("action")
+            return str(label) if label else str(value)
+        return str(value)
+
+    @staticmethod
+    def _normalize_structured_inference(item: Dict[str, Any]) -> Dict[str, Any]:
+        basis = item.get("basis") or item.get("reason") or []
+        if isinstance(basis, str):
+            basis = [basis]
+        return {
+            "claim": CaseIntelligenceService._structured_text(item.get("claim") or item.get("title") or item),
+            "basis": [CaseIntelligenceService._structured_text(value) for value in basis if value],
+            "confidence": item.get("confidence") or "medium",
+        }
+
+    @staticmethod
+    def _normalize_structured_recommendation(item: Dict[str, Any]) -> Dict[str, Any]:
+        basis = item.get("basis") or item.get("reason") or []
+        evidence = item.get("evidence") or item.get("evidence_refs") or []
+        if isinstance(basis, str):
+            basis = [basis]
+        if isinstance(evidence, (str, dict)):
+            evidence = [evidence]
+        return {
+            "title": CaseIntelligenceService._structured_text(item.get("title") or "待复核建议"),
+            "action": CaseIntelligenceService._structured_text(item.get("action") or item.get("summary") or item),
+            "basis": [CaseIntelligenceService._structured_text(value) for value in basis if value],
+            "evidence": [value for value in evidence if value],
+            "confidence": item.get("confidence"),
+            "priority": item.get("priority") or "medium",
+        }
+
+    @staticmethod
+    def _normalize_structured_evidence_ref(item: Dict[str, Any]) -> Dict[str, Any]:
+        basis = item.get("basis") or []
+        if isinstance(basis, str):
+            basis = [basis]
+        return {
+            "id": CaseIntelligenceService._structured_text(item.get("id") or item.get("summary") or "evidence"),
+            "kind": CaseIntelligenceService._structured_text(item.get("kind") or "evidence"),
+            "summary": CaseIntelligenceService._structured_text(item.get("summary") or item),
+            "basis": [CaseIntelligenceService._structured_text(value) for value in basis if value],
+        }
+
+    @staticmethod
+    def _render_structured_ai_markdown(output: Dict[str, Any]) -> str:
+        def lines(items: Iterable[Any], empty: str) -> List[str]:
+            values = [CaseIntelligenceService._structured_text(item) for item in items if item]
+            return [f"- {item}" for item in values] or [f"- {empty}"]
+
+        markdown = [
+            f"# {output.get('title')}",
+            "",
+            f"- 草稿状态：{output.get('draft_status')}",
+            f"- 复核状态：{output.get('review_status')}",
+            f"- 模型状态：{output.get('model_status')}",
+            "",
+            "## 事实依据",
+            *lines(output.get("facts", []), "暂无事实依据"),
+            "",
+            "## 模式推断",
+        ]
+        for item in output.get("inferences", []):
+            markdown.append(f"- {item.get('claim')}（置信度：{item.get('confidence')}）")
+            if item.get("basis"):
+                markdown.append(f"  - 依据：{CaseIntelligenceService._join_cn(item.get('basis') or [])}")
+        if not output.get("inferences"):
+            markdown.append("- 暂无模式推断")
+
+        markdown.extend(["", "## 建议与补齐事项"])
+        for item in output.get("recommendations", []):
+            markdown.append(f"- {item.get('title')}：{item.get('action')}")
+            if item.get("basis"):
+                markdown.append(f"  - 依据：{CaseIntelligenceService._join_cn(item.get('basis') or [])}")
+        if not output.get("recommendations"):
+            markdown.append("- 暂无建议或补齐事项")
+
+        markdown.extend([
+            "",
+            "## 信息缺口",
+            *lines(output.get("information_gaps", []), "暂无信息缺口"),
+            "",
+            "## 证据索引",
+        ])
+        for item in output.get("evidence_refs", []):
+            markdown.append(f"- {item.get('id')}｜{item.get('kind')}：{item.get('summary')}")
+            if item.get("basis"):
+                markdown.append(f"  - 依据：{CaseIntelligenceService._join_cn(item.get('basis') or [])}")
+        if not output.get("evidence_refs"):
+            markdown.append("- 暂无证据索引")
+
+        markdown.extend([
+            "",
+            "## 边界说明",
+            *lines(output.get("boundary", []), "仅用于研判辅助，不替代人工复核"),
+        ])
+        return "\n".join(markdown).strip()
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(key): CaseIntelligenceService._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [CaseIntelligenceService._json_safe(item) for item in value]
+        return value
 
     @staticmethod
     def _case_brief(case: Optional[Case]) -> Optional[Dict[str, Any]]:

@@ -159,7 +159,7 @@ class DeploymentService:
                 "routes": []
             }
         
-        # 根据热点生成巡逻路线
+        # 根据热点生成防控覆盖参考
         routes = []
         for i, hotspot in enumerate(hotspots[:5]):  # 最多5条路线
             routes.append({
@@ -456,4 +456,3 @@ class DeploymentService:
             result.append(h)
 
         return result
-

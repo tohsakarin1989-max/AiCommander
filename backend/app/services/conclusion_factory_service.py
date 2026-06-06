@@ -117,6 +117,55 @@ class ConclusionFactoryService:
         }
 
     @staticmethod
+    def _build_conclusion_ai_output(
+        *,
+        title: str,
+        output_type: str,
+        facts: List[Any],
+        payload: Dict[str, Any],
+        information_gaps: List[Any],
+        evidence_refs: List[Dict[str, Any]],
+        model_status: str,
+    ) -> Dict[str, Any]:
+        inference_notes = payload.get("inference_notes") or []
+        if isinstance(inference_notes, str):
+            inference_notes = [inference_notes]
+        inferences = [
+            {
+                "claim": item,
+                "basis": payload.get("key_evidence") or ["结论草稿摘要"],
+                "confidence": payload.get("confidence", "low"),
+            }
+            for item in (inference_notes or [payload.get("summary") or "结论草稿待人工复核"])
+        ]
+        recommendations = [
+            {
+                "title": f"复核建议 {index}",
+                "action": item,
+                "basis": payload.get("key_evidence") or ["结论草稿"],
+                "evidence": [ref.get("id") for ref in evidence_refs if ref.get("id")],
+                "priority": "medium",
+            }
+            for index, item in enumerate(payload.get("recommendations") or ["人工复核事实依据后再确认结论。"], start=1)
+        ]
+        return CaseIntelligenceService.build_structured_ai_output(
+            title=title,
+            output_type=output_type,
+            facts=facts,
+            inferences=inferences,
+            recommendations=recommendations,
+            information_gaps=information_gaps or ["结论草稿仍需人工复核事实依据、推断边界和引用范围。"],
+            evidence_refs=evidence_refs,
+            boundary=[
+                "结论草稿只用于人工复核前的研判表达。",
+                "不替代人工审核，不替代规则评分、事实确认和处置决策。",
+                "不得编造未掌握的人车链条、销赃链条或未破案件线索。",
+                "低置信度或高风险内容必须保持待人工复核，不自动发布。",
+            ],
+            model_status=model_status,
+        )
+
+    @staticmethod
     async def generate_conclusion(db: Session, case_id: int) -> Conclusion:
         case = CaseService.get_case(db, case_id)
         if not case:
@@ -138,6 +187,7 @@ class ConclusionFactoryService:
         llm = ConclusionFactoryService._get_llm(db)
         payload: Dict[str, Any]
         if llm:
+            model_status = "llm_success"
             prompt = f"""你是涉油案件研判结论助手，请基于案件、证据链和结构化研判依据输出结论。
 要求：
 1. 只输出 JSON；
@@ -163,13 +213,41 @@ JSON字段：
             except Exception as e:
                 logger.warning(f"结论生成解析失败，使用降级方案: {e}")
                 payload = ConclusionFactoryService._fallback_summary(case_dict)
+                model_status = "llm_failed"
         else:
             payload = ConclusionFactoryService._fallback_summary(case_dict)
+            model_status = "deterministic_fallback"
 
         safe_evidence = ConclusionFactoryService._json_safe(evidence)
         confidence = float(payload.get("confidence", 0.0))
         risk_level = payload.get("risk_level", "unknown")
-        status = "published" if confidence >= 0.7 and risk_level != "high" else "needs_review"
+        status = "needs_review"
+        information_gaps = []
+        case_intel = safe_evidence.get("case_intelligence") if isinstance(safe_evidence, dict) else None
+        if isinstance(case_intel, dict):
+            report_ai = (case_intel.get("report") or {}).get("ai_output") or {}
+            information_gaps.extend(report_ai.get("information_gaps") or [])
+        ai_output = ConclusionFactoryService._build_conclusion_ai_output(
+            title=f"{case.case_number or case_id} 情报结论草稿",
+            output_type="conclusion_draft",
+            facts=[
+                f"案件编号：{case.case_number or case_id}",
+                f"发生时间：{case_dict.get('occurred_time') or '未填写'}",
+                f"地点：{case_dict.get('location') or '未填写'}",
+                f"案件类型：{case_dict.get('case_type') or '未填写'}",
+            ],
+            payload=payload,
+            information_gaps=information_gaps,
+            evidence_refs=[
+                {
+                    "id": f"case:{case.case_number or case_id}",
+                    "kind": "case",
+                    "summary": f"案件 {case.case_number or case_id}",
+                    "basis": payload.get("key_evidence") or [],
+                }
+            ],
+            model_status=model_status,
+        )
 
         conclusion = Conclusion(
             case_id=case_id,
@@ -181,6 +259,7 @@ JSON字段：
                 "key_evidence": payload.get("key_evidence", []),
                 "inference_notes": payload.get("inference_notes", []),
                 "recommendations": payload.get("recommendations", []),
+                "ai_output": ai_output,
                 "raw": safe_evidence,
             },
         )
@@ -270,6 +349,7 @@ JSON字段：
         payload: Dict[str, Any]
 
         if llm:
+            model_status = "llm_success"
             prompt = f"""你是资深案件分析助手，请基于圆桌会议的研判结果生成最终结论。
 
 会议信息：
@@ -315,6 +395,7 @@ JSON字段：
                     "key_evidence": ["圆桌会议研判结果", f"关联案件 {len(case_ids)} 起"],
                     "recommendations": ["建议进一步核实关键信息"],
                 }
+                model_status = "llm_failed"
         else:
             payload = {
                 "summary": report.content[:500] if report and report.content else "基于圆桌会议研判生成的综合结论",
@@ -323,13 +404,43 @@ JSON字段：
                 "key_evidence": ["圆桌会议研判结果"],
                 "recommendations": [],
             }
+            model_status = "deterministic_fallback"
 
         confidence = float(payload.get("confidence", 0.0))
         risk_level = payload.get("risk_level", "unknown")
-        status = "published" if confidence >= 0.7 and risk_level != "high" else "needs_review"
+        status = "needs_review"
 
         # 使用第一个案件ID作为主案件
         primary_case_id = case_ids[0] if case_ids else None
+        safe_evidence = ConclusionFactoryService._json_safe(evidence)
+        ai_output = ConclusionFactoryService._build_conclusion_ai_output(
+            title=f"会议 {meeting_id} 情报结论草稿",
+            output_type="conclusion_draft",
+            facts=[
+                f"会议编号：{meeting_id}",
+                f"关联案件数：{len(case_ids)}",
+                f"会议状态：{meeting.status}",
+            ],
+            payload=payload,
+            information_gaps=["会议结论发布前需人工复核案件事实、报告引用和建议边界。"],
+            evidence_refs=[
+                {
+                    "id": f"meeting:{meeting_id}",
+                    "kind": "meeting",
+                    "summary": f"圆桌会议 {meeting_id}",
+                    "basis": payload.get("key_evidence") or [],
+                },
+                *([
+                    {
+                        "id": f"report:{report.id}",
+                        "kind": "meeting_report",
+                        "summary": f"会议报告 {report.report_type or '综合'}",
+                        "basis": [],
+                    }
+                ] if report else []),
+            ],
+            model_status=model_status,
+        )
 
         conclusion = Conclusion(
             case_id=primary_case_id,
@@ -341,7 +452,8 @@ JSON字段：
             evidence={
                 "key_evidence": payload.get("key_evidence", []),
                 "recommendations": payload.get("recommendations", []),
-                "raw": evidence,
+                "ai_output": ai_output,
+                "raw": safe_evidence,
             },
         )
         db.add(conclusion)

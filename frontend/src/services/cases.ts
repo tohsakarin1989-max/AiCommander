@@ -23,9 +23,10 @@ import type {
   SerialCaseGroup,
   BatchReviewResult,
   PreprocessStatus,
+  PreprocessBatchResult,
   TrajectoryPoint,
   TrajectoryAnalysis,
-  TrajectoryPrediction,
+  TrajectoryReview,
   TrajectoryReplayFrame,
   SemanticSearchResult,
   CaseStatistics,
@@ -281,6 +282,19 @@ export const caseApi = {
     return response.data
   },
 
+  /**
+   * 批量触发案件预处理；不传 case_ids 时默认处理全部后台案件
+   */
+  preprocessCasesBatch: async (payload?: {
+    case_ids?: number[]
+    only_missing?: boolean
+    limit?: number
+    use_llm?: boolean
+  }): Promise<PreprocessBatchResult> => {
+    const response = await api.post<PreprocessBatchResult>('/cases/preprocess/batch', payload ?? {})
+    return response.data
+  },
+
   batchReviewCases: async (payload?: {
     case_ids?: number[]
     only_missing?: boolean
@@ -405,11 +419,20 @@ export const caseApi = {
   },
 
   /**
-   * 预测下一个位置
+   * 复盘已发生案件路径条件
    */
-  predictNextLocation: async (caseIds: number[], useAI = true): Promise<TrajectoryPrediction> => {
+  reviewTrajectoryConditions: async (caseIds: number[]): Promise<TrajectoryReview> => {
     const ids = caseIds.join(',')
-    const response = await api.get<TrajectoryPrediction>(`/cases/trajectory/${ids}/predict`, {
+    const response = await api.get<TrajectoryReview>(`/cases/trajectory/${ids}/review`)
+    return response.data
+  },
+
+  /**
+   * 旧兼容入口：后端返回路径条件复盘，不再返回未来地点
+   */
+  predictNextLocation: async (caseIds: number[], useAI = true): Promise<TrajectoryReview> => {
+    const ids = caseIds.join(',')
+    const response = await api.get<TrajectoryReview>(`/cases/trajectory/${ids}/predict`, {
       params: { use_ai: useAI },
     })
     return response.data

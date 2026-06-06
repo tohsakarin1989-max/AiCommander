@@ -47,6 +47,8 @@ export interface JurisdictionAssetSummary {
   by_type: Record<string, number>
   by_source: Record<string, number>
   by_status: Record<string, number>
+  by_layer?: Record<string, number>
+  layer_labels?: Record<string, string>
 }
 
 export interface AssetTableImportResult {
@@ -56,6 +58,34 @@ export interface AssetTableImportResult {
   updated: number
   errors: Array<{ row: number; error: string }>
   items: Array<JurisdictionAsset | JurisdictionAssetCreate>
+}
+
+export interface PublicMapSyncRequest {
+  south?: number
+  west?: number
+  north?: number
+  east?: number
+  center_lat?: number
+  center_lng?: number
+  radius_km?: number
+  max_features?: number
+}
+
+export interface PublicMapSyncResult {
+  total: number
+  created: number
+  updated: number
+  pulled: number
+  usable: number
+  provider: string
+  bounds: {
+    south: number
+    west: number
+    north: number
+    east: number
+  }
+  errors: string[]
+  items: JurisdictionAsset[]
 }
 
 export interface JurisdictionDistance {
@@ -191,6 +221,7 @@ export interface DataQualitySummary {
   duplicate_candidates: number
   type_counts: Record<string, number>
   missing_required_types: string[]
+  missing_public_reference_types?: string[]
   coverage_score: number
   recommendations: string[]
 }
@@ -251,6 +282,11 @@ export const jurisdictionApi = {
     items: JurisdictionAsset[]
   }> => {
     const response = await api.post('/jurisdiction/assets/import-geojson', { geojson, source })
+    return response.data
+  },
+
+  syncPublicMapReferences: async (payload: PublicMapSyncRequest = {}): Promise<PublicMapSyncResult> => {
+    const response = await api.post<PublicMapSyncResult>('/jurisdiction/assets/sync-public-map', payload)
     return response.data
   },
 

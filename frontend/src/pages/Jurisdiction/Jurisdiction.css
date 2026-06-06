@@ -96,6 +96,24 @@
   background: var(--line);
 }
 
+.jurisdiction-auto-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid oklch(0.64 0.10 80 / 0.22);
+  background: oklch(0.14 0.018 245 / 0.72);
+}
+
+.jurisdiction-auto-sync span {
+  min-width: 220px;
+  flex: 1;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .jurisdiction-import-preview {
   display: flex;
   flex-wrap: wrap;

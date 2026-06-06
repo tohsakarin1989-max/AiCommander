@@ -130,7 +130,7 @@ def test_evidence_create_auto_classifies_bonus_material():
     assert evidence["meta"]["auto_classification"]["label"] == "检斤含水单据"
 
 
-def test_bonus_assessment_gates_materials_and_calculates_after_evidence_is_complete():
+def test_bonus_assessment_calculates_from_case_data_and_gates_review_by_evidence():
     db = _session()
     client = _client(db)
     occurred_time = datetime.utcnow() - timedelta(minutes=30)
@@ -186,7 +186,15 @@ def test_bonus_assessment_gates_materials_and_calculates_after_evidence_is_compl
     assert blocked_response.status_code == 200
     blocked = blocked_response.json()
     assert blocked["material_gate"]["status"] == "blocked_by_materials"
-    assert blocked["total_suggested_amount"] == 0
+    assert blocked["ready_for_review"] is False
+    assert blocked["total_suggested_amount"] == 5250
+    blocked_item_status = {item["key"]: item["status"] for item in blocked["bonus_items"]}
+    assert blocked_item_status["small_vehicle_reward"] == "calculated"
+    assert blocked_item_status["criminal_detention_reward"] == "calculated"
+    assert blocked_item_status["other_person_reward"] == "calculated"
+    blocked_item_materials = {item["key"]: item["blocked_by"] for item in blocked["bonus_items"]}
+    assert blocked_item_materials["small_vehicle_reward"] == ["vehicle_transfer_document"]
+    assert blocked_item_materials["criminal_detention_reward"] == ["person_disposition_document"]
 
     _add_required_bonus_evidence(client, case_id)
 
@@ -226,6 +234,186 @@ def test_bonus_assessment_gates_materials_and_calculates_after_evidence_is_compl
     assert item_status["small_vehicle_reward"] == "calculated"
     assert item_status["criminal_detention_reward"] == "calculated"
     assert item_status["other_person_reward"] == "calculated"
+
+
+def test_bonus_assessment_blocks_whole_case_when_calculation_indicator_is_missing():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=15)
+
+    case_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "采油一厂六号井场",
+            "case_type": "涉油盗窃",
+            "description": "巡逻发现一台5吨以下机动车盗运原油，现场抓获1人，车辆移交公安，检斤入库。",
+            "report_time": (occurred_time + timedelta(minutes=10)).isoformat(),
+            "report_unit": "案件一班",
+            "source_type": "巡逻发现",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.0,
+            "water_cut": 8,
+            "oil_handling": "检斤入库",
+            "vehicle_handling": "移交公安",
+            "police_reported": True,
+            "case_filed": True,
+            "security_officers": ["案件一班:张三"],
+        },
+    )
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+
+    client.post(
+        f"/api/cases/{case_id}/vehicles",
+        json={
+            "vehicle_type": "5吨以下机动车",
+            "plate_number": "辽A67890",
+            "handling_status": "移交公安",
+            "transfer_document_no": "YJ-006",
+        },
+    )
+    client.post(
+        f"/api/cases/{case_id}/persons",
+        json={"name": "王某"},
+    )
+    _add_required_bonus_evidence(client, case_id)
+
+    response = client.get(f"/api/cases/{case_id}/bonus-assessment")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["calculation_gate"]["status"] == "blocked_by_data"
+    assert payload["calculation_gate"]["missing_items"] == [
+        {
+            "key": "person_disposition",
+            "label": "人员处理类型",
+            "detail": "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
+        }
+    ]
+    assert payload["total_suggested_amount"] == 0
+    assert payload["ready_for_review"] is False
+    item_status = {item["key"]: item["status"] for item in payload["bonus_items"]}
+    item_amounts = {item["key"]: item["suggested_amount"] for item in payload["bonus_items"]}
+    assert item_status["small_vehicle_reward"] == "blocked_by_data"
+    assert item_status["other_person_reward"] == "blocked_by_data"
+    assert item_amounts["small_vehicle_reward"] == 0
+    assert item_amounts["other_person_reward"] == 0
+
+
+def test_bonus_assessment_does_not_require_person_indicator_without_person_entry():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=15)
+
+    case_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "采油一厂六号井场",
+            "case_type": "涉油盗窃",
+            "description": "巡逻发现一台5吨以下机动车盗运原油，现场曾提到抓获线索，车辆移交公安，检斤入库。",
+            "involved_persons": {"items": []},
+            "report_time": (occurred_time + timedelta(minutes=10)).isoformat(),
+            "report_unit": "案件一班",
+            "source_type": "巡逻发现",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.0,
+            "water_cut": 8,
+            "oil_handling": "检斤入库",
+            "vehicle_handling": "移交公安",
+            "security_officers": ["案件一班:张三"],
+        },
+    )
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+
+    vehicle_response = client.post(
+        f"/api/cases/{case_id}/vehicles",
+        json={
+            "vehicle_type": "5吨以下机动车",
+            "plate_number": "辽A67890",
+            "handling_status": "移交公安",
+            "transfer_document_no": "YJ-006",
+        },
+    )
+    assert vehicle_response.status_code == 200
+    for title in ["检斤含水单据", "原油入库处理凭证", "车辆移交单据"]:
+        evidence_response = client.post(
+            f"/api/cases/{case_id}/evidence",
+            json={"title": title, "file_path": f"/tmp/{title}.pdf"},
+        )
+        assert evidence_response.status_code == 200
+
+    response = client.get(f"/api/cases/{case_id}/bonus-assessment")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["calculation_gate"]["status"] == "ready"
+    assert payload["calculation_gate"]["missing_items"] == []
+    assert payload["bonus_counts"]["people"] == 0
+    person_material = next(
+        item for item in payload["material_checks"]
+        if item["requirement_key"] == "person_disposition_document"
+    )
+    assert person_material["required"] is False
+    item_status = {item["key"]: item["status"] for item in payload["bonus_items"]}
+    assert item_status["small_vehicle_reward"] == "calculated"
+    assert item_status["other_person_reward"] == "not_applicable"
+
+
+def test_case_create_can_capture_bonus_calculation_indicators_upfront():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=12)
+
+    case_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "采油一厂七号井场",
+            "case_type": "涉油盗窃",
+            "description": "巡逻发现一台5吨以下机动车盗运原油，现场抓获1人并刑事拘留，车辆移交公安，检斤入库。",
+            "report_time": (occurred_time + timedelta(minutes=8)).isoformat(),
+            "report_unit": "案件一班",
+            "source_type": "巡逻发现",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.0,
+            "water_cut": 8,
+            "oil_handling": "检斤入库",
+            "vehicle_handling": "移交公安",
+            "person_handling": "刑事拘留",
+            "security_officers": ["案件一班:张三"],
+            "initial_vehicles": [
+                {
+                    "vehicle_type": "5吨以下机动车",
+                    "plate_number": "辽A77777",
+                    "handling_status": "移交公安",
+                }
+            ],
+            "initial_persons": [
+                {
+                    "name": "王某",
+                    "handling_status": "刑事拘留",
+                }
+            ],
+        },
+    )
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+
+    vehicles = client.get(f"/api/cases/{case_id}/vehicles").json()
+    persons = client.get(f"/api/cases/{case_id}/persons").json()
+    _add_required_bonus_evidence(client, case_id)
+    assessment = client.get(f"/api/cases/{case_id}/bonus-assessment").json()
+
+    assert vehicles[0]["vehicle_type"] == "5吨以下机动车"
+    assert persons[0]["handling_status"] == "刑事拘留"
+    assert assessment["calculation_gate"]["status"] == "ready"
+    assert assessment["total_suggested_amount"] == 3750
 
 
 def test_official_bonus_uses_largest_remainder_for_cross_squad_distribution():
@@ -339,6 +527,96 @@ def test_official_bonus_switches_to_high_tier_after_target_is_exceeded():
     item_amounts = {item["key"]: item["suggested_amount"] for item in payload["bonus_items"]}
     assert item_amounts["small_vehicle_reward"] == 2400
     assert item_amounts["criminal_detention_reward"] == 9000
+
+
+def test_bonus_assessment_uses_case_quarter_for_management_targets():
+    db = _session()
+    client = _client(db)
+
+    previous_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 1, 15, 9, 0).isoformat(),
+            "location": "一季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，抓获1人并刑事拘留，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.0,
+            "water_cut": 5,
+            "oil_handling": "检斤入库",
+            "vehicle_handling": "移交公安",
+            "person_handling": "移交公安",
+            "police_reported": True,
+            "case_filed": True,
+            "police_officer": "张警官",
+            "police_phone": "13800000000",
+            "security_officers": ["案件三班:张三"],
+        },
+    )
+    previous_id = previous_response.json()["id"]
+    client.post(
+        f"/api/cases/{previous_id}/vehicles",
+        json={"vehicle_type": "小型机动车", "plate_number": "辽A-Q1", "transfer_document_no": "YJ-Q1"},
+    )
+    client.post(
+        f"/api/cases/{previous_id}/persons",
+        json={"name": "王某", "handling_status": "刑事拘留"},
+    )
+    _add_required_bonus_evidence(client, previous_id)
+
+    current_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 4, 6, 9, 30).isoformat(),
+            "location": "二季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，抓获1人并刑事拘留，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.0,
+            "water_cut": 5,
+            "oil_handling": "检斤入库",
+            "vehicle_handling": "移交公安",
+            "person_handling": "移交公安",
+            "police_reported": True,
+            "case_filed": True,
+            "police_officer": "张警官",
+            "police_phone": "13800000000",
+            "security_officers": ["案件三班:李四"],
+        },
+    )
+    case_id = current_response.json()["id"]
+    client.post(
+        f"/api/cases/{case_id}/vehicles",
+        json={"vehicle_type": "小型机动车", "plate_number": "辽A-Q2", "transfer_document_no": "YJ-Q2"},
+    )
+    client.post(
+        f"/api/cases/{case_id}/persons",
+        json={"name": "赵某", "handling_status": "刑事拘留"},
+    )
+    _add_required_bonus_evidence(client, case_id)
+
+    response = client.get(f"/api/cases/{case_id}/bonus-assessment")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["squad_performance"]["案件三班"]["vehicle_actual"] == 1
+    assert payload["squad_performance"]["案件三班"]["vehicle_high"] is False
+    assert payload["squad_performance"]["案件三班"]["person_actual"] == 1
+    assert payload["squad_performance"]["案件三班"]["person_high"] is False
+    assert payload["total_suggested_amount"] == 3750
+    management = payload["management_context"]
+    assert management["period"]["quarter_label"] == "2026年Q2"
+    assert management["quarter"]["case_count"] == 1
+    assert management["quarter"]["vehicle_actual"] == 1
+    assert management["quarter"]["vehicle_target"] == 1
+    assert management["annual"]["case_count"] == 2
+    assert management["annual"]["vehicle_actual"] == 2
+    assert management["annual"]["vehicle_target"] == 4
+    assert "单案金额进入该周期人工复核" in management["pricing_basis"]
 
 
 def test_case_automation_workbench_surfaces_456_modules():

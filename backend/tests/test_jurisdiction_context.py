@@ -14,6 +14,7 @@ from app.api import jurisdiction
 from app.database import Base, get_db
 from app.models.case import Case
 from app.models.patrol import PatrolRecord
+from app.services.jurisdiction_service import JurisdictionService
 from app.services.smart_analysis_service import SmartAnalysisService
 
 
@@ -104,6 +105,8 @@ def test_create_assets_and_summary(api_db_session: Session):
     assert payload["total"] == 3
     assert payload["by_type"]["road"] == 1
     assert payload["by_source"]["map"] == 2
+    assert payload["by_layer"]["public_map_reference"] == 2
+    assert payload["by_layer"]["oil_business_asset"] == 1
 
 
 def test_bulk_import_assets_marks_map_source(api_db_session: Session):
@@ -204,6 +207,62 @@ def test_geojson_import_creates_and_updates_assets(api_db_session: Session):
     assets = client.get("/api/jurisdiction/assets", params={"status": ""}).json()
     assert len(assets) == 2
     assert any(asset["name"] == "南区东侧便道-已校验" for asset in assets)
+
+
+def test_sync_public_map_references_fetches_osm_and_upserts(api_db_session: Session, monkeypatch):
+    client = _build_client(api_db_session)
+    _add_case(api_db_session)
+
+    def fake_fetch(query: str):
+        assert "way[\"highway\"]" in query
+        assert "node[\"place\"" in query
+        return [
+            {
+                "type": "way",
+                "id": 1001,
+                "tags": {"highway": "service", "name": "南区东侧道路"},
+                "geometry": [
+                    {"lat": 39.9000, "lon": 116.4000},
+                    {"lat": 39.9040, "lon": 116.4040},
+                ],
+            },
+            {
+                "type": "node",
+                "id": 2001,
+                "lat": 39.9100,
+                "lon": 116.4070,
+                "tags": {"place": "village", "name": "东湾村"},
+            },
+            {
+                "type": "way",
+                "id": 3001,
+                "tags": {"waterway": "stream", "name": "南侧排水沟"},
+                "geometry": [
+                    {"lat": 39.8990, "lon": 116.3980},
+                    {"lat": 39.9020, "lon": 116.4020},
+                ],
+            },
+        ]
+
+    monkeypatch.setattr(JurisdictionService, "_fetch_public_map_elements", staticmethod(fake_fetch))
+
+    created = client.post("/api/jurisdiction/assets/sync-public-map", json={"radius_km": 1, "max_features": 10})
+    updated = client.post("/api/jurisdiction/assets/sync-public-map", json={"radius_km": 1, "max_features": 10})
+
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["provider"] == "openstreetmap"
+    assert payload["pulled"] == 3
+    assert payload["usable"] == 3
+    assert payload["created"] == 3
+    assert payload["updated"] == 0
+    assert payload["items"][0]["source"] == "map"
+    assert payload["items"][0]["verified"] is True
+    assert payload["items"][0]["external_id"] == "osm:way:1001"
+    assert {item["asset_type"] for item in payload["items"]} == {"road", "village", "river"}
+    assert updated.status_code == 200
+    assert updated.json()["created"] == 0
+    assert updated.json()["updated"] == 3
 
 
 def test_update_and_deactivate_asset(api_db_session: Session):
@@ -390,6 +449,10 @@ def test_data_quality_audit_detects_gaps_and_duplicates(api_db_session: Session)
     assert payload["duplicate_candidates"] >= 1
     assert payload["coverage_score"] < 100
     assert payload["recommendations"]
+    assert "road" not in payload["missing_required_types"]
+    assert "village" not in payload["missing_required_types"]
+    assert set(payload["missing_public_reference_types"]) == {"road", "village"}
+    assert any("公共地图参考数据" in item for item in payload["recommendations"])
 
 
 def test_patrol_plan_roundtable_and_feedback_close_loop(api_db_session: Session):

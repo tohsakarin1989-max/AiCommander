@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Table, Descriptions, message } from 'antd'
+import { Table, Descriptions, Modal, message } from 'antd'
 import {
   FilterOutlined,
   SyncOutlined,
@@ -7,12 +7,13 @@ import {
   WarningOutlined,
   ApartmentOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { caseApi } from '../../services/cases'
 import type { Case } from '../../types'
 import './CaseFeatures.css'
 
 const CaseFeatures: React.FC = () => {
+  const queryClient = useQueryClient()
   const { data: cases, isLoading } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
@@ -26,6 +27,37 @@ const CaseFeatures: React.FC = () => {
 
   const [selected, setSelected] = useState<Case | null>(null)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [batchSummary, setBatchSummary] = useState<{
+    processed: number
+    success: number
+    failed: number
+    skipped: number
+    modeText: string
+  } | null>(null)
+
+  const batchMutation = useMutation({
+    mutationFn: (payload?: { case_ids?: number[]; only_missing?: boolean; use_llm?: boolean }) =>
+      caseApi.preprocessCasesBatch(payload),
+    onSuccess: (result) => {
+      const modeText = Object.entries(result.mode_counts || {})
+        .map(([mode, count]) => `${mode} ${count}`)
+        .join('，') || '暂无'
+      setBatchSummary({
+        processed: result.processed,
+        success: result.success,
+        failed: result.failed,
+        skipped: result.skipped,
+        modeText,
+      })
+      message.success(`清洗完成：成功 ${result.success} 条，失败 ${result.failed} 条`)
+      setSelectedRowKeys([])
+      queryClient.invalidateQueries({ queryKey: ['cases'] })
+      queryClient.invalidateQueries({ queryKey: ['preprocess-status'] })
+    },
+    onError: (e: any) => {
+      message.error(`批量清洗失败：${e.message || e}`)
+    },
+  })
 
   const renderQuality = (record: Case) => {
     if (record.quality_score == null) return <span style={{ color: 'var(--ink-3)' }}>—</span>
@@ -91,15 +123,21 @@ const CaseFeatures: React.FC = () => {
       message.warning('请先选择需要预处理的案件')
       return
     }
-    try {
-      await Promise.all(
-        selectedRowKeys.map((id) => caseApi.preprocessCase(id as number)),
-      )
-      message.success(`已提交 ${selectedRowKeys.length} 条预处理任务`)
-      setSelectedRowKeys([])
-    } catch (e: any) {
-      message.error(`批量预处理失败：${e.message || e}`)
-    }
+    batchMutation.mutate({
+      case_ids: selectedRowKeys.map((id) => Number(id)),
+      only_missing: false,
+      use_llm: true,
+    })
+  }
+
+  const handlePreprocessAll = () => {
+    Modal.confirm({
+      title: '全量清洗后台案件数据',
+      content: '将按现有案件预处理方式重跑全部案件，默认使用不消耗 token 的确定性清洗，适合测试阶段快速看整体效果。',
+      okText: '开始清洗',
+      cancelText: '取消',
+      onOk: () => batchMutation.mutateAsync({ only_missing: false, use_llm: false }),
+    })
   }
 
   const renderDetail = () => {
@@ -223,9 +261,18 @@ const CaseFeatures: React.FC = () => {
         <span className="sub">FEATURE EXTRACTION</span>
         <span style={{ flex: 1 }} />
         <button
+          className="btn"
+          onClick={handlePreprocessAll}
+          disabled={batchMutation.isPending}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <SyncOutlined spin={batchMutation.isPending} />
+          全量清洗
+        </button>
+        <button
           className="btn-primary"
           onClick={handleBatchPreprocess}
-          disabled={!selectedRowKeys.length}
+          disabled={!selectedRowKeys.length || batchMutation.isPending}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
         >
           <FilterOutlined />
@@ -251,6 +298,26 @@ const CaseFeatures: React.FC = () => {
               ? `${Math.round(preprocessStatus.avg_duration_seconds)} 秒`
               : '暂无数据'}
           </span>
+          <span style={{ color: 'var(--line)' }}>·</span>
+          <span>失败</span>
+          <span className="cf-status-bar__num" style={{ color: preprocessStatus.failed > 0 ? 'var(--err)' : 'var(--ink-3)' }}>
+            {preprocessStatus.failed}
+          </span>
+        </div>
+      )}
+
+      {batchSummary && (
+        <div className="cf-batch-result">
+          <CheckCircleOutlined />
+          <span>本次清洗</span>
+          <b>{batchSummary.processed}</b>
+          <span>条，成功</span>
+          <b>{batchSummary.success}</b>
+          <span>条，失败</span>
+          <b className={batchSummary.failed > 0 ? 'err' : ''}>{batchSummary.failed}</b>
+          <span>条，跳过</span>
+          <b>{batchSummary.skipped}</b>
+          <span>条；模式：{batchSummary.modeText}</span>
         </div>
       )}
 

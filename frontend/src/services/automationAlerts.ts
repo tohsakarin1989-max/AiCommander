@@ -1,5 +1,5 @@
 import api from './api'
-import type { LlmContextPack } from './caseIntelligence'
+import type { LlmContextPack, StructuredAiOutput } from './caseIntelligence'
 
 export interface AutomationAlert {
   id: number
@@ -55,6 +55,7 @@ export interface AutomationAlertTriagePack {
   } | null
   related_case_context?: LlmContextPack | null
   boundary: string[]
+  ai_output?: StructuredAiOutput
 }
 
 export const automationAlertApi = {

@@ -174,7 +174,7 @@ def test_case_intelligence_workbench_builds_full_explainable_chain():
     assert payload["scene_analysis"]["reusable_rules"]
     assert payload["area_profiles"]["items"]
     assert payload["prevention_suggestions"]["items"]
-    assert "不自动派发巡逻任务" in payload["prevention_suggestions"]["boundary"]
+    assert "不自动创建执行任务" in payload["prevention_suggestions"]["boundary"]
     assert "不做犯罪预测" in payload["report"]["markdown"]
     section_types = {section["type"] for section in payload["report"]["sections"]}
     assert {"facts", "patterns", "gaps", "prevention_reference"}.issubset(section_types)
@@ -270,4 +270,4 @@ def test_assistant_context_uses_case_intelligence_workbench():
     assert intelligence["similar_cases"][0]["case_number"] == "INT-002"
     assert intelligence["similar_cases"][0]["score"] > 0
     assert intelligence["suggestions"][0]["basis"]
-    assert "不自动派发巡逻任务" in intelligence["boundary"]
+    assert "不自动创建执行任务" in intelligence["boundary"]

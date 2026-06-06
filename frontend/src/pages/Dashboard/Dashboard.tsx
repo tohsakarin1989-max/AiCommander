@@ -6,14 +6,17 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { caseApi, patrolApi } from '../../services'
-import type { AreaRisk, Case } from '../../types'
+import { aiApi, automationAlertApi, caseApi, patrolApi, reportApi, suggestionsApi } from '../../services'
+import type { AreaRisk, Case, ChainLink } from '../../types'
 import AutoScrollList from './AutoScrollList'
 import {
   buildDashboardModel,
+  type DashboardAutomationAlert,
+  type DashboardConclusionDraft,
   type DashboardHotspot,
   type DashboardKpi,
   type DashboardMapPoint,
+  type DashboardReportDraft,
   type ProjectedChainLine,
 } from './dashboardCommandModel'
 import './Dashboard.css'
@@ -29,6 +32,15 @@ interface DashboardStatistics {
 
 type VB = [number, number, number, number]
 
+const EMPTY_CASES: Case[] = []
+const EMPTY_AREA_RISKS: AreaRisk[] = []
+const EMPTY_HOTSPOTS: DashboardHotspot[] = []
+const EMPTY_ALERTS: DashboardAutomationAlert[] = []
+const EMPTY_CHAIN_LINKS: ChainLink[] = []
+const EMPTY_REPORTS: DashboardReportDraft[] = []
+const EMPTY_CONCLUSIONS: DashboardConclusionDraft[] = []
+const EMPTY_SUGGESTIONS: NonNullable<Awaited<ReturnType<typeof suggestionsApi.list>>['suggestions']> = []
+
 const LAT_MIN = 44.5
 const LAT_MAX = 48.0
 const LNG_MIN = 122.5
@@ -39,6 +51,7 @@ const SVG_PAD = 30
 const VB_DEFAULT: VB = [0, 0, SVG_W, SVG_H]
 const VB_W_MIN = 260
 const VB_W_MAX = SVG_W
+const VB_RATIO = SVG_H / SVG_W
 
 const OIL_FIELDS = [
   { name: '喇嘛甸', lat: 46.720, lng: 124.860 },
@@ -70,10 +83,49 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
 }
 
+function fitMapViewBox(anchors: Array<{ x: number; y: number; radius?: number }>): VB {
+  const fallbackAnchors = OIL_FIELDS.map(field => {
+    const [x, y] = latLngToSvg(field.lat, field.lng)
+    return { x, y, radius: 58 }
+  })
+  const safeAnchors = anchors.length > 0 ? anchors : fallbackAnchors
+  const xs = safeAnchors.flatMap(anchor => [anchor.x - (anchor.radius ?? 0) * 0.72, anchor.x + (anchor.radius ?? 0) * 0.72])
+  const ys = safeAnchors.flatMap(anchor => [anchor.y - (anchor.radius ?? 0) * 0.72, anchor.y + (anchor.radius ?? 0) * 0.72])
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  const basePad = anchors.length > 0 ? 122 : 150
+  const minW = anchors.length > 0 ? 520 : 720
+  let viewW = Math.max(maxX - minX + basePad * 2, minW)
+  let viewH = Math.max(maxY - minY + basePad * 1.45, minW * VB_RATIO)
+  if (viewH > viewW * VB_RATIO) viewW = viewH / VB_RATIO
+  viewW = clamp(viewW, VB_W_MIN, VB_W_MAX)
+  viewH = viewW * VB_RATIO
+  return [
+    Number(clamp(cx - viewW / 2, 0, SVG_W - viewW).toFixed(1)),
+    Number(clamp(cy - viewH / 2, 0, SVG_H - viewH).toFixed(1)),
+    Number(viewW.toFixed(1)),
+    Number(viewH.toFixed(1)),
+  ]
+}
+
+function sameViewBox(a: VB, b: VB): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3]
+}
+
 function latLngToSvg(lat: number, lng: number): [number, number] {
   const x = SVG_PAD + ((lng - LNG_MIN) / (LNG_MAX - LNG_MIN)) * (SVG_W - SVG_PAD * 2)
   const y = SVG_H - SVG_PAD - ((lat - LAT_MIN) / (LAT_MAX - LAT_MIN)) * (SVG_H - SVG_PAD * 2)
   return [Number(x.toFixed(1)), Number(y.toFixed(1))]
+}
+
+function compactCaseNumber(caseNumber: string): string {
+  const match = caseNumber.match(/(\d{4})-(\d{5})$/)
+  if (match) return `${match[1]}-${match[2]}`
+  return caseNumber.length > 10 ? caseNumber.slice(-10) : caseNumber
 }
 
 function Panel({ className = '', title, meta, children }: {
@@ -101,6 +153,7 @@ function KpiCard({ item }: { item: DashboardKpi }) {
       <div className="lbl">{item.label}</div>
       <div className="val">{item.value}</div>
       <div className="sub">{item.detail}</div>
+      <div className="scope">口径：{item.scope}</div>
     </div>
   )
 }
@@ -166,6 +219,21 @@ function renderCasePoint(point: DashboardMapPoint) {
   )
 }
 
+function renderCaseLabel(point: DashboardMapPoint, index: number) {
+  const dx = index % 2 === 0 ? 22 : -100
+  const dy = -28 - (index % 3) * 7
+  const labelX = point.x + dx
+  const labelY = point.y + dy
+  const lineEndX = dx > 0 ? labelX : labelX + 82
+  return (
+    <g key={`case-label-${point.id}`} className="db-map-case-label">
+      <path d={`M${point.x},${point.y} L${lineEndX},${labelY + 12}`} />
+      <rect x={labelX} y={labelY} width="82" height="24" />
+      <text x={labelX + 8} y={labelY + 16}>{compactCaseNumber(point.caseNumber)}</text>
+    </g>
+  )
+}
+
 function renderChainLine(line: ProjectedChainLine) {
   return (
     <g key={line.id} className={`db-chain-line db-chain-line--${line.status}`}>
@@ -197,10 +265,12 @@ const Dashboard = () => {
   const wsRef = useRef<WebSocket | null>(null)
   const vbRef = useRef<VB>(VB_DEFAULT)
   const dragRef = useRef<{ cx: number; cy: number; vb0: VB } | null>(null)
+  const mapViewTouchedRef = useRef(false)
 
   const setVb = useCallback((updater: VB | ((old: VB) => VB)) => {
     setVbState(previous => {
       const next = typeof updater === 'function' ? updater(previous) : updater
+      if (sameViewBox(previous, next)) return previous
       vbRef.current = next
       return next
     })
@@ -237,17 +307,17 @@ const Dashboard = () => {
     return () => ws.close()
   }, [])
 
-  const { data: queriedCases = [] } = useQuery<Case[]>({
+  const { data: queriedCases } = useQuery<Case[]>({
     queryKey: ['dashboard-cases'],
     queryFn: () => caseApi.getCases({ limit: 100 }),
     refetchInterval: 60_000,
   })
-  const { data: areaRisks = [] } = useQuery<AreaRisk[]>({
+  const { data: areaRisks } = useQuery<AreaRisk[]>({
     queryKey: ['dashboard-area-risks'],
     queryFn: () => patrolApi.getAreaRisks({ limit: 5, min_risk: 0.5 }),
     refetchInterval: 120_000,
   })
-  const { data: rawHotspots = [] } = useQuery({
+  const { data: rawHotspots } = useQuery<DashboardHotspot[]>({
     queryKey: ['dashboard-map-hotspots'],
     queryFn: () => caseApi.getHotspots(1.0, 3),
     refetchInterval: 120_000,
@@ -257,19 +327,47 @@ const Dashboard = () => {
     queryFn: () => caseApi.getChainMapData(),
     refetchInterval: 120_000,
   })
+  const { data: automationAlerts } = useQuery<DashboardAutomationAlert[]>({
+    queryKey: ['dashboard-automation-alerts'],
+    queryFn: () => automationAlertApi.list({ limit: 20 }),
+    refetchInterval: 120_000,
+    retry: false,
+  })
+  const { data: reports } = useQuery<DashboardReportDraft[]>({
+    queryKey: ['dashboard-reports'],
+    queryFn: () => reportApi.list({ limit: 40 }),
+    refetchInterval: 120_000,
+    retry: false,
+  })
+  const { data: conclusions } = useQuery<DashboardConclusionDraft[]>({
+    queryKey: ['dashboard-conclusions'],
+    queryFn: () => aiApi.conclusion.list(),
+    refetchInterval: 120_000,
+    retry: false,
+  })
+  const { data: suggestionsData } = useQuery({
+    queryKey: ['dashboard-suggestions'],
+    queryFn: () => suggestionsApi.list({ limit: 30, status: 'open' }),
+    refetchInterval: 120_000,
+    retry: false,
+  })
 
-  const dashboardCases = cases.length > 0 ? cases : queriedCases
+  const dashboardCases = cases.length > 0 ? cases : (queriedCases ?? EMPTY_CASES)
 
   const model = useMemo(() => buildDashboardModel({
     cases: dashboardCases,
-    chainLinks: chainMapData?.chain_links ?? [],
-    areaRisks,
-    hotspots: rawHotspots as DashboardHotspot[],
+    chainLinks: chainMapData?.chain_links ?? EMPTY_CHAIN_LINKS,
+    areaRisks: areaRisks ?? EMPTY_AREA_RISKS,
+    hotspots: rawHotspots ?? EMPTY_HOTSPOTS,
+    automationAlerts: automationAlerts ?? EMPTY_ALERTS,
+    reports: reports ?? EMPTY_REPORTS,
+    conclusions: conclusions ?? EMPTY_CONCLUSIONS,
+    suggestions: suggestionsData?.suggestions ?? EMPTY_SUGGESTIONS,
     statistics,
-  }), [dashboardCases, chainMapData, areaRisks, rawHotspots, statistics])
+  }), [dashboardCases, chainMapData, areaRisks, rawHotspots, automationAlerts, reports, conclusions, suggestionsData, statistics])
 
   const hotspotSvg = useMemo(() => {
-    return (rawHotspots as DashboardHotspot[])
+    return (rawHotspots ?? EMPTY_HOTSPOTS)
       .map((hotspot, index) => {
         const lat = hotspot.center?.latitude ?? hotspot.center_latitude
         const lng = hotspot.center?.longitude ?? hotspot.center_longitude
@@ -285,9 +383,25 @@ const Dashboard = () => {
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8)
   }, [rawHotspots])
 
+  const recommendedVb = useMemo(() => fitMapViewBox([
+    ...model.mapPoints.map(point => ({ x: point.x, y: point.y, radius: 32 })),
+    ...model.chainLines.flatMap(line => [
+      { x: line.fromX, y: line.fromY, radius: 24 },
+      { x: line.toX, y: line.toY, radius: 24 },
+    ]),
+    ...hotspotSvg.map(hotspot => ({ x: hotspot.x, y: hotspot.y, radius: Math.min(hotspot.radius, 96) })),
+  ]), [model.mapPoints, model.chainLines, hotspotSvg])
+
+  useEffect(() => {
+    if (!mapViewTouchedRef.current) setVb(recommendedVb)
+  }, [recommendedVb, setVb])
+
   const zoomIn = useCallback(() => {
+    mapViewTouchedRef.current = true
     setVb(([x, y, w]) => {
       const nw = clamp(w * 0.72, VB_W_MIN, VB_W_MAX)
       const nh = nw * (SVG_H / SVG_W)
@@ -297,6 +411,7 @@ const Dashboard = () => {
   }, [setVb])
 
   const zoomOut = useCallback(() => {
+    mapViewTouchedRef.current = true
     setVb(([x, y, w]) => {
       const nw = clamp(w / 0.72, VB_W_MIN, VB_W_MAX)
       const nh = nw * (SVG_H / SVG_W)
@@ -305,13 +420,17 @@ const Dashboard = () => {
     })
   }, [setVb])
 
-  const resetView = useCallback(() => setVb(VB_DEFAULT), [setVb])
+  const resetView = useCallback(() => {
+    mapViewTouchedRef.current = false
+    setVb(recommendedVb)
+  }, [recommendedVb, setVb])
 
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) return
     const handler = (event: WheelEvent) => {
       event.preventDefault()
+      mapViewTouchedRef.current = true
       const rect = svg.getBoundingClientRect()
       const [vbX, vbY, vbW, vbH] = vbRef.current
       const mx = vbX + ((event.clientX - rect.left) / rect.width) * vbW
@@ -331,6 +450,7 @@ const Dashboard = () => {
 
   const handleMouseDown = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
     if (event.button !== 0) return
+    mapViewTouchedRef.current = true
     dragRef.current = { cx: event.clientX, cy: event.clientY, vb0: [...vbRef.current] as VB }
     setIsDragging(true)
   }, [])
@@ -404,30 +524,42 @@ const Dashboard = () => {
               style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             >
               <defs>
+                <linearGradient id="dashboard-map-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="oklch(0.18 0.02 250)" />
+                  <stop offset="52%" stopColor="oklch(0.125 0.014 250)" />
+                  <stop offset="100%" stopColor="oklch(0.09 0.01 250)" />
+                </linearGradient>
                 <pattern id="dashboard-grid" width="60" height="60" patternUnits="userSpaceOnUse">
                   <path d="M60 0 L0 0 0 60" fill="none" stroke="oklch(0.32 0.014 250 / 0.22)" strokeWidth="0.6" />
                 </pattern>
                 <radialGradient id="dashboard-heat">
-                  <stop offset="0%" stopColor="oklch(0.78 0.14 45 / 0.32)" />
+                  <stop offset="0%" stopColor="oklch(0.72 0.19 28 / 0.44)" />
+                  <stop offset="46%" stopColor="oklch(0.78 0.14 45 / 0.20)" />
                   <stop offset="100%" stopColor="oklch(0.78 0.14 45 / 0)" />
                 </radialGradient>
+                <filter id="dashboard-point-glow" x="-80%" y="-80%" width="260%" height="260%">
+                  <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="oklch(0.78 0.11 220 / 0.68)" />
+                </filter>
               </defs>
-              <rect width={SVG_W} height={SVG_H} fill="oklch(0.16 0.014 250)" />
+              <rect width={SVG_W} height={SVG_H} fill="url(#dashboard-map-bg)" />
               <rect width={SVG_W} height={SVG_H} fill="url(#dashboard-grid)" />
-              <path className="db-map-boundary" d="M150 140 L965 74 L1068 526 L238 666 Z" />
-              <g className="db-map-roads">
-                <path d="M0 318 C260 312 460 318 620 316 C810 314 990 312 1200 314" />
-                <path d="M620 0 C618 156 612 246 620 318 C606 474 584 612 560 800" />
-                <path d="M620 318 L706 380 L930 502" />
+              <g className="db-map-terrain" aria-hidden="true">
+                <path className="db-map-boundary" d="M150 140 L965 74 L1068 526 L238 666 Z" />
+                <path className="db-map-corridor" d="M220 306 L1008 186 L1098 334 L294 502 Z" />
+                <path className="db-map-corridor db-map-corridor--inner" d="M286 338 L934 238 L1000 324 L348 456 Z" />
               </g>
-              <g className="db-map-pipelines">
+              <g className="db-map-roads" aria-hidden="true">
+                <path d="M42 328 C272 298 472 316 620 314 C822 310 990 284 1160 248" />
+                <path d="M618 18 C628 154 616 248 620 314 C606 474 584 612 560 782" />
+                <path d="M618 314 L708 380 L958 508" />
+                <path d="M244 568 C402 520 472 462 600 416 C764 358 924 344 1106 378" />
+              </g>
+              <g className="db-map-pipelines" aria-label="管线参考">
                 {PIPELINE_ROUTES.map(route => (
-                  <path key={route.id} d={route.d}>
-                    <title>{route.name}</title>
-                  </path>
+                  <path key={route.id} d={route.d} />
                 ))}
               </g>
-              <g className="db-map-fields">
+              <g className="db-map-fields" aria-label="油区参考">
                 {OIL_FIELDS.map(field => {
                   const [x, y] = latLngToSvg(field.lat, field.lng)
                   return (
@@ -439,10 +571,12 @@ const Dashboard = () => {
                 })}
               </g>
               <g className="db-map-heat">
-                {hotspotSvg.map(hotspot => (
-                  <g key={hotspot.label}>
+                {hotspotSvg.map((hotspot, index) => (
+                  <g key={hotspot.label} className="db-map-hotspot">
                     <circle cx={hotspot.x} cy={hotspot.y} r={hotspot.radius} fill="url(#dashboard-heat)" />
-                    <text x={hotspot.x + 12} y={hotspot.y - 12}>{hotspot.label} · {hotspot.count}</text>
+                    <circle cx={hotspot.x} cy={hotspot.y} r={Math.max(18, hotspot.radius * 0.22)} />
+                    <rect x={hotspot.x + 16} y={hotspot.y - 28} width="86" height="30" />
+                    <text x={hotspot.x + 26} y={hotspot.y - 9}>热区 {index + 1} · {hotspot.count}</text>
                   </g>
                 ))}
               </g>
@@ -452,6 +586,11 @@ const Dashboard = () => {
               <g className="db-map-case-points">
                 {model.mapPoints.map(renderCasePoint)}
               </g>
+              {model.mapPoints.length <= 12 && (
+                <g className="db-map-case-labels">
+                  {model.mapPoints.slice(0, 8).map(renderCaseLabel)}
+                </g>
+              )}
               <g className="db-map-city-labels">
                 {CITY_LABELS.map(city => {
                   const [x, y] = latLngToSvg(city.lat, city.lng)
@@ -459,7 +598,10 @@ const Dashboard = () => {
                 })}
               </g>
               {model.mapPoints.length === 0 && (
-                <text className="db-map-empty" x="460" y="390">暂无有效坐标案件</text>
+                <g className="db-map-empty-state">
+                  <text x="432" y="378">暂无有效坐标案件</text>
+                  <text x="394" y="414">补录案件经纬度后展示空间聚类、热区和链条关系。</text>
+                </g>
               )}
             </svg>
             <div className="db-map-controls">

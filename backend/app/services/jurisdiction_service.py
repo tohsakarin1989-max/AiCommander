@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 from typing import Any, Dict, Iterable, List, Optional
+
+import httpx
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +17,15 @@ from app.services.patrol_service import PatrolService
 from app.utils.geo import haversine_km
 
 
-ROAD_TYPES = {"road", "path", "access_road"}
+ROAD_TYPES = {
+    "road",
+    "path",
+    "access_road",
+    "internal_route",
+    "temporary_route",
+    "abandoned_road",
+    "risk_route",
+}
 VILLAGE_TYPES = {"village", "residential", "settlement"}
 PRODUCTION_TARGET_TYPES = {
     "well",
@@ -25,8 +36,43 @@ PRODUCTION_TARGET_TYPES = {
     "pipeline_node",
     "key_location",
 }
-TECH_TYPES = {"camera", "lighting", "alarm", "fence", "checkpoint"}
-PATROL_TYPES = {"patrol_point", "checkpoint"}
+TECH_TYPES = {"camera", "lighting", "alarm", "fence", "checkpoint", "blind_spot"}
+PATROL_TYPES = {"patrol_point", "checkpoint", "high_risk_area"}
+PUBLIC_MAP_REFERENCE_TYPES = {
+    "road",
+    "path",
+    "access_road",
+    "village",
+    "residential",
+    "settlement",
+    "river",
+    "bridge",
+    "intersection",
+    "public_place",
+}
+BUSINESS_ASSET_TYPES = (
+    PRODUCTION_TARGET_TYPES
+    | TECH_TYPES
+    | PATROL_TYPES
+    | {"internal_route", "temporary_route", "abandoned_road", "risk_route"}
+)
+BUSINESS_REQUIREMENT_GROUPS = {
+    "production_target": PRODUCTION_TARGET_TYPES,
+    "technical_protection": TECH_TYPES,
+}
+ASSET_LAYER_LABELS = {
+    "public_map_reference": "公共地图参考",
+    "oil_business_asset": "油区业务资产",
+    "analysis_derived": "研判派生条件",
+    "other": "其他要素",
+}
+REQUIREMENT_LABELS = {
+    "production_target": "井点/管线节点/站库等生产目标",
+    "technical_protection": "监控/卡口/照明/报警等防控设施",
+}
+OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
+DEFAULT_PUBLIC_MAP_RADIUS_KM = 6.0
+MAX_PUBLIC_MAP_RADIUS_KM = 20.0
 
 
 @dataclass(frozen=True)
@@ -121,6 +167,46 @@ class JurisdictionService:
         }
 
     @staticmethod
+    def sync_public_map_references(
+        db: Session,
+        *,
+        south: Optional[float] = None,
+        west: Optional[float] = None,
+        north: Optional[float] = None,
+        east: Optional[float] = None,
+        center_lat: Optional[float] = None,
+        center_lng: Optional[float] = None,
+        radius_km: float = DEFAULT_PUBLIC_MAP_RADIUS_KM,
+        max_features: int = 160,
+    ) -> Dict[str, Any]:
+        """从公共地图服务拉取道路、村屯等参考要素并写入辖区要素库。"""
+        bounds = JurisdictionService._resolve_public_map_bounds(
+            db,
+            south=south,
+            west=west,
+            north=north,
+            east=east,
+            center_lat=center_lat,
+            center_lng=center_lng,
+            radius_km=radius_km,
+        )
+        query = JurisdictionService._build_overpass_public_map_query(bounds)
+        elements = JurisdictionService._fetch_public_map_elements(query)
+        features = JurisdictionService._osm_elements_to_geojson_features(elements, max_features=max_features)
+        result = JurisdictionService.import_geojson(
+            db,
+            {"type": "FeatureCollection", "features": features},
+            source="map",
+        )
+        result.update({
+            "provider": "openstreetmap",
+            "bounds": bounds,
+            "pulled": len(elements),
+            "usable": len(features),
+        })
+        return result
+
+    @staticmethod
     def import_tabular_assets(
         db: Session,
         rows: List[Dict[str, Any]],
@@ -193,16 +279,21 @@ class JurisdictionService:
         by_type: Dict[str, int] = {}
         by_source: Dict[str, int] = {}
         by_status: Dict[str, int] = {}
+        by_layer: Dict[str, int] = {}
         for asset in assets:
             by_type[asset.asset_type] = by_type.get(asset.asset_type, 0) + 1
             by_source[asset.source or "unknown"] = by_source.get(asset.source or "unknown", 0) + 1
             by_status[asset.status or "unknown"] = by_status.get(asset.status or "unknown", 0) + 1
+            layer = JurisdictionService._asset_data_layer(asset)
+            by_layer[layer] = by_layer.get(layer, 0) + 1
 
         return {
             "total": len(assets),
             "by_type": by_type,
             "by_source": by_source,
             "by_status": by_status,
+            "by_layer": by_layer,
+            "layer_labels": ASSET_LAYER_LABELS,
         }
 
     @staticmethod
@@ -219,8 +310,16 @@ class JurisdictionService:
         for asset in assets:
             type_counts[asset.asset_type] = type_counts.get(asset.asset_type, 0) + 1
 
-        required_types = ["road", "village", "well"]
-        missing_required_types = [asset_type for asset_type in required_types if type_counts.get(asset_type, 0) == 0]
+        missing_public_reference_types = [
+            asset_type
+            for asset_type in ["road", "village"]
+            if type_counts.get(asset_type, 0) == 0
+        ]
+        missing_required_types = [
+            group
+            for group, asset_types in BUSINESS_REQUIREMENT_GROUPS.items()
+            if not any(type_counts.get(asset_type, 0) > 0 for asset_type in asset_types)
+        ]
         penalties = (
             missing_coordinates * 12
             + duplicate_candidates * 8
@@ -236,7 +335,13 @@ class JurisdictionService:
         if unverified_count:
             recommendations.append(f"校验 {unverified_count} 个未确认要素，区分地图事实和业务事实。")
         if missing_required_types:
-            recommendations.append(f"补齐关键类型：{', '.join(missing_required_types)}。")
+            labels = [REQUIREMENT_LABELS.get(item, item) for item in missing_required_types]
+            recommendations.append(f"补齐油区业务资产/防控设施：{'、'.join(labels)}。")
+        if missing_public_reference_types:
+            labels = "、".join("道路" if item == "road" else "村屯" for item in missing_public_reference_types)
+            recommendations.append(
+                f"{labels}属于公共地图参考数据，建议从地图服务或离线地图自动导入，不建议人工逐条维护。"
+            )
         if not recommendations:
             recommendations.append("底座质量较好，可进入常态化风险画像和布防规划。")
 
@@ -247,6 +352,7 @@ class JurisdictionService:
             "duplicate_candidates": duplicate_candidates,
             "type_counts": type_counts,
             "missing_required_types": missing_required_types,
+            "missing_public_reference_types": missing_public_reference_types,
             "coverage_score": coverage_score,
             "recommendations": recommendations,
         }
@@ -590,9 +696,9 @@ class JurisdictionService:
                 for point in top_points
             ] or [
                 {
-                    "title": "补录辖区底座数据",
+                    "title": "补录油区业务资产和防控设施",
                     "owner": "研判员",
-                    "target": "道路、村屯、井口、技防设施",
+                    "target": "井点、管线节点、站库、监控、卡口、盲区；道路村屯走地图参考导入",
                     "due_in_days": 5,
                     "status": "pending",
                 }
@@ -642,7 +748,7 @@ class JurisdictionService:
         }
         if case_id is None:
             payload["patrol_plan"] = JurisdictionService.build_patrol_plan(db)
-            payload["summary"] = "未选择案件，展示辖区底座质量和基础巡防建议。"
+            payload["summary"] = "未选择案件，展示地图参考、业务资产质量和基础巡防建议。"
             return payload
 
         payload.update({
@@ -678,6 +784,226 @@ class JurisdictionService:
             asset=nearest,
             distance_km=haversine_km(latitude, longitude, nearest.latitude, nearest.longitude),
         )
+
+    @staticmethod
+    def _asset_data_layer(asset: JurisdictionAsset) -> str:
+        asset_type = asset.asset_type or ""
+        source = asset.source or ""
+        if asset_type.startswith("derived_"):
+            return "analysis_derived"
+        if asset_type in PUBLIC_MAP_REFERENCE_TYPES:
+            return "public_map_reference"
+        if asset_type in BUSINESS_ASSET_TYPES or source in {"manual", "ledger", "import"}:
+            return "oil_business_asset"
+        return "other"
+
+    @staticmethod
+    def _resolve_public_map_bounds(
+        db: Session,
+        *,
+        south: Optional[float],
+        west: Optional[float],
+        north: Optional[float],
+        east: Optional[float],
+        center_lat: Optional[float],
+        center_lng: Optional[float],
+        radius_km: float,
+    ) -> Dict[str, float]:
+        if None not in (south, west, north, east):
+            resolved = {
+                "south": float(south),
+                "west": float(west),
+                "north": float(north),
+                "east": float(east),
+            }
+            JurisdictionService._validate_bounds(resolved)
+            return resolved
+
+        center: Optional[tuple[float, float]] = None
+        if center_lat is not None and center_lng is not None:
+            center = (float(center_lat), float(center_lng))
+        else:
+            coordinates = JurisdictionService._reference_coordinates(db)
+            if coordinates:
+                center = (
+                    sum(item[0] for item in coordinates) / len(coordinates),
+                    sum(item[1] for item in coordinates) / len(coordinates),
+                )
+
+        if center is None:
+            raise ValueError("缺少案件或业务资产坐标，无法自动确定公共地图拉取范围")
+
+        radius = max(0.2, min(float(radius_km or DEFAULT_PUBLIC_MAP_RADIUS_KM), MAX_PUBLIC_MAP_RADIUS_KM))
+        return JurisdictionService._bounds_from_center(center[0], center[1], radius)
+
+    @staticmethod
+    def _reference_coordinates(db: Session) -> List[tuple[float, float]]:
+        coordinates: List[tuple[float, float]] = []
+        cases = db.query(Case.latitude, Case.longitude).filter(
+            Case.latitude.isnot(None),
+            Case.longitude.isnot(None),
+        ).limit(200).all()
+        assets = db.query(JurisdictionAsset.latitude, JurisdictionAsset.longitude).filter(
+            JurisdictionAsset.latitude.isnot(None),
+            JurisdictionAsset.longitude.isnot(None),
+            JurisdictionAsset.status == "active",
+        ).limit(200).all()
+        for latitude, longitude in [*cases, *assets]:
+            try:
+                coordinates.append((float(latitude), float(longitude)))
+            except (TypeError, ValueError):
+                continue
+        return coordinates
+
+    @staticmethod
+    def _bounds_from_center(latitude: float, longitude: float, radius_km: float) -> Dict[str, float]:
+        lat_delta = radius_km / 111.32
+        lng_factor = max(math.cos(math.radians(latitude)), 0.2)
+        lng_delta = radius_km / (111.32 * lng_factor)
+        bounds = {
+            "south": max(-90.0, latitude - lat_delta),
+            "west": max(-180.0, longitude - lng_delta),
+            "north": min(90.0, latitude + lat_delta),
+            "east": min(180.0, longitude + lng_delta),
+        }
+        return {key: round(value, 6) for key, value in bounds.items()}
+
+    @staticmethod
+    def _validate_bounds(bounds: Dict[str, float]) -> None:
+        if bounds["south"] >= bounds["north"] or bounds["west"] >= bounds["east"]:
+            raise ValueError("地图拉取范围无效")
+        lat_span_km = (bounds["north"] - bounds["south"]) * 111.32
+        center_lat = (bounds["north"] + bounds["south"]) / 2
+        lng_span_km = (bounds["east"] - bounds["west"]) * 111.32 * max(math.cos(math.radians(center_lat)), 0.2)
+        if max(lat_span_km, lng_span_km) > MAX_PUBLIC_MAP_RADIUS_KM * 2:
+            raise ValueError("地图拉取范围过大，请缩小到约 40 公里以内")
+
+    @staticmethod
+    def _build_overpass_public_map_query(bounds: Dict[str, float]) -> str:
+        bbox = f"{bounds['south']},{bounds['west']},{bounds['north']},{bounds['east']}"
+        return f"""
+[out:json][timeout:25];
+(
+  way["highway"]({bbox});
+  node["place"~"^(village|hamlet|town|neighbourhood|suburb|isolated_dwelling)$"]({bbox});
+  way["waterway"~"^(river|stream|canal|ditch)$"]({bbox});
+  way["bridge"="yes"]({bbox});
+  node["highway"~"^(traffic_signals|crossing|stop|give_way)$"]({bbox});
+);
+out body geom qt;
+"""
+
+    @staticmethod
+    def _fetch_public_map_elements(query: str) -> List[Dict[str, Any]]:
+        with httpx.Client(timeout=30.0, headers={"User-Agent": "AiCommander/1.0 public-map-sync"}) as client:
+            response = client.post(OVERPASS_API_URL, data={"data": query})
+            response.raise_for_status()
+            payload = response.json()
+        elements = payload.get("elements", [])
+        return elements if isinstance(elements, list) else []
+
+    @staticmethod
+    def _osm_elements_to_geojson_features(elements: List[Dict[str, Any]], max_features: int) -> List[Dict[str, Any]]:
+        features: List[Dict[str, Any]] = []
+        for element in elements:
+            feature = JurisdictionService._osm_element_to_geojson_feature(element)
+            if not feature:
+                continue
+            features.append(feature)
+            if len(features) >= max_features:
+                break
+        return features
+
+    @staticmethod
+    def _osm_element_to_geojson_feature(element: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        tags = element.get("tags") or {}
+        asset_type = JurisdictionService._asset_type_from_osm_tags(tags)
+        if not asset_type:
+            return None
+
+        geometry = JurisdictionService._geometry_from_osm_element(element)
+        if not geometry:
+            return None
+
+        osm_type = str(element.get("type") or "element")
+        osm_id = str(element.get("id") or "")
+        name = (
+            tags.get("name:zh")
+            or tags.get("name")
+            or tags.get("official_name")
+            or JurisdictionService._fallback_osm_name(asset_type, osm_id)
+        )
+        return {
+            "type": "Feature",
+            "properties": {
+                "id": f"osm:{osm_type}:{osm_id}",
+                "name": name,
+                "asset_type": asset_type,
+                "description": "OpenStreetMap 公共地图参考自动拉取",
+                "status": "active",
+                "risk_level": 1,
+                "confidence_score": 0.78,
+                "verified": True,
+                "provider": "openstreetmap",
+                "osm_type": osm_type,
+                "osm_id": osm_id,
+                "osm_tags": tags,
+            },
+            "geometry": geometry,
+        }
+
+    @staticmethod
+    def _asset_type_from_osm_tags(tags: Dict[str, Any]) -> Optional[str]:
+        if tags.get("bridge") == "yes":
+            return "bridge"
+        if tags.get("highway") in {"traffic_signals", "crossing", "stop", "give_way"}:
+            return "intersection"
+        if tags.get("waterway"):
+            return "river"
+        place = tags.get("place")
+        if place in {"village", "hamlet", "isolated_dwelling"}:
+            return "village"
+        if place in {"town", "suburb", "neighbourhood"}:
+            return "settlement"
+        if tags.get("highway"):
+            return "road"
+        return None
+
+    @staticmethod
+    def _geometry_from_osm_element(element: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        element_type = element.get("type")
+        if element_type == "node":
+            lat = element.get("lat")
+            lon = element.get("lon")
+            if lat is None or lon is None:
+                return None
+            return {"type": "Point", "coordinates": [float(lon), float(lat)]}
+
+        if element_type == "way":
+            geometry = element.get("geometry")
+            if not isinstance(geometry, list):
+                return None
+            coordinates = [
+                [float(point["lon"]), float(point["lat"])]
+                for point in geometry
+                if isinstance(point, dict) and point.get("lat") is not None and point.get("lon") is not None
+            ]
+            if len(coordinates) < 2:
+                return None
+            return {"type": "LineString", "coordinates": coordinates}
+        return None
+
+    @staticmethod
+    def _fallback_osm_name(asset_type: str, osm_id: str) -> str:
+        labels = {
+            "road": "未命名道路",
+            "village": "未命名村屯",
+            "settlement": "未命名聚落",
+            "river": "未命名水系",
+            "bridge": "未命名桥梁",
+            "intersection": "交通节点",
+        }
+        return f"{labels.get(asset_type, '地图要素')}-{osm_id}"
 
     @staticmethod
     def _payload_from_geojson_feature(feature: Dict[str, Any], source: str) -> Dict[str, Any]:

@@ -333,15 +333,24 @@ class CaseAutomationService:
         if isinstance(max_total, (int, float)) and max_total >= 0:
             total = min(total, float(max_total))
         distribution = CaseAutomationService._build_bonus_distribution(
-            total if gate_status == "ready" else 0,
+            total,
             bonus_context["officer_counts"],
         )
         warnings = list(bonus_context["warnings"])
         if not calculation_ready:
             warnings.append("核算指标未齐，整案暂不测算，避免遗漏应计奖金。")
+        if gate_status == "blocked_by_materials" and total > 0:
+            warnings.append("佐证材料未齐，测算金额仅作预估，暂不能进入复核或发放确认。")
         if total > 0 and not distribution:
             warnings.append("缺少保卫班出警人数，暂不能自动分配到班组。")
 
+        management_context = CaseAutomationService._build_bonus_management_context(
+            db,
+            case,
+            normalized_rules,
+            bonus_context,
+            total,
+        )
         missing_materials = [
             check["label"]
             for check in material_checks
@@ -368,6 +377,7 @@ class CaseAutomationService:
             "primary_squad": bonus_context["primary_squad"],
             "bonus_counts": bonus_context["counts"],
             "squad_performance": bonus_context["squad_performance"],
+            "management_context": management_context,
             "distribution": distribution,
             "warnings": warnings,
             "ready_for_review": calculation_ready and gate_status == "ready" and any(item["status"] == "calculated" for item in bonus_items),
@@ -485,42 +495,42 @@ class CaseAutomationService:
         facts = quality.get("facts") or {}
         text = _text_pool(case.description, case.oil_handling, case.vehicle_handling, case.person_handling)
         has_oil = bool(facts.get("has_oil_signal") or case.oil_volume is not None or case.water_cut is not None or oil_recovery)
-        has_person = bool(facts.get("has_person_signal") or persons or not _is_blank(case.person_handling))
+        has_person = CaseAutomationService._has_person_bonus_scope(case, persons)
         has_vehicle = bool(facts.get("has_vehicle_signal") or vehicles or not _is_blank(case.vehicle_handling))
 
         definitions = [
             (
                 "weigh_water_document",
                 has_oil,
-                "存在涉案油量、含水率或涉油处置记录",
+                "案件已记录涉案油量、含水率或涉油处置，需要补齐对应佐证单据",
                 bool(case.oil_volume is not None and case.water_cut is not None),
                 "已有油量/含水字段，但缺少对应单据附件",
             ),
             (
                 "oil_disposition_document",
                 has_oil and (_contains_any(text, ("入库", "暂存", "回收", "检斤")) or bool(oil_recovery)),
-                "涉案原油已描述入库、暂存、回收或处理",
+                "案件已记录涉案原油入库、暂存、回收或处理，需要补齐处置凭证",
                 bool(oil_recovery),
                 "已有涉案原油处理台账，但缺少处理凭证附件",
             ),
             (
                 "person_disposition_document",
-                has_person and _contains_any(text, ("移交", "处理", "抓获", "嫌疑人")),
-                "案件包含抓获人员或人员处理结果",
+                has_person,
+                "案件已记录抓获人员或人员处理结果，需要补齐人员处理佐证",
                 any(not _is_blank(p.handling_status) for p in persons) or not _is_blank(case.person_handling),
                 "已填写人员处理结果，但缺少处理结果单据附件",
             ),
             (
                 "vehicle_transfer_document",
                 has_vehicle and _contains_any(text, ("移交", "扣押", "查扣", "车辆")),
-                "案件包含查扣车辆或车辆移交处置",
+                "案件已记录查扣车辆或车辆移交处置，需要补齐车辆处置佐证",
                 any(not _is_blank(v.transfer_document_no) for v in vehicles) or not _is_blank(case.vehicle_handling),
                 "已填写车辆处理信息，但缺少车辆移交/扣押材料附件",
             ),
             (
                 "police_case_document",
                 bool(case.police_reported or case.case_filed),
-                "案件已标记报案或立案",
+                "案件已标记报案或立案，需要补齐公安接收佐证",
                 bool(not _is_blank(case.police_officer) or not _is_blank(case.police_phone)),
                 "已有公安联系人信息，但缺少报案/立案/接收材料附件",
             ),
@@ -657,13 +667,11 @@ class CaseAutomationService:
                 key
                 for key, status in material_status.items()
                 if status not in {"satisfied", "not_required"}
-            ]
+        ]
         if quantity <= 0:
             status = "not_applicable"
         elif not calculation_ready:
             status = "blocked_by_data"
-        elif blocking:
-            status = "blocked_by_materials"
         elif not rules_configured:
             status = "rules_not_configured"
         else:
@@ -692,10 +700,15 @@ class CaseAutomationService:
         warnings.extend(count_warnings)
         officer_counts, officer_warnings = CaseAutomationService._extract_officer_counts(case, primary_squad)
         warnings.extend(officer_warnings)
+        quarter_start, quarter_end, _, _ = CaseAutomationService._bonus_period_bounds(case)
         return {
             "primary_squad": primary_squad,
             "counts": counts,
-            "squad_performance": CaseAutomationService._build_squad_performance(db),
+            "squad_performance": CaseAutomationService._build_squad_performance(
+                db,
+                start_at=quarter_start,
+                end_at=quarter_end,
+            ),
             "officer_counts": officer_counts,
             "warnings": warnings,
             "calculation_gaps": calculation_gaps,
@@ -730,7 +743,11 @@ class CaseAutomationService:
         return actions
 
     @staticmethod
-    def _build_squad_performance(db: Session) -> Dict[str, Dict[str, Any]]:
+    def _build_squad_performance(
+        db: Session,
+        start_at: Optional[datetime] = None,
+        end_at: Optional[datetime] = None,
+    ) -> Dict[str, Dict[str, Any]]:
         performance = {
             squad: {
                 "vehicle_actual": 0,
@@ -742,7 +759,12 @@ class CaseAutomationService:
             }
             for squad in SQUAD_NAMES
         }
-        for item in db.query(Case).all():
+        query = db.query(Case)
+        if start_at is not None:
+            query = query.filter(Case.occurred_time >= start_at)
+        if end_at is not None:
+            query = query.filter(Case.occurred_time < end_at)
+        for item in query.all():
             squad = CaseAutomationService._resolve_primary_squad(item)
             if not squad or squad not in performance:
                 continue
@@ -757,6 +779,107 @@ class CaseAutomationService:
             info["vehicle_high"] = bool(info["vehicle_target"] > 0 and info["vehicle_actual"] > info["vehicle_target"])
             info["person_high"] = bool(info["person_target"] > 0 and info["person_actual"] > info["person_target"])
         return performance
+
+    @staticmethod
+    def _bonus_period_bounds(case: Case) -> Tuple[datetime, datetime, datetime, datetime]:
+        occurred = case.occurred_time or datetime.utcnow()
+        quarter = (occurred.month - 1) // 3 + 1
+        quarter_start_month = (quarter - 1) * 3 + 1
+        tzinfo = occurred.tzinfo
+        quarter_start = datetime(occurred.year, quarter_start_month, 1, tzinfo=tzinfo)
+        if quarter == 4:
+            quarter_end = datetime(occurred.year + 1, 1, 1, tzinfo=tzinfo)
+        else:
+            quarter_end = datetime(occurred.year, quarter_start_month + 3, 1, tzinfo=tzinfo)
+        year_start = datetime(occurred.year, 1, 1, tzinfo=tzinfo)
+        year_end = datetime(occurred.year + 1, 1, 1, tzinfo=tzinfo)
+        return quarter_start, quarter_end, year_start, year_end
+
+    @staticmethod
+    def _build_bonus_management_context(
+        db: Session,
+        case: Case,
+        rules: Dict[str, Any],
+        bonus_context: Dict[str, Any],
+        selected_total: float,
+    ) -> Dict[str, Any]:
+        quarter_start, quarter_end, year_start, year_end = CaseAutomationService._bonus_period_bounds(case)
+        primary_squad = bonus_context.get("primary_squad")
+        target_rules = rules.get("squad_targets") or SQUAD_TARGETS
+
+        quarter_performance = bonus_context.get("squad_performance") or CaseAutomationService._build_squad_performance(
+            db,
+            start_at=quarter_start,
+            end_at=quarter_end,
+        )
+        annual_performance = CaseAutomationService._build_squad_performance(
+            db,
+            start_at=year_start,
+            end_at=year_end,
+        )
+
+        def summarize_period(
+            performance: Dict[str, Dict[str, Any]],
+            start_at: datetime,
+            end_at: datetime,
+            target_multiplier: int = 1,
+        ) -> Dict[str, Any]:
+            if not primary_squad:
+                vehicle_target = 0
+                person_target = 0
+                actual = {}
+            else:
+                actual = performance.get(primary_squad, {})
+                target = target_rules.get(primary_squad, {}) if isinstance(target_rules, dict) else {}
+                vehicle_target = int(target.get("vehicle") or actual.get("vehicle_target") or 0) * target_multiplier
+                person_target = int(target.get("person") or actual.get("person_target") or 0) * target_multiplier
+            vehicle_actual = int(actual.get("vehicle_actual") or 0)
+            person_actual = int(actual.get("person_actual") or 0)
+            return {
+                "start": start_at.isoformat(),
+                "end": end_at.isoformat(),
+                "case_count": CaseAutomationService._count_cases_in_period(db, start_at, end_at, primary_squad),
+                "vehicle_actual": vehicle_actual,
+                "vehicle_target": vehicle_target,
+                "vehicle_remaining": max(0, vehicle_target - vehicle_actual),
+                "vehicle_high": bool(vehicle_target > 0 and vehicle_actual > vehicle_target),
+                "person_actual": person_actual,
+                "person_target": person_target,
+                "person_remaining": max(0, person_target - person_actual),
+                "person_high": bool(person_target > 0 and person_actual > person_target),
+            }
+
+        occurred = case.occurred_time or datetime.utcnow()
+        quarter = (occurred.month - 1) // 3 + 1
+        return {
+            "period_type": "quarter",
+            "rules_version": rules.get("version"),
+            "pricing_basis": "按案件发生时间所属季度指标判断高低档，单案金额进入该周期人工复核，不代表直接发放。",
+            "case_amount_status": "provisional" if selected_total > 0 else "not_calculated",
+            "selected_case_amount": _round_amount(selected_total),
+            "primary_squad": primary_squad,
+            "period": {
+                "year": occurred.year,
+                "quarter": quarter,
+                "quarter_label": f"{occurred.year}年Q{quarter}",
+                "annual_label": f"{occurred.year}年度",
+            },
+            "quarter": summarize_period(quarter_performance, quarter_start, quarter_end, 1),
+            "annual": summarize_period(annual_performance, year_start, year_end, 4),
+        }
+
+    @staticmethod
+    def _count_cases_in_period(
+        db: Session,
+        start_at: datetime,
+        end_at: datetime,
+        primary_squad: Optional[str],
+    ) -> int:
+        query = db.query(Case).filter(Case.occurred_time >= start_at, Case.occurred_time < end_at)
+        cases = query.all()
+        if not primary_squad:
+            return len(cases)
+        return sum(1 for item in cases if CaseAutomationService._resolve_primary_squad(item) == primary_squad)
 
     @staticmethod
     def _resolve_primary_squad(case: Case) -> Optional[str]:
@@ -840,9 +963,10 @@ class CaseAutomationService:
                         "人员处理类型",
                         "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
                     )
-        else:
-            person_text = _text_pool(case.description, case.person_handling, case.involved_persons)
+        elif CaseAutomationService._legacy_person_count(case.involved_persons) > 0:
+            person_text = _text_pool(case.involved_persons, case.person_handling)
             counts["people"] = CaseAutomationService._extract_person_count(person_text)
+            counts["people"] = max(counts["people"], CaseAutomationService._legacy_person_count(case.involved_persons))
             counts["criminal"] = min(
                 counts["people"],
                 CaseAutomationService._extract_criminal_detention_count(person_text),
@@ -859,6 +983,20 @@ class CaseAutomationService:
                     "已记录抓获人员，但缺少行政拘留、刑事拘留等处理结果，需补齐后整案测算。",
                 )
         return counts, warnings, calculation_gaps
+
+    @staticmethod
+    def _has_person_bonus_scope(case: Case, persons: List[CasePerson]) -> bool:
+        return bool(persons or CaseAutomationService._legacy_person_count(case.involved_persons) > 0)
+
+    @staticmethod
+    def _legacy_person_count(value: Any) -> int:
+        if isinstance(value, dict) and isinstance(value.get("items"), list):
+            return sum(1 for item in value["items"] if not _is_blank(item))
+        if isinstance(value, list):
+            return sum(1 for item in value if not _is_blank(item))
+        if isinstance(value, dict):
+            return 1 if any(not _is_blank(item) for item in value.values()) else 0
+        return 0
 
     @staticmethod
     def _add_calculation_gap(

@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401
 from app.api import cases, patrols
 from app.database import Base, get_db
+from app.models.case import CasePerson, CaseVehicle
 from app.services.preprocess_service import CasePreprocessService
 
 
@@ -61,6 +62,151 @@ def test_case_quality_flags_required_management_fields():
     assert quality["facts"]["has_vehicle_signal"] is True
     assert quality["facts"]["has_person_signal"] is True
     assert quality["facts"]["has_oil_signal"] is True
+
+
+def test_case_update_accepts_bonus_indicator_drafts():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=30)
+
+    created = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "测试井场",
+            "case_type": "涉油盗窃",
+            "description": "现场抓获1人，查扣皮卡车1台。",
+        },
+    )
+    assert created.status_code == 200
+    case_id = created.json()["id"]
+
+    updated = client.put(
+        f"/api/cases/{case_id}",
+        json={
+            "initial_vehicles": [
+                {"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}
+            ],
+            "initial_persons": [
+                {"name": "张某", "handling_status": "行政拘留"}
+            ],
+        },
+    )
+
+    assert updated.status_code == 200
+    vehicles = db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).all()
+    persons = db.query(CasePerson).filter(CasePerson.case_id == case_id).all()
+    assert [vehicle.vehicle_type for vehicle in vehicles] == ["5吨以下机动车"]
+    assert [person.handling_status for person in persons] == ["行政拘留"]
+
+
+def test_case_update_refreshes_existing_bonus_indicator_drafts_without_duplicates():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=30)
+
+    created = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "测试井场",
+            "case_type": "涉油盗窃",
+            "description": "现场查扣车辆。",
+            "initial_vehicles": [
+                {"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}
+            ],
+        },
+    )
+    assert created.status_code == 200
+    case_id = created.json()["id"]
+    vehicle = db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).one()
+
+    updated = client.put(
+        f"/api/cases/{case_id}",
+        json={
+            "initial_vehicles": [
+                {"id": vehicle.id, "vehicle_type": "5吨以上机动车", "plate_number": "黑E12345"}
+            ],
+        },
+    )
+
+    assert updated.status_code == 200
+    vehicles = db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).all()
+    assert len(vehicles) == 1
+    assert vehicles[0].vehicle_type == "5吨以上机动车"
+
+
+def test_case_update_can_clear_bonus_indicator_drafts_with_empty_lists():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=30)
+
+    created = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "测试井场",
+            "case_type": "涉油盗窃",
+            "description": "现场查扣车辆并抓获人员。",
+            "initial_vehicles": [
+                {"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}
+            ],
+            "initial_persons": [
+                {"name": "张某", "handling_status": "行政拘留"}
+            ],
+        },
+    )
+    assert created.status_code == 200
+    case_id = created.json()["id"]
+    assert db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).count() == 1
+    assert db.query(CasePerson).filter(CasePerson.case_id == case_id).count() == 1
+
+    updated = client.put(
+        f"/api/cases/{case_id}",
+        json={
+            "initial_vehicles": [],
+            "initial_persons": [],
+        },
+    )
+
+    assert updated.status_code == 200
+    assert db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).count() == 0
+    assert db.query(CasePerson).filter(CasePerson.case_id == case_id).count() == 0
+
+
+def test_case_update_can_clear_existing_bonus_indicator_fields():
+    db = _session()
+    client = _client(db)
+    occurred_time = datetime.utcnow() - timedelta(minutes=30)
+
+    created = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "测试井场",
+            "case_type": "涉油盗窃",
+            "description": "现场查扣车辆。",
+            "initial_vehicles": [
+                {"vehicle_type": "5吨以下机动车", "plate_number": "黑E12345"}
+            ],
+        },
+    )
+    assert created.status_code == 200
+    case_id = created.json()["id"]
+    vehicle = db.query(CaseVehicle).filter(CaseVehicle.case_id == case_id).one()
+
+    updated = client.put(
+        f"/api/cases/{case_id}",
+        json={
+            "initial_vehicles": [
+                {"id": vehicle.id, "vehicle_type": None, "plate_number": "黑E12345"}
+            ],
+        },
+    )
+
+    assert updated.status_code == 200
+    db.refresh(vehicle)
+    assert vehicle.vehicle_type is None
 
 
 def test_case_profile_uses_structured_vehicle_person_and_evidence():
@@ -216,6 +362,93 @@ def test_preprocess_has_deterministic_fallback_without_llm():
     assert refreshed["features"]["basic"]["case_type"] == "涉油盗窃"
     assert refreshed["features"]["oil"]["facts"]["oil_nature"] == "落地原油"
     assert refreshed["features"]["facts"]["oil"]["oil_nature"] == "落地原油"
+
+
+def test_preprocess_overwrites_existing_features_with_new_top_level_keys():
+    db = _session()
+    occurred_time = datetime.utcnow() - timedelta(minutes=20)
+    client = _client(db)
+    case_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": occurred_time.isoformat(),
+            "location": "旧画像测试井场",
+            "case_type": "涉油盗窃",
+            "description": "用于测试已有 features 被重新写入。",
+        },
+    )
+    assert case_response.status_code == 200
+    case_id = case_response.json()["id"]
+
+    stored = db.query(app.models.Case).filter(app.models.Case.id == case_id).first()
+    assert stored is not None
+    stored.features = {"legacy": True}
+    db.commit()
+    db.refresh(stored)
+
+    CasePreprocessService._write_features(
+        db,
+        stored,
+        {"preprocess_mode": "llm", "confidence": 0.88},
+    )
+
+    refreshed = client.get(f"/api/cases/{case_id}").json()
+    assert refreshed["features"]["legacy"] is True
+    assert refreshed["features"]["preprocess_mode"] == "llm"
+    assert refreshed["features"]["confidence"] == 0.88
+
+
+def test_batch_preprocess_all_cases_writes_features_and_jobs():
+    db = _session()
+    client = _client(db)
+
+    for idx in range(2):
+        response = client.post(
+            "/api/cases/",
+            json={
+                "occurred_time": datetime.utcnow().isoformat(),
+                "location": f"测试井场{idx}",
+                "latitude": 39.9 + idx * 0.01,
+                "longitude": 116.4 + idx * 0.01,
+                "case_type": "涉油盗窃",
+                "description": f"测试案件{idx}，发现车辆转运原油，现场留有油迹。",
+                "report_unit": "测试保卫班",
+                "source_type": "巡逻发现",
+                "oil_nature": "落地原油",
+            },
+        )
+        assert response.status_code == 200
+
+    batch_response = client.post(
+        "/api/cases/preprocess/batch",
+        json={"only_missing": False, "use_llm": False},
+    )
+
+    assert batch_response.status_code == 200
+    payload = batch_response.json()
+    assert payload["total_candidates"] == 2
+    assert payload["processed"] == 2
+    assert payload["success"] == 2
+    assert payload["failed"] == 0
+    assert payload["llm_enabled"] is False
+    assert payload["mode_counts"]["deterministic_fallback"] == 2
+
+    cases_response = client.get("/api/cases/", params={"limit": 10})
+    assert cases_response.status_code == 200
+    assert all(case["features"]["basic"]["case_type"] == "涉油盗窃" for case in cases_response.json())
+
+    status_response = client.get("/api/cases/preprocess/status")
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["success"] == 2
+    assert status["failed"] == 0
+
+    skipped_response = client.post("/api/cases/preprocess/batch", json={"only_missing": True})
+
+    assert skipped_response.status_code == 200
+    skipped = skipped_response.json()
+    assert skipped["processed"] == 0
+    assert skipped["skipped"] == 2
 
 
 def test_case_driven_patrol_plan_uses_quality_and_case_fields():

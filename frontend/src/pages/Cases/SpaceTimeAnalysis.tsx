@@ -1,6 +1,6 @@
 /**
  * 时空研判页面
- * - 指挥中心视图：预测热点卡片（高危区域 + 高危时窗）
+ * - 指挥中心视图：热点复盘卡片（高危区域 + 高发时窗）
  * - 分析员视图：时段×星期规律矩阵 + 月度趋势
  */
 
@@ -65,7 +65,7 @@ const DAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '
 type TimeSlot = 'all' | 'midnight' | 'day' | 'evening'
 type DayFilter = 'all' | 'weekday' | 'weekend'
 
-// ── 预测逻辑：为每个热点生成时空预测 ─────────────────────────────────
+// ── 热点复盘逻辑：为每个热点生成时空关注摘要 ─────────────────────────────
 
 interface TopType { type: string; count: number; pct: number }
 
@@ -131,9 +131,9 @@ function buildPredictions(hotspots: Hotspot[], allCases: Case[]): PredictionResu
     const nightRatio = Math.round(nightCount / total * 100)
 
     const recommendation = riskLevel === 'high'
-      ? `建议在 ${hourToRange(peakHour)} 增派${peakDay === 0 || peakDay === 6 ? '周末' : '工作日'}专项巡逻，${nightRatio > 40 ? '夜间需重点覆盖' : '侧重日间关键时段'}`
+      ? `建议复核 ${hourToRange(peakHour)} ${peakDay === 0 || peakDay === 6 ? '周末' : '工作日'}防控覆盖，${nightRatio > 40 ? '夜间需重点关注' : '侧重日间关键时段'}`
       : riskLevel === 'medium'
-      ? `关注 ${DAY_NAMES[peakDay]} ${hourToRange(peakHour)} 时段动态，可与邻近路线联合巡逻`
+      ? `关注 ${DAY_NAMES[peakDay]} ${hourToRange(peakHour)} 时段动态，可结合邻近路线和技防覆盖复核`
       : `常规跟踪，如近期案件上升需升级研判等级`
 
     return {
@@ -254,7 +254,7 @@ const SpaceTimeAnalysis: React.FC = () => {
     queryFn: () => caseApi.getHotspotEvolution({ months: 6 }),
   })
 
-  // 预测热点
+  // 热点关注区
   const predictions: PredictionResult[] = useMemo(
     () => (hotspots && cases ? buildPredictions(hotspots, cases) : []),
     [hotspots, cases]
@@ -486,7 +486,7 @@ const SpaceTimeAnalysis: React.FC = () => {
         {/* 右侧面板 */}
         <div className="sta-right-panel">
 
-          {/* 预测高危区域 */}
+          {/* 热点关注区域 */}
           <div className="card">
             <div className="card-head">
               <EnvironmentOutlined className="ico" />
@@ -715,7 +715,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                           <b style={{ color: 'var(--err)', fontFamily: 'var(--mono)', fontSize: 10 }}>高风险区域 ({predictions.filter(p => p.riskLevel === 'high').length}处)：</b>
                           {' '}{predictions.filter(p => p.riskLevel === 'high').map(p =>
                             `热点${p.index}（${p.peakHourLabel} · ${p.peakDayLabel}）`
-                          ).join('、')}，应优先安排巡逻
+                          ).join('、')}，应优先复核防控覆盖
                         </div>
                       )}
                       {predictions[0]?.topTypes[0] && (

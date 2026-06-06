@@ -1255,6 +1255,21 @@ def preprocess_case(case_id: int, db: Session = Depends(get_db)):
         return {"message": "预处理已同步完成", "result": result}
 
 
+@router.post("/preprocess/batch")
+def preprocess_cases_batch(payload: Optional[BatchReviewRequest] = None, db: Session = Depends(get_db)):
+    """同步批量预处理案件，保留给预处理入口和测试契约使用。"""
+    payload = payload or BatchReviewRequest()
+    if payload.limit is not None and payload.limit <= 0:
+        raise HTTPException(status_code=400, detail="limit 必须大于 0")
+    return CasePreprocessService.preprocess_cases(
+        db=db,
+        case_ids=payload.case_ids,
+        only_missing=payload.only_missing,
+        limit=payload.limit,
+        use_llm=payload.use_llm,
+    )
+
+
 @router.get("/tips", response_model=List[CaseTipResponse])
 def list_case_tips(
     case_id: Optional[int] = None,
@@ -1573,6 +1588,18 @@ def analyze_trajectory(
     analysis = TrajectoryService.analyze_trajectory_pattern(trajectory)
     return analysis
 
+
+@router.get("/trajectory/{case_ids}/review")
+def review_trajectory(
+    case_ids: str,
+    db: Session = Depends(get_db)
+):
+    """复盘已发生案件路径条件，不输出未来地点。"""
+    from app.services.trajectory_service import TrajectoryService
+    case_id_list = [int(id.strip()) for id in case_ids.split(",") if id.strip().isdigit()]
+    return TrajectoryService.review_path_conditions(db, case_id_list)
+
+
 @router.get("/trajectory/{case_ids}/predict")
 def predict_next_location(
     case_ids: str,
@@ -1604,6 +1631,7 @@ def get_preprocess_status(db: Session = Depends(get_db)):
     - pending: 等待中的任务数
     - processing: 进行中的任务数
     - success: 最近成功任务数
+    - failed: 失败任务数
     - avg_duration_seconds: 成功任务的平均耗时（秒）
     """
     pending = (
@@ -1623,6 +1651,11 @@ def get_preprocess_status(db: Session = Depends(get_db)):
         .limit(100)
         .all()
     )
+    failed = (
+        db.query(PreprocessJob)
+        .filter(PreprocessJob.status == "failed")
+        .count()
+    )
     durations = []
     for j in successes:
         if j.started_at and j.finished_at:
@@ -1635,5 +1668,6 @@ def get_preprocess_status(db: Session = Depends(get_db)):
         "pending": pending,
         "processing": processing,
         "success": len(successes),
+        "failed": failed,
         "avg_duration_seconds": avg_duration,
     }

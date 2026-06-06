@@ -37,7 +37,7 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
       { label: '案件研判', path: '/case-intelligence' },
       { label: '时空区域', path: '/area-analysis' },
       { label: '辖区底座', path: '/jurisdiction' },
-      { label: '防控建议', path: '/suggestions' },
+      { label: '待办中心', path: '/suggestions' },
       { label: '分析报告', path: '/reports' },
       { label: '情报结论', path: '/conclusions' },
     ],

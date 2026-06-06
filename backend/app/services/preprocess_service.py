@@ -1,10 +1,12 @@
 import json
-from typing import Optional, Dict, Any
+from datetime import datetime
+from typing import Optional, Dict, Any, List
 
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
 from app.models.ai_model import AIModel
+from app.models.preprocess_job import PreprocessJob
 from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.services.case_quality_service import CaseQualityService
@@ -255,7 +257,7 @@ class CasePreprocessService:
             })
         if case.latitude is None or case.longitude is None:
             recommendations.append({
-                "action": "补齐案发坐标以关联道路、村屯、井口和数智自动化事件",
+                "action": "补齐案发坐标以关联地图参考、油区业务资产和数智自动化事件",
                 "basis": ["案件缺少经纬度"],
                 "priority": "high",
                 "boundary": "仅供人工研判和防控参考",
@@ -395,12 +397,40 @@ class CasePreprocessService:
 
     @staticmethod
     def _write_features(db: Session, case: Case, data: Dict[str, Any]) -> Dict[str, Any]:
-        features = case.features or {}
+        features = dict(case.features or {})
         features.update(data)
         case.features = features
         db.commit()
         db.refresh(case)
         return data
+
+    @staticmethod
+    def _preprocess_case_record(db: Session, case: Case, llm: Any = None) -> Dict[str, Any]:
+        """
+        对已加载的案件执行预处理。批处理会复用同一个 LLM 实例，避免重复解密和建连。
+        """
+        if llm is None:
+            data = CasePreprocessService._build_deterministic_features(db, case)
+            logger.info(f"案件 {case.id} 使用确定性预处理结果写入 features")
+            return CasePreprocessService._write_features(db, case, data)
+
+        prompt = CasePreprocessService._build_prompt(db, case)
+        try:
+            resp = llm.invoke(prompt)
+            content = resp.content
+            # 兼容模型输出 ```json ... ``` 包裹的情况
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            data = json.loads(content)  # type: ignore[name-defined]
+            data.setdefault("preprocess_mode", "llm")
+        except Exception as e:
+            logger.error(f"案件 {case.id} 预处理JSON解析失败: {e}")
+            data = CasePreprocessService._build_deterministic_features(db, case)
+
+        logger.info(f"案件 {case.id} 预处理完成并写入 features")
+        return CasePreprocessService._write_features(db, case, data)
 
     @staticmethod
     def preprocess_case(db: Session, case_id: int) -> Optional[Dict[str, Any]]:
@@ -415,24 +445,91 @@ class CasePreprocessService:
             return None
 
         llm = CasePreprocessService._build_llm(db)
-        if llm is None:
-            data = CasePreprocessService._build_deterministic_features(db, case)
-            logger.info(f"案件 {case_id} 使用确定性预处理结果写入 features")
-            return CasePreprocessService._write_features(db, case, data)
+        return CasePreprocessService._preprocess_case_record(db, case, llm)
 
-        prompt = CasePreprocessService._build_prompt(db, case)
-        try:
-            resp = llm.invoke(prompt)
-            content = resp.content
-            # 兼容模型输出 ```json ... ``` 包裹的情况
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-            data = json.loads(content)  # type: ignore[name-defined]
-        except Exception as e:
-            logger.error(f"案件 {case_id} 预处理JSON解析失败: {e}")
-            data = CasePreprocessService._build_deterministic_features(db, case)
+    @staticmethod
+    def preprocess_cases(
+        db: Session,
+        case_ids: Optional[List[int]] = None,
+        only_missing: bool = False,
+        limit: Optional[int] = None,
+        use_llm: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        同步批量预处理案件：
+        - 默认重跑当前库内全部案件，便于测试阶段一次性查看清洗效果
+        - only_missing=true 时只处理 features 为空的案件
+        - 每条案件写入 PreprocessJob，便于页面状态栏和后续排查
+        """
+        query = db.query(Case).order_by(Case.occurred_time.desc(), Case.id.desc())
+        if case_ids:
+            query = query.filter(Case.id.in_(case_ids))
+        candidates = query.all()
+        total_candidates = len(candidates)
 
-        logger.info(f"案件 {case_id} 预处理完成并写入 features")
-        return CasePreprocessService._write_features(db, case, data)
+        selected = [
+            case
+            for case in candidates
+            if not only_missing or not case.features
+        ]
+        skipped = total_candidates - len(selected)
+        if limit is not None:
+            selected = selected[:limit]
+            skipped = total_candidates - len(selected)
+
+        llm = CasePreprocessService._build_llm(db) if use_llm else None
+        results = []
+        mode_counts: Dict[str, int] = {}
+        success = 0
+        failed = 0
+
+        for case in selected:
+            job = PreprocessJob(case_id=case.id, status="queued")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+
+            try:
+                job.status = "processing"
+                job.started_at = datetime.utcnow()
+                db.commit()
+
+                result = CasePreprocessService._preprocess_case_record(db, case, llm)
+                mode = result.get("preprocess_mode") or "llm"
+                mode_counts[mode] = mode_counts.get(mode, 0) + 1
+
+                job.status = "success"
+                job.finished_at = datetime.utcnow()
+                db.commit()
+                success += 1
+                results.append({
+                    "case_id": case.id,
+                    "case_number": case.case_number,
+                    "status": "success",
+                    "preprocess_mode": mode,
+                    "confidence": result.get("confidence"),
+                })
+            except Exception as e:
+                job.status = "failed"
+                job.finished_at = datetime.utcnow()
+                job.error = str(e)
+                db.commit()
+                failed += 1
+                results.append({
+                    "case_id": case.id,
+                    "case_number": case.case_number,
+                    "status": "failed",
+                    "error": str(e),
+                })
+
+        return {
+            "message": "批量预处理完成",
+            "total_candidates": total_candidates,
+            "processed": len(selected),
+            "success": success,
+            "failed": failed,
+            "skipped": skipped,
+            "llm_enabled": use_llm,
+            "mode_counts": mode_counts,
+            "results": results,
+        }

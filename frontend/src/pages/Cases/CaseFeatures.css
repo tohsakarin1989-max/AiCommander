@@ -32,6 +32,29 @@
   margin-left: 4px;
 }
 
+.cf-batch-result {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: oklch(0.78 0.14 155 / 0.08);
+  border: 1px solid oklch(0.78 0.14 155 / 0.28);
+  border-left: 3px solid var(--ok);
+  padding: 9px 16px;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-bottom: var(--gap);
+}
+
+.cf-batch-result b {
+  font-family: var(--mono);
+  color: var(--ok);
+}
+
+.cf-batch-result b.err {
+  color: var(--err);
+}
+
 /* 预处理状态 badge */
 .cf-badge {
   font-family: var(--mono);

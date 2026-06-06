@@ -1,19 +1,20 @@
 """
-轨迹分析与预测服务
-基于案件时序位置数据，进行轨迹回放和AI位置预测
+轨迹路径条件复盘服务
+基于已发生案件的时序位置数据，复盘距离、方向、时间差和周边条件。
 """
 from sqlalchemy.orm import Session
 from app.models.case import Case
-from app.utils.geo import haversine_km, calculate_bearing, destination_point
-from typing import List, Dict, Optional, Tuple
-from datetime import datetime, timedelta
+from app.models.jurisdiction import JurisdictionAsset
+from app.utils.geo import haversine_km, calculate_bearing
+from typing import Any, List, Dict
+from datetime import datetime
 from collections import defaultdict
 from app.utils.logger import logger
 from app.ai.llm_providers import LLMProvider
 
 
 class TrajectoryService:
-    """轨迹分析与预测服务"""
+    """已发生案件路径条件复盘服务。"""
     
     @staticmethod
     def extract_trajectory(
@@ -42,7 +43,7 @@ class TrajectoryService:
             return []
         
         if time_order:
-            cases = sorted(cases, key=lambda c: c.occurred_time)
+            cases = sorted(cases, key=lambda c: c.occurred_time or datetime.min)
         
         trajectory = []
         for i, case in enumerate(cases):
@@ -67,6 +68,185 @@ class TrajectoryService:
                     point["time_from_start"] = (point_time - start_time).total_seconds() / 3600  # 小时
         
         return trajectory
+
+    @staticmethod
+    def review_path_conditions(db: Session, case_ids: List[int]) -> Dict[str, Any]:
+        """复盘已发生案件路径条件，不输出未来地点。"""
+        trajectory = TrajectoryService.extract_trajectory(db, case_ids)
+        analysis = TrajectoryService.analyze_trajectory_pattern(trajectory)
+        if not trajectory:
+            return {
+                "case_ids": case_ids,
+                "method": "path_condition_review",
+                "facts": [],
+                "path_conditions": [],
+                "inferences": [],
+                "information_gaps": ["缺少可用于复盘的案件坐标，暂不能分析路径条件。"],
+                "reusable_suggestions": ["先补齐案件发生时间、经纬度和地点描述，再进行路径条件复盘。"],
+                "analysis": analysis,
+                "boundary": "仅复盘已发生案件路径条件，不做犯罪预测，不输出未来地点，不自动派发任务。",
+            }
+
+        facts = []
+        for point in trajectory:
+            facts.append({
+                "case_id": point["case_id"],
+                "case_number": point["case_number"],
+                "time": point["timestamp"],
+                "location": point["location"],
+                "coordinate": {
+                    "latitude": point["latitude"],
+                    "longitude": point["longitude"],
+                },
+                "description": f"{point['case_number']} 已录入发生时间、地点和坐标。",
+            })
+
+        path_conditions: List[Dict[str, Any]] = []
+        for i in range(1, len(trajectory)):
+            previous = trajectory[i - 1]
+            current = trajectory[i]
+            distance_km = haversine_km(
+                previous["latitude"],
+                previous["longitude"],
+                current["latitude"],
+                current["longitude"],
+            )
+            bearing = calculate_bearing(
+                previous["latitude"],
+                previous["longitude"],
+                current["latitude"],
+                current["longitude"],
+            )
+            time_gap = None
+            if previous.get("timestamp") and current.get("timestamp"):
+                previous_time = datetime.fromisoformat(previous["timestamp"].replace("Z", "+00:00"))
+                current_time = datetime.fromisoformat(current["timestamp"].replace("Z", "+00:00"))
+                time_gap = round((current_time - previous_time).total_seconds() / 3600, 2)
+            path_conditions.append({
+                "type": "segment",
+                "from_case_id": previous["case_id"],
+                "to_case_id": current["case_id"],
+                "label": f"{previous['case_number']} -> {current['case_number']}",
+                "distance_km": round(distance_km, 2),
+                "bearing_degree": round(bearing, 1),
+                "time_gap_hours": time_gap,
+                "detail": f"两案相距约 {round(distance_km, 2)} 公里，方向角约 {round(bearing, 1)} 度。"
+                + (f" 时间差约 {time_gap} 小时。" if time_gap is not None else " 时间差缺少发生时间支撑。"),
+            })
+
+        nearby_assets = TrajectoryService._build_nearby_asset_conditions(db, trajectory)
+        if nearby_assets:
+            path_conditions.extend(nearby_assets)
+
+        inferences = []
+        direction = analysis.get("direction_analysis") or {}
+        if len(trajectory) >= 2:
+            inferences.append({
+                "level": "medium",
+                "statement": "案件点位之间存在可复盘的空间连续性，应结合道路、井点、监控和车辆信息人工确认链条关系。",
+                "basis": analysis.get("insights", [])[:3],
+            })
+        if direction.get("is_linear") is True:
+            inferences.append({
+                "level": "low",
+                "statement": "点位排列相对线性，可能与道路、管线或便道方向有关。",
+                "basis": ["方向变化较少", *analysis.get("insights", [])[:2]],
+            })
+        elif direction.get("direction_changes", 0) > 0:
+            inferences.append({
+                "level": "low",
+                "statement": "点位之间存在明显转向，应复核是否经过岔路、村屯、站库或转运节点。",
+                "basis": [f"方向变化次数：{direction.get('direction_changes')}"],
+            })
+
+        information_gaps = []
+        if any(point.get("timestamp") is None for point in trajectory):
+            information_gaps.append("部分案件缺少发生时间，无法准确计算时间差和移动节奏。")
+        if not nearby_assets:
+            information_gaps.append("缺少井点、道路、村屯、监控等结构化空间要素，周边条件只能按案件点位复盘。")
+        if len(trajectory) < 3:
+            information_gaps.append("案件点少于 3 个，只能复盘相邻关系，不能形成稳定路径条件。")
+        if not information_gaps:
+            information_gaps.append("暂无阻断复盘的核心缺口，后续需人工核对实际路网和现场条件。")
+
+        reusable_suggestions = [
+            "将相邻案件的时间差、距离和方向作为链条复核依据，先核事实再确认推断。",
+            "优先补齐周边井点、道路、村屯、监控和现场照片，支撑路径条件复盘。",
+            "对复盘出的链条关系保留人工确认状态，避免把条件相似直接写成确定串案。",
+        ]
+        if nearby_assets:
+            reusable_suggestions.append("对距离案件点最近的业务资产和公共地理要素建立引用，供报告和经验卡复用。")
+
+        return {
+            "case_ids": case_ids,
+            "method": "path_condition_review",
+            "facts": facts,
+            "path_conditions": path_conditions,
+            "inferences": inferences,
+            "information_gaps": information_gaps,
+            "reusable_suggestions": reusable_suggestions,
+            "analysis": analysis,
+            "boundary": "仅复盘已发生案件路径条件，不做犯罪预测，不输出未来地点，不自动派发任务。",
+        }
+
+    @staticmethod
+    def _build_nearby_asset_conditions(db: Session, trajectory: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        assets = (
+            db.query(JurisdictionAsset)
+            .filter(JurisdictionAsset.latitude.isnot(None), JurisdictionAsset.longitude.isnot(None))
+            .limit(300)
+            .all()
+        )
+        if not assets:
+            return []
+
+        grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for point in trajectory:
+            nearest_by_type: Dict[str, Dict[str, Any]] = {}
+            for asset in assets:
+                distance = haversine_km(
+                    point["latitude"],
+                    point["longitude"],
+                    asset.latitude,
+                    asset.longitude,
+                )
+                current = nearest_by_type.get(asset.asset_type)
+                if current is None or distance < current["distance_km"]:
+                    nearest_by_type[asset.asset_type] = {
+                        "case_id": point["case_id"],
+                        "case_number": point["case_number"],
+                        "asset_id": asset.id,
+                        "asset_name": asset.name,
+                        "asset_type": asset.asset_type,
+                        "status": asset.status,
+                        "distance_km": round(distance, 2),
+                    }
+            for asset_type, item in nearest_by_type.items():
+                if item["distance_km"] <= 3:
+                    grouped[asset_type].append(item)
+
+        conditions = []
+        labels = {
+            "well": "井点邻近关系",
+            "pipeline": "管线邻近关系",
+            "station": "站库邻近关系",
+            "camera": "监控邻近关系",
+            "road": "道路邻近关系",
+            "village": "村屯邻近关系",
+        }
+        for asset_type, items in grouped.items():
+            nearest = sorted(items, key=lambda item: item["distance_km"])[:5]
+            conditions.append({
+                "type": "nearby_asset",
+                "asset_type": asset_type,
+                "label": labels.get(asset_type, f"{asset_type} 邻近关系"),
+                "detail": "；".join(
+                    f"{item['case_number']} 距 {item['asset_name']} 约 {item['distance_km']} 公里"
+                    for item in nearest
+                ),
+                "items": nearest,
+            })
+        return conditions
     
     @staticmethod
     def analyze_trajectory_pattern(trajectory: List[Dict]) -> Dict:
@@ -165,95 +345,21 @@ class TrajectoryService:
         use_ai: bool = True
     ) -> Dict:
         """
-        预测下一个可能的位置
+        兼容旧入口：返回路径条件复盘口径，不再外推未来位置。
         
         Args:
             db: 数据库会话
             case_ids: 案件ID列表（用于分析历史模式）
-            use_ai: 是否使用AI模型进行预测
+            use_ai: 旧参数，仅为兼容保留，当前不会外推未来地点
             
         Returns:
-            预测结果：可能的位置、概率、理由等
+            路径条件复盘结果。
         """
-        trajectory = TrajectoryService.extract_trajectory(db, case_ids)
-        
-        if len(trajectory) < 2:
-            return {
-                "prediction": None,
-                "confidence": 0,
-                "method": "insufficient_data",
-                "message": "轨迹点不足，无法预测"
-            }
-        
-        # 简单预测：基于速度和方向
-        last_point = trajectory[-1]
-        second_last = trajectory[-2]
-        
-        if not (last_point["latitude"] and last_point["longitude"] and 
-                second_last["latitude"] and second_last["longitude"]):
-            return {
-                "prediction": None,
-                "confidence": 0,
-                "method": "insufficient_data",
-                "message": "缺少位置信息"
-            }
-        
-        # 计算最后一段的速度和方向
-        dist_km = haversine_km(
-            second_last["latitude"], second_last["longitude"],
-            last_point["latitude"], last_point["longitude"]
-        )
-        
-        time_diff_h = None
-        if second_last["time_from_start"] is not None and last_point["time_from_start"] is not None:
-            time_diff_h = last_point["time_from_start"] - second_last["time_from_start"]
-        
-        # 计算方向
-        bearing_deg = calculate_bearing(
-            second_last["latitude"], second_last["longitude"],
-            last_point["latitude"], last_point["longitude"]
-        )
-
-        # 简单线性外推（假设保持当前速度和方向）
-        # 预测未来1小时的位置
-        if time_diff_h and time_diff_h > 0:
-            speed_kmh = dist_km / time_diff_h
-            future_distance_km = speed_kmh * 1.0  # 1小时后
-
-            # 使用共享的目标点计算函数
-            predicted_lat, predicted_lon = destination_point(
-                last_point["latitude"], last_point["longitude"],
-                bearing_deg, future_distance_km
-            )
-            
-            # 如果使用AI，可以进一步优化预测
-            if use_ai:
-                # TODO: 调用AI模型进行更智能的预测
-                # 可以考虑历史案件模式、地理特征、时间规律等
-                pass
-            
-            return {
-                "prediction": {
-                    "latitude": round(predicted_lat, 6),
-                    "longitude": round(predicted_lon, 6),
-                    "estimated_time": (datetime.fromisoformat(last_point["timestamp"].replace("Z", "+00:00")) + timedelta(hours=1)).isoformat() if last_point["timestamp"] else None
-                },
-                "confidence": 0.6,  # 简单预测的置信度较低
-                "method": "linear_extrapolation",
-                "reasoning": f"基于最后一段轨迹的速度({round(speed_kmh, 2)} km/h)和方向进行线性外推",
-                "assumptions": [
-                    "保持当前移动速度和方向",
-                    "预测时间窗口：1小时",
-                    "未考虑地理障碍和实际路网"
-                ]
-            }
-        else:
-            return {
-                "prediction": None,
-                "confidence": 0,
-                "method": "insufficient_data",
-                "message": "无法计算速度，缺少时间信息"
-            }
+        review = TrajectoryService.review_path_conditions(db, case_ids)
+        review["deprecated"] = True
+        review["compatibility_note"] = "旧 predict 入口已改为路径条件复盘，不再输出未来地点。"
+        review["use_ai_requested"] = bool(use_ai)
+        return review
     
     @staticmethod
     def get_trajectory_replay_data(
@@ -305,4 +411,3 @@ class TrajectoryService:
             "start_time": frames[0]["timestamp"] if frames else None,
             "end_time": frames[-1]["timestamp"] if frames else None
         }
-

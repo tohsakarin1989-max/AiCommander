@@ -640,7 +640,7 @@ class AreaAnalysisService:
         events: List[Event],
         type_counts: Dict[str, int]
     ) -> Dict:
-        """生成巡逻建议"""
+        """生成区域防控参考"""
         # 分析时间规律
         hour_counts = defaultdict(int)
         weekday_counts = defaultdict(int)

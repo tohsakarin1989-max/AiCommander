@@ -150,6 +150,44 @@ export interface ExperienceCardPayload {
   evidence_basis: Record<string, unknown>
 }
 
+export interface StructuredAiInference {
+  claim: string
+  basis: string[]
+  confidence: string | number
+}
+
+export interface StructuredAiRecommendation {
+  title: string
+  action: string
+  basis: string[]
+  evidence: unknown[]
+  confidence?: number | null
+  priority?: string
+}
+
+export interface StructuredAiEvidenceRef {
+  id: string
+  kind: string
+  summary: string
+  basis?: string[]
+}
+
+export interface StructuredAiOutput {
+  title: string
+  output_type: string
+  draft_status: 'draft' | string
+  review_status: 'pending_review' | 'approved' | 'rejected' | string
+  model_status: 'deterministic_fallback' | 'llm_success' | 'llm_failed' | string
+  generated_at: string
+  facts: string[]
+  inferences: StructuredAiInference[]
+  recommendations: StructuredAiRecommendation[]
+  information_gaps: string[]
+  evidence_refs: StructuredAiEvidenceRef[]
+  boundary: string[]
+  markdown: string
+}
+
 export interface IntelligenceReport {
   title: string
   generated_at: string
@@ -157,6 +195,7 @@ export interface IntelligenceReport {
   days: number
   sections: Array<{ title: string; items: string[] }>
   markdown: string
+  ai_output?: StructuredAiOutput
 }
 
 export interface LlmContextPack {
@@ -169,6 +208,7 @@ export interface LlmContextPack {
     basis: string[]
     confidence: string
   }>
+  inferences?: StructuredAiInference[]
   prevention_references: Array<{
     title?: string
     action?: string
@@ -177,6 +217,7 @@ export interface LlmContextPack {
     evidence?: unknown[]
     confidence?: number
   }>
+  recommendations?: StructuredAiRecommendation[]
   information_gaps: string[]
   evidence_index: Array<{
     id: string
@@ -184,8 +225,12 @@ export interface LlmContextPack {
     summary: string
     basis?: string[]
   }>
+  evidence_refs?: StructuredAiEvidenceRef[]
+  boundary?: string[]
   recommended_questions: string[]
   llm_prompt: string
+  markdown?: string
+  ai_output?: StructuredAiOutput
   generated_at: string
 }
 
