@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildReportPresentation, getReportDraftMeta, getReportExportMarkdown } from './reportPresentationModel'
+import {
+  buildReportPresentation,
+  buildReportReviewPresentation,
+  getReportDraftMeta,
+  getReportExportMarkdown,
+} from './reportPresentationModel'
 
 describe('reportPresentationModel', () => {
   it('maps new structured meeting reports into visible detail sections', () => {
@@ -119,5 +124,22 @@ describe('reportPresentationModel', () => {
       reviewStatus: '待人工复核',
       modelStatus: '规则兜底',
     })
+  })
+
+  it('summarizes report reviewer findings for the review officer panel', () => {
+    const presentation = buildReportReviewPresentation({
+      findings: [
+        { type: 'unsupported_claim', severity: 'high', message: '结论缺少案件证据引用' },
+        { type: 'tone_conflict', severity: 'medium', message: '报告口径与结论草稿不一致' },
+      ],
+      suggested_fixes: ['补充现场照片和告警记录引用'],
+      manual_review_required: true,
+    })
+
+    expect(presentation.totalFindings).toBe(2)
+    expect(presentation.severityCounts).toEqual({ high: 1, medium: 1 })
+    expect(presentation.findingLines[0]).toContain('unsupported_claim')
+    expect(presentation.suggestedFixes).toEqual(['补充现场照片和告警记录引用'])
+    expect(presentation.manualReviewRequired).toBe(true)
   })
 })

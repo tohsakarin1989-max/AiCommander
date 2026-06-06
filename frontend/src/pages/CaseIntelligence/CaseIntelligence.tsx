@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   Empty,
+  Input,
   InputNumber,
   List,
   Progress,
@@ -33,10 +34,11 @@ import {
   SafetyCertificateOutlined,
   TagsOutlined,
 } from '@ant-design/icons'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
+import { knowledgeApi } from '../../services/knowledge'
 import {
   AreaProfile,
   IntelligenceCounterItem,
@@ -46,8 +48,15 @@ import {
   SimilarCaseItem,
   caseIntelligenceApi,
 } from '../../services/caseIntelligence'
-import type { Case } from '../../types'
-import { getReportDraftMeta, getReportMarkdown } from './caseIntelligencePresentation'
+import type { Case, KnowledgeSearchResult, TagCurationResult } from '../../types'
+import {
+  getCaseDiagramSummary,
+  getExperienceStatusMeta,
+  getKnowledgeRoute,
+  getKnowledgeSourceLabel,
+  getReportDraftMeta,
+  getReportMarkdown,
+} from './caseIntelligencePresentation'
 import './CaseIntelligence.css'
 
 const { Paragraph, Text, Title } = Typography
@@ -245,6 +254,81 @@ const AreaProfileCard = ({ profile }: { profile: AreaProfile }) => {
   )
 }
 
+const KnowledgeResultCard = ({
+  item,
+  onOpen,
+}: {
+  item: KnowledgeSearchResult
+  onOpen: (route: string) => void
+}) => {
+  const route = getKnowledgeRoute(item)
+  return (
+    <Card className="intel-inner-card" size="small">
+      <div className="intel-suggestion-head">
+        <Space wrap>
+          <FileTextOutlined />
+          <Text strong>{item.title}</Text>
+          <Tag color="blue">{getKnowledgeSourceLabel(item.source_type)}</Tag>
+          <Tag>{Math.round(item.score)}</Tag>
+        </Space>
+        <Button size="small" disabled={!route} onClick={() => route && onOpen(route)}>
+          查看来源
+        </Button>
+      </div>
+      <Paragraph className="intel-action">{item.snippet}</Paragraph>
+      {!!item.evidence_refs.length && (
+        <div className="intel-chip-line">
+          {item.evidence_refs.slice(0, 4).map((ref, index) => (
+            <Tag key={`${item.source_type}-${item.source_id}-${index}`}>
+              {formatEvidence(ref)}
+            </Tag>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
+const CaseDiagramPanel = ({ diagram }: { diagram: NonNullable<Awaited<ReturnType<typeof caseApi.getCaseDiagram>>> }) => (
+  <Card
+    title="一案一图"
+    className="intel-panel-card intel-diagram-card"
+    extra={<Tag>{getCaseDiagramSummary(diagram)}</Tag>}
+  >
+    <Row gutter={[16, 16]}>
+      <Col xs={24} lg={12}>
+        <div className="intel-section-mini">事实节点</div>
+        <div className="intel-diagram-node-grid">
+          {diagram.nodes.map(node => (
+            <div key={node.id} className="intel-diagram-node">
+              <Tag>{node.type}</Tag>
+              <b>{node.label}</b>
+              {node.detail && <small>{node.detail}</small>}
+            </div>
+          ))}
+        </div>
+      </Col>
+      <Col xs={24} lg={12}>
+        <div className="intel-section-mini">关系链路</div>
+        <List
+          size="small"
+          dataSource={diagram.edges}
+          locale={{ emptyText: '暂无关系链路' }}
+          renderItem={edge => (
+            <List.Item>
+              <Space direction="vertical" size={2}>
+                <Text strong>{edge.label}</Text>
+                <Text type="secondary">{edge.from} → {edge.to}</Text>
+              </Space>
+            </List.Item>
+          )}
+        />
+      </Col>
+    </Row>
+    <Alert type="info" showIcon className="intel-boundary" message={diagram.boundary} />
+  </Card>
+)
+
 const LlmContextPanel = ({
   contextPack,
   loading,
@@ -339,10 +423,14 @@ const LlmContextPanel = ({
 }
 
 const CaseIntelligence: React.FC = () => {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [selectedCaseId, setSelectedCaseId] = useState<number | undefined>()
   const [days, setDays] = useState(365)
   const [limit, setLimit] = useState(8)
+  const [knowledgeQuery, setKnowledgeQuery] = useState('')
+  const [tagCurationResult, setTagCurationResult] = useState<TagCurationResult | null>(null)
 
   const casesQuery = useQuery({
     queryKey: ['cases-for-intelligence'],
@@ -388,10 +476,26 @@ const CaseIntelligence: React.FC = () => {
     enabled: !!selectedCaseId,
   })
 
+  const knowledgeSearchQuery = useQuery({
+    queryKey: ['case-knowledge-search', knowledgeQuery, selectedCaseId],
+    queryFn: () => knowledgeApi.search({
+      q: knowledgeQuery,
+      case_id: selectedCaseId,
+      limit: 8,
+    }),
+    enabled: knowledgeQuery.trim().length > 0,
+  })
+
   const tagCurationMutation = useMutation({
-    mutationFn: () => caseIntelligenceApi.curateTags(selectedCaseId as number, false),
+    mutationFn: (confirm: boolean) => caseIntelligenceApi.curateTags(selectedCaseId as number, confirm),
     onSuccess: (result) => {
-      message.info(`已生成 ${result.recommended_tags.length} 个候选标签，需人工确认后写入`)
+      setTagCurationResult(result)
+      message.info(
+        result.applied
+          ? `已确认写入 ${result.recommended_tags.length} 个标签`
+          : `已生成 ${result.recommended_tags.length} 个候选标签，需人工确认后写入`,
+      )
+      queryClient.invalidateQueries({ queryKey: ['case-intelligence-workbench'] })
     },
   })
 
@@ -399,11 +503,36 @@ const CaseIntelligence: React.FC = () => {
   const contextPack = contextPackQuery.data
   const cases = casesQuery.data || []
   const selectedCase = cases.find((item: Case) => item.id === selectedCaseId)
+
+  const experienceAssetsQuery = useQuery({
+    queryKey: ['experience-assets', selectedCaseId, selectedCase?.location, selectedCase?.case_type],
+    queryFn: () => knowledgeApi.searchExperienceCards({
+      q: selectedCase?.location || selectedCase?.case_type || selectedCase?.case_number || '涉油案件',
+      limit: 6,
+    }),
+    enabled: !!selectedCaseId,
+  })
+
+  const experienceStatusMutation = useMutation({
+    mutationFn: (status: 'confirmed' | 'archived') => knowledgeApi.updateExperienceCardStatus(selectedCaseId as number, {
+      status,
+      reviewer: '人工复核',
+      note: status === 'confirmed' ? '页面人工确认入库' : '页面人工归档',
+    }),
+    onSuccess: (_result, status) => {
+      message.success(status === 'confirmed' ? '经验卡已确认入库' : '经验卡已归档')
+      queryClient.invalidateQueries({ queryKey: ['case-intelligence-workbench'] })
+      queryClient.invalidateQueries({ queryKey: ['experience-assets'] })
+      queryClient.invalidateQueries({ queryKey: ['case-knowledge-search'] })
+    },
+  })
+
   const tags = workbench?.feature_tags.tags || []
   const qualityScore = workbench?.quality?.score ?? selectedCase?.quality_score ?? 0
   const qualityLevel = workbench?.quality?.level || selectedCase?.quality_level || 'unknown'
   const reportMarkdown = getReportMarkdown(workbench?.report)
   const reportMeta = getReportDraftMeta(workbench?.report)
+  const experienceStatus = getExperienceStatusMeta(workbench?.experience_card?.manual_review_status)
 
   const copyReport = async () => {
     if (!reportMarkdown) return
@@ -490,14 +619,115 @@ const CaseIntelligence: React.FC = () => {
                 icon={<TagsOutlined />}
                 disabled={!selectedCaseId}
                 loading={tagCurationMutation.isPending}
-                onClick={() => tagCurationMutation.mutate()}
+                onClick={() => tagCurationMutation.mutate(false)}
               >
                 标签策展
               </Button>
             </Space>
           </Col>
         </Row>
+        <Row gutter={[12, 12]} className="intel-search-row">
+          <Col xs={24} lg={16}>
+            <Input.Search
+              allowClear
+              placeholder="大模型研判搜索：案件画像、经验卡、报告、结论、告警"
+              enterButton="检索"
+              loading={knowledgeSearchQuery.isFetching}
+              onSearch={(value) => setKnowledgeQuery(value.trim())}
+            />
+          </Col>
+          <Col xs={24} lg={8}>
+            <Text type="secondary">检索结果只返回带来源的事实、经验和引用，不直接生成结论。</Text>
+          </Col>
+        </Row>
       </Card>
+
+      {knowledgeQuery && (
+        <Card
+          className="intel-panel-card"
+          title={`研判知识检索：${knowledgeQuery}`}
+          extra={<Tag>{knowledgeSearchQuery.data?.total ?? 0} 条</Tag>}
+        >
+          {knowledgeSearchQuery.isLoading ? (
+            <div className="intel-loading intel-loading--small"><Spin /> 正在检索案件底座…</div>
+          ) : knowledgeSearchQuery.data?.items.length ? (
+            <div className="intel-card-stack">
+              {knowledgeSearchQuery.data.items.map((item) => (
+                <KnowledgeResultCard
+                  key={`${item.source_type}-${item.source_id}`}
+                  item={item}
+                  onOpen={(route) => navigate(route)}
+                />
+              ))}
+            </div>
+          ) : (
+            <Empty description="资料不足，未检索到可引用来源" />
+          )}
+          {knowledgeSearchQuery.data?.boundary && (
+            <Alert type="info" showIcon className="intel-boundary" message={knowledgeSearchQuery.data.boundary} />
+          )}
+        </Card>
+      )}
+
+      {tagCurationResult && (
+        <Card
+          className="intel-panel-card"
+          title="智能标签策展候选"
+          extra={(
+            <Space>
+              <Tag color={tagCurationResult.applied ? 'green' : 'gold'}>
+                {tagCurationResult.applied ? '已写入' : '待人工确认'}
+              </Tag>
+              {!tagCurationResult.applied && (
+                <Button
+                  size="small"
+                  type="primary"
+                  disabled={!selectedCaseId}
+                  loading={tagCurationMutation.isPending}
+                  onClick={() => tagCurationMutation.mutate(true)}
+                >
+                  确认写入标签
+                </Button>
+              )}
+            </Space>
+          )}
+        >
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={12}>
+              <div className="intel-section-mini">推荐标签</div>
+              {tagCurationResult.recommended_tags.length ? (
+                <div className="intel-tag-wall">
+                  {tagCurationResult.recommended_tags.map((tag, index) => (
+                    <Tooltip key={`${tag.key || tag.label || index}`} title={formatEvidence(tag.basis || tag.evidence || tag)}>
+                      <Tag color="blue">
+                        {String(tag.label || tag.key || '候选标签')}
+                        {typeof tag.confidence === 'number' && (
+                          <span className="intel-tag-confidence">{Math.round(tag.confidence * 100)}%</span>
+                        )}
+                      </Tag>
+                    </Tooltip>
+                  ))}
+                </div>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无推荐标签" />
+              )}
+            </Col>
+            <Col xs={24} lg={12}>
+              <div className="intel-section-mini">合并和低置信提示</div>
+              <List
+                size="small"
+                dataSource={[
+                  ...tagCurationResult.merge_suggestions.map(item => `合并建议：${formatEvidence(item)}`),
+                  ...tagCurationResult.low_confidence_tags.map(item => `低置信标签：${formatEvidence(item)}`),
+                ]}
+                locale={{ emptyText: '暂无合并或低置信提示' }}
+                renderItem={item => <List.Item>{item}</List.Item>}
+              />
+            </Col>
+          </Row>
+          <Alert type="info" showIcon className="intel-boundary" message={tagCurationResult.boundary} />
+        </Card>
+      )}
 
       {workbenchQuery.isLoading ? (
         <div className="intel-loading"><Spin /> 正在汇聚案件、地图参考与油区业务资产…</div>
@@ -541,13 +771,7 @@ const CaseIntelligence: React.FC = () => {
           </Row>
 
           {selectedCaseId && diagramQuery.data && (
-            <Alert
-              type="success"
-              showIcon
-              className="intel-boundary"
-              message="一案一图已生成"
-              description={`当前案件图谱包含 ${diagramQuery.data.nodes.length} 个节点、${diagramQuery.data.edges.length} 条关系，覆盖时间、地点、车辆、人员、证据和经验卡。`}
-            />
+            <CaseDiagramPanel diagram={diagramQuery.data} />
           )}
 
           <Alert
@@ -755,6 +979,26 @@ const CaseIntelligence: React.FC = () => {
                       <Card title="案件复盘卡" className="intel-panel-card">
                         {workbench.experience_card ? (
                           <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                            <Space wrap>
+                              <Tag color={experienceStatus.color}>{experienceStatus.label}</Tag>
+                              <Button
+                                size="small"
+                                icon={<CheckCircleOutlined />}
+                                disabled={!selectedCaseId || experienceStatus.label === '已入库'}
+                                loading={experienceStatusMutation.isPending}
+                                onClick={() => experienceStatusMutation.mutate('confirmed')}
+                              >
+                                确认入库
+                              </Button>
+                              <Button
+                                size="small"
+                                disabled={!selectedCaseId || experienceStatus.label === '已归档'}
+                                loading={experienceStatusMutation.isPending}
+                                onClick={() => experienceStatusMutation.mutate('archived')}
+                              >
+                                归档经验卡
+                              </Button>
+                            </Space>
                             <Paragraph>{workbench.experience_card.summary}</Paragraph>
                             <div className="intel-section-mini">为什么值得沉淀</div>
                             <List
@@ -771,6 +1015,46 @@ const CaseIntelligence: React.FC = () => {
                           </Space>
                         ) : (
                           <Empty description="全局模式下不生成单案复盘卡，请选择案件" />
+                        )}
+                      </Card>
+                      <Card title="可借鉴经验资产" className="intel-panel-card">
+                        {experienceAssetsQuery.isLoading ? (
+                          <div className="intel-loading intel-loading--small"><Spin /> 正在召回经验资产…</div>
+                        ) : experienceAssetsQuery.data?.items.length ? (
+                          <List
+                            size="small"
+                            dataSource={experienceAssetsQuery.data.items}
+                            renderItem={item => (
+                              <List.Item
+                                actions={[
+                                  <Button
+                                    key="open"
+                                    size="small"
+                                    onClick={() => navigate(item.route)}
+                                  >
+                                    来源
+                                  </Button>,
+                                ]}
+                              >
+                                <List.Item.Meta
+                                  title={(
+                                    <Space wrap>
+                                      <Text strong>{item.title}</Text>
+                                      <Tag color="green">{item.manual_review_status}</Tag>
+                                    </Space>
+                                  )}
+                                  description={(
+                                    <Space direction="vertical" size={4}>
+                                      <Text>{item.applicability_reason}</Text>
+                                      <Text type="secondary">{item.snippet}</Text>
+                                    </Space>
+                                  )}
+                                />
+                              </List.Item>
+                            )}
+                          />
+                        ) : (
+                          <Empty description="暂无已确认经验卡资产可召回" />
                         )}
                       </Card>
                     </Col>

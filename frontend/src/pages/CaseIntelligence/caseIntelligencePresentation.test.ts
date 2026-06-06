@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { IntelligenceReport } from '../../services/caseIntelligence'
-import { getReportDraftMeta, getReportMarkdown } from './caseIntelligencePresentation'
+import {
+  getCaseDiagramSummary,
+  getExperienceStatusMeta,
+  getKnowledgeRoute,
+  getKnowledgeSourceLabel,
+  getReportDraftMeta,
+  getReportMarkdown,
+} from './caseIntelligencePresentation'
 
 const report: IntelligenceReport = {
   title: '旧报告标题',
@@ -38,5 +45,34 @@ describe('caseIntelligencePresentation', () => {
       reviewStatus: '待人工复核',
       modelStatus: '规则兜底',
     })
+  })
+
+  it('labels knowledge assets and experience review status for the workbench', () => {
+    expect(getKnowledgeSourceLabel('experience_card')).toBe('经验卡')
+    expect(getKnowledgeSourceLabel('report')).toBe('分析报告')
+    expect(getExperienceStatusMeta('confirmed')).toEqual({ label: '已入库', color: 'green' })
+    expect(getExperienceStatusMeta('draft')).toEqual({ label: '草稿', color: 'default' })
+  })
+
+  it('summarizes one-case diagram data and keeps knowledge routes clickable', () => {
+    expect(getCaseDiagramSummary({
+      case_id: 12,
+      nodes: [
+        { id: 'case:12', type: 'case', label: '案件' },
+        { id: 'evidence:1', type: 'evidence', label: '现场照片' },
+      ],
+      edges: [{ from: 'case:12', to: 'evidence:1', label: '证据' }],
+      boundary: '只表达案件事实链路',
+    })).toBe('包含 2 个节点、1 条关系')
+
+    expect(getKnowledgeRoute({
+      source_type: 'report',
+      source_id: 3,
+      title: '报告',
+      snippet: '引用',
+      score: 12,
+      route: '/reports?reportId=3',
+      evidence_refs: [],
+    })).toBe('/reports?reportId=3')
   })
 })

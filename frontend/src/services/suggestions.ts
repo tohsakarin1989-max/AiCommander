@@ -10,6 +10,7 @@ export type SuggestionType =
   | 'alert'
   | 'experience'
   | 'report_quality'
+  | 'processing_card'
 
 export type SuggestionAction =
   | 'open_case'
@@ -23,6 +24,7 @@ export type SuggestionAction =
   | 'open_alert_triage_pack'
   | 'review_experience_card'
   | 'generate_experience_card'
+  | 'review_processing_card'
   | 'review_prevention_reference'
   | string
 

@@ -13,6 +13,14 @@ export interface ReportPresentation {
   modelContributions: Array<{ model: string; contribution: string }>
 }
 
+export interface ReportReviewPresentation {
+  totalFindings: number
+  severityCounts: Record<string, number>
+  findingLines: string[]
+  suggestedFixes: string[]
+  manualReviewRequired: boolean
+}
+
 const EMPTY_TEXT = '暂无'
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -282,4 +290,28 @@ export function getReportExportMarkdown(meetingId: string, report: unknown, expo
     toContributionList(presentation.modelContributions),
     '',
   ].filter((line) => line !== '').join('\n')
+}
+
+export function buildReportReviewPresentation(review: unknown): ReportReviewPresentation {
+  const record = isRecord(review) ? review : {}
+  const findings = Array.isArray(record.findings) ? record.findings : []
+  const severityCounts: Record<string, number> = {}
+  const findingLines = findings
+    .map((item) => {
+      if (!isRecord(item)) return toText(item)
+      const severity = toText(item.severity) || 'info'
+      severityCounts[severity] = (severityCounts[severity] || 0) + 1
+      const type = toText(item.type) || '问题'
+      const message = toText(item.message) || '需人工复核'
+      return `${severity} · ${type}：${message}`
+    })
+    .filter(Boolean)
+
+  return {
+    totalFindings: findingLines.length,
+    severityCounts,
+    findingLines,
+    suggestedFixes: toStringList(record.suggested_fixes),
+    manualReviewRequired: record.manual_review_required !== false,
+  }
 }

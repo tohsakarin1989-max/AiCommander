@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import assistant, case_intelligence, cases, conclusions, knowledge, reports
+from app.api import assistant, case_intelligence, cases, conclusions, knowledge, reports, suggestions
 from app.database import Base, get_db
 from app.models.automation_alert import AutomationAlert
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
@@ -34,6 +34,7 @@ def _client(db_session: Session) -> TestClient:
     app.include_router(reports.router, prefix="/api/reports")
     app.include_router(conclusions.router, prefix="/api/conclusions")
     app.include_router(case_intelligence.router, prefix="/api/case-intelligence")
+    app.include_router(suggestions.router, prefix="/api/suggestions")
 
     def override_get_db():
         yield db_session
@@ -228,6 +229,52 @@ def test_confirmed_experience_cards_are_searchable_knowledge_assets_only():
     assert first["evidence_refs"]
 
 
+def test_experience_card_status_can_be_confirmed_and_archived():
+    db = _session()
+    client = _client(db)
+    case = _seed_case(db, card_status="draft")
+
+    before = client.get("/api/knowledge/experience-cards/search", params={"q": "夜间 井场 软管"})
+    assert before.status_code == 200
+    assert case.case_number not in {item["case_number"] for item in before.json()["items"]}
+
+    confirmed = client.post(
+        f"/api/knowledge/experience-cards/{case.id}/status",
+        json={"status": "confirmed", "reviewer": "测试复核", "note": "事实和建议边界已确认"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["manual_review_status"] == "confirmed"
+    after = client.get("/api/knowledge/experience-cards/search", params={"q": "夜间 井场 软管"})
+    assert case.case_number in {item["case_number"] for item in after.json()["items"]}
+
+    archived = client.post(
+        f"/api/knowledge/experience-cards/{case.id}/status",
+        json={"status": "archived", "reviewer": "测试复核"},
+    )
+
+    assert archived.status_code == 200
+    archived_search = client.get("/api/knowledge/experience-cards/search", params={"q": "夜间 井场 软管"})
+    assert case.case_number not in {item["case_number"] for item in archived_search.json()["items"]}
+
+
+def test_processing_card_is_prioritized_in_suggestion_center():
+    db = _session()
+    client = _client(db)
+    case = _seed_case(db, card_status="draft")
+
+    response = client.get("/api/suggestions/", params={"limit": 20})
+
+    assert response.status_code == 200
+    items = response.json()["suggestions"]
+    card_item = next(item for item in items if item["id"] == f"case-processing-card-{case.id}")
+    assert card_item["type"] == "processing_card"
+    assert card_item["action"] == "review_processing_card"
+    assert card_item["target_id"] == case.id
+    assert card_item["meta"]["gap_group_count"] >= 3
+    assert "奖金" in " ".join(card_item["meta"]["gap_labels"])
+
+
 def test_evidence_qa_search_citation_report_review_and_conclusion_draft_are_source_bound():
     db = _session()
     client = _client(db)
@@ -237,6 +284,7 @@ def test_evidence_qa_search_citation_report_review_and_conclusion_draft_are_sour
     search = client.get("/api/knowledge/search", params={"q": "夜间 井场 软管"})
     assert search.status_code == 200
     assert search.json()["items"][0]["evidence_refs"]
+    assert any(item["source_type"] == "report" for item in search.json()["items"])
 
     qa = client.post("/api/assistant/evidence-qa", json={"query": "这个案件有什么防护短板？", "case_id": case.id})
     assert qa.status_code == 200

@@ -42,7 +42,7 @@ class CaseProfileService:
         return case
 
     @staticmethod
-    def build_case_profile(db: Session, case_id: int) -> Dict[str, Any]:
+    def build_case_profile(db: Session, case_id: int, include_similar: bool = True) -> Dict[str, Any]:
         case = CaseProfileService.get_case(db, case_id)
         related = CaseProfileService._related(db, case.id)
         quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
@@ -50,7 +50,11 @@ class CaseProfileService:
         intelligence = _as_dict(features.get("intelligence"))
         experience_card = _as_dict(intelligence.get("experience_card"))
         tags = CaseProfileService._safe_tags(db, case)
-        similar = CaseProfileService._safe_similar_cases(db, case.id)
+        similar = (
+            CaseProfileService._safe_similar_cases(db, case.id)
+            if include_similar
+            else {"case_id": case.id, "items": []}
+        )
         reports = CaseProfileService._reports(db, case)
         conclusions = CaseProfileService._conclusions(db, case.id)
         alerts = CaseProfileService._alerts(db, case.id)

@@ -57,6 +57,14 @@ export const knowledgeApi = {
     return response.data
   },
 
+  updateExperienceCardStatus: async (
+    caseId: number,
+    payload: { status: 'draft' | 'confirmed' | 'archived'; reviewer?: string; note?: string },
+  ): Promise<Record<string, unknown>> => {
+    const response = await api.post<Record<string, unknown>>(`/knowledge/experience-cards/${caseId}/status`, payload)
+    return response.data
+  },
+
   evidenceQa: async (payload: { query: string; case_id?: number }): Promise<EvidenceQaResponse> => {
     const response = await api.post<EvidenceQaResponse>('/assistant/evidence-qa', payload)
     return response.data

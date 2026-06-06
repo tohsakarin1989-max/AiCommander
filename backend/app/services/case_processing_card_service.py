@@ -16,7 +16,7 @@ class CaseProcessingCardService:
     @staticmethod
     def build_processing_card(db: Session, case_id: int) -> Dict[str, Any]:
         case = CaseProfileService.get_case(db, case_id)
-        profile = CaseProfileService.build_case_profile(db, case_id)
+        profile = CaseProfileService.build_case_profile(db, case_id, include_similar=False)
         gap_groups = CaseProcessingCardService._gap_groups(db, case, profile)
         priority = CaseProcessingCardService._priority(gap_groups)
         actions = CaseProcessingCardService._actions(case, gap_groups)

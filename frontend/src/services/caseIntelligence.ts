@@ -137,6 +137,9 @@ export interface PreventionSuggestionsPayload {
 export interface ExperienceCardPayload {
   case_id: number
   case_number: string
+  manual_review_status?: string
+  reviewed_at?: string
+  reviewer?: string
   summary: string
   what_happened: {
     time?: string | null

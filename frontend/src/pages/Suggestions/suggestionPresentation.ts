@@ -18,6 +18,7 @@ export const ACTION_LABELS: Record<string, string> = {
   open_alert_triage_pack: '打开研判包',
   review_experience_card: '复核经验卡',
   generate_experience_card: '生成经验卡',
+  review_processing_card: '查看处理卡',
   review_prevention_reference: '查看防控参考',
 }
 
@@ -30,6 +31,7 @@ export const TYPE_LABELS: Record<string, string> = {
   alert: '数智告警',
   experience: '经验卡',
   report_quality: '报告质量',
+  processing_card: '案件处理卡',
 }
 
 export const SUGGESTION_FILTERS = [
@@ -40,6 +42,7 @@ export const SUGGESTION_FILTERS = [
   { value: 'alert', label: TYPE_LABELS.alert },
   { value: 'review', label: TYPE_LABELS.review },
   { value: 'experience', label: TYPE_LABELS.experience },
+  { value: 'processing_card', label: TYPE_LABELS.processing_card },
   { value: 'report_quality', label: TYPE_LABELS.report_quality },
   { value: 'workflow', label: TYPE_LABELS.workflow },
 ]
@@ -78,6 +81,7 @@ export function getSuggestionRoute(suggestion: WorkSuggestion): string | null {
   const targetId = numericTargetId(suggestion)
   switch (suggestion.action) {
     case 'open_case':
+    case 'review_processing_card':
       return targetId ? `/cases?caseId=${targetId}` : '/cases'
     case 'review_bonus_data':
     case 'review_bonus_materials':

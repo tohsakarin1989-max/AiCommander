@@ -57,6 +57,42 @@ class CaseKnowledgeService:
     """案件知识资产、证据型问答和材料辅助的确定性底座。"""
 
     @staticmethod
+    def update_experience_card_status(
+        db: Session,
+        case_id: int,
+        *,
+        status: str,
+        reviewer: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if status not in {"draft", "confirmed", "archived"}:
+            raise ValueError("invalid_experience_status")
+        case = CaseProfileService.get_case(db, case_id)
+        features = dict(case.features or {})
+        intelligence = dict(features.get("intelligence") or {})
+        card = dict(intelligence.get("experience_card") or {})
+        if not card:
+            raise ValueError("experience_card_not_found")
+        card["manual_review_status"] = status
+        card["reviewed_at"] = _now()
+        if reviewer:
+            card["reviewer"] = reviewer
+        if note:
+            card["review_note"] = note
+        if status == "confirmed":
+            card["asset_status"] = "active"
+        elif status == "archived":
+            card["asset_status"] = "archived"
+        else:
+            card["asset_status"] = "draft"
+        intelligence["experience_card"] = card
+        features["intelligence"] = intelligence
+        case.features = features
+        db.commit()
+        db.refresh(case)
+        return card
+
+    @staticmethod
     def list_experience_cards(db: Session, status: str = "confirmed", limit: int = 50) -> Dict[str, Any]:
         items = CaseKnowledgeService._experience_items(db, "", status=status, limit=limit, require_match=False)
         return {"items": items, "total": len(items), "status": status, "generated_at": _now()}
@@ -118,6 +154,27 @@ class CaseKnowledgeService:
                     "evidence_refs": [
                         {"id": f"conclusion:{conclusion.id}", "kind": "conclusion", "summary": conclusion.summary or "结论"},
                         {"id": f"case:{conclusion.case_id}", "kind": "case", "summary": f"案件 #{conclusion.case_id}"},
+                    ],
+                })
+
+        for report in CaseKnowledgeService._report_query(db):
+            text = _text([report.content, report.consensus_points, report.disagreement_points, report.model_contributions])
+            score = _score(query, text)
+            if score > 0:
+                content = _as_dict(report.content)
+                candidates.append({
+                    "source_type": "report",
+                    "source_id": report.id,
+                    "title": f"分析报告 #{report.id}",
+                    "snippet": content.get("summary") or content.get("conclusions") or f"会议 {report.meeting_id} 报告",
+                    "score": score,
+                    "route": f"/reports?meetingId={report.meeting_id}" if report.meeting_id else f"/reports?reportId={report.id}",
+                    "evidence_refs": [
+                        {
+                            "id": f"report:{report.id}",
+                            "kind": "report",
+                            "summary": content.get("summary") or f"报告 #{report.id}",
+                        }
                     ],
                 })
 
@@ -407,6 +464,10 @@ class CaseKnowledgeService:
         if case_id is not None:
             query = query.filter(Conclusion.case_id == case_id)
         return query.order_by(Conclusion.id.desc()).limit(100).all()
+
+    @staticmethod
+    def _report_query(db: Session) -> Iterable[Report]:
+        return db.query(Report).order_by(Report.id.desc()).limit(100).all()
 
     @staticmethod
     def _tag_merges(tags: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
