@@ -1,0 +1,493 @@
+/* ==========================================================================
+   GANG ANALYSIS PAGE — 团伙分析
+   基于 Gangs.html 设计稿重写，遵循 design-system.css token 体系
+   ========================================================================== */
+
+/* ── 页面布局 ─────────────────────────────────────────────── */
+.page-gangs {
+  padding: var(--gap) var(--pad);
+  overflow-y: auto;
+  display: block;
+}
+.page-gangs .page-title {
+  margin-bottom: var(--gap);
+}
+
+/* gangs-grid: 左侧英雄卡 + 右侧列表 */
+.gangs-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--gap);
+}
+
+/* ── 英雄卡 ──────────────────────────────────────────────── */
+.gang-hero {
+  min-height: 0;
+}
+.gang-hero .card-head .ti {
+  font-weight: 600;
+}
+
+/* hero 主体：左侧面板 + 右侧主区 */
+.gang-hero-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 侧面板（头像 / 代号 / 风险 / KV） ──────────────────── */
+.gang-side {
+  padding: 22px 18px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(to bottom, oklch(0.70 0.20 25 / 0.04), transparent);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.gh-avatar {
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  background: oklch(0.70 0.20 25 / 0.14);
+  border: 1px solid oklch(0.70 0.20 25 / 0.5);
+  color: var(--err);
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 auto 12px;
+  cursor: default;
+}
+/* 低风险头像（非 err） */
+.gh-avatar.safe {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.gh-name {
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 18px;
+  color: var(--ink-0);
+  font-weight: 500;
+}
+
+.gh-codename {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  margin-top: 3px;
+}
+
+.gh-risk {
+  margin: 16px 0;
+  text-align: center;
+  padding: 10px;
+  border: 1px solid oklch(0.70 0.20 25 / 0.4);
+  background: oklch(0.70 0.20 25 / 0.08);
+}
+.gh-risk.safe {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.gh-risk-v {
+  font-family: var(--mono);
+  font-size: 32px;
+  color: var(--err);
+  font-weight: 500;
+  line-height: 1;
+}
+.gh-risk.safe .gh-risk-v {
+  color: var(--accent);
+}
+
+.gh-risk-l {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.gh-kvs {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+.gh-kvs .kv {
+  grid-template-columns: 72px 1fr;
+  font-size: 12px;
+}
+.gh-kvs .kv .k {
+  font-size: 10px;
+}
+
+/* ── 主区（图谱 + 时间线 + 成员表） ────────────────────── */
+.gh-main {
+  padding: 18px 20px;
+  display: grid;
+  gap: 22px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.gh-section .sh {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* 网络图 SVG */
+.gh-network-svg {
+  width: 100%;
+  height: 260px;
+  display: block;
+  background: var(--bg-0);
+  border: 1px solid var(--line-soft);
+}
+
+/* ── 作案时间线网格 (.gtl) ──────────────────────────────── */
+.gtl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.gtl-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.gtl-t {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.gtl-box {
+  padding: 8px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  font-size: 10.5px;
+  transition: border-color 0.15s;
+}
+.gtl-item:hover .gtl-box {
+  border-color: var(--accent-line);
+}
+
+.gtl-item.active .gtl-box {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.gtl-item.active .gtl-t {
+  color: var(--accent);
+}
+
+/* 团伙聚类徽章 */
+.cluster {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 11px;
+}
+.cluster.c-a { background: var(--err);  color: white; }
+.cluster.c-b { background: var(--warn); color: oklch(0.18 0.05 75); }
+.cluster.c-c { background: var(--ok);   color: oklch(0.15 0.04 155); }
+/* 通用索引色 */
+.cluster.c-0 { background: var(--err);    color: white; }
+.cluster.c-1 { background: var(--warn);   color: oklch(0.18 0.05 75); }
+.cluster.c-2 { background: var(--ok);     color: oklch(0.15 0.04 155); }
+.cluster.c-3 { background: var(--info);   color: oklch(0.15 0.03 220); }
+.cluster.c-4 { background: var(--oil);    color: oklch(0.15 0.03 285); }
+.cluster.c-5 { background: var(--accent); color: var(--accent-ink); }
+
+.gtl-loc {
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.gtl-val {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 10px;
+}
+
+/* ── 右侧 其他团伙列表 ──────────────────────────────────── */
+.other-gangs {
+  display: flex;
+  flex-direction: column;
+}
+.other-gangs .card-body {
+  overflow-y: auto;
+  padding: 0;
+}
+
+.og-row {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.og-row:hover {
+  background: var(--bg-2);
+}
+.og-row:last-child {
+  border-bottom: 0;
+}
+.og-row.selected {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+}
+.og-row.hi {
+  background: oklch(0.70 0.20 25 / 0.04);
+}
+.og-row.hi.selected {
+  background: oklch(0.70 0.20 25 / 0.10);
+  border-left-color: var(--err);
+}
+
+.og-avatar {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.og-row.hi .og-avatar {
+  background: oklch(0.70 0.20 25 / 0.12);
+  border-color: oklch(0.70 0.20 25 / 0.5);
+  color: var(--err);
+}
+
+.og-name {
+  font-size: 14px;
+  color: var(--ink-0);
+  font-weight: 500;
+}
+.og-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+}
+
+.og-risk {
+  text-align: right;
+  flex-shrink: 0;
+}
+.og-risk .v {
+  font-family: var(--mono);
+  font-size: 18px;
+  color: var(--accent);
+  font-weight: 500;
+  display: block;
+}
+.og-row.hi .og-risk .v {
+  color: var(--err);
+}
+.og-risk .l {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+}
+
+/* ── 空状态（英雄区无数据） ───────────────────────────────── */
+.gang-hero-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  flex: 1;
+}
+.gang-hero-empty .icon {
+  font-size: 32px;
+  opacity: 0.35;
+}
+
+/* ── 分析参数工具栏 ────────────────────────────────────────── */
+.gang-controls-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 var(--pad) var(--gap);
+  margin-bottom: var(--gap);
+  border-bottom: 1px solid var(--line);
+}
+
+.gang-ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gang-ctrl-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ── mini tag ─────────────────────────────────────────────── */
+.gang-mini-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  background: transparent;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+/* ── 成员表（在 gh-main 内） ───────────────────────────────── */
+.gh-members-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.gh-members-table thead th {
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+  text-align: left;
+}
+.gh-members-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-1);
+}
+.gh-members-table tbody tr:hover td {
+  background: var(--bg-2);
+}
+
+/* ── 画像详情 Modal ───────────────────────────────────────── */
+.gang-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gang-risk-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-2);
+  border: 1px solid;
+  padding: 16px 20px;
+}
+.gang-risk-banner__left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gang-detail-section {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+.gang-detail-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.gang-kv__key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.gang-kv__val {
+  font-size: 13px;
+  color: var(--ink-1);
+  line-height: 1.5;
+}
+
+/* ── 时间线 Modal 条目 ────────────────────────────────────── */
+.gang-timeline-item {
+  padding-bottom: 4px;
+}
+.gang-timeline-item__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+/* ── 操作按钮 ─────────────────────────────────────────────── */
+.gang-action-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  letter-spacing: 0.04em;
+}
+.gang-action-btn:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.gang-action-btn--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.gang-action-btn--primary:hover {
+  filter: brightness(1.08);
+}

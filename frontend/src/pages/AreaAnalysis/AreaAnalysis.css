@@ -1,0 +1,346 @@
+/* =========================================================
+   AREA ANALYSIS PAGE — 区域研判分析
+   Design system: docs/design-reference/aicommand/shell.css + pages.css
+   ========================================================= */
+
+/* ── 页面包装 ─────────────────────────────────────────────── */
+.aa-page {
+  display: block;
+  padding: var(--gap) var(--pad);
+  overflow-y: auto;
+}
+
+/* ── 页面标题行 ─────────────────────────────────────────────── */
+.aa-page .page-title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 0 0 var(--gap);
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 var(--gap);
+}
+
+/* ── KPI 行 ──────────────────────────────────────────────── */
+.aa-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: var(--gap);
+}
+
+.aa-kpill {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.aa-kpill .lbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.aa-kpill .val {
+  font-family: var(--mono);
+  font-size: 26px;
+  color: var(--accent);
+  margin-top: 4px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.aa-kpill .sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+
+/* ── 2×2 分析卡片网格 ──────────────────────────────────────── */
+.aa-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+/* ── an-card body padding ─────────────────────────────────── */
+.aa-card .card-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* ── 搜索栏（区域名称输入）────────────────────────────────── */
+.aa-search-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.aa-input {
+  flex: 1 1 200px;
+  min-width: 140px;
+  height: 34px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 10px;
+  outline: none;
+  letter-spacing: 0.03em;
+  transition: border-color 0.15s;
+}
+.aa-input:focus { border-color: var(--accent-line); }
+.aa-input::placeholder { color: var(--ink-3); }
+
+.aa-select {
+  height: 34px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+/* ── an-kpi-row (簇内指标) ────────────────────────────────── */
+.an-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.an-kpi {
+  padding: 10px;
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.an-kpi .v {
+  font-family: var(--mono);
+  font-size: 22px;
+  color: var(--accent);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.an-kpi .l {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-top: 4px;
+  letter-spacing: 0.08em;
+}
+
+/* ── an-bullets ─────────────────────────────────────────── */
+.an-bullets {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-1);
+}
+
+.an-bullets > div {
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border-left: 2px solid var(--accent);
+}
+
+.an-bullets b { color: var(--accent); font-weight: 500; }
+
+/* ── pattern-row ────────────────────────────────────────── */
+.pattern-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  align-items: center;
+  font-size: 12.5px;
+}
+.pattern-row:last-child { border-bottom: 0; }
+
+.pattern-row .rnk {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  text-align: center;
+  padding: 3px 0;
+  background: var(--accent-soft);
+}
+
+.pattern-row .ptn b { color: var(--ink-0); font-weight: 500; }
+
+.pattern-row .sup {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* ── dep-rec (area analysis card deployment recs) ──────── */
+.dep-rec {
+  padding: 12px 14px;
+  border-left: 3px solid var(--err);
+  background: oklch(0.70 0.20 25 / 0.06);
+  margin-bottom: 10px;
+}
+.dep-rec:last-child { margin-bottom: 0; }
+.dep-rec.p1 { border-left-color: var(--warn); background: oklch(0.80 0.16 75 / 0.06); }
+.dep-rec.p2 { border-left-color: var(--info); background: oklch(0.78 0.11 220 / 0.06); }
+
+.dep-rec .rec-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-0);
+  font-weight: 500;
+  margin-bottom: 5px;
+}
+
+.dep-rec .rec-body {
+  font-size: 12.5px;
+  color: var(--ink-1);
+  line-height: 1.55;
+}
+
+.dep-rec .rec-body b { color: var(--accent); font-weight: 500; }
+
+/* ── 区域风险评分表 ────────────────────────────────────────── */
+.aa-risk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.aa-risk-table th {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  background: var(--bg-1);
+}
+.aa-risk-table td {
+  padding: 8px 10px;
+  border-bottom: 1px dashed var(--line-soft);
+  color: var(--ink-1);
+}
+.aa-risk-table tr:hover td { background: var(--bg-2); }
+
+/* ── 趋势项目列表 ─────────────────────────────────────────── */
+.aa-trend-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.aa-trend-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-left: 2px solid var(--accent-line);
+  font-size: 12.5px;
+  color: var(--ink-1);
+}
+
+.aa-trend-item .bullet {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+/* ── 高风险区域列表 ─────────────────────────────────────────── */
+.aa-high-risk-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line-soft);
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  transition: background 0.12s;
+}
+.aa-high-risk-item:last-child { border-bottom: 0; }
+.aa-high-risk-item:hover { background: var(--bg-2); }
+
+.aa-high-risk-item .name { flex: 1; color: var(--ink-0); font-weight: 500; }
+.aa-high-risk-item .meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+
+/* ── tag variants ────────────────────────────────────────── */
+.aa-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  border: 1px solid var(--tag-c, var(--line));
+  color: var(--tag-c, var(--ink-2));
+  background: color-mix(in oklab, var(--tag-c, var(--line)) 12%, transparent);
+}
+.aa-tag.low    { --tag-c: var(--ok); }
+.aa-tag.medium { --tag-c: var(--warn); }
+.aa-tag.high   { --tag-c: var(--err); }
+.aa-tag.info   { --tag-c: var(--info); }
+
+/* ── 空状态 ──────────────────────────────────────────────── */
+.aa-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+.aa-empty .icon { font-size: 24px; opacity: 0.3; }
+
+/* ── 周期按钮组 ──────────────────────────────────────────── */
+.aa-period-group {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.aa-period-btn {
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  border-right: 1px solid var(--line);
+  letter-spacing: 0.04em;
+  background: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.aa-period-btn:last-child { border-right: 0; }
+.aa-period-btn:hover { color: var(--ink-0); background: var(--bg-2); }
+.aa-period-btn.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+/* ── 响应式 ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .aa-grid { grid-template-columns: 1fr; }
+  .aa-kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .an-kpi-row { grid-template-columns: repeat(2, 1fr); }
+}

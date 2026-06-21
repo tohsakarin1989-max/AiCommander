@@ -1,0 +1,119 @@
+.event-page {
+  padding: var(--gap) var(--pad);
+  overflow-y: auto;
+}
+
+.event-page .page-title {
+  margin-bottom: var(--gap);
+}
+
+.ev-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 2fr;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.ev-stat {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top right, oklch(0.78 0.11 220 / 0.14), transparent 42%),
+    var(--bg-1);
+}
+
+.ev-stat span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+}
+
+.ev-stat b {
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.ev-stat small {
+  display: block;
+  margin-top: 7px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.ev-type-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.ev-type-row em {
+  padding: 5px 7px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.ev-table th:nth-child(1) { width: 150px; }
+.ev-table th:nth-child(2) { width: 120px; }
+.ev-table th:nth-child(3) { width: 130px; }
+.ev-table th:nth-child(5) { width: 96px; }
+.ev-table th:nth-child(7) { width: 100px; }
+
+.ev-no {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ev-desc {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.ev-desc b {
+  color: var(--ink-0);
+  font-size: 12.5px;
+}
+
+.ev-desc span {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.ev-risk-low { color: var(--ok); }
+.ev-risk-medium { color: var(--warn); }
+.ev-risk-high,
+.ev-risk-critical { color: var(--err); }
+
+.ev-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+@media (max-width: 1000px) {
+  .ev-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ev-stat.wide {
+    grid-column: span 2;
+  }
+
+  .ev-table {
+    min-width: 920px;
+  }
+}

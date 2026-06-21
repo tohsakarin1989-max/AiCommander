@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>团伙分析 · AiCommander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage"><div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="Dashboard.html">大屏 <span class="num">01</span></a>
+      <a href="Cases.html">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html">研判 <span class="num">04</span></a>
+      <a href="Gangs.html" class="cur">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html">巡逻 <span class="num">06</span></a>
+    </nav>
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+<div class="page page-gangs">
+  <div class="page-title">
+    <h1>团伙分析</h1>
+    <div class="sub">GANG INTELLIGENCE · 4 活跃 · 2 重点追踪</div>
+    <div style="margin-left:auto;display:flex;gap:10px;">
+      <button class="btn-ghost">团伙图谱</button>
+      <button class="btn-ghost">时间线</button>
+      <button class="btn-accent">＋ 新建团伙档案</button>
+    </div>
+  </div>
+
+  <div class="gangs-grid">
+    <!-- Hero: featured gang -->
+    <div class="card gang-hero">
+      <div class="card-head">
+        <span class="ico">!</span>
+        <span class="ti" style="color:var(--err);">夜鹰团伙 · 重点追踪</span>
+        <span class="spacer"></span>
+        <span class="chip err"><span class="dot" style="background:var(--err)"></span>活跃 23 天</span>
+      </div>
+      <div class="card-body" style="padding:0;display:grid;grid-template-columns:280px 1fr;gap:0;">
+        <aside class="gang-side">
+          <div class="gh-avatar">夜鹰</div>
+          <div class="gh-name">夜鹰 / Yeying</div>
+          <div class="gh-codename">内部代号 G-0023</div>
+          <div class="gh-risk"><div class="gh-risk-v">0.91</div><div class="gh-risk-l">综合风险</div></div>
+          <div class="gh-kvs">
+            <div class="kv"><span class="k">首次出现</span><span class="v">2026-01-14</span></div>
+            <div class="kv"><span class="k">作案数</span><span class="v">9 起</span></div>
+            <div class="kv"><span class="k">涉案总值</span><span class="v">¥ 186.4 万</span></div>
+            <div class="kv"><span class="k">子组数</span><span class="v">3 (Pⅰ · Pⅱ · Pⅲ)</span></div>
+            <div class="kv"><span class="k">活动范围</span><span class="v">滨州 · 东营 · 潍坊</span></div>
+            <div class="kv"><span class="k">核心设施</span><span class="v">输油管线</span></div>
+            <div class="kv"><span class="k">作案时段</span><span class="v">夜间 01-04</span></div>
+            <div class="kv"><span class="k">主要油品</span><span class="v">柴油 · 原油</span></div>
+          </div>
+        </aside>
+        <div class="gh-main">
+          <!-- Network graph -->
+          <div class="gh-section">
+            <div class="sh">团伙网络图谱</div>
+            <svg viewBox="0 0 700 260" style="width:100%;height:260px;display:block;">
+              <g stroke="oklch(0.42 0.014 250 / 0.45)" stroke-width="0.8" fill="none">
+                <line x1="350" y1="130" x2="200" y2="80"/><line x1="350" y1="130" x2="200" y2="180"/>
+                <line x1="350" y1="130" x2="500" y2="80"/><line x1="350" y1="130" x2="500" y2="180"/>
+                <line x1="200" y1="80" x2="80" y2="60"/><line x1="200" y1="80" x2="120" y2="120"/>
+                <line x1="200" y1="180" x2="80" y2="200"/><line x1="200" y1="180" x2="120" y2="220"/>
+                <line x1="500" y1="80" x2="620" y2="40"/><line x1="500" y1="80" x2="620" y2="100"/>
+                <line x1="500" y1="180" x2="620" y2="160"/><line x1="500" y1="180" x2="620" y2="220"/>
+              </g>
+              <g>
+                <circle cx="350" cy="130" r="22" fill="oklch(0.70 0.20 25)"/>
+                <text x="350" y="135" font-family="JetBrains Mono" font-size="11" text-anchor="middle" fill="white" font-weight="600">夜鹰</text>
+                <circle cx="200" cy="80" r="14" fill="oklch(0.78 0.14 45)"/>
+                <text x="200" y="84" font-family="JetBrains Mono" font-size="10" text-anchor="middle" fill="oklch(0.18 0.02 45)">Pⅰ</text>
+                <circle cx="200" cy="180" r="14" fill="oklch(0.78 0.14 45)"/>
+                <text x="200" y="184" font-family="JetBrains Mono" font-size="10" text-anchor="middle" fill="oklch(0.18 0.02 45)">Pⅱ</text>
+                <circle cx="500" cy="80" r="12" fill="oklch(0.78 0.11 220)"/>
+                <text x="500" y="84" font-family="JetBrains Mono" font-size="9" text-anchor="middle" fill="oklch(0.18 0.02 220)">车辆</text>
+                <circle cx="500" cy="180" r="12" fill="oklch(0.78 0.11 220)"/>
+                <text x="500" y="184" font-family="JetBrains Mono" font-size="9" text-anchor="middle" fill="oklch(0.18 0.02 220)">销赃</text>
+                <g fill="oklch(0.62 0.013 90)">
+                  <circle cx="80" cy="60" r="7"/><circle cx="120" cy="120" r="7"/>
+                  <circle cx="80" cy="200" r="7"/><circle cx="120" cy="220" r="7"/>
+                  <circle cx="620" cy="40" r="7"/><circle cx="620" cy="100" r="7"/>
+                  <circle cx="620" cy="160" r="7"/><circle cx="620" cy="220" r="7"/>
+                </g>
+                <g font-family="JetBrains Mono" font-size="9" fill="oklch(0.72 0.013 90)">
+                  <text x="40" y="48">王**</text><text x="80" y="108">李**</text>
+                  <text x="40" y="212">张**</text><text x="82" y="232">赵**</text>
+                  <text x="636" y="42">鲁B·AX3</text><text x="636" y="102">鲁Q·9K2</text>
+                  <text x="636" y="162">寿光·利民</text><text x="636" y="222">寿光·兴源</text>
+                </g>
+              </g>
+            </svg>
+          </div>
+
+          <!-- Timeline -->
+          <div class="gh-section">
+            <div class="sh">作案时间线 · 近 30 天</div>
+            <div class="gtl">
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">03-28</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">滨城北</span>
+                    <span class="gtl-val">¥18.6 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-01</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">滨城北</span>
+                    <span class="gtl-val">¥14.2 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-05</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-β">β</span>
+                    <span class="gtl-loc">垦利</span>
+                    <span class="gtl-val">¥22.8 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-08</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">滨城北</span>
+                    <span class="gtl-val">¥16.4 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-11</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-γ">γ</span>
+                    <span class="gtl-loc">寿光</span>
+                    <span class="gtl-val">¥3.8 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-13</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">滨城北</span>
+                    <span class="gtl-val">¥19.4 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-16</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-β">β</span>
+                    <span class="gtl-loc">垦利</span>
+                    <span class="gtl-val">¥46.8 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item ">
+                  <div class="gtl-t">04-18</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">广饶</span>
+                    <span class="gtl-val">¥22.1 万</span>
+                  </div>
+                </div>
+              
+                <div class="gtl-item active">
+                  <div class="gtl-t">04-20</div>
+                  <div class="gtl-box">
+                    <span class="cluster c-α">α</span>
+                    <span class="gtl-loc">滨城北</span>
+                    <span class="gtl-val">¥18.3 万</span>
+                  </div>
+                </div>
+              
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Other gangs grid -->
+    <div class="card other-gangs">
+      <div class="card-head"><span class="ico">◉</span><span class="ti">其他活跃团伙</span></div>
+      <div class="card-body" style="padding:0;">
+        
+          <div class="og-row hi">
+            <div class="og-avatar">G25</div>
+            <div class="og-body">
+              <div class="og-name">G25 沿线流窜</div>
+              <div class="og-meta">活跃 14 天 · 6 起 · ¥ 58.4 万 · 跨市 · 套牌罐车</div>
+            </div>
+            <div class="og-risk"><span class="v">0.74</span><span class="l">风险</span></div>
+          </div>
+        
+          <div class="og-row">
+            <div class="og-avatar">寿光</div>
+            <div class="og-body">
+              <div class="og-name">寿光街头收油</div>
+              <div class="og-meta">活跃 8 天 · 4 起 · ¥ 12.8 万 · 下游网络 · 黑市</div>
+            </div>
+            <div class="og-risk"><span class="v">0.58</span><span class="l">风险</span></div>
+          </div>
+        
+          <div class="og-row">
+            <div class="og-avatar">广饶</div>
+            <div class="og-body">
+              <div class="og-name">广饶南开孔组</div>
+              <div class="og-meta">活跃 21 天 · 3 起 · ¥ 42.6 万 · 管线 · 夜间 01-04</div>
+            </div>
+            <div class="og-risk"><span class="v">0.46</span><span class="l">风险</span></div>
+          </div>
+        
+      </div>
+    </div>
+  </div>
+</div>
+
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div></div>
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk"><label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)"></div>
+  <div class="tk"><label>密度</label><div class="seg" id="seg-density">
+    <button data-v="comfortable" class="on">宽松</button><button data-v="compact">紧凑</button></div></div>
+  <div class="tk"><label>环境遥测</label><div class="seg" id="seg-telemetry">
+    <button data-v="on" class="on">显示</button><button data-v="off">收起</button></div></div>
+  <div class="tk"><label>动效</label><div class="seg" id="seg-animation">
+    <button data-v="normal" class="on">正常</button><button data-v="subtle">轻微</button><button data-v="off">关闭</button></div></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

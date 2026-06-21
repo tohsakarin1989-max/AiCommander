@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>案件管理 · AiCommander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="pages.css">
+</head>
+<body data-density="comfortable" data-telemetry="on" data-animation="normal">
+<div class="stage" id="stage"><div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">AiC</div>
+      <div class="wordmark">
+        <div class="n">涉油案件智慧指挥大屏</div>
+        <div class="s">AiCommander · 智慧研判中心 · <span class="pulse">● 实时</span></div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="Dashboard.html">大屏 <span class="num">01</span></a>
+      <a href="Cases.html" class="cur">案件 <span class="num">02</span></a>
+      <a href="Roundtable.html">圆桌 <span class="num">03</span></a>
+      <a href="Analysis.html">研判 <span class="num">04</span></a>
+      <a href="Gangs.html">团伙 <span class="num">05</span></a>
+      <a href="Patrol.html">巡逻 <span class="num">06</span></a>
+    </nav>
+    <div class="clock">
+      <div class="t"><span id="clk-h">14</span><span class="sep">:</span><span id="clk-m">27</span><span class="sep">:</span><span id="clk-s">08</span></div>
+      <div class="d" id="clk-d">2026-04-20 · 星期一 · 辖区滨州</div>
+    </div>
+    <div class="sys-chips">
+      <span class="chip live"><span class="dot"></span>WS 已连接</span>
+      <span class="chip accent"><span class="dot" style="background:var(--accent)"></span>推理 4 路</span>
+    </div>
+    <div class="user">
+      <div class="a">刘</div>
+      <div>
+        <div class="n">刘警官</div>
+        <div class="r">涉油专案组 · 指挥</div>
+      </div>
+    </div>
+  </div>
+
+<div class="page page-cases">
+  <div class="cases-layout">
+    <!-- Filter sidebar -->
+    <aside class="filters">
+      <div class="filter-group">
+        <div class="gh">案件状态</div>
+        <label class="chk"><input type="checkbox" checked><span>待处理</span><span class="ct">8</span></label>
+        <label class="chk"><input type="checkbox" checked><span>处理中</span><span class="ct">14</span></label>
+        <label class="chk"><input type="checkbox" checked><span>已侦破</span><span class="ct">105</span></label>
+        <label class="chk"><input type="checkbox"><span>已归档</span><span class="ct">412</span></label>
+      </div>
+      <div class="filter-group">
+        <div class="gh">案件类型</div>
+        <label class="chk"><input type="checkbox" checked><span>管线开孔</span><span class="ct">43</span></label>
+        <label class="chk"><input type="checkbox" checked><span>油库入侵</span><span class="ct">28</span></label>
+        <label class="chk"><input type="checkbox" checked><span>加油站入侵</span><span class="ct">23</span></label>
+        <label class="chk"><input type="checkbox" checked><span>油罐车劫持</span><span class="ct">20</span></label>
+        <label class="chk"><input type="checkbox"><span>非法收油</span><span class="ct">13</span></label>
+      </div>
+      <div class="filter-group">
+        <div class="gh">油品</div>
+        <div class="chip-row">
+          <span class="chip-sm on" style="--c:var(--oil)">柴油 58</span>
+          <span class="chip-sm" style="--c:oklch(0.74 0.13 55)">汽油 39</span>
+          <span class="chip-sm" style="--c:oklch(0.74 0.13 140)">润滑油 18</span>
+          <span class="chip-sm" style="--c:oklch(0.65 0.05 250)">原油 12</span>
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="gh">案发时段</div>
+        <div class="hourgrid">
+          <div class="hc" style="background:oklch(0.78 0.14 45 / 0.15)" title="0:00 · 3件">00</div><div class="hc" style="background:var(--bg-2)" title="1:00 · 0件">01</div><div class="hc" style="background:var(--bg-2)" title="2:00 · 0件">02</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.15)" title="3:00 · 3件">03</div><div class="hc" style="background:var(--bg-2)" title="4:00 · 0件">04</div><div class="hc" style="background:var(--bg-2)" title="5:00 · 0件">05</div><div class="hc" style="background:var(--bg-2)" title="6:00 · 0件">06</div><div class="hc" style="background:var(--bg-2)" title="7:00 · 0件">07</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.15)" title="8:00 · 3件">08</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.15)" title="9:00 · 3件">09</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.35)" title="10:00 · 6件">10</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.35)" title="11:00 · 6件">11</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.55)" title="12:00 · 9件">12</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.35)" title="13:00 · 6件">13</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.35)" title="14:00 · 6件">14</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.55)" title="15:00 · 9件">15</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.75)" title="16:00 · 12件">16</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.90)" title="17:00 · 15件">17</div><div class="hc" style="background:var(--err)" title="18:00 · 18件">18</div><div class="hc" style="background:oklch(0.70 0.20 25)" title="19:00 · 21件">19</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.90)" title="20:00 · 15件">20</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.75)" title="21:00 · 12件">21</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.55)" title="22:00 · 9件">22</div><div class="hc" style="background:oklch(0.78 0.14 45 / 0.35)" title="23:00 · 6件">23</div>
+        </div>
+        <div class="hc-legend"><span>00</span><span style="color:var(--err);">夜间高发 01-04</span><span>23</span></div>
+      </div>
+      <div class="filter-group">
+        <div class="gh">日期范围</div>
+        <div class="date-range">
+          <input value="2026-01-01"><span>→</span><input value="2026-04-20">
+        </div>
+      </div>
+      <button class="btn-primary">应用筛选 (127)</button>
+      <button class="btn-ghost">重置</button>
+    </aside>
+
+    <!-- Cases list + detail -->
+    <section class="cases-main">
+      <div class="tools-bar">
+        <div class="search">
+          <span class="ico">⌕</span>
+          <input placeholder="搜索案件编号、地点、作案手法、车牌、人员...">
+          <span class="kbd">⌘K</span>
+        </div>
+        <div class="seg">
+          <button class="on">列表</button>
+          <button>卡片</button>
+          <button>时间线</button>
+          <button>地图</button>
+        </div>
+        <button class="btn-ghost">导出 ▾</button>
+        <button class="btn-accent">＋ 新建案件</button>
+      </div>
+
+      <div class="cases-split">
+        <div class="card" style="overflow:auto;">
+          <table class="data cases-table">
+            <thead><tr>
+              <th style="width:140px;">案件编号</th>
+              <th style="width:130px;">案发时间</th>
+              <th>案发地点</th>
+              <th style="width:110px;">类型</th>
+              <th style="width:90px;">油品</th>
+              <th style="width:100px;">涉案值</th>
+              <th style="width:110px;">状态</th>
+              <th style="width:80px;">研判</th>
+            </tr></thead>
+            <tbody>
+              <tr class="selected">
+                <td><span class="cno">JA-2026-0127</span></td>
+                <td class="time">04-20 11:42</td>
+                <td>滨州·滨城 K112+300 管线</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">管线开孔</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥18.3<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-r">处理中</span></td>
+                <td style="font-family:var(--mono);color:var(--info);font-size:11px;">4 AI</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0126</span></td>
+                <td class="time">04-19 23:18</td>
+                <td>东营·垦利 中石化油库北</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">油库入侵</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥32.6<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-p">待处理</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0125</span></td>
+                <td class="time">04-19 14:06</td>
+                <td>潍坊·寿光 G25 收费站</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">加油站入侵</span></td>
+                <td><span class="tag" style="--tag-c:oklch(0.74 0.13 55)">汽油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥4.8<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-r">处理中</span></td>
+                <td style="font-family:var(--mono);color:var(--info);font-size:11px;">gpt·claude</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0124</span></td>
+                <td class="time">04-18 02:34</td>
+                <td>东营·广饶 G18 K48</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">管线开孔</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥22.1<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0123</span></td>
+                <td class="time">04-17 19:22</td>
+                <td>滨州·博兴 兴福镇加油站</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">加油站入侵</span></td>
+                <td><span class="tag" style="--tag-c:oklch(0.74 0.13 55)">汽油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥2.4<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0122</span></td>
+                <td class="time">04-16 03:50</td>
+                <td>东营·利津 陈庄管线北</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">管线开孔</span></td>
+                <td><span class="tag" style="--tag-c:oklch(0.65 0.05 250)">原油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥46.8<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-r">处理中</span></td>
+                <td style="font-family:var(--mono);color:var(--info);font-size:11px;">4 AI</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0121</span></td>
+                <td class="time">04-15 13:44</td>
+                <td>滨州·邹平 西董乡罐车站</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">罐车劫持</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥12.6<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-p">待处理</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0120</span></td>
+                <td class="time">04-14 22:18</td>
+                <td>滨州·无棣 埕口油田外围</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">油库入侵</span></td>
+                <td><span class="tag" style="--tag-c:oklch(0.65 0.05 250)">原油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥38.2<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0119</span></td>
+                <td class="time">04-13 02:06</td>
+                <td>东营·河口 仙河镇管线</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">管线开孔</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥19.4<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0118</span></td>
+                <td class="time">04-12 10:24</td>
+                <td>潍坊·寿光 台头镇收购点</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">非法收油</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥8.2<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-r">处理中</span></td>
+                <td style="font-family:var(--mono);color:var(--info);font-size:11px;">qwen</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0117</span></td>
+                <td class="time">04-11 04:16</td>
+                <td>滨州·沾化 盐场路 213</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">管线开孔</span></td>
+                <td><span class="tag" style="--tag-c:var(--oil)">柴油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥14.8<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr><tr>
+                <td><span class="cno">JA-2026-0116</span></td>
+                <td class="time">04-10 01:52</td>
+                <td>东营·垦利 G18 K66</td>
+                <td><span class="tag" style="--tag-c:var(--accent)">罐车劫持</span></td>
+                <td><span class="tag" style="--tag-c:oklch(0.74 0.13 55)">汽油</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-0);">¥28.4<span style="color:var(--ink-3);"> 万</span></td>
+                <td><span class="tag t-d">已侦破</span></td>
+                <td style="font-family:var(--mono);color:var(--ink-3);font-size:11px;">—</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Case detail panel -->
+        <aside class="case-detail">
+          <div class="detail-head">
+            <div>
+              <div class="cno-big">JA-2026-0127</div>
+              <div class="cno-sub">滨州·滨城 K112+300 输油管线开孔</div>
+            </div>
+            <span class="tag t-r">处理中</span>
+          </div>
+
+          <div class="detail-grid">
+            <div class="kv"><span class="k">案发时间</span><span class="v">2026-04-20 11:42</span></div>
+            <div class="kv"><span class="k">上报时间</span><span class="v">2026-04-20 12:08</span></div>
+            <div class="kv"><span class="k">油品</span><span class="v"><span class="tag" style="--tag-c:var(--oil)">柴油</span></span></div>
+            <div class="kv"><span class="k">涉案油量</span><span class="v">4.8 吨</span></div>
+            <div class="kv"><span class="k">涉案价值</span><span class="v" style="color:var(--accent);">¥ 18.3 万</span></div>
+            <div class="kv"><span class="k">设施</span><span class="v">中石化东营-滨州输油管线</span></div>
+            <div class="kv"><span class="k">作案手法</span><span class="v">夜间开孔 · 软管接驳 · 罐车收油</span></div>
+            <div class="kv"><span class="k">嫌疑车辆</span><span class="v" style="font-family:var(--mono);">蓝白罐车 · 鲁B·AX3★★ (套牌疑)</span></div>
+            <div class="kv"><span class="k">关联团伙</span><span class="v"><span class="tag" style="--tag-c:var(--err)">夜鹰 0.91</span></span></div>
+            <div class="kv"><span class="k">关联案件</span><span class="v"><span class="link">JA-2026-0124</span> · <span class="link">JA-2026-0119</span> · <span class="link">+7</span></span></div>
+          </div>
+
+          <div class="detail-section">
+            <div class="ds-head">案发描述</div>
+            <p class="narr">中石化东营-滨州输油管线 K112+300 里程处发现非法开孔盗油点。管线压力监测系统于 11:42 检测到压差骤降 0.34 MPa，巡线员 12:05 到达现场确认。现场遗留接驳软管 18m，疑似夜间作案后未及时清理。周边监控于 02:40 捕获一辆无号牌蓝白罐车由辅路驶入，04:15 离开，行驶方向 G25 寿光方向。初步判断与 04-18、04-13、03-28 等 7 起同类案件作案手法、车型一致，疑为"夜鹰"团伙所为。</p>
+          </div>
+
+          <div class="detail-section">
+            <div class="ds-head">处置进展</div>
+            <div class="timeline">
+              <div class="tl-item"><span class="dot"></span><span class="t">11:42</span><span>管线压差告警触发 · 自动推送</span></div>
+              <div class="tl-item"><span class="dot"></span><span class="t">12:05</span><span>巡线员李建国到达现场 · 确认开孔</span></div>
+              <div class="tl-item"><span class="dot"></span><span class="t">12:08</span><span>案件上报 · 编号 JA-2026-0127</span></div>
+              <div class="tl-item"><span class="dot"></span><span class="t">12:42</span><span>特勤 3 班抵达 · 现场勘验取证</span></div>
+              <div class="tl-item active"><span class="dot"></span><span class="t">13:15</span><span>发起圆桌会议 M-8432 · 4 AI 研判中</span></div>
+              <div class="tl-item pending"><span class="dot"></span><span class="t">—</span><span>等待研判报告</span></div>
+            </div>
+          </div>
+
+          <div class="detail-actions">
+            <button class="btn-accent">发起圆桌研判</button>
+            <button class="btn-ghost">关联案件</button>
+            <button class="btn-ghost">派遣巡逻</button>
+            <button class="btn-ghost">⋯</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </div>
+</div>
+
+  <div class="statusbar">
+    <span><span class="k">DB</span><span class="v ok">● sqlite</span></span>
+    <span><span class="k">REDIS</span><span class="v ok">● 127.0.0.1:6379</span></span>
+    <span><span class="k">MODELS</span><span class="v accent">gpt-4.1 · claude-3.5 · qwen-max · deepseek-v3</span></span>
+    <span><span class="k">MCP</span><span class="v ok">地图 MCP 已连</span></span>
+    <span style="justify-self:end;"></span>
+    <span><span class="k">P95</span><span class="v">742 ms</span></span>
+    <span><span class="k">v0.9.3-rc</span><span class="v">build 2f1a</span></span>
+  </div>
+</div></div>
+
+<button class="tweak-toggle" onclick="tweaks.toggle()"><span class="d"></span>Tweaks</button>
+<div class="tweaks" id="tweaks-panel">
+  <h3>调节 <span class="x" onclick="tweaks.toggle()">×</span></h3>
+  <div class="tk"><label>强调色 hue <span class="v" id="hue-val">45°</span></label>
+    <input type="range" id="hue" min="0" max="360" step="5" value="45" oninput="tweaks.setHue(this.value)"></div>
+  <div class="tk"><label>密度</label><div class="seg" id="seg-density">
+    <button data-v="comfortable" class="on">宽松</button><button data-v="compact">紧凑</button></div></div>
+  <div class="tk"><label>环境遥测</label><div class="seg" id="seg-telemetry">
+    <button data-v="on" class="on">显示</button><button data-v="off">收起</button></div></div>
+  <div class="tk"><label>动效</label><div class="seg" id="seg-animation">
+    <button data-v="normal" class="on">正常</button><button data-v="subtle">轻微</button><button data-v="off">关闭</button></div></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

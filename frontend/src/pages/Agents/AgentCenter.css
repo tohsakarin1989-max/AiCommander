@@ -1,0 +1,127 @@
+/* ===================================================
+   AGENT CENTER PAGE — design-system.css 派生
+   =================================================== */
+
+/* 任务网格 */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--gap);
+  margin-top: var(--gap);
+}
+
+/* 任务卡片状态变体 */
+.agent-task-card--running  { border-left: 3px solid var(--info); }
+.agent-task-card--completed { border-left: 3px solid var(--ok); }
+.agent-task-card--failed    { border-left: 3px solid var(--err); }
+.agent-task-card--pending   { border-left: 3px solid var(--line); }
+
+/* 状态 chip 颜色变体 */
+.chip-running  { color: var(--info);  border-color: oklch(0.78 0.11 220 / 0.4); background: oklch(0.78 0.11 220 / 0.1); }
+.chip-completed{ color: var(--ok);   border-color: oklch(0.78 0.14 155 / 0.4); background: oklch(0.78 0.14 155 / 0.1); }
+.chip-failed   { color: var(--err);  border-color: oklch(0.70 0.20 25 / 0.4);  background: oklch(0.70 0.20 25 / 0.1); }
+.chip-pending  { color: var(--ink-3); border-color: var(--line); }
+
+/* 步骤 tag */
+.agent-step-tag {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 2px 7px;
+  letter-spacing: 0.04em;
+  display: inline-block;
+}
+
+/* 结果区 */
+.agent-result-box {
+  background: var(--bg-0);
+  border: 1px solid var(--line-soft);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+.agent-result-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.agent-result-text {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-1);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-result-list {
+  background: var(--bg-0);
+  border: 1px solid var(--line-soft);
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+
+.agent-result-list .ant-list-item {
+  color: var(--ink-1);
+  border-color: var(--line-soft) !important;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 5px 0 !important;
+}
+
+.agent-confidence {
+  margin-top: 8px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.agent-case-select {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.agent-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* 任务查询文本 */
+.agent-task-query {
+  font-size: 13px;
+  color: var(--ink-0);
+  font-weight: 500;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+/* 骨架屏 */
+.agent-skeleton {
+  height: 100px;
+  margin-bottom: 10px;
+}
+
+/* textarea 覆写（Ant Design） */
+.agent-textarea {
+  background: var(--bg-2) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  color: var(--ink-1) !important;
+  font-family: var(--sans) !important;
+  font-size: 13px !important;
+  resize: vertical !important;
+  margin-bottom: 12px;
+}
+.agent-textarea:focus {
+  border-color: var(--accent-line) !important;
+  box-shadow: none !important;
+}
+.agent-textarea::placeholder {
+  color: var(--ink-3) !important;
+}

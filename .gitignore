@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build
+frontend/dist/
+frontend/build/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/data/chroma_db/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+._*
+__MACOSX/
+.AppleDouble/
+.LSOverride
+Thumbs.db
+
+# Local assistant/app settings
+.claude/settings.local.json
+
+# Private local materials
+docs/submission-materials/
+design-prototype.html
+
+# Superpowers brainstorm sessions
+.superpowers/
