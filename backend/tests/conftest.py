@@ -11,6 +11,8 @@ from sqlalchemy.orm import sessionmaker, Session
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing")
 os.environ.setdefault("ENABLE_VECTOR_DB", "false")
 os.environ.setdefault("ENABLE_BONUS_ACCOUNTING", "true")
+os.environ.setdefault("AUTH_REQUIRED", "false")
+os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
 
 from app.database import Base
 from app.models.case import Case

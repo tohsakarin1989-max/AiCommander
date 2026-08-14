@@ -14,9 +14,11 @@ import type { BonusAssessment, Case } from '../../types'
 import { bonusAccountingEnabled } from '../../config/features'
 import {
   buildBonusManagementDisplay,
+  buildBonusSquadOptions,
   buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
+  resolveCaseBonusSquad,
   type BonusManagementDisplay,
   type BonusManagementMetricDisplay,
   type CaseBonusGateStatus,
@@ -25,6 +27,7 @@ import {
 import './CaseBonusAccounting.css'
 
 type BonusCasePeriodScope = 'quarter' | 'annual'
+type BonusSquadFilter = '__primary__' | '__all__' | string
 
 const gateLabel: Record<CaseBonusGateStatus, string> = {
   ready: '材料齐全',
@@ -84,6 +87,7 @@ const CaseBonusAccounting: React.FC = () => {
   const [keyword, setKeyword] = useState('')
   const [gateFilter, setGateFilter] = useState<CaseBonusGateStatus | 'all'>('all')
   const [periodScope, setPeriodScope] = useState<BonusCasePeriodScope>('quarter')
+  const [squadFilter, setSquadFilter] = useState<BonusSquadFilter>('__primary__')
 
   if (!bonusAccountingEnabled) {
     return (
@@ -132,28 +136,44 @@ const CaseBonusAccounting: React.FC = () => {
 
   const managementContext = selectedAssessment?.management_context
   const { data: periodCases = [], isLoading: periodCasesLoading } = useQuery<Case[]>({
-    queryKey: ['case-bonus-period-cases', selectedId, periodScope],
-    queryFn: () => caseApi.getBonusPeriodCases(selectedId!, periodScope),
+    queryKey: ['case-bonus-period-cases', selectedId, periodScope, 'all-squads'],
+    queryFn: () => caseApi.getBonusPeriodCases(selectedId!, periodScope, { includeAllSquads: true }),
     enabled: selectedId != null && !!managementContext,
     refetchInterval: 60_000,
   })
-  const scopedCases = managementContext ? periodCases : cases
-  const selectedCase = useMemo(
-    () => scopedCases.find(caseItem => caseItem.id === selectedId) ?? cases.find(caseItem => caseItem.id === selectedId) ?? null,
-    [cases, scopedCases, selectedId],
-  )
-  const rows = useMemo(() => buildCaseBonusRows(scopedCases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [scopedCases, selectedAssessment])
-  const summary = useMemo(() => buildCaseBonusSummary(rows), [rows])
-  const rowsLoading = managementContext ? periodCasesLoading : casesLoading
+
   const managementDisplay = useMemo(
     () => buildBonusManagementDisplay(managementContext),
     [managementContext],
   )
+  const squadOptions = useMemo(
+    () => buildBonusSquadOptions(periodCases, managementDisplay?.primarySquad, { includeKnownSquads: true }),
+    [managementDisplay?.primarySquad, periodCases],
+  )
+  const activeSquad = useMemo(() => {
+    if (!managementDisplay) return null
+    if (squadFilter === '__all__') return null
+    if (squadFilter === '__primary__') return managementDisplay.primarySquad
+    return squadFilter
+  }, [managementDisplay, squadFilter])
+  const scopedCases = useMemo(() => {
+    if (!managementContext) return cases
+    if (!activeSquad) return periodCases
+    return periodCases.filter(caseItem => resolveCaseBonusSquad(caseItem) === activeSquad)
+  }, [activeSquad, cases, managementContext, periodCases])
+  const selectedCase = useMemo(
+    () => scopedCases.find(caseItem => caseItem.id === selectedId) ?? (!managementContext ? cases.find(caseItem => caseItem.id === selectedId) : null),
+    [cases, managementContext, scopedCases, selectedId],
+  )
+  const rows = useMemo(() => buildCaseBonusRows(scopedCases, selectedAssessment ? { [selectedAssessment.case_id]: selectedAssessment } : {}), [scopedCases, selectedAssessment])
+  const summary = useMemo(() => buildCaseBonusSummary(rows), [rows])
+  const rowsLoading = managementContext ? periodCasesLoading : casesLoading
   const accountingScopeLabel = useMemo(() => {
     if (!managementDisplay) return '当前案件列表'
     const periodLabel = periodScope === 'annual' ? managementDisplay.annualLabel : managementDisplay.quarterLabel
-    return `${periodLabel} · ${managementDisplay.primarySquad}`
-  }, [managementDisplay, periodScope])
+    if (squadFilter === '__all__') return `${periodLabel} · 全部班组`
+    return `${periodLabel} · ${activeSquad || managementDisplay.primarySquad}`
+  }, [activeSquad, managementDisplay, periodScope, squadFilter])
 
   const filteredRows = useMemo(() => {
     const kw = keyword.trim()
@@ -173,6 +193,14 @@ const CaseBonusAccounting: React.FC = () => {
     setSelectedId(id)
     setSearchParams({ caseId: String(id) })
   }
+
+  useEffect(() => {
+    if (!managementContext || rowsLoading || selectedId == null || rows.length === 0) return
+    if (rows.some(row => row.caseId === selectedId)) return
+    const nextId = rows[0].caseId
+    setSelectedId(nextId)
+    setSearchParams({ caseId: String(nextId) })
+  }, [managementContext, rows, rowsLoading, selectedId, setSearchParams])
 
   const handleCalculate = () => {
     if (selectedId == null) {
@@ -523,6 +551,24 @@ const CaseBonusAccounting: React.FC = () => {
               options={[
                 { value: 'quarter', label: managementDisplay ? `${managementDisplay.quarterLabel}案件` : '当前季度案件' },
                 { value: 'annual', label: managementDisplay ? `${managementDisplay.annualLabel}案件` : '当前年度案件' },
+              ]}
+            />
+            <Select
+              value={squadFilter}
+              onChange={(value: BonusSquadFilter) => setSquadFilter(value)}
+              disabled={!managementDisplay}
+              options={[
+                {
+                  value: '__primary__',
+                  label: managementDisplay ? `当前案件班组：${managementDisplay.primarySquad}` : '当前案件班组',
+                },
+                { value: '__all__', label: `全部班组 · ${periodCases.length} 起` },
+                ...squadOptions
+                  .filter(option => option.value !== managementDisplay?.primarySquad)
+                  .map(option => ({
+                    value: option.value,
+                    label: option.label,
+                  })),
               ]}
             />
             <Select

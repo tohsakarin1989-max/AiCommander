@@ -674,7 +674,10 @@ const Settings: React.FC = () => {
                         </Select>
                       </Form.Item>
                       <Form.Item name="map_api_key" label="地图 API 密钥" tooltip={getConfigDescription('map_api_key', mapConfigs)}>
-                        <Input.Password placeholder="输入地图 API 密钥（OpenStreetMap 不需要）" autoComplete="new-password" />
+                        <Input.Password
+                          placeholder={mapConfigs?.find(item => item.config_key === 'map_api_key')?.is_configured ? '已安全保存，留空保持不变' : '输入地图 API 密钥（OpenStreetMap 不需要）'}
+                          autoComplete="new-password"
+                        />
                       </Form.Item>
                       <Form.Item name="map_api_base_url" label="地图 API 服务地址（可选）" tooltip={getConfigDescription('map_api_base_url', mapConfigs)}>
                         <Input placeholder="如：https://api.mapbox.com" />
@@ -726,7 +729,10 @@ const Settings: React.FC = () => {
                         </Select>
                       </Form.Item>
                       <Form.Item name="meeting_api_key" label="圆桌会议 API 密钥" tooltip={getConfigDescription('meeting_api_key', meetingConfigs)}>
-                        <Input.Password placeholder="输入 OpenRouter API 密钥（Direct 模式不需要）" autoComplete="new-password" />
+                        <Input.Password
+                          placeholder={meetingConfigs?.find(item => item.config_key === 'meeting_api_key')?.is_configured ? '已安全保存，留空保持不变' : '输入 OpenRouter API 密钥（Direct 模式不需要）'}
+                          autoComplete="new-password"
+                        />
                       </Form.Item>
                       <Form.Item name="meeting_api_base_url" label="圆桌会议 API 服务地址" tooltip={getConfigDescription('meeting_api_base_url', meetingConfigs)}>
                         <Input placeholder="默认：https://openrouter.ai/api/v1" />

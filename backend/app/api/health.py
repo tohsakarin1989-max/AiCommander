@@ -42,7 +42,7 @@ def _check_database() -> DependencyHealth:
         return DependencyHealth(
             status="down",
             latency_ms=round((perf_counter() - started_at) * 1000, 2),
-            detail=str(exc),
+            detail="数据库连接失败" if settings.ENVIRONMENT == "production" else str(exc),
         )
 
 
@@ -63,9 +63,9 @@ def _check_redis() -> DependencyHealth:
         )
     except Exception as exc:
         return DependencyHealth(
-            status="optional_down",
+            status="down" if settings.ENVIRONMENT == "production" else "optional_down",
             latency_ms=round((perf_counter() - started_at) * 1000, 2),
-            detail=str(exc),
+            detail="Redis 连接失败" if settings.ENVIRONMENT == "production" else str(exc),
         )
 
 
@@ -84,7 +84,9 @@ def health_ready():
         "database": _check_database(),
         "redis": _check_redis(),
     }
-    if dependencies["database"].status != "ok":
+    if dependencies["database"].status != "ok" or (
+        settings.ENVIRONMENT == "production" and dependencies["redis"].status != "ok"
+    ):
         status = "not_ready"
     elif dependencies["redis"].status == "ok":
         status = "ready"

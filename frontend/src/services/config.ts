@@ -10,7 +10,14 @@ import type {
   ModelCreate,
   ModelUpdate,
   ModelTestResult,
+  MapConfig,
 } from '../types'
+
+interface MeetingRuntimeConfig {
+  provider: string
+  api_key_configured: boolean
+  api_base_url?: string
+}
 
 // ==================== API 实现 ====================
 
@@ -89,13 +96,13 @@ export const configApi = {
 
     /** 获取地图配置 */
     getMapConfig: async () => {
-      const response = await api.get<SystemConfig[]>('/system-config/map/config')
+      const response = await api.get<MapConfig>('/system-config/map/config')
       return response.data
     },
 
     /** 获取会议配置 */
     getMeetingConfig: async () => {
-      const response = await api.get<SystemConfig[]>('/system-config/meeting/config')
+      const response = await api.get<MeetingRuntimeConfig>('/system-config/meeting/config')
       return response.data
     },
   },

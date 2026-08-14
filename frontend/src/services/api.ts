@@ -12,6 +12,7 @@ declare module 'axios' {
 
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
   timeout: 120000, // 120秒，圆桌会议需要调用多个LLM
   headers: {
     'Content-Type': 'application/json',
@@ -26,12 +27,6 @@ api.interceptors.request.use(
     config._requestId = requestId
     config._startTime = Date.now()
     config.headers['X-Request-Id'] = requestId
-
-    // 添加认证令牌（如果存在）
-    const token = localStorage.getItem('auth_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
 
     // 开发环境日志
     if (import.meta.env.DEV) {
@@ -80,10 +75,11 @@ api.interceptors.response.use(
 
     // 认证失败处理
     if (needsReLogin(apiError)) {
-      // 清除本地认证信息
-      localStorage.removeItem('auth_token')
-      // 可选：触发重新登录流程
-      // window.location.href = '/login'
+      const isPublicAuthRequest = error.config?.url?.includes('/auth/login')
+        || error.config?.url?.includes('/auth/bootstrap')
+      if (!isPublicAuthRequest) {
+        window.dispatchEvent(new CustomEvent('aic:auth-expired'))
+      }
     }
 
     return Promise.reject(apiError)

@@ -16,13 +16,10 @@ def encrypt_api_key(api_key: str) -> str:
 
 def decrypt_api_key(encrypted_key: str) -> str:
     """解密API密钥"""
-    try:
-        f = Fernet(get_encryption_key())
-        decrypted = f.decrypt(encrypted_key.encode())
-        return decrypted.decode()
-    except Exception as e:
-        # 如果解密失败，可能是旧格式，直接返回
-        if encrypted_key.startswith("encrypted_"):
-            return encrypted_key.replace("encrypted_", "")
-        raise e
+    f = Fernet(get_encryption_key())
+    decrypted = f.decrypt(encrypted_key.encode())
+    return decrypted.decode()
 
+
+encrypt_secret = encrypt_api_key
+decrypt_secret = decrypt_api_key

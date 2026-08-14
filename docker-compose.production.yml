@@ -1,0 +1,181 @@
+name: aicommander
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  AUTH_REQUIRED: "true"
+  AUTO_CREATE_TABLES: "false"
+  SESSION_COOKIE_SECURE: "true"
+  ENABLE_API_DOCS: "false"
+  FRONTEND_URL: "https://${APP_DOMAIN:?set APP_DOMAIN}"
+  CORS_ORIGINS: "https://${APP_DOMAIN:?set APP_DOMAIN}"
+  ALLOWED_HOSTS: "${APP_DOMAIN:?set APP_DOMAIN},frontend,localhost,127.0.0.1"
+  ENABLE_VECTOR_DB: "false"
+  ENABLE_BONUS_ACCOUNTING: "${ENABLE_BONUS_ACCOUNTING:-false}"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-480}"
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: aicommander
+  DB_USER: aicommander
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  SECRET_KEY_FILE: /run/secrets/secret_key
+  DB_PASSWORD_FILE: /run/secrets/db_password
+  REDIS_PASSWORD_FILE: /run/secrets/redis_password
+  BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
+
+x-backend-secrets: &backend-secrets
+  - secret_key
+  - db_password
+  - redis_password
+  - bootstrap_token
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+    environment:
+      POSTGRES_DB: aicommander
+      POSTGRES_USER: aicommander
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aicommander -d aicommander"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    command:
+      - /bin/sh
+      - -c
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$(cat /run/secrets/redis_password)"
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  backend:
+    image: aicommander-backend:${APP_VERSION:-2.0.0}
+    build:
+      context: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
+    environment: *backend-environment
+    secrets: *backend-secrets
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    logging: *default-logging
+
+  celery:
+    image: aicommander-backend:${APP_VERSION:-2.0.0}
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
+    environment: *backend-environment
+    secrets: *backend-secrets
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *default-logging
+
+  frontend:
+    image: aicommander-frontend:${APP_VERSION:-2.0.0}
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:80"
+    networks:
+      - app
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging: *default-logging
+
+networks:
+  app:
+  data:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:
+
+secrets:
+  secret_key:
+    file: ${SECRETS_DIR:-./secrets}/secret_key
+  db_password:
+    file: ${SECRETS_DIR:-./secrets}/db_password
+  redis_password:
+    file: ${SECRETS_DIR:-./secrets}/redis_password
+  bootstrap_token:
+    file: ${SECRETS_DIR:-./secrets}/bootstrap_token

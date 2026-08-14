@@ -241,9 +241,17 @@ export const caseApi = {
     return response.data
   },
 
-  getBonusPeriodCases: async (caseId: number, scope: 'quarter' | 'annual'): Promise<Case[]> => {
+  getBonusPeriodCases: async (
+    caseId: number,
+    scope: 'quarter' | 'annual',
+    options?: { squad?: string; includeAllSquads?: boolean },
+  ): Promise<Case[]> => {
     const response = await api.get<Case[]>(`/cases/${caseId}/bonus-period-cases`, {
-      params: { scope },
+      params: {
+        scope,
+        squad: options?.squad,
+        include_all_squads: options?.includeAllSquads,
+      },
     })
     return response.data
   },

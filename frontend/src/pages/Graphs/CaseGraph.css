@@ -3,6 +3,19 @@
    =================================================== */
 
 /* 输入框覆写 */
+.cg-build-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cg-select-field {
+  width: min(430px, 100%) !important;
+  min-width: 300px;
+  flex: 1 1 360px;
+}
+
 .cg-input-field {
   background: var(--bg-2) !important;
   border-color: var(--line) !important;
@@ -17,6 +30,41 @@
 .cg-input-field:focus {
   border-color: var(--accent-line) !important;
   box-shadow: none !important;
+}
+
+.cg-case-select-dropdown {
+  width: min(680px, calc(100vw - 40px)) !important;
+  max-width: calc(100vw - 40px);
+}
+
+.cg-case-select-dropdown .ant-select-item {
+  min-height: 46px;
+  padding: 8px 12px !important;
+}
+
+.cg-case-select-dropdown .ant-select-item-option-content {
+  white-space: normal;
+  overflow: visible;
+}
+
+.cg-case-option {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.cg-case-option b {
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cg-case-option span {
+  color: var(--ink-3);
+  font-size: 11px;
+  word-break: break-word;
 }
 
 /* 视图切换行 */

@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.ai.utils import parse_llm_json_response
 from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilRecoveryRecord
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_quality_service import CaseQualityService, _is_blank
@@ -44,6 +45,49 @@ MATERIAL_RULES = {
         "keywords": ("报案", "立案", "受案", "公安", "接警", "移交公安", "案件回执"),
     },
 }
+
+AI_INTAKE_FIELD_NAMES = {
+    "occurred_time",
+    "location",
+    "case_type",
+    "description",
+    "report_time",
+    "report_unit",
+    "oil_type",
+    "oil_volume",
+    "oil_value",
+    "oil_nature",
+    "water_cut",
+    "source_type",
+    "source_detail",
+    "police_reported",
+    "case_filed",
+    "police_officer",
+    "police_phone",
+    "security_officers",
+    "person_handling",
+    "vehicle_handling",
+    "oil_handling",
+    "facility_type",
+    "facility_owner",
+    "modus_operandi",
+    "operation_role",
+    "current_stage",
+}
+
+STANDARD_CASE_REPORTING_REQUIREMENTS = """
+标准案件信息要求来自《保卫系统业务管理细则》：
+- 发生时间：XXX年XX月XX日XX:XX。
+- 报送/责任单位：XX保卫班；48小时内录入案件系统，1小时内先报基础信息。
+- 地点：县、乡镇、村、方向和距离；同时记录作业区、区块或班组。
+- 车辆：抓获车辆台数、颜色、品牌、型号、车牌照、车内原油情况；车辆照片和发动机/大架号拓印属于佐证材料。
+- 涉油：原油性质（被盗原油、落地原油）、数量、检斤含水率、原油处理方式。
+- 人员：抓获人数、姓名、身份证号、家庭住址、人员处理方式。
+- 公安：是否报案、是否立案、公安机关出警人和联系电话。
+- 保卫班：保卫班出警人。
+- 线索来源：巡逻发现、群众举报、领导指派、公安机关线索。
+- 联合行动：主导、联合、配合、协助。
+""".strip()
 
 
 SQUAD_NAMES = [
@@ -160,7 +204,31 @@ class CaseAutomationService:
     """面向案件录入、佐证材料归档和奖金考核测算的轻量自动化服务。"""
 
     @staticmethod
-    def structure_case_text(raw_text: str) -> Dict[str, Any]:
+    def structure_case_text(raw_text: str, llm: Any = None) -> Dict[str, Any]:
+        fallback = CaseAutomationService._structure_case_text_deterministic(raw_text)
+        if llm is None:
+            return fallback
+
+        text = (raw_text or "").strip()
+        try:
+            prompt = CaseAutomationService._build_ai_intake_prompt(text, fallback)
+            response = llm.invoke(prompt)
+            content = getattr(response, "content", str(response))
+            model_payload, error = parse_llm_json_response(content, {})
+            if error:
+                raise ValueError(error)
+            return CaseAutomationService._merge_llm_ai_intake(text, fallback, model_payload)
+        except Exception as exc:
+            result = dict(fallback)
+            result["model_status"] = "llm_failed"
+            result["model_error"] = str(exc)[:200]
+            result["intake_mode"] = "rules_fallback"
+            result["ai_intake_boundary"] = "大模型识别失败，已使用规则降级抽取；候选字段仍需人工确认。"
+            result["boundary"] = "模型不可用或解析失败时，系统只提供规则降级结果，不自动认定案件事实。"
+            return result
+
+    @staticmethod
+    def _structure_case_text_deterministic(raw_text: str) -> Dict[str, Any]:
         text = (raw_text or "").strip()
         fields: Dict[str, Any] = {}
         field_sources: Dict[str, str] = {}
@@ -176,6 +244,9 @@ class CaseAutomationService:
             set_field("occurred_time", occurred_time.isoformat(), "案情中的日期时间")
         else:
             warnings.append("未识别到明确发生时间，创建案件时仍需人工选择。")
+
+        report_unit = CaseAutomationService._extract_report_unit(text)
+        set_field("report_unit", report_unit, "细则格式中的报送保卫班")
 
         location = CaseAutomationService._extract_location(text)
         set_field("location", location, "案情中的地点片段")
@@ -206,9 +277,18 @@ class CaseAutomationService:
             set_field("police_reported", True, "公安处置关键词")
         if _contains_any(text, ("立案", "受案")):
             set_field("case_filed", True, "立案/受案关键词")
+        set_field("police_officer", CaseAutomationService._extract_police_officer(text), "公安出警人片段")
+        set_field("police_phone", CaseAutomationService._extract_police_phone(text), "公安联系电话片段")
+        security_officers = CaseAutomationService._extract_security_officers(text)
+        if security_officers:
+            set_field("security_officers", security_officers, "保卫班出警人片段")
 
         if _contains_any(text, ("移交公安", "人员移交", "嫌疑人移交")):
             set_field("person_handling", "移交公安", "人员处置关键词")
+        elif _contains_any(text, ("治安拘留", "行政拘留")):
+            set_field("person_handling", "治安拘留", "人员处置关键词")
+        elif _contains_any(text, ("刑事拘留", "刑拘")):
+            set_field("person_handling", "刑事拘留", "人员处置关键词")
         if _contains_any(text, ("车辆移交", "移交车辆", "车移交公安")):
             set_field("vehicle_handling", "移交公安", "车辆处置关键词")
         elif _contains_any(text, ("扣押车辆", "车辆扣押", "查扣车辆")):
@@ -252,6 +332,7 @@ class CaseAutomationService:
             warnings=warnings,
             confidence=round(confidence, 2),
         )
+        ai_intake["ai_intake_boundary"] = "当前未使用大模型，系统按规则降级抽取候选字段；提交前仍需人工确认。"
         return {
             "case_fields": fields,
             "field_sources": field_sources,
@@ -259,9 +340,189 @@ class CaseAutomationService:
             "suggested_evidence": CaseAutomationService._dedupe_evidence_suggestions(suggested_evidence),
             "warnings": warnings,
             "confidence": round(confidence, 2),
-            "boundary": "自动提取结果仅用于辅助录入，提交前需人工核对。",
+            "boundary": "规则抽取结果仅用于辅助录入，提交前需人工核对。",
+            "model_status": "deterministic_fallback",
+            "intake_mode": "rules_fallback",
             **ai_intake,
         }
+
+    @staticmethod
+    def _build_ai_intake_prompt(text: str, fallback: Dict[str, Any]) -> str:
+        fallback_fields = fallback.get("case_fields") or {}
+        return f"""
+你是涉油案件录入辅助大模型。请把不标准、口语化、顺序混乱的案情整理成“可人工确认的标准录入候选”，不得编造。
+
+要求：
+1. 只基于原文输出；不确定的字段不要填，放入 follow_up_questions。
+2. 不做案件定性结论，不预测后续风险，不派发任务。
+3. 输出 JSON，禁止输出 Markdown。
+4. case_fields 只能包含这些字段：{sorted(AI_INTAKE_FIELD_NAMES)}。
+5. description 要写成符合业务管理细则的标准案情摘要：时间、报送保卫班、地点、作业区/区块、车辆、油品数量/含水率、人员、报案立案、车辆/人员/原油处理方式，缺项不编。
+6. 每个 candidates 项要给 label、field、value、source、confidence、status=candidate。
+7. 身份证号、家庭住址可保留在摘要中供人工核对，但不要编造，不要外推。
+
+{STANDARD_CASE_REPORTING_REQUIREMENTS}
+
+原始案情：
+{text}
+
+规则抽取参考（可纠错，不可盲从）：
+{fallback_fields}
+
+请按如下 schema 返回：
+{{
+  "case_fields": {{}},
+  "field_sources": {{}},
+  "entities": {{"plate_numbers": [], "person_count": 0, "material_hints": []}},
+  "suggested_evidence": [{{"requirement_key": "weigh_water_document", "label": "检斤含水单据", "reason": "..."}}],
+  "candidates": [{{"field": "location", "label": "案发地点", "value": "...", "source": "原文依据", "confidence": 0.8, "status": "candidate"}}],
+  "follow_up_questions": [],
+  "warnings": [],
+  "confidence": 0.8
+}}
+""".strip()
+
+    @staticmethod
+    def _merge_llm_ai_intake(
+        text: str,
+        fallback: Dict[str, Any],
+        model_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        result = dict(fallback)
+        fallback_fields = dict(fallback.get("case_fields") or {})
+        model_fields = CaseAutomationService._sanitize_llm_case_fields(
+            model_payload.get("case_fields") or model_payload.get("standard_fields") or {}
+        )
+        fields = {**fallback_fields, **model_fields}
+
+        field_sources = dict(fallback.get("field_sources") or {})
+        for field, source in (model_payload.get("field_sources") or {}).items():
+            if field in AI_INTAKE_FIELD_NAMES and source:
+                field_sources[field] = f"大模型整理：{source}"
+        for field in model_fields:
+            field_sources.setdefault(field, "大模型语义整理")
+
+        model_evidence = [
+            item for item in (model_payload.get("suggested_evidence") or model_payload.get("material_recommendations") or [])
+            if isinstance(item, dict) and item.get("requirement_key") and item.get("label")
+        ]
+        suggested_evidence = CaseAutomationService._dedupe_evidence_suggestions([
+            *(fallback.get("suggested_evidence") or []),
+            *model_evidence,
+        ])
+        warnings = [
+            *(fallback.get("warnings") or []),
+            *(model_payload.get("warnings") or []),
+        ]
+        confidence = float(model_payload.get("confidence") or fallback.get("confidence") or 0.75)
+        confidence = max(0.0, min(0.98, confidence))
+
+        ai_intake = CaseAutomationService._build_ai_intake_preview(
+            text=text,
+            fields=fields,
+            field_sources=field_sources,
+            suggested_evidence=suggested_evidence,
+            warnings=warnings,
+            confidence=round(confidence, 2),
+        )
+        model_candidates = [
+            item for item in (model_payload.get("candidates") or [])
+            if isinstance(item, dict) and item.get("field")
+        ]
+        if model_candidates:
+            ai_intake["candidates"] = CaseAutomationService._merge_ai_candidates(
+                ai_intake["candidates"],
+                model_candidates,
+            )
+        model_follow_ups = [
+            item for item in (model_payload.get("follow_up_questions") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if model_follow_ups:
+            ai_intake["follow_up_questions"] = CaseAutomationService._dedupe_strings([
+                *model_follow_ups,
+                *(ai_intake.get("follow_up_questions") or []),
+            ])
+
+        result.update({
+            "case_fields": fields,
+            "field_sources": field_sources,
+            "entities": {
+                **(fallback.get("entities") or {}),
+                **(model_payload.get("entities") or {}),
+            },
+            "suggested_evidence": suggested_evidence,
+            "warnings": warnings,
+            "confidence": round(confidence, 2),
+            "boundary": "大模型整理结果仅作为录入候选，提交前需人工核对；缺失或不确定内容不会自动补造。",
+            "model_status": "llm_success",
+            "intake_mode": "llm",
+            **ai_intake,
+        })
+        result["ai_intake_boundary"] = "大模型已整理为标准录入候选；系统不自动认定事实，必须人工确认后保存。"
+        return result
+
+    @staticmethod
+    def _sanitize_llm_case_fields(raw_fields: Dict[str, Any]) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        if not isinstance(raw_fields, dict):
+            return fields
+        for field, value in raw_fields.items():
+            if field not in AI_INTAKE_FIELD_NAMES or value in (None, ""):
+                continue
+            if field in {"oil_volume", "water_cut"}:
+                try:
+                    fields[field] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            elif field == "oil_value":
+                try:
+                    fields[field] = int(float(value))
+                except (TypeError, ValueError):
+                    continue
+            elif field in {"police_reported", "case_filed"}:
+                fields[field] = bool(value)
+            elif field == "security_officers":
+                if isinstance(value, list):
+                    officers = [str(item).strip() for item in value if str(item).strip()]
+                else:
+                    officers = [item.strip() for item in re.split(r"[、,，;；\s]+", str(value)) if item.strip()]
+                if officers:
+                    fields[field] = officers
+            else:
+                fields[field] = value
+        return fields
+
+    @staticmethod
+    def _merge_ai_candidates(
+        base_candidates: List[Dict[str, Any]],
+        model_candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        by_field: Dict[str, Dict[str, Any]] = {item.get("field"): item for item in base_candidates if item.get("field")}
+        for item in model_candidates:
+            field = item.get("field")
+            if not field:
+                continue
+            by_field[field] = {
+                "field": field,
+                "value": item.get("value"),
+                "label": item.get("label") or CaseAutomationService._field_label(field),
+                "source": item.get("source") or "大模型语义整理",
+                "confidence": item.get("confidence") or 0.8,
+                "status": item.get("status") or "candidate",
+            }
+        return list(by_field.values())
+
+    @staticmethod
+    def _dedupe_strings(items: List[str]) -> List[str]:
+        result: List[str] = []
+        seen = set()
+        for item in items:
+            text = item.strip()
+            if text and text not in seen:
+                seen.add(text)
+                result.append(text)
+        return result
 
     @staticmethod
     def _build_ai_intake_preview(
@@ -334,6 +595,8 @@ class CaseAutomationService:
     def _field_label(field: str) -> str:
         labels = {
             "occurred_time": "发生时间",
+            "report_time": "报送时间",
+            "report_unit": "报送保卫班",
             "location": "案发地点",
             "case_type": "案件类型",
             "description": "案情描述",
@@ -343,12 +606,21 @@ class CaseAutomationService:
             "water_cut": "含水率",
             "oil_value": "涉案价值",
             "source_type": "线索来源",
+            "source_detail": "线索补充说明",
             "police_reported": "是否报案",
             "case_filed": "是否立案",
+            "police_officer": "公安出警人",
+            "police_phone": "公安联系电话",
+            "security_officers": "保卫班出警人",
             "person_handling": "人员处置",
             "vehicle_handling": "车辆处置",
             "oil_handling": "油品处置",
+            "operation_role": "联合行动角色",
+            "current_stage": "办理阶段",
             "vehicle_info": "车辆信息",
+            "facility_type": "设施类型",
+            "facility_owner": "所属单位",
+            "modus_operandi": "作案方式",
         }
         return labels.get(field, field)
 
@@ -607,19 +879,23 @@ class CaseAutomationService:
         db: Session,
         case: Case,
         scope: str = "quarter",
+        squad: Optional[str] = None,
+        include_all_squads: bool = False,
     ) -> List[Case]:
         quarter_start, quarter_end, year_start, year_end = CaseAutomationService._bonus_period_bounds(case)
         if scope == "annual":
             start_at, end_at = year_start, year_end
         else:
             start_at, end_at = quarter_start, quarter_end
-        primary_squad = CaseAutomationService._resolve_primary_squad(case)
+        primary_squad = CaseAutomationService._resolve_squad_from_text(squad) if squad else CaseAutomationService._resolve_primary_squad(case)
         cases = (
             db.query(Case)
             .filter(Case.occurred_time >= start_at, Case.occurred_time < end_at)
             .order_by(Case.occurred_time.desc())
             .all()
         )
+        if include_all_squads:
+            return cases
         if not primary_squad:
             return cases
         return [
@@ -1348,6 +1624,7 @@ class CaseAutomationService:
     def _extract_location(text: str) -> Optional[str]:
         patterns = [
             r"(?:在|于)([^，。,；;]{2,40}(?:井场|管线|油井|站|作业区|井区|道路|附近))",
+            r"(?:在|于)([^，。,；;]{2,80}(?:县|乡|镇|村|屯|公里|作业区|平台|区块)[^，。,；;]{0,20})",
             r"地点[:：]\s*([^，。,；;]{2,60})",
         ]
         for pattern in patterns:
@@ -1355,6 +1632,39 @@ class CaseAutomationService:
             if match:
                 return match.group(1).strip()
         return None
+
+    @staticmethod
+    def _extract_report_unit(text: str) -> Optional[str]:
+        match = re.search(r"([\u4e00-\u9fa5A-Za-z0-9]{2,20}保卫班)", text or "")
+        return match.group(1).strip() if match else None
+
+    @staticmethod
+    def _extract_police_officer(text: str) -> Optional[str]:
+        patterns = [
+            r"(?:公安机关|[\u4e00-\u9fa5]{2,20}派出所)出警人[:：]\s*([^，。,；;\n]+)",
+            r"公安出警人[:：]\s*([^，。,；;\n]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text or "")
+            if match:
+                return match.group(1).strip()
+        return None
+
+    @staticmethod
+    def _extract_police_phone(text: str) -> Optional[str]:
+        match = re.search(r"(?:联系电话|电话)[:：]\s*([0-9\-]{5,20})", text or "")
+        return match.group(1).strip() if match else None
+
+    @staticmethod
+    def _extract_security_officers(text: str) -> List[str]:
+        match = re.search(r"保卫班出警人[:：]\s*([^。；;\n]+)", text or "")
+        if not match:
+            return []
+        return [
+            item.strip(" 、,，")
+            for item in re.split(r"[、,，;；/\s]+", match.group(1))
+            if item.strip(" 、,，")
+        ]
 
     @staticmethod
     def _extract_volume_tons(text: str) -> Optional[float]:

@@ -38,10 +38,14 @@ import { bonusAccountingEnabled } from '../../config/features'
 import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import { summarizeBatchReview } from './batchReviewPresentation'
+import {
+  buildCaseAiIntakeApplication,
+  buildCaseAiIntakeEntryFlags,
+  formatAiIntakeValue,
+} from './caseAiIntake'
 import './Cases.css'
 
 const { TextArea } = Input
-const { RangePicker } = DatePicker
 const { Option } = Select
 
 // 搜索筛选参数接口
@@ -105,6 +109,12 @@ const bonusGateLabel: Record<string, string> = {
   rules_not_configured: '待配置细则',
 }
 
+const aiIntakeModeText: Record<string, string> = {
+  llm_success: 'LLM 识别',
+  llm_failed: '规则降级',
+  deterministic_fallback: '规则降级',
+}
+
 const sourceTypeOptions = ['巡逻发现', '群众举报', '领导指派', '公安机关线索', '技防预警', '红色网格上报', '作业区反馈', '其他']
 const oilNatureOptions = ['被盗原油', '落地原油', '收缴油品', '回收原油', '其他']
 const stageOptions = [
@@ -164,6 +174,11 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
 }) => {
   const watchedLat = Form.useWatch('latitude', form)
   const watchedLng = Form.useWatch('longitude', form)
+  const watchedOccurredTime = Form.useWatch('occurred_time', form)
+  const watchedReportTime = Form.useWatch('report_time', form)
+  const watchedReportUnit = Form.useWatch('report_unit', form)
+  const watchedSourceType = Form.useWatch('source_type', form)
+  const watchedSecurityOfficers = Form.useWatch('security_officers', form)
   const watchedLocation = Form.useWatch('location', form)
   const watchedCaseType = Form.useWatch('case_type', form)
   const watchedDescription = Form.useWatch('description', form)
@@ -223,6 +238,11 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
   ])
 
   const caseEntryReadiness = useMemo(() => buildCaseEntryReadiness({
+    occurred_time: watchedOccurredTime,
+    report_time: watchedReportTime,
+    report_unit: watchedReportUnit,
+    source_type: watchedSourceType,
+    security_officers: watchedSecurityOfficers,
     latitude: watchedLat,
     longitude: watchedLng,
     location: watchedLocation,
@@ -246,6 +266,11 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
     initial_persons: watchedInitialPersons,
   }, bonusEntryHints), [
     bonusEntryHints,
+    watchedOccurredTime,
+    watchedReportTime,
+    watchedReportUnit,
+    watchedSourceType,
+    watchedSecurityOfficers,
     watchedLat,
     watchedLng,
     watchedLocation,
@@ -427,7 +452,6 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
   const [evidenceForm] = Form.useForm()
-  const [searchForm] = Form.useForm()
   const watchedLat = Form.useWatch('latitude', form)
   const watchedLng = Form.useWatch('longitude', form)
   const [isModalVisible, setIsModalVisible] = useState(false)
@@ -443,6 +467,9 @@ const Cases: React.FC = () => {
   const [activeLocationCaseId, setActiveLocationCaseId] = useState<number | null>(null)
   const [locationDraft, setLocationDraft] = useState<{ latitude?: number; longitude?: number }>({})
   const [showAdvancedFields, setShowAdvancedFields] = useState(false)
+  const [showMapPicker, setShowMapPicker] = useState(false)
+  const [aiIntakeText, setAiIntakeText] = useState('')
+  const [aiIntakeSourceText, setAiIntakeSourceText] = useState('')
   const [filters, setFilters] = useState<SearchFilters>({})
   const [keyword, setKeyword] = useState('')
   const [sidebarFilter, setSidebarFilter] = useState<FilterState>(defaultFilterState)
@@ -666,20 +693,39 @@ const Cases: React.FC = () => {
 
   const structureMutation = useMutation({
     mutationFn: (text: string) => caseApi.structureCaseText(text),
-    onSuccess: (data) => {
-      const patch = { ...data.case_fields } as Record<string, unknown>
-      if (typeof patch.occurred_time === 'string') {
-        patch.occurred_time = dayjs(patch.occurred_time)
-      }
+    onSuccess: (data, sourceText) => {
+      const application = buildCaseAiIntakeApplication(data, sourceText)
+      const patch = {
+        ...application.patch,
+        ...buildCaseAiIntakeEntryFlags(data, application.patch),
+      } as Record<string, unknown>
+      ;(['occurred_time', 'report_time'] as const).forEach(field => {
+        if (typeof patch[field] === 'string') {
+          patch[field] = dayjs(patch[field] as string)
+        }
+      })
       form.setFieldsValue(patch)
-      setShowAdvancedFields(true)
-      message.success(`已提取 ${Object.keys(data.case_fields).length} 个字段`)
+      setAiIntakeSourceText(sourceText)
+      if (application.shouldOpenAdvancedFields) {
+        setShowAdvancedFields(true)
+      }
+      if (patch.latitude != null || patch.longitude != null) {
+        setShowMapPicker(true)
+      }
+      message.success(`AI 录入辅助员已写入 ${Object.keys(application.patch).length} 个可编辑字段`)
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
       message.error(`自动提取失败: ${err.response?.data?.detail || err.message}`)
     },
   })
+
+  const aiIntakeApplication = useMemo(
+    () => structureMutation.data
+      ? buildCaseAiIntakeApplication(structureMutation.data, aiIntakeSourceText || aiIntakeText)
+      : null,
+    [aiIntakeSourceText, aiIntakeText, structureMutation.data],
+  )
 
   const createEvidenceMutation = useMutation({
     mutationFn: (data: { title?: string; file_path?: string; notes?: string }) =>
@@ -798,6 +844,10 @@ const Cases: React.FC = () => {
     setBonusDraftLoadState({ vehicles: true, persons: true })
     setBonusDraftTouched({ vehicles: false, persons: false })
     setShowAdvancedFields(false)
+    setShowMapPicker(false)
+    setAiIntakeText('')
+    setAiIntakeSourceText('')
+    structureMutation.reset()
     setIsModalVisible(true)
   }
 
@@ -826,6 +876,9 @@ const Cases: React.FC = () => {
     }
     setBonusDraftLoadState({ vehicles: vehiclesLoaded, persons: personsLoaded })
     setBonusDraftTouched({ vehicles: false, persons: false })
+    setAiIntakeText(caseItem.description || '')
+    setAiIntakeSourceText('')
+    structureMutation.reset()
     const vehicleDrafts = vehicles.map(vehicleDraftFromRecord)
     const personDrafts = persons.map(personDraftFromRecord)
     const hasVehicleBonus = vehicleDrafts.length > 0 || Boolean(caseItem.vehicle_handling)
@@ -843,6 +896,7 @@ const Cases: React.FC = () => {
       initial_vehicles: hasVehicleBonus ? (vehicleDrafts.length ? vehicleDrafts : [{}]) : [],
       initial_persons: hasPersonBonus ? (personDrafts.length ? personDrafts : [{}]) : [],
     })
+    setShowMapPicker(caseItem.latitude != null && caseItem.longitude != null)
     setIsModalVisible(true)
   }
 
@@ -920,7 +974,6 @@ const Cases: React.FC = () => {
     setSidebarFilter(defaultFilterState)
     setKeyword('')
     setFilters({})
-    searchForm.resetFields()
   }
 
   // 统计各状态数量
@@ -960,10 +1013,10 @@ const Cases: React.FC = () => {
     navigate(`/patrols?caseId=${selectedCase.id}`)
   }
 
-  const handleStructureFromDescription = () => {
-    const text = form.getFieldValue('description')
+  const handleRunAiIntake = () => {
+    const text = aiIntakeText || form.getFieldValue('description')
     if (!text || !String(text).trim()) {
-      message.warning('请先填写案情描述')
+      message.warning('请先粘贴案情文本')
       return
     }
     structureMutation.mutate(String(text))
@@ -1844,7 +1897,7 @@ const Cases: React.FC = () => {
           setEditingCase(null)
           form.resetFields()
         }}
-        width={620}
+        width={760}
         confirmLoading={createMutation.isPending || updateMutation.isPending}
         okText="确认"
         cancelText="取消"
@@ -1855,6 +1908,80 @@ const Cases: React.FC = () => {
         }}
       >
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
+          <div className="cases-ai-assistant">
+            <div className="cases-ai-assistant__head">
+              <div>
+                <span><ApiOutlined /> AI 录入辅助员</span>
+                <small>{structureMutation.data?.ai_intake_boundary || '先粘贴原始案情，系统只生成候选字段，提交前仍由人工确认。'}</small>
+              </div>
+              <b>
+                {structureMutation.data
+                  ? `${aiIntakeModeText[structureMutation.data.model_status || ''] || '候选识别'} · ${Math.round((structureMutation.data.confidence || 0) * 100)}%`
+                  : '候选录入'}
+              </b>
+            </div>
+            <TextArea
+              rows={4}
+              value={aiIntakeText}
+              onChange={event => setAiIntakeText(event.target.value)}
+              placeholder="粘贴原始案情：时间、地点、发现方式、涉油数量、车辆/人员处置、报案立案等。点击后自动填入下方可编辑字段。"
+            />
+            <div className="cases-ai-assistant__actions">
+              <Button
+                type="primary"
+                icon={<ApiOutlined />}
+                loading={structureMutation.isPending}
+                onClick={handleRunAiIntake}
+              >
+                AI 辅助录入
+              </Button>
+              <Button
+                onClick={() => setAiIntakeText(String(form.getFieldValue('description') || ''))}
+                disabled={!form.getFieldValue('description')}
+              >
+                读取案情描述
+              </Button>
+              <span>结果已写入表单，可继续人工修改。</span>
+            </div>
+
+            {aiIntakeApplication && (
+              <div className="cases-ai-intake">
+                <div className="cases-ai-intake__head">
+                  <span>已识别字段</span>
+                  <b>{aiIntakeApplication.writableCandidates.length} 项可写入</b>
+                </div>
+                <div className="cases-ai-intake__list">
+                  {aiIntakeApplication.writableCandidates.slice(0, 8).map(item => (
+                    <div key={`${item.field}-${String(item.value)}`} className="cases-ai-intake__item">
+                      <span>{item.label}</span>
+                      <b>{formatAiIntakeValue(item.value)}</b>
+                      <small>{item.source}</small>
+                    </div>
+                  ))}
+                  {aiIntakeApplication.referenceCandidates.slice(0, 2).map(item => (
+                    <div key={`${item.field}-${String(item.value)}`} className="cases-ai-intake__item cases-ai-intake__item--reference">
+                      <span>{item.label}</span>
+                      <b>{formatAiIntakeValue(item.value)}</b>
+                      <small>仅供参考 · {item.source}</small>
+                    </div>
+                  ))}
+                </div>
+                {structureMutation.data?.material_recommendations?.length ? (
+                  <div className="cases-ai-intake__chips">
+                    {structureMutation.data.material_recommendations.slice(0, 4).map(item => (
+                      <span key={item.requirement_key}>{item.label}</span>
+                    ))}
+                  </div>
+                ) : null}
+                {structureMutation.data?.follow_up_questions?.length ? (
+                  <p className="narr" style={{ color: 'var(--warn)' }}>
+                    待人工确认：{structureMutation.data.follow_up_questions.slice(0, 2).join('；')}
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </div>
+
           <Form.Item
             name="occurred_time"
             label="发生时间"
@@ -1867,38 +1994,53 @@ const Cases: React.FC = () => {
             <Input placeholder="如：××路××小区南门" />
           </Form.Item>
 
-          <Form.Item label="经纬度（可选，用于地图与空间分析）" style={{ marginBottom: 0 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="纬度，例如 31.2304"
-                  min={-90}
-                  max={90}
-                  step={0.000001}
-                />
+          <div
+            className="cases-map-toggle"
+            onClick={() => setShowMapPicker(!showMapPicker)}
+          >
+            {showMapPicker ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+            地图坐标（可选，用于地图与空间分析）
+            {watchedLat != null && watchedLng != null && (
+              <span>{Number(watchedLat).toFixed(5)}, {Number(watchedLng).toFixed(5)}</span>
+            )}
+          </div>
+
+          {showMapPicker && (
+            <div className="cases-map-entry">
+              <Form.Item label="经纬度" style={{ marginBottom: 0 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      placeholder="纬度，例如 31.2304"
+                      min={-90}
+                      max={90}
+                      step={0.000001}
+                    />
+                  </Form.Item>
+                  <Form.Item name="longitude" style={{ flex: 1, marginBottom: 8 }}>
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      placeholder="经度，例如 121.4737"
+                      min={-180}
+                      max={180}
+                      step={0.000001}
+                    />
+                  </Form.Item>
+                </div>
               </Form.Item>
-              <Form.Item name="longitude" style={{ flex: 1, marginBottom: 8 }}>
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="经度，例如 121.4737"
-                  min={-180}
-                  max={180}
-                  step={0.000001}
+
+              <Form.Item label="地图选点">
+                <MapPicker
+                  lat={watchedLat}
+                  lng={watchedLng}
+                  onChange={(lat, lng) => {
+                    form.setFieldsValue({ latitude: lat, longitude: lng })
+                  }}
                 />
               </Form.Item>
             </div>
-          </Form.Item>
-
-          <Form.Item label="地图选点（可选）">
-            <MapPicker
-              lat={watchedLat}
-              lng={watchedLng}
-              onChange={(lat, lng) => {
-                form.setFieldsValue({ latitude: lat, longitude: lng })
-              }}
-            />
-          </Form.Item>
+          )}
 
           <Form.Item name="case_type" label="类型（可选）">
             <Input placeholder="如：管线开孔、油库入侵、罐车劫持等" />
@@ -1911,40 +2053,6 @@ const Cases: React.FC = () => {
           >
             <TextArea rows={4} placeholder="请尽可能详细描述案情，其余结构化分析将由系统自动完成" />
           </Form.Item>
-
-          <div className="cases-auto-extract">
-            <Button
-              size="small"
-              icon={<ApiOutlined />}
-              loading={structureMutation.isPending}
-              onClick={handleStructureFromDescription}
-            >
-              自动提取
-            </Button>
-          </div>
-
-          {structureMutation.data?.candidates?.length ? (
-            <div className="cases-ai-intake">
-              <div className="cases-ai-intake__head">
-                <span>AI 录入副驾驶</span>
-                <b>需人工确认</b>
-              </div>
-              <div className="cases-ai-intake__list">
-                {structureMutation.data.candidates.slice(0, 6).map(item => (
-                  <div key={`${item.field}-${String(item.value)}`} className="cases-ai-intake__item">
-                    <span>{item.label}</span>
-                    <b>{String(item.value || '待确认')}</b>
-                    <small>{item.source}</small>
-                  </div>
-                ))}
-              </div>
-              {structureMutation.data.follow_up_questions?.length ? (
-                <p className="narr" style={{ color: 'var(--warn)' }}>
-                  追问：{structureMutation.data.follow_up_questions.slice(0, 2).join('；')}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
 
           <CaseEntryPrecheck
             form={form}
@@ -2028,6 +2136,10 @@ const Cases: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+
+          <Form.Item name="security_officers" label="保卫班出警人">
+            <Select mode="tags" placeholder="输入姓名后回车，可填写多人" />
+          </Form.Item>
 
           <Form.Item name="loss_amount" label="损失金额（元，可选）">
             <InputNumber style={{ width: '100%' }} />
@@ -2339,16 +2451,6 @@ const Cases: React.FC = () => {
         )}
       </Modal>
 
-      {/* 搜索表单（隐藏，保留逻辑） */}
-      <Form form={searchForm} style={{ display: 'none' }}>
-        <Form.Item name="keyword"><Input /></Form.Item>
-        <Form.Item name="status"><Select><Option value="pending">待处理</Option></Select></Form.Item>
-        <Form.Item name="case_type"><Input /></Form.Item>
-        <Form.Item name="oil_type"><Input /></Form.Item>
-        <Form.Item name="dateRange"><RangePicker /></Form.Item>
-        <Form.Item name="has_geo" valuePropName="checked"><Switch /></Form.Item>
-        <Row><Col span={6}></Col></Row>
-      </Form>
     </div>
   )
 }

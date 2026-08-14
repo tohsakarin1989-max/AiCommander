@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import { caseApi } from '../../services/cases'
 import { aiApi } from '../../services/ai'
 import { analysisApi, SmartAnalysisReport } from '../../services/analysis'
+import { suggestionsApi } from '../../services/suggestions'
 import type { Case } from '../../types'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -36,17 +37,6 @@ const RISK_LABEL: Record<string, string> = {
   critical: '极高风险', high: '高风险', medium: '中风险', low: '低风险',
 }
 
-/* 快速导航模块 */
-const MODULES = [
-  { path: '/cases',         icon: '⬛', label: '案件管理',   desc: '录入与管理案件信息' },
-  { path: '/case-intelligence', icon: '◈', label: '案件研判', desc: '相似条件与防控参考' },
-  { path: '/cases/features', icon: '◇', label: '特征提取', desc: '案件质量与结构化画像' },
-  { path: '/cases/spacetime', icon: '◉', label: '时空研判', desc: '时间和空间规律分析' },
-  { path: '/jurisdiction',  icon: '▦',  label: '辖区底座',   desc: '地图参考与油区资产' },
-  { path: '/reports',       icon: '▤',  label: '研判报告',   desc: '沉淀复盘和专题材料' },
-  { path: '/assistant',     icon: '◎',  label: '智能助手',   desc: '自然语言问答分析' },
-]
-
 const INTELLIGENCE_ACTIONS = [
   { title: '进入案件研判工作台', desc: '从单案出发生成标签、相似条件、区域画像和报告', path: '/case-intelligence' },
   { title: '补齐案件结构化字段', desc: '提升时空、相似条件和现场要素分析质量', path: '/cases/features' },
@@ -66,6 +56,11 @@ const Home: React.FC = () => {
 
   const { data: cases }       = useQuery({ queryKey: ['cases'],       queryFn: () => caseApi.getCases() })
   const { data: conclusions } = useQuery({ queryKey: ['conclusions'], queryFn: () => aiApi.conclusion.list() })
+  const { data: suggestionsData } = useQuery({
+    queryKey: ['home-suggestions'],
+    queryFn: () => suggestionsApi.list({ limit: 40, status: 'open' }),
+    retry: false,
+  })
 
   const stats = {
     totalCases:          cases?.length || 0,
@@ -77,6 +72,24 @@ const Home: React.FC = () => {
   }
 
   const recentCases    = (cases    || []).slice(-5).reverse()
+  const suggestions = suggestionsData?.suggestions ?? []
+  const highPrioritySuggestions = suggestions.filter(item => item.priority === 'high').length
+  const bonusSuggestions = suggestions.filter(item => item.type === 'bonus').length
+  const alertSuggestions = suggestions.filter(item => item.type === 'alert').length
+
+  const workEntries = [
+    { label: '待办中心', metric: `${suggestions.length} 项`, desc: '坐标、材料、结论、报告、经验卡统一分流', action: '进入队列', path: '/suggestions', tone: highPrioritySuggestions > 0 ? 'hot' : 'normal' },
+    { label: '案件录入预检', metric: `${stats.pendingCases} 起`, desc: '保存前提示关键字段，不强制阻断录入', action: '录入案件', path: '/cases', tone: stats.pendingCases > 0 ? 'warn' : 'normal' },
+    { label: '奖金核算内业', metric: `${bonusSuggestions} 项`, desc: '仅在案件/奖金页处理指标和佐证材料', action: '进入核算', path: '/cases/bonus', tone: bonusSuggestions > 0 ? 'hot' : 'normal' },
+    { label: '数智告警核查', metric: `${alertSuggestions} 条`, desc: '接收告警后形成研判包，不自动派发执行', action: '打开数智', path: '/intelli-inspect', tone: alertSuggestions > 0 ? 'warn' : 'normal' },
+    { label: '辖区底座维护', metric: `${stats.casesWithGeo} 坐标`, desc: '公共地图参考、井点、管线、监控设施分层维护', action: '维护底座', path: '/jurisdiction', tone: 'normal' },
+  ]
+
+  const systemItems = [
+    { label: '后台复核队列', value: suggestions.length ? `${suggestions.length} 项待处理` : '暂无积压', desc: '默认模型失败时走确定性降级，不中断全量任务' },
+    { label: '人工复核边界', value: `${stats.pendingReview} 条结论`, desc: '事实、推断、建议分层展示，最终结论由人工确认' },
+    { label: '数据可用性', value: `${stats.analyzableCases} 起可研判`, desc: '坐标、时间、地点、描述越完整，AI沉淀质量越高' },
+  ]
 
   /* ── KPI pills 数据 ── */
   const kpis = [
@@ -89,13 +102,13 @@ const Home: React.FC = () => {
   ]
 
   return (
-    <div className="page-scrollable">
+    <div className="page-scrollable home-redesign">
 
-      {/* ── 页面标题 ── */}
-      <div className="page-title">
-        <h1>指挥中心</h1>
-        <span className="sub">涉油案件 · AI 多智能体协作分析平台</span>
-        <div style={{ marginLeft: 'auto' }}>
+      <section className="home-hero">
+        <div className="home-hero-title">
+          <span>AiCommander · 内业总控台</span>
+          <h1>指挥中心</h1>
+          <p>把案件录入、研判待办、奖金内业、报告复核和辖区底座放到同一个工作入口。</p>
           <button
             className="btn-primary"
             onClick={() => smartAnalysisMutation.mutate()}
@@ -105,10 +118,28 @@ const Home: React.FC = () => {
             {smartAnalysisMutation.isPending ? '分析中…' : '一键智能研判'}
           </button>
         </div>
-      </div>
+        <div className="home-entry-switchboard" aria-label="核心工作入口">
+          <div className="home-entry-head">
+            <strong>今日工作入口</strong>
+            <span>选择任务流进入，不把所有页面混成一个研判中心</span>
+          </div>
+          <div className="home-entry-grid">
+            {workEntries.slice(0, 5).map((item, index) => (
+              <button
+                key={item.path}
+                className={`home-entry-card home-entry-card--${item.tone}`}
+                onClick={() => navigate(item.path)}
+              >
+                <span className="home-entry-index">{String(index + 1).padStart(2, '0')}</span>
+                <strong>{item.label}</strong>
+                <small>{item.metric} · {item.action}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
 
-      {/* ── KPI 行 ── */}
-      <div className="home-kpis-row">
+      <section className="home-kpis-row home-kpis-row--redesign">
         {kpis.map((k, i) => (
           <div key={i} className="kpill home-kpill--link" onClick={() => navigate(k.path)} title={k.lbl}>
             <div className="lbl">{k.lbl}</div>
@@ -116,27 +147,59 @@ const Home: React.FC = () => {
             <div className="sub">{k.sub}</div>
           </div>
         ))}
-      </div>
+      </section>
 
-      {/* ── 快速导航模块 ── */}
-      <div className="section-head" style={{ marginTop: 'var(--gap)' }}>快速导航</div>
-      <div className="home-modules">
-        {MODULES.map(m => (
-          <div
-            key={m.path}
-            className="card home-module-card"
-            onClick={() => navigate(m.path)}
-          >
-            <div className="card-head">
-              <span className="ico">{m.icon}</span>
-              <span className="ti">{m.label}</span>
-            </div>
-            <div className="card-body pad">
-              <span style={{ color: 'var(--ink-2)', fontSize: 12 }}>{m.desc}</span>
-            </div>
+      <section className="home-command-grid">
+        <section className="card home-workbench">
+          <div className="card-head">
+            <span className="ico">▦</span>
+            <span className="ti">今日工作入口</span>
+            <span className="spacer" />
+            <button className="btn-ghost-sm" onClick={() => navigate('/suggestions')}>查看全部</button>
           </div>
-        ))}
-      </div>
+          <div className="home-work-list">
+            {workEntries.map(item => (
+              <button
+                key={item.path}
+                className={`home-work-row home-work-row--${item.tone}`}
+                onClick={() => navigate(item.path)}
+              >
+                <span className="home-work-main">
+                  <strong>{item.label}</strong>
+                  <small>{item.desc}</small>
+                </span>
+                <span className="home-work-metric">{item.metric}</span>
+                <span className="home-work-action">{item.action}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="card home-system-panel">
+          <div className="card-head">
+            <ThunderboltOutlined className="ico" />
+            <span className="ti">AI 后台处理</span>
+            <span className="spacer" />
+            <span className="chip accent">测试阶段</span>
+          </div>
+          <div className="home-system-list">
+            {systemItems.map(item => (
+              <div key={item.label} className="home-system-row">
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <small>{item.desc}</small>
+              </div>
+            ))}
+          </div>
+          <button
+            className="btn-primary home-system-action"
+            onClick={() => smartAnalysisMutation.mutate()}
+            disabled={smartAnalysisMutation.isPending}
+          >
+            {smartAnalysisMutation.isPending ? '后台处理中…' : '一键智能研判'}
+          </button>
+        </section>
+      </section>
 
       {/* ── 动态信息 2 列 ── */}
       <div className="home-activity">

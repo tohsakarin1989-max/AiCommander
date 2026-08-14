@@ -8,6 +8,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from app.utils.logger import logger
+from app.security import authenticate_websocket
 from app.database import SessionLocal
 from app.models.case import Case
 from sqlalchemy.orm import Session
@@ -147,6 +148,9 @@ async def websocket_dashboard(websocket: WebSocket):
     实时指挥大屏WebSocket端点
     推送案件、警力位置等实时数据
     """
+    if not authenticate_websocket(websocket):
+        await websocket.close(code=4401, reason="authentication required")
+        return
     await manager.connect(websocket)
     
     try:
@@ -268,6 +272,9 @@ async def websocket_meeting(websocket: WebSocket, meeting_id: str):
     会议进度WebSocket端点
     推送会议各阶段的进度信息
     """
+    if not authenticate_websocket(websocket):
+        await websocket.close(code=4401, reason="authentication required")
+        return
     await meeting_manager.connect(websocket, meeting_id)
 
     try:
@@ -351,6 +358,5 @@ async def broadcast_meeting_message(meeting_id: str, message: Dict):
         "meeting_id": meeting_id,
         "connections": meeting_manager.get_connection_count(meeting_id)
     }
-
 
 

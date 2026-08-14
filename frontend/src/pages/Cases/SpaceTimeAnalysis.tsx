@@ -4,7 +4,7 @@
  * - 分析员视图：时段×星期规律矩阵 + 月度趋势
  */
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   DatePicker,
   Radio,
@@ -25,6 +25,7 @@ import dayjs, { Dayjs } from 'dayjs'
 import { caseApi } from '../../services/cases'
 import SpaceTimeMap, { type HeatPoint, type PredictionHotspot } from '../../components/Map/SpaceTimeMap'
 import type { Case, Hotspot } from '../../types'
+import type { ThemeMode } from '../../theme/themeMode'
 import './SpaceTimeAnalysis.css'
 
 const { RangePicker } = DatePicker
@@ -64,6 +65,77 @@ const DAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '
 
 type TimeSlot = 'all' | 'midnight' | 'day' | 'evening'
 type DayFilter = 'all' | 'weekday' | 'weekend'
+
+interface ChartPalette {
+  tooltipBg: string
+  tooltipBorder: string
+  tooltipText: string
+  axisText: string
+  axisLine: string
+  splitLine: string
+  splitAreas: string[]
+  heatColors: string[]
+  heatLabel: string
+  warn: string
+  err: string
+  ok: string
+  info: string
+}
+
+const CHART_PALETTES: Record<ThemeMode, ChartPalette> = {
+  dark: {
+    tooltipBg: '#111827',
+    tooltipBorder: '#2f4054',
+    tooltipText: '#d7deea',
+    axisText: '#7f8b9b',
+    axisLine: 'rgba(93, 110, 128, 0.65)',
+    splitLine: 'rgba(93, 110, 128, 0.34)',
+    splitAreas: ['#101923', '#152131'],
+    heatColors: ['#101923', '#193044', '#2f6f82', '#c79b4b', '#ee8255', '#e85d4a'],
+    heatLabel: '#fff7df',
+    warn: '#f2b84b',
+    err: '#e85d4a',
+    ok: '#52c987',
+    info: '#49b8d8',
+  },
+  light: {
+    tooltipBg: '#ffffff',
+    tooltipBorder: '#cbd5e1',
+    tooltipText: '#1f2937',
+    axisText: '#5f6f82',
+    axisLine: 'rgba(125, 140, 158, 0.65)',
+    splitLine: 'rgba(125, 140, 158, 0.28)',
+    splitAreas: ['#edf3f8', '#e2ebf3'],
+    heatColors: ['#edf3f8', '#d5e6ef', '#93cfd8', '#d8b65d', '#f08f5f', '#d95745'],
+    heatLabel: '#172033',
+    warn: '#c88719',
+    err: '#d95745',
+    ok: '#2f9b64',
+    info: '#178fb5',
+  },
+}
+
+function getDocumentThemeMode(): ThemeMode {
+  if (typeof document === 'undefined') return 'dark'
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+}
+
+function useDocumentThemeMode(): ThemeMode {
+  const [mode, setMode] = useState<ThemeMode>(() => getDocumentThemeMode())
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const root = document.documentElement
+    const syncMode = () => setMode(getDocumentThemeMode())
+    syncMode()
+
+    const observer = new MutationObserver(syncMode)
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
+
+  return mode
+}
 
 // ── 热点复盘逻辑：为每个热点生成时空关注摘要 ─────────────────────────────
 
@@ -165,6 +237,8 @@ const SpaceTimeAnalysis: React.FC = () => {
   ])
   const [timeSlot, setTimeSlot] = useState<TimeSlot>('all')
   const [dayFilter, setDayFilter] = useState<DayFilter>('all')
+  const chartTheme = useDocumentThemeMode()
+  const chartPalette = CHART_PALETTES[chartTheme]
 
   const { data: cases, isLoading } = useQuery({
     queryKey: ['cases', 'space-time-all'],
@@ -207,7 +281,7 @@ const SpaceTimeAnalysis: React.FC = () => {
   // 时段×星期 规律矩阵 (24小时 × 7天)
   const hourDayData = useMemo(() => {
     const matrix: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
-    ;(cases ?? []).forEach((c) => {
+    filteredCases.forEach((c) => {
       if (!c.occurred_time) return
       const t = dayjs(c.occurred_time)
       matrix[t.day()][t.hour()]++
@@ -216,12 +290,12 @@ const SpaceTimeAnalysis: React.FC = () => {
     matrix.forEach((row, d) => row.forEach((count, h) => flat.push([h, d, count])))
     const max = Math.max(...matrix.flat(), 1)
     return { flat, max }
-  }, [cases])
+  }, [filteredCases])
 
   // 月度趋势
   const monthlyTrend = useMemo(() => {
     const map: Record<string, number> = {}
-    ;(cases ?? []).forEach((c) => {
+    filteredCases.forEach((c) => {
       if (!c.occurred_time) return
       const m = dayjs(c.occurred_time).format('YYYY-MM')
       map[m] = (map[m] || 0) + 1
@@ -246,7 +320,7 @@ const SpaceTimeAnalysis: React.FC = () => {
       counts: sorted.map(([, c]) => c),
       signal,
     }
-  }, [cases])
+  }, [filteredCases])
 
   // 热点演化数据查询
   const { data: evolution, isLoading: evolutionLoading } = useQuery({
@@ -266,64 +340,81 @@ const SpaceTimeAnalysis: React.FC = () => {
     tooltip: {
       formatter: (p: { data: [number, number, number] }) =>
         `${String(p.data[0]).padStart(2, '0')}:00  ${DAY_NAMES[p.data[1]]}  ${p.data[2]}起`,
-      backgroundColor: 'var(--bg-0)',
-      borderColor: 'var(--line)',
-      textStyle: { color: 'var(--ink-1)', fontSize: 11 },
+      borderColor: chartPalette.tooltipBorder,
+      backgroundColor: chartPalette.tooltipBg,
+      textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
     },
     grid: { top: 28, left: 36, right: 8, bottom: 28 },
     xAxis: {
       type: 'category' as const,
       data: Array.from({ length: 24 }, (_, i) => `${i}`),
-      splitArea: { show: true, areaStyle: { color: ['oklch(0.12 0.012 250)', 'oklch(0.155 0.013 250)'] } },
-      axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 9 },
-      axisLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.7)' } },
+      splitArea: { show: true, areaStyle: { color: chartPalette.splitAreas } },
+      axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+      axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     yAxis: {
       type: 'category' as const,
       data: DAY_NAMES,
-      splitArea: { show: true, areaStyle: { color: ['oklch(0.12 0.012 250)', 'oklch(0.155 0.013 250)'] } },
-      axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 10 },
-      axisLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.7)' } },
+      splitArea: { show: true, areaStyle: { color: chartPalette.splitAreas } },
+      axisLabel: { color: chartPalette.axisText, fontSize: 10 },
+      axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     visualMap: {
       min: 0,
       max: hourDayData.max,
       show: false,
-      inRange: { color: ['oklch(0.12 0.012 250)', 'oklch(0.195 0.014 250)', 'oklch(0.62 0.013 90)', 'oklch(0.78 0.14 45)', 'oklch(0.70 0.20 25)'] },
+      inRange: { color: chartPalette.heatColors },
     },
     series: [
       {
         type: 'heatmap' as const,
         data: hourDayData.flat,
-        itemStyle: { borderRadius: 1 },
+        label: {
+          show: true,
+          formatter: (p: { data: [number, number, number] }) => (p.data[2] > 0 ? String(p.data[2]) : ''),
+          color: chartPalette.heatLabel,
+          fontSize: 10,
+          fontWeight: 700,
+        },
+        itemStyle: {
+          borderRadius: 1,
+          borderColor: chartPalette.splitLine,
+          borderWidth: 1,
+        },
+        emphasis: {
+          itemStyle: {
+            borderColor: chartPalette.tooltipText,
+            borderWidth: 1,
+          },
+        },
       },
     ],
   }
 
   const trendLineColor =
-    monthlyTrend.signal === 'increasing' ? 'oklch(0.70 0.20 25)'
-    : monthlyTrend.signal === 'decreasing' ? 'oklch(0.78 0.14 155)'
-    : 'oklch(0.78 0.14 45)'
+    monthlyTrend.signal === 'increasing' ? chartPalette.err
+    : monthlyTrend.signal === 'decreasing' ? chartPalette.ok
+    : chartPalette.warn
 
   const trendOption = {
     backgroundColor: 'transparent',
     grid: { top: 8, bottom: 20, left: 24, right: 8 },
     tooltip: {
       trigger: 'axis' as const,
-      backgroundColor: 'var(--bg-0)',
-      borderColor: 'var(--line)',
-      textStyle: { color: 'var(--ink-1)', fontSize: 11 },
+      backgroundColor: chartPalette.tooltipBg,
+      borderColor: chartPalette.tooltipBorder,
+      textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
     },
     xAxis: {
       type: 'category' as const,
       data: monthlyTrend.months,
-      axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 8, rotate: 30 },
-      axisLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.7)' } },
+      axisLabel: { color: chartPalette.axisText, fontSize: 8, rotate: 30 },
+      axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     yAxis: {
       type: 'value' as const,
-      axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 9 },
-      splitLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.35)' } },
+      axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+      splitLine: { lineStyle: { color: chartPalette.splitLine } },
     },
     series: [
       {
@@ -331,7 +422,7 @@ const SpaceTimeAnalysis: React.FC = () => {
         data: monthlyTrend.counts,
         smooth: true,
         lineStyle: { color: trendLineColor, width: 2 },
-        areaStyle: { color: trendLineColor.replace(')', ' / 0.08)') },
+        areaStyle: { color: monthlyTrend.signal === 'stable' ? 'rgba(242, 184, 75, 0.10)' : monthlyTrend.signal === 'decreasing' ? 'rgba(82, 201, 135, 0.10)' : 'rgba(232, 93, 74, 0.10)' },
         itemStyle: { color: trendLineColor },
       },
     ],
@@ -393,16 +484,16 @@ const SpaceTimeAnalysis: React.FC = () => {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis' as const,
-        backgroundColor: 'var(--bg-0)',
-        borderColor: 'var(--line)',
-        textStyle: { color: 'var(--ink-1)', fontSize: 11 },
+        backgroundColor: chartPalette.tooltipBg,
+        borderColor: chartPalette.tooltipBorder,
+        textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
       },
       legend: {
         data: topKeys.map((key) => {
           const [lat, lng] = key.split('_')
           return `热点 ${lat},${lng}`
         }),
-        textStyle: { color: 'var(--ink-2)', fontSize: 10 },
+        textStyle: { color: chartPalette.axisText, fontSize: 10 },
         itemWidth: 14,
         itemHeight: 6,
         top: 4,
@@ -411,18 +502,18 @@ const SpaceTimeAnalysis: React.FC = () => {
       xAxis: {
         type: 'category' as const,
         data: xLabels,
-        axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 10 },
-        axisLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.7)' } },
+        axisLabel: { color: chartPalette.axisText, fontSize: 10 },
+        axisLine: { lineStyle: { color: chartPalette.axisLine } },
       },
       yAxis: {
         type: 'value' as const,
         minInterval: 1,
-        axisLabel: { color: 'oklch(0.45 0.013 90)', fontSize: 9 },
-        splitLine: { lineStyle: { color: 'oklch(0.32 0.014 250 / 0.35)' } },
+        axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+        splitLine: { lineStyle: { color: chartPalette.splitLine } },
       },
       series,
     }
-  }, [evolution])
+  }, [chartPalette, evolution])
 
   return (
     <div className="sta-page">

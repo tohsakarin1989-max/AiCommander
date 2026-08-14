@@ -193,3 +193,10 @@
   border-color: var(--accent-line);
   color: var(--accent);
 }
+
+@media (max-width: 767px) {
+  .tweak-toggle,
+  .tweaks-panel {
+    display: none;
+  }
+}

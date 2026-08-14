@@ -28,6 +28,8 @@ class ConfigResponse(BaseModel):
     id: int
     config_key: str
     config_value: str
+    value_masked: str
+    is_configured: bool
     config_type: str
     category: str
     description: Optional[str] = None
@@ -39,12 +41,16 @@ class ConfigResponse(BaseModel):
         from_attributes = True
     
     @classmethod
-    def from_orm(cls, obj: SystemConfig):
+    def from_model(cls, db: Session, obj: SystemConfig):
         """自定义序列化，处理datetime对象"""
+        is_secret = obj.config_type == "api_key"
+        configured = SystemConfigService.is_configured(db, obj)
         return cls(
             id=obj.id,
             config_key=obj.config_key,
-            config_value=obj.config_value,
+            config_value="" if is_secret else (obj.config_value or ""),
+            value_masked="********" if is_secret and configured else "",
+            is_configured=configured,
             config_type=obj.config_type,
             category=obj.category,
             description=obj.description,
@@ -63,7 +69,7 @@ def get_configs(
         configs = SystemConfigService.get_configs_by_category(db, category)
     else:
         configs = SystemConfigService.get_all_configs(db)
-    return [ConfigResponse.from_orm(config) for config in configs]
+    return [ConfigResponse.from_model(db, config) for config in configs]
 
 @router.get("/{config_key}", response_model=ConfigResponse)
 def get_config(config_key: str, db: Session = Depends(get_db)):
@@ -71,7 +77,7 @@ def get_config(config_key: str, db: Session = Depends(get_db)):
     config = SystemConfigService.get_config(db, config_key)
     if not config:
         raise HTTPException(status_code=404, detail="配置不存在")
-    return ConfigResponse.from_orm(config)
+    return ConfigResponse.from_model(db, config)
 
 @router.post("/", response_model=ConfigResponse)
 def create_config(config: ConfigCreate, db: Session = Depends(get_db)):
@@ -89,7 +95,7 @@ def create_config(config: ConfigCreate, db: Session = Depends(get_db)):
         description=config.description,
         extra_data=config.extra_data
     )
-    return ConfigResponse.from_orm(new_config)
+    return ConfigResponse.from_model(db, new_config)
 
 @router.put("/{config_key}", response_model=ConfigResponse)
 def update_config(
@@ -125,22 +131,21 @@ def update_config(
             description=config_update.description or default_info.get("description"),
             extra_data=config_update.extra_data or {}
         )
-        return ConfigResponse.from_orm(config)
+        return ConfigResponse.from_model(db, config)
     
-    if config_update.config_value is not None:
-        config.config_value = config_update.config_value
-    if config_update.config_type is not None:
-        config.config_type = config_update.config_type
-    if config_update.category is not None:
-        config.category = config_update.category
-    if config_update.description is not None:
-        config.description = config_update.description
-    if config_update.extra_data is not None:
-        config.extra_data = config_update.extra_data
-    
-    db.commit()
-    db.refresh(config)
-    return ConfigResponse.from_orm(config)
+    config = SystemConfigService.set_config(
+        db,
+        config_key=config_key,
+        config_value=config_update.config_value if config_update.config_value is not None else (
+            SystemConfigService.get_config_value(db, config_key, "") or ""
+        ),
+        config_type=config_update.config_type or config.config_type,
+        category=config_update.category or config.category,
+        description=config_update.description if config_update.description is not None else config.description,
+        extra_data=config_update.extra_data if config_update.extra_data is not None else config.extra_data,
+        preserve_blank_secret=True,
+    )
+    return ConfigResponse.from_model(db, config)
 
 @router.delete("/{config_key}")
 def delete_config(config_key: str, db: Session = Depends(get_db)):
@@ -160,12 +165,14 @@ def init_default_configs(db: Session = Depends(get_db)):
 def get_map_config(db: Session = Depends(get_db)):
     """获取地图配置（供前端使用）"""
     provider = SystemConfigService.get_config_value(db, "map_api_provider", "openstreetmap")
-    api_key = SystemConfigService.get_config_value(db, "map_api_key", "")
+    api_key_config = SystemConfigService.get_config(db, "map_api_key")
     api_base_url = SystemConfigService.get_config_value(db, "map_api_base_url", "")
     
     return {
         "provider": provider,
-        "api_key": api_key,
+        "api_key_configured": bool(
+            api_key_config and SystemConfigService.is_configured(db, api_key_config)
+        ),
         "api_base_url": api_base_url
     }
 
@@ -173,12 +180,13 @@ def get_map_config(db: Session = Depends(get_db)):
 def get_meeting_config(db: Session = Depends(get_db)):
     """获取圆桌会议配置（供前端使用）"""
     provider = SystemConfigService.get_config_value(db, "meeting_api_provider", "direct")
-    api_key = SystemConfigService.get_config_value(db, "meeting_api_key", "")
+    api_key_config = SystemConfigService.get_config(db, "meeting_api_key")
     api_base_url = SystemConfigService.get_config_value(db, "meeting_api_base_url", "https://openrouter.ai/api/v1")
     
     return {
         "provider": provider,
-        "api_key": api_key,
+        "api_key_configured": bool(
+            api_key_config and SystemConfigService.is_configured(db, api_key_config)
+        ),
         "api_base_url": api_base_url
     }
-

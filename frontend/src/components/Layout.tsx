@@ -1,20 +1,27 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { configApi } from '../services/config'
-import type { AIModel } from '../types'
+import { LogoutOutlined } from '@ant-design/icons'
+import { Tooltip } from 'antd'
+import { runtimeApi } from '../services/runtime'
+import { useAuth } from '../auth/AuthContext'
 import { bonusAccountingEnabled } from '../config/features'
+import type { ThemeMode } from '../theme/themeMode'
 import './Layout.css'
 
-interface LayoutProps { children: React.ReactNode }
+interface LayoutProps {
+  children: React.ReactNode
+  themeMode: ThemeMode
+  onToggleTheme: () => void
+}
 
 const NAV_ITEMS = [
   { label: '大屏', num: '01', paths: ['/dashboard'] },
   { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
-  { label: '研判', num: '03', paths: ['/case-intelligence', '/area-analysis', '/jurisdiction', '/suggestions', '/reports', '/conclusions'] },
+  { label: '研判', num: '03', paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
   { label: '助手', num: '05', paths: ['/assistant', '/agents'] },
-  { label: '设置', num: '06', paths: ['/settings'] },
+  { label: '设置', num: '06', paths: ['/settings', '/settings/users'], adminOnly: true },
 ]
 
 type SubNavItem = { label: string; path: string }
@@ -32,14 +39,22 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
     ],
   },
   {
-    paths: ['/case-intelligence', '/area-analysis', '/jurisdiction', '/suggestions', '/reports', '/conclusions'],
+    paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'],
     items: [
+      { label: '闭环工作台', path: '/case-review' },
+      { label: '待办中心', path: '/suggestions' },
       { label: '案件研判', path: '/case-intelligence' },
       { label: '时空区域', path: '/area-analysis' },
       { label: '辖区底座', path: '/jurisdiction' },
-      { label: '待办中心', path: '/suggestions' },
       { label: '分析报告', path: '/reports' },
       { label: '情报结论', path: '/conclusions' },
+    ],
+  },
+  {
+    paths: ['/settings', '/settings/users'],
+    items: [
+      { label: '系统配置', path: '/settings' },
+      { label: '用户与权限', path: '/settings/users' },
     ],
   },
 ]
@@ -69,49 +84,35 @@ function Clock() {
   )
 }
 
-const Layout: React.FC<LayoutProps> = ({ children }) => {
+const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { user, logout } = useAuth()
 
   // ── 真实后端状态 ──────────────────────────────────────────────
-  const { data: models, isSuccess: backendOk, isError: backendErr } = useQuery<AIModel[]>({
-    queryKey: ['layout-models'],
-    queryFn: () => configApi.models.list(),
+  const { data: runtime, isSuccess: backendOk, isError: backendErr } = useQuery({
+    queryKey: ['runtime-status'],
+    queryFn: runtimeApi.status,
     staleTime: 60_000,
     refetchInterval: 60_000,
     retry: 1,
   })
 
-  const { data: mapConfig } = useQuery({
-    queryKey: ['layout-map-config'],
-    queryFn: () => configApi.system.getMapConfig(),
-    staleTime: 120_000,
-    retry: false,
-  })
-
-  // 拼接活跃模型名称列表
-  const activeModels = models?.filter(m => m.is_active) ?? []
-  const modelDisplay = activeModels.length > 0
-    ? activeModels.map(m => m.name || m.model_name).slice(0, 4).join(' · ')
+  const modelDisplay = runtime
+    ? `${runtime.active_model_count} 个可用模型`
     : backendErr ? '未连接' : '加载中...'
-
-  // MCP 是否已配置（有非空 API Key）
-  // getMapConfig() 返回 {provider, api_key, api_base_url} 对象
-  const mcpActive = (() => {
-    if (!mapConfig) return false
-    const cfg = mapConfig as unknown as { provider?: string; api_key?: string }
-    // openstreetmap 不需要 key，视为已配置
-    if (cfg.provider === 'openstreetmap') return true
-    return !!(cfg.api_key && cfg.api_key.trim() !== '' && cfg.api_key !== 'your_api_key_here')
-  })()
+  const mcpActive = runtime?.map_configured ?? false
 
   // DB/后端状态
   const dbStatus = backendErr ? 'err' : backendOk ? 'ok' : 'loading'
 
   // ── 子导航计算 ────────────────────────────────────────────────
   const subNav = SUB_NAVS.find(n => n.paths.includes(location.pathname)) ?? null
+  const isDashboard = location.pathname === '/dashboard'
 
-  const isActive = (item: typeof NAV_ITEMS[0]) =>
+  const visibleNavItems = NAV_ITEMS.filter(item => !item.adminOnly || user?.role === 'admin')
+
+  const isActive = (item: typeof NAV_ITEMS[number]) =>
     item.paths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'))
 
   const goto = (e: React.MouseEvent, path: string) => {
@@ -128,14 +129,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <a className="brand" href="/dashboard" onClick={e => goto(e, '/dashboard')}>
           <div className="mark">AiC</div>
           <div className="wordmark">
-            <div className="n">涉油案件指挥系统</div>
-            <div className="s">AiCommander · <span className="pulse">● 实时</span></div>
+            <div className="n">{isDashboard ? 'AiCommander 指挥大屏' : '涉油案件指挥系统'}</div>
+            <div className="s">
+              {isDashboard ? '涉油案件 · 数智化研判与防控支撑系统 · ' : 'AiCommander · '}
+              <span className="pulse">● 实时</span>
+            </div>
           </div>
         </a>
 
         {/* Tab navigation */}
         <nav className="top-nav">
-          {NAV_ITEMS.map(item => (
+          {visibleNavItems.map(item => (
             <a
               key={item.num}
               href={item.paths[0]}
@@ -162,13 +166,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </span>
         </div>
 
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={onToggleTheme}
+          title={themeMode === 'dark' ? '切换为明亮主题' : '切换为暗色主题'}
+        >
+          <span className="theme-toggle-k">主题</span>
+          <span className="theme-toggle-v">{themeMode === 'dark' ? '暗' : '明'}</span>
+        </button>
+
         {/* User */}
         <div className="user-badge">
-          <div className="a">管</div>
+          <div className="a">{user?.display_name.slice(0, 1) || '用'}</div>
           <div>
-            <div className="n">管理员</div>
-            <div className="r">涉油专案组 · 指挥</div>
+            <div className="n">{user?.display_name}</div>
+            <div className="r">{user?.role === 'admin' ? '系统管理员' : user?.role === 'analyst' ? '研判人员' : '只读查看'}</div>
           </div>
+          <Tooltip title="退出登录">
+            <button type="button" className="user-logout" aria-label="退出登录" onClick={() => void logout()}>
+              <LogoutOutlined />
+            </button>
+          </Tooltip>
         </div>
       </header>
 
@@ -198,28 +217,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <span>
           <span className="k">数据库</span>
           <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
-            {dbStatus === 'err' ? '× SQLite' : '● SQLite'}
+            {dbStatus === 'err' ? '× 未连接' : `● ${runtime?.database === 'postgresql' ? 'PostgreSQL' : 'SQLite'}`}
           </span>
         </span>
         <span>
           <span className="k">缓存</span>
           <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
-            {dbStatus === 'err' ? '× Redis' : '● Redis'}
+            {runtime?.redis === 'ok' ? '● Redis' : '× Redis'}
           </span>
         </span>
         <span>
           <span className="k">模型</span>
-          <span className={`v${activeModels.length > 0 ? ' accent' : ''}`}>{modelDisplay}</span>
+          <span className={`v${(runtime?.active_model_count || 0) > 0 ? ' accent' : ''}`}>{modelDisplay}</span>
         </span>
         <span>
           <span className="k">地图 MCP</span>
           <span className={`v${mcpActive ? ' ok' : ''}`}>
-            {mcpActive ? '已连接' : '未配置'}
+            {mcpActive ? `${runtime?.map_provider || '地图'} 已配置` : '未配置'}
           </span>
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v0.9.3</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.0.0'}</span></span>
         </div>
       </footer>
     </div>

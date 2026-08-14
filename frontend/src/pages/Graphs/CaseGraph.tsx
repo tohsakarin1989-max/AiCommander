@@ -265,16 +265,33 @@ const CaseGraph: React.FC = () => {
             {/* 快捷下拉多选（最近50案） */}
             <Select
               className="cg-select-field"
+              classNames={{ popup: { root: 'cg-case-select-dropdown' } }}
               mode="multiple"
               allowClear
               placeholder="从最近50案中选择"
               value={selectedCaseIds}
               onChange={setSelectedCaseIds}
               maxTagCount={4}
-              optionFilterProp="label"
+              optionFilterProp="searchText"
+              optionLabelProp="title"
+              popupMatchSelectWidth={false}
               options={recentCases.map((c) => ({
                 value: c.id,
-                label: `${c.case_number}（${c.case_type || '未知类型'}）`,
+                title: c.case_number,
+                searchText: [
+                  c.case_number,
+                  c.case_type,
+                  c.location,
+                  formatOccurredTime(c.occurred_time),
+                ].filter(Boolean).join(' '),
+                label: (
+                  <div className="cg-case-option">
+                    <b>{c.case_number}</b>
+                    <span>
+                      {c.case_type || '未知类型'} · {c.location || '未填写地点'} · {formatOccurredTime(c.occurred_time)}
+                    </span>
+                  </div>
+                ),
               }))}
             />
 

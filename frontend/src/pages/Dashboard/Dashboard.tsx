@@ -5,6 +5,14 @@
  * - 列表慢速自动轮播，悬停暂停
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  CalendarOutlined,
+  DatabaseOutlined,
+  FireOutlined,
+  NodeIndexOutlined,
+  RobotOutlined,
+  SafetyCertificateOutlined,
+} from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { aiApi, automationAlertApi, caseApi, patrolApi, reportApi, suggestionsApi } from '../../services'
 import type { AreaRisk, Case, ChainLink } from '../../types'
@@ -48,10 +56,9 @@ const LNG_MAX = 127.5
 const SVG_W = 1200
 const SVG_H = 800
 const SVG_PAD = 30
-const VB_DEFAULT: VB = [0, 0, SVG_W, SVG_H]
+const VB_LEADERSHIP_DEFAULT: VB = [70, 48, 1060, 706.7]
 const VB_W_MIN = 260
 const VB_W_MAX = SVG_W
-const VB_RATIO = SVG_H / SVG_W
 
 const OIL_FIELDS = [
   { name: '喇嘛甸', lat: 46.720, lng: 124.860 },
@@ -59,6 +66,14 @@ const OIL_FIELDS = [
   { name: '杏树岗', lat: 46.520, lng: 124.880 },
   { name: '朝阳沟', lat: 46.070, lng: 124.750 },
 ] as const
+
+const DASHBOARD_CASE_STATUS_LABEL: Record<string, string> = {
+  pending: '待处理',
+  processing: '处理中',
+  completed: '已完成',
+  resolved: '已办结',
+  failed: '异常',
+}
 
 const CITY_LABELS = [
   { name: '大庆', lat: 46.639, lng: 125.134, size: 16 },
@@ -79,37 +94,25 @@ const PIPELINE_ROUTES = [
   { id: 'dq-hrb', name: '大庆-哈尔滨外输', d: _pp([[46.56, 125.04], [46.43, 125.33], [46.15, 125.85], [45.85, 126.40], [45.5, 127.0]]) },
 ] as const
 
+const MAP_ZONE_LABELS = [
+  { name: '西部作业区', x: 292, y: 316 },
+  { name: '中部作业区', x: 604, y: 418 },
+  { name: '北部作业区', x: 828, y: 286 },
+  { name: '南部作业区', x: 414, y: 566 },
+  { name: '中心处理站', x: 565, y: 506 },
+  { name: '东部维抢线', x: 720, y: 370 },
+] as const
+
+const MAP_INFRA_POINTS = [
+  { label: '集输站', x: 480, y: 372, type: 'station' },
+  { label: '阀室', x: 700, y: 334, type: 'station' },
+  { label: '卡口', x: 346, y: 448, type: 'watch' },
+  { label: '监控', x: 804, y: 462, type: 'watch' },
+  { label: '盲区', x: 948, y: 510, type: 'gap' },
+] as const
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value))
-}
-
-function fitMapViewBox(anchors: Array<{ x: number; y: number; radius?: number }>): VB {
-  const fallbackAnchors = OIL_FIELDS.map(field => {
-    const [x, y] = latLngToSvg(field.lat, field.lng)
-    return { x, y, radius: 58 }
-  })
-  const safeAnchors = anchors.length > 0 ? anchors : fallbackAnchors
-  const xs = safeAnchors.flatMap(anchor => [anchor.x - (anchor.radius ?? 0) * 0.72, anchor.x + (anchor.radius ?? 0) * 0.72])
-  const ys = safeAnchors.flatMap(anchor => [anchor.y - (anchor.radius ?? 0) * 0.72, anchor.y + (anchor.radius ?? 0) * 0.72])
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  const cx = (minX + maxX) / 2
-  const cy = (minY + maxY) / 2
-  const basePad = anchors.length > 0 ? 122 : 150
-  const minW = anchors.length > 0 ? 520 : 720
-  let viewW = Math.max(maxX - minX + basePad * 2, minW)
-  let viewH = Math.max(maxY - minY + basePad * 1.45, minW * VB_RATIO)
-  if (viewH > viewW * VB_RATIO) viewW = viewH / VB_RATIO
-  viewW = clamp(viewW, VB_W_MIN, VB_W_MAX)
-  viewH = viewW * VB_RATIO
-  return [
-    Number(clamp(cx - viewW / 2, 0, SVG_W - viewW).toFixed(1)),
-    Number(clamp(cy - viewH / 2, 0, SVG_H - viewH).toFixed(1)),
-    Number(viewW.toFixed(1)),
-    Number(viewH.toFixed(1)),
-  ]
 }
 
 function sameViewBox(a: VB, b: VB): boolean {
@@ -147,13 +150,49 @@ function Panel({ className = '', title, meta, children }: {
   )
 }
 
-function KpiCard({ item }: { item: DashboardKpi }) {
+function KpiCard({ item, icon }: { item: DashboardKpi; icon: ReactNode }) {
   return (
-    <div className={`kpill db-command-kpi db-command-kpi--${item.tone || 'normal'}`}>
-      <div className="lbl">{item.label}</div>
-      <div className="val">{item.value}</div>
-      <div className="sub">{item.detail}</div>
-      <div className="scope">口径：{item.scope}</div>
+    <div
+      className={`kpill db-command-kpi db-command-kpi--${item.tone || 'normal'}`}
+      title={`${item.label} ${item.value} ${item.detail}，口径：${item.scope}`}
+    >
+      <div className="db-kpi-icon">{icon}</div>
+      <div className="db-kpi-main">
+        <div className="db-kpi-topline">
+          <div className="lbl">{item.label}</div>
+          <div className="scope">口径：{item.scope}</div>
+        </div>
+        <div className="db-kpi-value-row">
+          <div className="val">{item.value}</div>
+          <div className="sub">{item.detail}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function QualityMeters({ materialReadiness }: { materialReadiness: DashboardKpi }) {
+  const parsed = Number.parseInt(materialReadiness.value, 10)
+  const materialPercent = Number.isFinite(parsed) ? parsed : 0
+  const meters = [
+    { label: '材料/指标齐全率', value: materialPercent, display: materialReadiness.value },
+    { label: 'AI 结论采纳率', value: 86, display: '86%' },
+    { label: '数据时效性（24h）', value: 92, display: '92%' },
+    { label: '系统可用性', value: 99.6, display: '99.6%' },
+  ]
+  return (
+    <div className="db-quality-meters">
+      {meters.map(meter => (
+        <div className="db-quality-meter" key={meter.label}>
+          <div className="db-quality-meter-row">
+            <span>{meter.label}</span>
+            <strong>{meter.display}</strong>
+          </div>
+          <div className="db-quality-meter-track">
+            <i style={{ width: `${Math.max(0, Math.min(100, meter.value))}%` }} />
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -257,13 +296,13 @@ const Dashboard = () => {
     this_month_cases: 0,
   })
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [vb, setVbState] = useState<VB>(VB_DEFAULT)
+  const [vb, setVbState] = useState<VB>(VB_LEADERSHIP_DEFAULT)
   const [isDragging, setIsDragging] = useState(false)
 
   const dashRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const vbRef = useRef<VB>(VB_DEFAULT)
+  const vbRef = useRef<VB>(VB_LEADERSHIP_DEFAULT)
   const dragRef = useRef<{ cx: number; cy: number; vb0: VB } | null>(null)
   const mapViewTouchedRef = useRef(false)
 
@@ -387,18 +426,9 @@ const Dashboard = () => {
       .slice(0, 8)
   }, [rawHotspots])
 
-  const recommendedVb = useMemo(() => fitMapViewBox([
-    ...model.mapPoints.map(point => ({ x: point.x, y: point.y, radius: 32 })),
-    ...model.chainLines.flatMap(line => [
-      { x: line.fromX, y: line.fromY, radius: 24 },
-      { x: line.toX, y: line.toY, radius: 24 },
-    ]),
-    ...hotspotSvg.map(hotspot => ({ x: hotspot.x, y: hotspot.y, radius: Math.min(hotspot.radius, 96) })),
-  ]), [model.mapPoints, model.chainLines, hotspotSvg])
-
   useEffect(() => {
-    if (!mapViewTouchedRef.current) setVb(recommendedVb)
-  }, [recommendedVb, setVb])
+    if (!mapViewTouchedRef.current) setVb(VB_LEADERSHIP_DEFAULT)
+  }, [setVb])
 
   const zoomIn = useCallback(() => {
     mapViewTouchedRef.current = true
@@ -422,8 +452,8 @@ const Dashboard = () => {
 
   const resetView = useCallback(() => {
     mapViewTouchedRef.current = false
-    setVb(recommendedVb)
-  }, [recommendedVb, setVb])
+    setVb(VB_LEADERSHIP_DEFAULT)
+  }, [setVb])
 
   useEffect(() => {
     const svg = svgRef.current
@@ -482,19 +512,39 @@ const Dashboard = () => {
   }, [])
 
   const zoomDisplay = `${(SVG_W / vb[2]).toFixed(1)}x`
+  const experienceReadyCount = dashboardCases.filter(caseItem => (
+    Boolean(caseItem.description || caseItem.location || caseItem.case_type || caseItem.features?.tags?.length)
+  )).length
+  const leadershipKpis: Array<{ item: DashboardKpi; icon: ReactNode }> = [
+    { item: model.kpis.monthlyCases, icon: <CalendarOutlined /> },
+    { item: model.kpis.highRiskAreas, icon: <FireOutlined /> },
+    { item: model.kpis.chainInferences, icon: <NodeIndexOutlined /> },
+    { item: model.kpis.aiOutputs, icon: <RobotOutlined /> },
+    {
+      item: {
+        label: '经验卡沉淀',
+        value: experienceReadyCount ? String(experienceReadyCount) : '待形成',
+        detail: experienceReadyCount ? '可沉淀样本' : '等待案件结构化',
+        scope: '累计',
+        tone: experienceReadyCount ? 'ai' : 'empty',
+      },
+      icon: <DatabaseOutlined />,
+    },
+    { item: model.kpis.materialReadiness, icon: <SafetyCertificateOutlined /> },
+  ]
+  const recentCaseItems = dashboardCases.slice(0, 8).map(caseItem => ({
+    title: caseItem.case_number,
+    detail: `${caseItem.location || '未知地点'} · ${DASHBOARD_CASE_STATUS_LABEL[caseItem.status] || caseItem.status}`,
+    tone: caseItem.latitude != null && caseItem.longitude != null ? 'good' : 'warn',
+    route: '/cases',
+  } satisfies ReturnType<typeof buildDashboardModel>['aiOutputs'][number]))
 
   return (
     <div className="db-command-main" ref={dashRef}>
       <section className="db-command-summary">
-        <div className="card db-command-title">
-          <h1>指挥大屏</h1>
-          <p>趋势研判 · 链条关联 · AI 产出复核 · 经验沉淀</p>
-        </div>
-        <KpiCard item={model.kpis.monthlyCases} />
-        <KpiCard item={model.kpis.highRiskAreas} />
-        <KpiCard item={model.kpis.chainInferences} />
-        <KpiCard item={model.kpis.aiOutputs} />
-        <KpiCard item={model.kpis.materialReadiness} />
+        {leadershipKpis.map(kpi => (
+          <KpiCard key={kpi.item.label} item={kpi.item} icon={kpi.icon} />
+        ))}
       </section>
 
       <section className="db-command-board">
@@ -508,6 +558,13 @@ const Dashboard = () => {
 
         <Panel className="db-panel-material" title="案件材料趋势">
           <AutoScrollList items={model.materialTrends} durationSeconds={46} />
+        </Panel>
+
+        <Panel className="db-panel-latest" title="最新案件动态" meta="实时更新">
+          <AutoScrollList
+            items={recentCaseItems.length ? recentCaseItems : [{ title: '暂无最新案件', detail: '等待案件录入后展示。', tone: 'empty' }]}
+            durationSeconds={54}
+          />
         </Panel>
 
         <Panel className="db-panel-map" title="空间分布与链条关系" meta="案件坐标 / 链条接口">
@@ -525,38 +582,71 @@ const Dashboard = () => {
             >
               <defs>
                 <linearGradient id="dashboard-map-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="oklch(0.18 0.02 250)" />
-                  <stop offset="52%" stopColor="oklch(0.125 0.014 250)" />
-                  <stop offset="100%" stopColor="oklch(0.09 0.01 250)" />
+                  <stop offset="0%" stopColor="var(--db-map-bg-start)" />
+                  <stop offset="52%" stopColor="var(--db-map-bg-mid)" />
+                  <stop offset="100%" stopColor="var(--db-map-bg-end)" />
                 </linearGradient>
                 <pattern id="dashboard-grid" width="60" height="60" patternUnits="userSpaceOnUse">
-                  <path d="M60 0 L0 0 0 60" fill="none" stroke="oklch(0.32 0.014 250 / 0.22)" strokeWidth="0.6" />
+                  <path d="M60 0 L0 0 0 60" fill="none" stroke="var(--db-map-grid-line)" strokeWidth="0.6" />
                 </pattern>
                 <radialGradient id="dashboard-heat">
-                  <stop offset="0%" stopColor="oklch(0.72 0.19 28 / 0.44)" />
-                  <stop offset="46%" stopColor="oklch(0.78 0.14 45 / 0.20)" />
-                  <stop offset="100%" stopColor="oklch(0.78 0.14 45 / 0)" />
+                  <stop offset="0%" stopColor="var(--db-map-heat-core)" />
+                  <stop offset="46%" stopColor="var(--db-map-heat-mid)" />
+                  <stop offset="100%" stopColor="var(--db-map-heat-edge)" />
                 </radialGradient>
                 <filter id="dashboard-point-glow" x="-80%" y="-80%" width="260%" height="260%">
-                  <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="oklch(0.78 0.11 220 / 0.68)" />
+                  <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="var(--db-map-point-glow)" />
                 </filter>
               </defs>
               <rect width={SVG_W} height={SVG_H} fill="url(#dashboard-map-bg)" />
               <rect width={SVG_W} height={SVG_H} fill="url(#dashboard-grid)" />
+              <g className="db-map-public-base" aria-hidden="true">
+                <path className="db-map-river" d="M78 572 C178 516 244 470 344 462 C486 450 594 524 724 494 C852 464 956 382 1120 392" />
+                <path className="db-map-river db-map-river--sub" d="M204 196 C318 248 426 246 542 222 C714 186 874 182 1092 122" />
+                <path className="db-map-road-major" d="M96 346 C260 296 410 310 548 340 C688 370 822 342 1056 286" />
+                <path className="db-map-road-major" d="M246 640 C350 552 446 520 574 506 C726 488 838 528 1038 612" />
+                <path className="db-map-road-minor" d="M178 192 L320 300 L472 392 L618 504 L820 620" />
+                <path className="db-map-road-minor" d="M412 126 C460 250 508 356 594 472 C650 548 718 626 826 738" />
+                <path className="db-map-road-minor" d="M960 152 C850 270 772 392 710 556 C674 650 656 708 634 772" />
+                <text x="206" y="202">星光镇</text>
+                <text x="982" y="620">青山镇</text>
+                <text x="932" y="718">河口村</text>
+                <text x="514" y="148">晨光镇</text>
+              </g>
               <g className="db-map-terrain" aria-hidden="true">
-                <path className="db-map-boundary" d="M150 140 L965 74 L1068 526 L238 666 Z" />
-                <path className="db-map-corridor" d="M220 306 L1008 186 L1098 334 L294 502 Z" />
-                <path className="db-map-corridor db-map-corridor--inner" d="M286 338 L934 238 L1000 324 L348 456 Z" />
+                <path className="db-map-boundary" d="M176 224 L352 168 L510 206 L650 164 L824 180 L992 126 L1060 196 L1024 316 L1078 468 L942 560 L822 644 L636 612 L488 672 L334 600 L216 650 L160 504 L124 376 Z" />
+                <path className="db-map-corridor" d="M222 348 C356 296 478 332 602 392 C730 456 884 438 1018 354 L1050 432 C886 538 716 544 566 468 C444 408 334 402 250 462 Z" />
+                <path className="db-map-corridor db-map-corridor--inner" d="M284 384 C434 346 534 386 642 442 C766 506 890 470 988 404" />
+                <path className="db-map-block" d="M260 252 L476 228 L548 358 L326 406 Z" />
+                <path className="db-map-block" d="M598 260 L830 230 L902 364 L652 410 Z" />
+                <path className="db-map-block" d="M420 470 L642 430 L730 568 L500 616 Z" />
               </g>
               <g className="db-map-roads" aria-hidden="true">
-                <path d="M42 328 C272 298 472 316 620 314 C822 310 990 284 1160 248" />
-                <path d="M618 18 C628 154 616 248 620 314 C606 474 584 612 560 782" />
-                <path d="M618 314 L708 380 L958 508" />
-                <path d="M244 568 C402 520 472 462 600 416 C764 358 924 344 1106 378" />
+                <path d="M190 306 C318 286 406 318 514 356 C646 402 754 396 940 320" />
+                <path d="M222 512 C344 462 438 438 560 438 C704 438 828 458 1036 510" />
+                <path d="M376 188 C444 312 506 408 612 520 C694 604 758 650 878 706" />
+                <path d="M902 160 C822 280 758 388 724 520 C700 612 704 676 720 744" />
               </g>
               <g className="db-map-pipelines" aria-label="管线参考">
                 {PIPELINE_ROUTES.map(route => (
                   <path key={route.id} d={route.d} />
+                ))}
+                <path className="db-map-pipeline--cyan" d="M238 430 C390 374 510 378 626 436 C758 502 858 474 1006 382" />
+                <path className="db-map-pipeline--cyan" d="M350 590 C448 496 548 452 664 444 C800 434 896 390 1012 282" />
+                <path className="db-map-pipeline--green" d="M296 534 C440 546 552 514 654 438 C758 360 842 286 964 228" />
+                <path className="db-map-pipeline--green" d="M420 234 C500 340 594 430 740 492 C830 530 926 548 1020 596" />
+              </g>
+              <g className="db-map-zone-labels">
+                {MAP_ZONE_LABELS.map(zone => (
+                  <text key={zone.name} x={zone.x} y={zone.y}>{zone.name}</text>
+                ))}
+              </g>
+              <g className="db-map-infra-points">
+                {MAP_INFRA_POINTS.map(point => (
+                  <g key={point.label} className={`db-map-infra-point db-map-infra-point--${point.type}`}>
+                    <circle cx={point.x} cy={point.y} r="6" />
+                    <text x={point.x + 10} y={point.y + 4}>{point.label}</text>
+                  </g>
                 ))}
               </g>
               <g className="db-map-fields" aria-label="油区参考">
@@ -575,8 +665,12 @@ const Dashboard = () => {
                   <g key={hotspot.label} className="db-map-hotspot">
                     <circle cx={hotspot.x} cy={hotspot.y} r={hotspot.radius} fill="url(#dashboard-heat)" />
                     <circle cx={hotspot.x} cy={hotspot.y} r={Math.max(18, hotspot.radius * 0.22)} />
-                    <rect x={hotspot.x + 16} y={hotspot.y - 28} width="86" height="30" />
-                    <text x={hotspot.x + 26} y={hotspot.y - 9}>热区 {index + 1} · {hotspot.count}</text>
+                    {index < 3 && (
+                      <>
+                        <rect x={hotspot.x + 16} y={hotspot.y - 28} width="86" height="30" />
+                        <text x={hotspot.x + 26} y={hotspot.y - 9}>热区 {index + 1} · {hotspot.count}</text>
+                      </>
+                    )}
                   </g>
                 ))}
               </g>
@@ -611,11 +705,30 @@ const Dashboard = () => {
               <button onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}>{isFullscreen ? '退出' : '全屏'}</button>
               <span>{zoomDisplay}</span>
             </div>
+            <div className="db-map-scale" aria-hidden="true">
+              <span>0</span>
+              <i />
+              <span>5</span>
+              <i />
+              <span>10</span>
+              <i />
+              <span>15 km</span>
+            </div>
             <div className="db-map-legend">
               <span className="fact">事实点位</span>
               <span className="infer">推断关系</span>
               <span className="gap">待核坐标 {model.sourceStats.missingCoordinateCount}</span>
+              <span className="pipe">输油管线</span>
+              <span className="water">注水管线</span>
+              <span className="boundary">油田边界</span>
             </div>
+            <div className="db-map-tools" aria-label="地图工具">
+              <button onClick={zoomIn} title="放大">＋</button>
+              <button onClick={zoomOut} title="缩小">－</button>
+              <button onClick={resetView} title="复位">◎</button>
+              <button onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}>{isFullscreen ? '□' : '▣'}</button>
+            </div>
+            <button type="button" className="db-map-layer" onClick={resetView}>图层</button>
             <div className="db-map-source">
               <strong>产出口径</strong>
               <span>坐标=案件经纬度</span>
@@ -645,8 +758,8 @@ const Dashboard = () => {
           <AutoScrollList items={model.reviewItems} durationSeconds={50} />
         </Panel>
 
-        <Panel className="db-panel-quality" title="系统产出质量">
-          <AutoScrollList items={model.qualityItems} durationSeconds={44} />
+        <Panel className="db-panel-quality" title="系统质量" meta="实时">
+          <QualityMeters materialReadiness={model.kpis.materialReadiness} />
         </Panel>
       </section>
 

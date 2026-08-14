@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { BonusAssessment, Case } from '../../types'
 import {
   buildBonusManagementDisplay,
+  buildBonusSquadOptions,
   buildMissingMaterialDetails,
   buildCaseBonusRows,
   buildCaseBonusSummary,
   getMissingRequiredCount,
   inferGateStatus,
+  resolveCaseBonusSquad,
 } from './caseBonusAccountingModel'
 
 const baseCase = (id: number, patch: Partial<Case> = {}): Case => ({
@@ -242,5 +244,21 @@ describe('caseBonusAccountingModel', () => {
     })
     expect(display?.annualMetrics[1].remaining).toBe(1)
     expect(display?.pricingBasis).toContain('不代表直接发放')
+  })
+
+  it('builds squad options from the same backend period cases without hiding other teams', () => {
+    const cases = [
+      baseCase(1, { report_unit: '案件三班' }),
+      baseCase(2, { description: '案件三班联合泰来保卫班办理' }),
+      baseCase(3, { operation_role: '新站保卫班主办' }),
+    ]
+    const options = buildBonusSquadOptions(cases, '案件三班')
+
+    expect(resolveCaseBonusSquad(cases[1])).toBe('泰来保卫班')
+    expect(options).toEqual([
+      { value: '案件三班', label: '案件三班 · 1 起', count: 1, primary: true },
+      { value: '泰来保卫班', label: '泰来保卫班 · 1 起', count: 1, primary: false },
+      { value: '新站保卫班', label: '新站保卫班 · 1 起', count: 1, primary: false },
+    ])
   })
 })

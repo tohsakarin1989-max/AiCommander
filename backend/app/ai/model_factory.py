@@ -1,6 +1,6 @@
 from app.models.ai_model import AIModel
 from app.ai.llm_providers import LLMProvider
-from langchain.chat_models.base import BaseChatModel
+from langchain_core.language_models.chat_models import BaseChatModel
 from app.utils.logger import logger
 
 
@@ -30,4 +30,3 @@ class ModelFactory:
         except Exception as e:
             logger.error(f"创建LLM实例失败: {str(e)}")
             raise
-

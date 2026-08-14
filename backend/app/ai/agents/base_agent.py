@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from langchain.chat_models.base import BaseChatModel
+from langchain_core.language_models.chat_models import BaseChatModel
 from app.models.ai_model import AIModel
 
 class BaseAgent(ABC):
@@ -15,4 +15,3 @@ class BaseAgent(ABC):
     async def process(self, input_data: dict) -> dict:
         """处理输入并返回结果"""
         pass
-

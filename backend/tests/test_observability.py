@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import redis
 
 from app.main import app
 
@@ -26,6 +27,25 @@ def test_ready_health_reports_database_status():
     assert payload["status"] in {"ready", "degraded"}
     assert payload["dependencies"]["database"]["status"] == "ok"
     assert "latency_ms" in payload["dependencies"]["database"]
+
+
+def test_production_readiness_requires_redis_without_leaking_connection_errors(monkeypatch):
+    from app.api import health
+
+    monkeypatch.setattr(health.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(
+        redis.Redis,
+        "from_url",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("secret connection detail")),
+    )
+
+    response = TestClient(app).get("/health/ready")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["dependencies"]["redis"]["status"] == "down"
+    assert payload["dependencies"]["redis"]["detail"] == "Redis 连接失败"
 
 
 def test_http_error_keeps_detail_and_adds_error_envelope():

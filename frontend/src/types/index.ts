@@ -134,6 +134,9 @@ export interface CaseStructurePreview {
   warnings: string[]
   confidence: number
   boundary: string
+  model_status?: 'deterministic_fallback' | 'llm_success' | 'llm_failed' | string
+  intake_mode?: 'llm' | 'rules_fallback' | string
+  model_error?: string
   candidates?: AiIntakeCandidate[]
   evidence_anchors?: AiEvidenceAnchor[]
   follow_up_questions?: string[]
@@ -969,6 +972,9 @@ export interface SystemConfig {
   id: number
   config_key: string
   config_value: string
+  value_masked: string
+  is_configured: boolean
+  config_type: 'api_key' | 'string' | 'number' | 'url' | string
   category: string
   description?: string
   created_at?: string
@@ -978,6 +984,7 @@ export interface SystemConfig {
 export interface MapConfig {
   provider: 'openstreetmap' | 'mapbox' | 'amap' | 'google' | 'baidu'
   api_key?: string
+  api_key_configured?: boolean
   api_base_url?: string
   default_center?: GeoPoint
   default_zoom?: number

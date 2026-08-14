@@ -49,6 +49,29 @@ export const SUGGESTION_FILTERS = [
 
 export type SuggestionTypeFilter = (typeof SUGGESTION_FILTERS)[number]['value']
 
+export const WORKFLOW_FILTERS = [
+  { value: 'all', label: '全部待办' },
+  { value: 'coordinate_gap', label: '坐标缺口' },
+  { value: 'preprocessing_gap', label: '预处理缺口' },
+  { value: 'bonus_metric_gap', label: '奖金核算指标缺口' },
+  { value: 'bonus_material_gap', label: '佐证材料缺口' },
+  { value: 'alert', label: '数智告警' },
+  { value: 'conclusion_review', label: '结论复核' },
+  { value: 'report_followup', label: '报告沉淀' },
+  { value: 'experience', label: '经验卡生成' },
+] as const
+
+export type SuggestionWorkflowFilter = (typeof WORKFLOW_FILTERS)[number]['value']
+
+export interface SuggestionDetailPanel {
+  targetLabel: string
+  blocker: string
+  facts: string[]
+  inferences: string[]
+  suggestions: string[]
+  boundary: string
+}
+
 export function numericTargetId(suggestion: WorkSuggestion) {
   const value = typeof suggestion.target_id === 'number'
     ? suggestion.target_id
@@ -75,6 +98,67 @@ export function buildSuggestionStats(suggestions: WorkSuggestion[]) {
 export function filterSuggestions(suggestions: WorkSuggestion[], filter: SuggestionTypeFilter) {
   if (filter === 'all') return suggestions
   return suggestions.filter(item => item.type === filter)
+}
+
+function includesAny(text: string, words: string[]) {
+  return words.some(word => text.includes(word))
+}
+
+export function getSuggestionWorkflowBucket(suggestion: WorkSuggestion): Exclude<SuggestionWorkflowFilter, 'all'> {
+  const text = `${suggestion.title} ${suggestion.description} ${suggestion.action} ${suggestion.type}`
+  if (includesAny(text, ['坐标', '经纬度', '点位'])) return 'coordinate_gap'
+  if (suggestion.action === 'preprocess_case' || includesAny(text, ['预处理', '结构化', '清洗'])) return 'preprocessing_gap'
+  if (suggestion.type === 'bonus' && (suggestion.action === 'review_bonus_data' || includesAny(text, ['指标', '车辆考核', '人员处理', '核算字段']))) return 'bonus_metric_gap'
+  if (suggestion.type === 'bonus' && (suggestion.action === 'review_bonus_materials' || includesAny(text, ['材料', '单据', '佐证', '凭证']))) return 'bonus_material_gap'
+  if (suggestion.type === 'alert' || suggestion.action === 'open_alert_triage_pack') return 'alert'
+  if (suggestion.action === 'review_conclusion' || suggestion.type === 'review') return 'conclusion_review'
+  if (suggestion.type === 'report_quality' || includesAny(text, ['报告', '沉淀', '会议'])) return 'report_followup'
+  if (suggestion.type === 'experience' || includesAny(text, ['经验卡'])) return 'experience'
+  return 'preprocessing_gap'
+}
+
+export function filterSuggestionsByWorkflow(suggestions: WorkSuggestion[], filter: SuggestionWorkflowFilter) {
+  if (filter === 'all') return suggestions
+  return suggestions.filter(item => getSuggestionWorkflowBucket(item) === filter)
+}
+
+export function buildSuggestionDetail(suggestion: WorkSuggestion | null | undefined): SuggestionDetailPanel {
+  if (!suggestion) {
+    return {
+      targetLabel: '-',
+      blocker: '未选择待办',
+      facts: ['请从中间队列选择一条待办。'],
+      inferences: ['系统不会在未选择待办时生成业务判断。'],
+      suggestions: ['先按优先级处理阻塞项。'],
+      boundary: '仅供人工复核，不自动认定，不自动派发执行任务。',
+    }
+  }
+
+  const actionLabel = ACTION_LABELS[suggestion.action] ?? '人工处理'
+  const typeLabel = TYPE_LABELS[suggestion.type] ?? suggestion.type
+  const priorityLabel = PRIORITY_META[suggestion.priority]?.label ?? suggestion.priority
+  const targetLabel = `${suggestion.target_type}:${String(suggestion.target_id)}`
+
+  return {
+    targetLabel,
+    blocker: suggestion.title,
+    facts: [
+      `${typeLabel}待办：${suggestion.title}`,
+      `目标对象：${targetLabel}`,
+      suggestion.description,
+    ].filter(Boolean),
+    inferences: [
+      `${priorityLabel}，说明该事项会影响研判闭环或后续复核效率。`,
+      suggestion.type === 'bonus'
+        ? '奖金核算相关缺口只作为案件内业核算门禁，不进入指挥大屏明细展示。'
+        : '该待办需要人工确认后才能进入下一步沉淀或复核。',
+    ],
+    suggestions: [
+      `下一步安全动作：${actionLabel}`,
+      '补齐事实依据后再生成结论、报告或经验卡。',
+    ],
+    boundary: '仅供人工复核，不自动认定，不自动派发执行任务。',
+  }
 }
 
 export function getSuggestionRoute(suggestion: WorkSuggestion): string | null {

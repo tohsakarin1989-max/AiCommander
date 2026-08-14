@@ -2,6 +2,29 @@ import { describe, expect, it } from 'vitest'
 import { buildCaseEntryReadiness } from './caseEntryReadiness'
 
 describe('caseEntryReadiness', () => {
+  it('checks standard reporting fields from the business management rules', () => {
+    const incomplete = buildCaseEntryReadiness({
+      description: '现场发现异常',
+    })
+
+    const incompleteItem = incomplete.find(item => item.key === 'standard_reporting')
+    expect(incompleteItem?.status).toBe('attention')
+    expect(incompleteItem?.impact).toContain('报送保卫班')
+
+    const ready = buildCaseEntryReadiness({
+      occurred_time: '2026-05-06T02:30:00',
+      report_time: '2026-05-06T03:00:00',
+      report_unit: '敖南保卫班',
+      location: '肇源县茂兴镇幸福村东约一公里',
+      source_type: '巡逻发现',
+      oil_nature: '被盗原油',
+      security_officers: ['张伟', '王艳龙'],
+      description: '2026年5月6日2时30分，敖南保卫班在肇源县茂兴镇幸福村东约一公里抓获盗油车辆1台，车内被盗原油1.2吨，含水率8%，抓获人员2人并移交公安，原油检斤入库。',
+    })
+
+    expect(ready.find(item => item.key === 'standard_reporting')?.status).toBe('ready')
+  })
+
   it('marks map, preprocessing and experience work as needing attention when core entry data is missing', () => {
     const items = buildCaseEntryReadiness({
       description: '现场发现异常',

@@ -710,11 +710,12 @@ def get_case_statistics(db: Session = Depends(get_db)):
 
 
 @router.post("/structure-preview")
-def structure_case_text(payload: CaseStructureRequest):
+def structure_case_text(payload: CaseStructureRequest, db: Session = Depends(get_db)):
     """从案情文本中自动提取案件录入字段，供人工确认后写入。"""
     if not payload.text or not payload.text.strip():
         raise HTTPException(status_code=400, detail="案情文本不能为空")
-    return CaseAutomationService.structure_case_text(payload.text)
+    llm = CasePreprocessService._build_llm(db)
+    return CaseAutomationService.structure_case_text(payload.text, llm=llm)
 
 
 @router.post("/evidence/classify")
@@ -1214,14 +1215,22 @@ def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
 def get_bonus_period_cases(
     case_id: int,
     scope: str = "quarter",
+    squad: Optional[str] = None,
+    include_all_squads: bool = False,
     db: Session = Depends(get_db),
 ):
-    """获取与选中案件同一奖金考核周期、同一主控班组的案件列表。"""
+    """获取与选中案件同一奖金考核周期的案件列表，默认收窄到同一主控班组。"""
     _require_bonus_accounting_enabled()
     if scope not in {"quarter", "annual"}:
         raise HTTPException(status_code=400, detail="scope must be quarter or annual")
     case = _get_case_or_404(db, case_id)
-    return CaseAutomationService.list_bonus_period_cases(db, case, scope=scope)
+    return CaseAutomationService.list_bonus_period_cases(
+        db,
+        case,
+        scope=scope,
+        squad=squad,
+        include_all_squads=include_all_squads,
+    )
 
 
 @router.get("/{case_id:int}/automation-workbench")

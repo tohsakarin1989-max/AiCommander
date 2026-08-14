@@ -37,6 +37,32 @@
   --sans:  'IBM Plex Sans', -apple-system, system-ui, sans-serif;
   --serif: 'IBM Plex Serif', Georgia, serif;
 }
+
+:root[data-theme="light"] {
+  --accent:      oklch(0.64 0.13 var(--accent-hue));
+  --accent-soft: oklch(0.72 0.13 var(--accent-hue) / 0.14);
+  --accent-line: oklch(0.62 0.13 var(--accent-hue) / 0.36);
+  --accent-ink:  oklch(0.98 0.01 85);
+
+  --bg-0: oklch(0.955 0.010 250);
+  --bg-1: oklch(0.985 0.006 250);
+  --bg-2: oklch(0.94 0.010 250);
+  --bg-3: oklch(0.90 0.012 250);
+
+  --line:      oklch(0.78 0.014 250 / 0.86);
+  --line-soft: oklch(0.80 0.014 250 / 0.52);
+
+  --ink-0: oklch(0.20 0.018 250);
+  --ink-1: oklch(0.30 0.018 250);
+  --ink-2: oklch(0.48 0.018 250);
+  --ink-3: oklch(0.62 0.016 250);
+
+  --ok:   oklch(0.58 0.13 155);
+  --warn: oklch(0.66 0.15 75);
+  --err:  oklch(0.60 0.18 25);
+  --info: oklch(0.58 0.13 220);
+  --oil:  oklch(0.55 0.13 285);
+}
 [data-density="compact"] { --gap: 10px; --pad: 12px; }
 
 /* ---------- reset ---------- */
@@ -75,16 +101,26 @@ a { color: inherit; text-decoration: none; }
     radial-gradient(ellipse at 105% 110%, oklch(0.78 0.11 220 / 0.04), transparent 55%);
 }
 
+:root[data-theme="light"] .app-shell::before {
+  background:
+    radial-gradient(ellipse at 12% -8%, oklch(0.72 0.13 var(--accent-hue) / 0.08), transparent 55%),
+    radial-gradient(ellipse at 100% 106%, oklch(0.58 0.13 220 / 0.06), transparent 55%);
+}
+
 /* ---------- topbar ---------- */
 .topbar {
   position: sticky; top: 0; z-index: 200;
   display: grid;
-  grid-template-columns: auto minmax(0, auto) minmax(140px, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, auto) minmax(140px, 1fr) auto auto auto;
   gap: 20px; align-items: center;
   padding: 10px 24px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(to bottom, var(--bg-1), oklch(0.14 0.013 250));
   min-width: 0;
+}
+
+:root[data-theme="light"] .topbar {
+  background: linear-gradient(to bottom, var(--bg-1), oklch(0.94 0.010 250));
 }
 
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -175,6 +211,46 @@ a { color: inherit; text-decoration: none; }
 }
 .user-badge .n { color: var(--ink-0); font-weight: 500; }
 .user-badge .r { color: var(--ink-3); font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; }
+.user-logout {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  margin-left: 2px;
+  border-left: 1px solid var(--line);
+  color: var(--ink-3);
+}
+.user-logout:hover { color: var(--err); background: var(--bg-2); }
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.theme-toggle-v {
+  min-width: 18px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
 
 /* ---------- main content ---------- */
 .app-main {
@@ -473,7 +549,7 @@ table.data.mini tbody td { padding: 7px 10px; font-size: 12px; }
 
 @media (max-width: 1280px) {
   .topbar {
-    grid-template-columns: minmax(210px, auto) minmax(0, 1fr) 142px auto;
+    grid-template-columns: minmax(210px, auto) minmax(0, 1fr) 142px auto auto;
     gap: 12px;
     padding: 8px 16px;
   }
@@ -488,13 +564,15 @@ table.data.mini tbody td { padding: 7px 10px; font-size: 12px; }
   .topbar-clock .t { font-size: 20px; }
   .topbar-clock .d { font-size: 10px; letter-spacing: 0.04em; }
   .sys-chips { display: none; }
+  .theme-toggle-k { display: none; }
   .user-badge { padding-right: 8px; }
   .user-badge .r { display: none; }
 }
 
 @media (max-width: 980px) {
   .topbar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    overflow: hidden;
   }
   .brand .wordmark .s,
   .topbar-clock {
@@ -505,6 +583,61 @@ table.data.mini tbody td { padding: 7px 10px; font-size: 12px; }
   }
   .user-badge > div:last-child {
     display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    max-width: 100vw;
+  }
+
+  .brand {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .brand .mark {
+    width: 34px;
+    height: 34px;
+    font-size: 12px;
+  }
+
+  .brand .wordmark {
+    min-width: 0;
+  }
+
+  .brand .wordmark .n {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 17px;
+  }
+
+  .top-nav {
+    display: none;
+  }
+
+  .theme-toggle {
+    width: 42px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .theme-toggle-k {
+    display: none;
+  }
+
+  .sub-nav {
+    max-width: 100vw;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 10px;
+  }
+
+  .sub-nav a {
+    flex: 0 0 auto;
+    padding: 8px 14px;
   }
 }
 

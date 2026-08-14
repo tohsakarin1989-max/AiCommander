@@ -31,6 +31,11 @@ export interface CaseBonusEntryValues {
 }
 
 export interface CaseEntryReadinessValues extends CaseBonusEntryValues {
+  occurred_time?: unknown
+  report_time?: unknown
+  report_unit?: unknown
+  source_type?: unknown
+  security_officers?: unknown
   latitude?: unknown
   longitude?: unknown
   location?: unknown
@@ -38,7 +43,7 @@ export interface CaseEntryReadinessValues extends CaseBonusEntryValues {
 }
 
 export interface CaseEntryReadinessItem {
-  key: 'map_analysis' | 'ai_preprocess' | 'bonus_accounting' | 'conclusion_layering' | 'experience_card'
+  key: 'standard_reporting' | 'map_analysis' | 'ai_preprocess' | 'bonus_accounting' | 'conclusion_layering' | 'experience_card'
   label: string
   status: CaseEntryReadinessStatus
   impact: string
@@ -77,6 +82,21 @@ function hasBonusScope(values: CaseEntryReadinessValues): boolean {
       || values.bonus_has_oil
       || values.bonus_has_police
   )
+}
+
+function missingStandardReportFields(values: CaseEntryReadinessValues): string[] {
+  const missing: string[] = []
+  if (!hasText(values.occurred_time)) missing.push('发生时间')
+  if (!hasText(values.report_time)) missing.push('报送时间')
+  if (!hasText(values.report_unit)) missing.push('报送保卫班')
+  if (!hasText(values.location)) missing.push('地点')
+  if (!hasText(values.source_type)) missing.push('线索来源')
+  if (!hasText(values.oil_nature)) missing.push('原油性质')
+  if (!hasText(values.security_officers)) missing.push('保卫班出警人')
+  if ((values.police_reported || values.case_filed) && !hasText(values.police_officer)) missing.push('公安出警人')
+  if ((values.police_reported || values.case_filed) && !hasText(values.police_phone)) missing.push('公安联系电话')
+  if (!hasText(values.description)) missing.push('标准案情摘要')
+  return missing
 }
 
 function rowHasAnyValue(row?: Record<string, unknown>): boolean {
@@ -204,6 +224,23 @@ export function buildCaseEntryReadiness(
   const hasBasicDescription = descLength >= 12
   const bonusScopeEnabled = hasBonusScope(values)
   const blockingBonusHints = bonusHints.filter(item => item.blocking)
+  const standardMissing = missingStandardReportFields(values)
+
+  const standardReportItem: CaseEntryReadinessItem = standardMissing.length === 0
+    ? {
+        key: 'standard_reporting',
+        label: '标准报送',
+        status: 'ready',
+        impact: '已具备细则要求的基础报送要素。',
+        action: '保存后可用于报送统计、质量评分和后续研判。',
+      }
+    : {
+        key: 'standard_reporting',
+        label: '标准报送',
+        status: 'attention',
+        impact: `按业务管理细则仍缺 ${standardMissing.slice(0, 4).join('、')}${standardMissing.length > 4 ? '等' : ''}。`,
+        action: '可先保存基础信息，但建议补齐发生/报送时间、班组、地点、线索来源、原油性质和标准案情摘要。',
+      }
 
   const mapItem: CaseEntryReadinessItem = hasCoordinate
     ? {
@@ -293,5 +330,5 @@ export function buildCaseEntryReadiness(
         action: '建议补充作案条件、发现方式、防护短板和证据缺口。',
       }
 
-  return [mapItem, preprocessItem, bonusItem, conclusionItem, experienceItem]
+  return [standardReportItem, mapItem, preprocessItem, bonusItem, conclusionItem, experienceItem]
 }
