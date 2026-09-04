@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.api import agent_runs, auth, cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, runtime
+from app.api import agent_runs, auth, cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -88,6 +88,7 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(agent_runs.router, prefix="/api/agent-runs", tags=["agent-runs"])
+app.include_router(map_steward.router, prefix="/api/agent-map-steward", tags=["agent-map-steward"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])

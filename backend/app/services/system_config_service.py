@@ -199,6 +199,30 @@ class SystemConfigService:
                 "description": "链条推断最低展示置信度，低于阈值的推断不进入前端展示。",
                 "extra_data": {"min": 0, "max": 1}
             },
+            {
+                "config_key": "agent_map_pilot_enabled",
+                "config_value": "false",
+                "config_type": "boolean",
+                "category": "agent_map_pilot",
+                "description": "地图数据管家指定用户试用总开关",
+                "extra_data": {},
+            },
+            {
+                "config_key": "agent_map_mutations_suspended",
+                "config_value": "true",
+                "config_type": "boolean",
+                "category": "agent_map_pilot",
+                "description": "地图数据管家候选写入暂停开关",
+                "extra_data": {},
+            },
+            {
+                "config_key": "agent_map_pilot_user_ids",
+                "config_value": "[]",
+                "config_type": "json",
+                "category": "agent_map_pilot",
+                "description": "地图数据管家指定试用用户 ID 列表",
+                "extra_data": {},
+            },
         ]
         
         for config_data in default_configs:

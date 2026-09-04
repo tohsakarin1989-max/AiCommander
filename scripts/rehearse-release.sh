@@ -114,6 +114,7 @@ printf '%s\n' \
     'AGENT_USE_EXTERNAL_MODEL=false' \
     'AGENT_SDK_TRACING_ENABLED=false' \
     'AGENT_APPROVAL_TTL_HOURS=24' \
+    'AGENT_MAP_PILOT_MAX_ASSETS=100' \
     > "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 

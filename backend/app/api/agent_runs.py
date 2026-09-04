@@ -14,6 +14,8 @@ from app.agent_runtime.service import AgentReplayConflict, AgentRunService, FINA
 from app.config import settings
 from app.database import get_db
 from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
+from app.models.jurisdiction import JurisdictionAsset
+from app.services.map_steward_service import MapStewardPilotService
 
 
 router = APIRouter()
@@ -64,6 +66,10 @@ def _principal(request: Request):
     return principal
 
 
+def _principal_user_id(principal) -> int | None:
+    return getattr(principal, "user_id", getattr(principal, "id", None))
+
+
 def _require_lab(request: Request, *, admin_only: bool = False):
     if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == "off":
         raise HTTPException(status_code=404, detail="Agent Lab 未启用")
@@ -83,6 +89,34 @@ def create_agent_run(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     principal = _require_lab(request)
+    principal_user_id = _principal_user_id(principal)
+    if settings.AGENT_MODE == "assist":
+        if payload.task_type != "map_data_quality":
+            raise HTTPException(
+                status_code=403,
+                detail="v2.2受控辅助模式仅开放地图数据管家",
+            )
+        if not payload.asset_ids:
+            raise HTTPException(status_code=422, detail="受控辅助模式必须明确选择地图资源")
+        if payload.case_ids:
+            raise HTTPException(status_code=422, detail="地图数据管家试用不得混入案件范围")
+        if len(set(payload.asset_ids)) > settings.AGENT_MAP_PILOT_MAX_ASSETS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"单次最多选择{settings.AGENT_MAP_PILOT_MAX_ASSETS}个地图资源",
+            )
+        selected_asset_ids = set(payload.asset_ids)
+        available_asset_count = db.query(JurisdictionAsset.id).filter(
+            JurisdictionAsset.id.in_(selected_asset_ids),
+            JurisdictionAsset.status == "active",
+        ).count()
+        if available_asset_count != len(selected_asset_ids):
+            raise HTTPException(status_code=422, detail="所选地图资源不存在或已失效")
+        control = MapStewardPilotService.get_control(db)
+        if not control.enabled:
+            raise HTTPException(status_code=409, detail="地图数据管家试用尚未开启")
+        if not MapStewardPilotService.is_pilot_user(control, principal_user_id):
+            raise HTTPException(status_code=403, detail="当前账号未被加入地图数据管家试用名单")
     run = AgentRunService.create_run(
         db,
         task_type=payload.task_type,
@@ -90,7 +124,7 @@ def create_agent_run(
         case_ids=payload.case_ids,
         asset_ids=payload.asset_ids,
         mode=settings.AGENT_MODE,
-        created_by=getattr(principal, "id", None),
+        created_by=principal_user_id,
     )
     try:
         dispatch_agent_run(run.id)
@@ -173,7 +207,7 @@ def get_agent_events(
 def cancel_agent_run(run_id: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     principal = _require_lab(request)
     try:
-        run = AgentRunService.cancel_run(db, run_id, actor_user_id=getattr(principal, "id", None))
+        run = AgentRunService.cancel_run(db, run_id, actor_user_id=_principal_user_id(principal))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Agent 任务不存在") from exc
     return _run_payload(run, detail=True)
@@ -198,12 +232,26 @@ def review_agent_approval(
     ).first()
     if belongs_to_run is None:
         raise HTTPException(status_code=404, detail="审批不属于当前 Agent 任务")
+    if (
+        payload.decision == "approve"
+        and run.mode == "assist"
+        and belongs_to_run.status == "pending"
+    ):
+        if run.task_type != "map_data_quality":
+            raise HTTPException(status_code=403, detail="v2.2不允许辅助模式修改案件或研判结论")
+        control = MapStewardPilotService.get_control(db)
+        if not control.enabled or control.mutations_suspended:
+            raise HTTPException(status_code=409, detail="地图数据管家候选写入已暂停")
+        if not MapStewardPilotService.is_pilot_user(control, run.created_by):
+            raise HTTPException(status_code=403, detail="任务发起人已不在地图数据管家试用名单")
+        if not settings.AGENT_MUTATIONS_ENABLED:
+            raise HTTPException(status_code=409, detail="全局写入保护仍处于关闭状态")
     try:
         approval = AgentRunService.review_approval(
             db,
             approval_id=approval_id,
             decision=payload.decision,
-            decided_by=getattr(principal, "id", None),
+            decided_by=_principal_user_id(principal),
             comment=payload.comment,
             allow_mutations=settings.AGENT_MUTATIONS_ENABLED,
         )
@@ -216,7 +264,28 @@ def review_agent_approval(
 def replay_agent_run(run_id: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     principal = _require_lab(request, admin_only=True)
     try:
-        replay = AgentRunService.replay_run(db, run_id, created_by=getattr(principal, "id", None))
+        original = AgentRunService.get_run(db, run_id)
+        principal_user_id = _principal_user_id(principal)
+        if original.mode == "assist":
+            control = MapStewardPilotService.get_control(db)
+            if original.task_type != "map_data_quality":
+                raise HTTPException(status_code=403, detail="v2.2受控辅助模式仅开放地图数据管家")
+            if not control.enabled:
+                raise HTTPException(status_code=409, detail="地图数据管家试用尚未开启")
+            if not MapStewardPilotService.is_pilot_user(control, principal_user_id):
+                raise HTTPException(status_code=403, detail="当前管理员未被加入地图数据管家试用名单")
+            replay_asset_ids = set(original.asset_ids or [])
+            if original.case_ids or not replay_asset_ids:
+                raise HTTPException(status_code=422, detail="旧任务不符合v2.2地图资源限界，不能重放")
+            if len(replay_asset_ids) > settings.AGENT_MAP_PILOT_MAX_ASSETS:
+                raise HTTPException(status_code=422, detail="旧任务超出地图资源试用上限，不能重放")
+            available_asset_count = db.query(JurisdictionAsset.id).filter(
+                JurisdictionAsset.id.in_(replay_asset_ids),
+                JurisdictionAsset.status == "active",
+            ).count()
+            if available_asset_count != len(replay_asset_ids):
+                raise HTTPException(status_code=422, detail="旧任务包含不存在或已失效的地图资源")
+        replay = AgentRunService.replay_run(db, run_id, created_by=principal_user_id)
     except AgentReplayConflict as exc:
         raise HTTPException(
             status_code=409,

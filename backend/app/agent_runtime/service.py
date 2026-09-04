@@ -163,6 +163,55 @@ class AgentRunService:
         return AgentRunService.get_run(db, run_id)
 
     @staticmethod
+    def suspend_map_pilot(
+        db: Session,
+        *,
+        actor_user_id: Optional[int],
+        reason: str,
+    ) -> dict[str, int]:
+        """停止地图试用运行并使所有待审批候选失效，不触碰正式地图数据。"""
+        now = datetime.utcnow()
+        runs = db.query(AgentRun).filter(
+            AgentRun.task_type == "map_data_quality",
+            AgentRun.mode == "assist",
+            AgentRun.status.in_({
+                "queued",
+                "planning",
+                "running",
+                "verifying",
+                "waiting_approval",
+            }),
+        ).all()
+        expired_approvals = 0
+        for run in runs:
+            approvals = db.query(AgentApproval).filter(
+                AgentApproval.run_id == run.id,
+                AgentApproval.status == "pending",
+            ).all()
+            for approval in approvals:
+                approval.status = "expired"
+                approval.decided_at = now
+                approval.execution_result = {
+                    "applied": False,
+                    "reason": "map_pilot_suspended",
+                }
+                expired_approvals += 1
+            run.status = "cancelled"
+            run.completed_at = now
+            AgentRunService.append_event(
+                db,
+                run,
+                event_type="pilot_suspended",
+                status="cancelled",
+                actor_type="user",
+                actor_user_id=actor_user_id,
+                input_summary={"reason": reason.strip()[:500]},
+                output_summary={"expired_approval_count": len(approvals)},
+            )
+        db.commit()
+        return {"cancelled_run_count": len(runs), "expired_approval_count": expired_approvals}
+
+    @staticmethod
     def replay_run(db: Session, run_id: str, *, created_by: Optional[int]) -> AgentRun:
         original = AgentRunService.get_run(db, run_id)
         current_data_version = AgentRunService._data_version(
@@ -390,6 +439,31 @@ class AgentRunService:
             return {"applied": False, "reason": "verified_asset_is_protected"}
         if asset_source_signature(asset) != approval.source_signature:
             return {"applied": False, "reason": "source_changed_since_analysis"}
+
+        if "name" in patch:
+            current_name = asset.name or ""
+            candidate_name = patch["name"]
+            if (
+                not isinstance(candidate_name, str)
+                or candidate_name != current_name.strip()
+                or candidate_name == current_name
+            ):
+                return {"applied": False, "reason": "candidate_name_outside_policy"}
+        if "geometry" in patch:
+            if (
+                asset.geometry_type != "point"
+                or asset.latitude is None
+                or asset.longitude is None
+                or not -90 <= asset.latitude <= 90
+                or not -180 <= asset.longitude <= 180
+            ):
+                return {"applied": False, "reason": "candidate_geometry_outside_policy"}
+            expected_geometry = {
+                "type": "Point",
+                "coordinates": [asset.longitude, asset.latitude],
+            }
+            if patch["geometry"] != expected_geometry or patch["geometry"] == asset.geometry:
+                return {"applied": False, "reason": "candidate_geometry_outside_policy"}
 
         changed_fields = sorted(patch)
         JurisdictionService.update_asset(

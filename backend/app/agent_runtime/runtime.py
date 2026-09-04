@@ -114,6 +114,10 @@ class AgentRunExecutor:
                 )
                 db.commit()
 
+            db.refresh(run)
+            if run.status == "cancelled":
+                return AgentRunService.get_run(db, run.id)
+
             run.status = "verifying"
             AgentRunService.append_event(
                 db,

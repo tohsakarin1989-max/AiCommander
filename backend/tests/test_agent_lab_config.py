@@ -24,6 +24,7 @@ def test_agent_lab_defaults_to_fail_closed():
     assert settings.AGENT_MODEL == ""
     assert settings.AGENT_USE_EXTERNAL_MODEL is False
     assert settings.AGENT_SDK_TRACING_ENABLED is False
+    assert settings.AGENT_MAP_PILOT_MAX_ASSETS == 100
 
 
 def test_agent_mutations_require_assist_mode():
@@ -70,3 +71,9 @@ def test_external_openai_adapter_is_optional_and_explicit():
 
     assert settings.AGENT_PROVIDER == "openai_agents"
     assert settings.AGENT_USE_EXTERNAL_MODEL is True
+
+
+@pytest.mark.parametrize("limit", [0, 501])
+def test_map_pilot_asset_limit_is_bounded(limit):
+    with pytest.raises(ValidationError):
+        Settings(**BASE, AGENT_MAP_PILOT_MAX_ASSETS=limit)

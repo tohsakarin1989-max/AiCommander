@@ -16,6 +16,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
 import { caseApi } from '../../services/cases'
+import { jurisdictionApi } from '../../services/jurisdiction'
+import { mapStewardApi } from '../../services/mapSteward'
 import type { AgentRun, AgentRunApproval, AgentRunTaskType } from '../../types'
 import {
   agentErrorMessage,
@@ -26,6 +28,13 @@ import {
   canReviewAgentRun,
   isAgentRunActive,
 } from './agentPresentation'
+import {
+  canSubmitMapStewardRun,
+  canStartMapSteward,
+  mapStewardControlHint,
+  mapStewardControlReason,
+  mapStewardStateLabel,
+} from './mapStewardPresentation'
 import './AgentCenter.css'
 
 const { TextArea } = Input
@@ -82,11 +91,13 @@ function ApprovalCard({
   run,
   approval,
   canReview,
+  canApprove,
   onReview,
 }: {
   run: AgentRun
   approval: AgentRunApproval
   canReview: boolean
+  canApprove: boolean
   onReview: (approval: AgentRunApproval, decision: 'approve' | 'reject') => void
 }) {
   return (
@@ -102,10 +113,15 @@ function ApprovalCard({
         <div className="agent-execution-note">执行结果：{JSON.stringify(approval.execution_result)}</div>
       )}
       {approval.status === 'pending' && canReview && (
-        <Space>
-          <button className="btn-primary" onClick={() => onReview(approval, 'approve')}>批准候选修正</button>
-          <button className="btn-ghost" onClick={() => onReview(approval, 'reject')}>驳回</button>
-        </Space>
+        <div>
+          <Space>
+            {canApprove && (
+              <button className="btn-primary" onClick={() => onReview(approval, 'approve')}>批准候选修正</button>
+            )}
+            <button className="btn-ghost" onClick={() => onReview(approval, 'reject')}>驳回</button>
+          </Space>
+          {!canApprove && <span className="agent-muted">当前只允许检查和驳回，不允许应用候选修正。</span>}
+        </div>
       )}
       {approval.status === 'pending' && !canReview && (
         <span className="agent-muted">仅管理员可以审批；审批不代表一定写入，仍受后端写入开关约束。</span>
@@ -120,10 +136,12 @@ const AgentCenter: React.FC = () => {
   const { user } = useAuth()
   const [messageApi, messageContextHolder] = message.useMessage()
   const [modalApi, modalContextHolder] = Modal.useModal()
-  const [taskType, setTaskType] = useState<AgentRunTaskType>('case_data_quality')
-  const [query, setQuery] = useState('检查所选数据并形成可复核的问题清单和证据依据')
+  const [taskType, setTaskType] = useState<AgentRunTaskType>('map_data_quality')
+  const [query, setQuery] = useState('检查所选地图资源并形成可复核的问题清单和证据依据')
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([])
-  const [assetIdsText, setAssetIdsText] = useState('')
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([])
+  const [pilotUserIds, setPilotUserIds] = useState<number[]>([])
+  const [controlReason, setControlReason] = useState('启动地图数据管家受控试用')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
 
   const runsQuery = useQuery({
@@ -137,23 +155,47 @@ const AgentCenter: React.FC = () => {
     enabled: Boolean(selectedRunId),
     refetchInterval: queryState => queryState.state.data && isAgentRunActive(queryState.state.data.status) ? 2000 : false,
   })
+  const mapStatusQuery = useQuery({
+    queryKey: ['agent-map-steward-status'],
+    queryFn: mapStewardApi.status,
+    refetchInterval: 10000,
+  })
   const casesQuery = useQuery({
     queryKey: ['agent-cases'],
     queryFn: () => caseApi.getCases({ limit: 200 }),
+    enabled: Boolean(mapStatusQuery.data) && mapStatusQuery.data?.global_mode !== 'assist',
+  })
+  const assetsQuery = useQuery({
+    queryKey: ['agent-map-assets'],
+    queryFn: () => jurisdictionApi.listAssets({ status: 'active', limit: 500 }),
   })
 
   const runs = runsQuery.data ?? []
+  const pilotUserIdsKey = mapStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
   useEffect(() => {
     if (!selectedRunId && runs[0]) setSelectedRunId(runs[0].id)
   }, [runs, selectedRunId])
+  useEffect(() => {
+    if (mapStatusQuery.data?.pilot_user_ids) {
+      setPilotUserIds(mapStatusQuery.data.pilot_user_ids)
+    }
+  }, [pilotUserIdsKey])
+  useEffect(() => {
+    if (mapStatusQuery.data?.global_mode === 'assist' && taskType !== 'map_data_quality') {
+      setTaskType('map_data_quality')
+      setSelectedCaseIds([])
+    }
+  }, [mapStatusQuery.data?.global_mode, taskType])
 
   const selectedTask = TASK_OPTIONS.find(item => item.value === taskType)
-  const assetIds = useMemo(() => Array.from(new Set(
-    assetIdsText
-      .split(/[,，\s]+/)
-      .map(item => Number(item))
-      .filter(item => Number.isInteger(item) && item > 0),
-  )), [assetIdsText])
+  const mapStatus = mapStatusQuery.data
+  const isAssistMode = mapStatus?.global_mode === 'assist'
+  const visibleTaskOptions = useMemo(
+    () => isAssistMode
+      ? TASK_OPTIONS.filter(item => item.value === 'map_data_quality')
+      : TASK_OPTIONS,
+    [isAssistMode],
+  )
 
   const createMutation = useMutation({
     mutationFn: agentRunApi.create,
@@ -161,6 +203,7 @@ const AgentCenter: React.FC = () => {
       messageApi.success('Agent任务已进入独立队列')
       setSelectedRunId(run.id)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, 'Agent任务启动失败'))
@@ -172,6 +215,7 @@ const AgentCenter: React.FC = () => {
       messageApi.success('Agent任务已取消，核心业务不受影响')
       queryClient.setQueryData(['agent-run', run.id], run)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '取消任务失败'))
@@ -196,10 +240,30 @@ const AgentCenter: React.FC = () => {
       messageApi.success('审批决定已记录')
       void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '审批失败'))
     },
+  })
+  const controlMutation = useMutation({
+    mutationFn: mapStewardApi.updateControl,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-map-steward-status'], status)
+      messageApi.success(status.mutations_suspended ? '地图数据管家已切换为安全暂停' : '地图数据管家受控试用已开启')
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '试用设置更新失败')),
+  })
+  const suspendMutation = useMutation({
+    mutationFn: mapStewardApi.suspend,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-map-steward-status'], status)
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      if (selectedRunId) void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
+      messageApi.success('试用已停用，活动任务和待审批候选已安全终止')
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '停用地图数据管家失败')),
   })
 
   const handleCreate = () => {
@@ -207,11 +271,51 @@ const AgentCenter: React.FC = () => {
       messageApi.warning('请输入任务目标')
       return
     }
+    if (isAssistMode && taskType === 'map_data_quality') {
+      if (!canStartMapSteward(mapStatus)) {
+        messageApi.warning('当前账号暂不能发起地图数据管家试用任务')
+        return
+      }
+      if (!selectedAssetIds.length) {
+        messageApi.warning('请先选择需要检查的地图资源')
+        return
+      }
+    }
     createMutation.mutate({
       task_type: taskType,
       query: query.trim(),
-      case_ids: selectedCaseIds,
-      asset_ids: assetIds,
+      case_ids: isAssistMode ? [] : selectedCaseIds,
+      asset_ids: selectedAssetIds,
+    })
+  }
+
+  const updatePilotControl = (mutationsSuspended: boolean) => {
+    if (!pilotUserIds.length) {
+      messageApi.warning('请至少选择一名试用人员')
+      return
+    }
+    if (controlReason.trim() && controlReason.trim().length < 2) {
+      messageApi.warning('请填写至少2个字的调整原因')
+      return
+    }
+    const action = mutationsSuspended ? 'pause' : 'enable'
+    const reason = mapStewardControlReason(controlReason, action)
+    controlMutation.mutate({
+      enabled: true,
+      mutations_suspended: mutationsSuspended,
+      pilot_user_ids: pilotUserIds,
+      reason,
+    })
+  }
+
+  const confirmSuspendPilot = () => {
+    modalApi.confirm({
+      title: '停用地图数据管家试用？',
+      content: '活动中的地图质检任务将取消，待审批候选将失效；正式地图数据不会被修改，核心系统继续运行。',
+      okText: '确认停用',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: () => suspendMutation.mutate(mapStewardControlReason(controlReason, 'disable')),
     })
   }
 
@@ -253,6 +357,79 @@ const AgentCenter: React.FC = () => {
         默认由内网规则引擎完成分析，不需要模型密钥、也不会向外部发送数据；如经安全评审启用外部模型，模型也只能接收临时别名和派生特征。所有候选修正必须人工审批。
       </div>
 
+      {mapStatus && (
+        <div className="card agent-pilot-card">
+          <div className="card-head agent-pilot-head">
+            <div>
+              <RadarChartOutlined className="ico" />
+              <span className="ti">地图数据管家 · 指定人员试用</span>
+            </div>
+            <Tag color={mapStatus.state === 'ready' ? 'green' : mapStatus.state === 'suspended' ? 'gold' : 'default'}>
+              {mapStewardStateLabel(mapStatus.state)}
+            </Tag>
+          </div>
+          <div className="card-body pad">
+            <div className="agent-pilot-summary">
+              <span>{mapStewardControlHint(mapStatus)}</span>
+              {mapStatus.reason && <span className="agent-muted">最近调整：{mapStatus.reason}</span>}
+            </div>
+            <div className="agent-metric-grid">
+              <div><strong>{mapStatus.metrics.runs_total}</strong><span>试用任务</span></div>
+              <div><strong>{mapStatus.metrics.candidate_count}</strong><span>候选修正</span></div>
+              <div><strong>{mapStatus.metrics.adoption_rate_percent}%</strong><span>人工采纳率</span></div>
+              <div><strong>{mapStatus.metrics.evidence_coverage_percent}%</strong><span>证据覆盖率</span></div>
+            </div>
+            {user?.role === 'admin' && (
+              <div className="agent-pilot-controls">
+                <div>
+                  <div className="agent-result-label">指定试用人员</div>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    className="agent-full-width"
+                    placeholder="选择管理员或分析员"
+                    value={pilotUserIds}
+                    onChange={setPilotUserIds}
+                    options={(mapStatus.eligible_users ?? []).map(item => ({
+                      value: item.id,
+                      label: `${item.display_name || item.username} · ${item.role === 'admin' ? '管理员' : '分析员'}`,
+                    }))}
+                  />
+                </div>
+                <div>
+                  <div className="agent-result-label">调整原因</div>
+                  <Input
+                    value={controlReason}
+                    onChange={event => setControlReason(event.target.value)}
+                    maxLength={500}
+                    placeholder="说明开启、暂停或停用原因"
+                  />
+                </div>
+                <div className="agent-pilot-actions">
+                  <button
+                    className="btn-primary"
+                    disabled={controlMutation.isPending}
+                    onClick={() => updatePilotControl(false)}
+                  >开启受控辅助</button>
+                  <button
+                    className="btn-ghost"
+                    disabled={controlMutation.isPending}
+                    onClick={() => updatePilotControl(true)}
+                  >暂停候选写入</button>
+                  <button
+                    className="btn-ghost agent-danger-action"
+                    disabled={suspendMutation.isPending}
+                    onClick={confirmSuspendPilot}
+                  >一键停用试用</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="card agent-create-card">
         <div className="card-head"><RadarChartOutlined className="ico" /><span className="ti">新建受控任务</span></div>
         <div className="card-body pad agent-form-grid">
@@ -262,7 +439,7 @@ const AgentCenter: React.FC = () => {
               value={taskType}
               onChange={setTaskType}
               className="agent-full-width"
-              options={TASK_OPTIONS.map(item => ({ value: item.value, label: item.label }))}
+              options={visibleTaskOptions.map(item => ({ value: item.value, label: item.label }))}
             />
             <div className="agent-muted">{selectedTask?.description}</div>
           </div>
@@ -273,9 +450,10 @@ const AgentCenter: React.FC = () => {
               allowClear
               showSearch
               className="agent-full-width"
-              placeholder="不选则分析最近案件"
-              value={selectedCaseIds}
+              placeholder={isAssistMode ? '地图数据管家试用不读取案件' : '不选则分析最近案件'}
+              value={isAssistMode ? [] : selectedCaseIds}
               onChange={setSelectedCaseIds}
+              disabled={isAssistMode}
               optionFilterProp="label"
               loading={casesQuery.isLoading}
               options={(casesQuery.data ?? []).map(item => ({
@@ -285,12 +463,33 @@ const AgentCenter: React.FC = () => {
             />
           </div>
           <div>
-            <div className="agent-result-label">地图要素ID</div>
-            <Input
-              value={assetIdsText}
-              onChange={event => setAssetIdsText(event.target.value)}
-              placeholder="可选，例如：12, 18, 26"
+            <div className="agent-result-label">地图资源范围</div>
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              className="agent-full-width"
+              placeholder={isAssistMode ? '必须明确选择，不会执行全库扫描' : '不选则按当前能力的默认范围检查'}
+              value={selectedAssetIds}
+              onChange={values => {
+                const maxAssets = mapStatus?.max_assets_per_run ?? 500
+                if (isAssistMode && values.length > maxAssets) {
+                  messageApi.warning(`单次最多选择 ${maxAssets} 项地图资源`)
+                  return
+                }
+                setSelectedAssetIds(values)
+              }}
+              maxTagCount="responsive"
+              loading={assetsQuery.isLoading}
+              options={(assetsQuery.data ?? []).map(item => ({
+                value: item.id,
+                label: `${item.name} · ${item.asset_type} · #${item.id}`,
+              }))}
             />
+            {isAssistMode && mapStatus && (
+              <div className="agent-muted">单次最多选择 {mapStatus.max_assets_per_run} 项地图资源。</div>
+            )}
           </div>
           <div className="agent-query-field">
             <div className="agent-result-label">任务目标</div>
@@ -303,7 +502,13 @@ const AgentCenter: React.FC = () => {
           </div>
           <div className="agent-create-actions">
             <span className="agent-muted">最多8个工具步骤 · 默认120秒 · 普通失败最多重试2次</span>
-            <button className="btn-primary" onClick={handleCreate} disabled={createMutation.isPending}>
+            <button
+              className="btn-primary"
+              onClick={handleCreate}
+              disabled={createMutation.isPending || (
+                isAssistMode && !canSubmitMapStewardRun(mapStatus, selectedAssetIds.length)
+              )}
+            >
               <PlayCircleOutlined /> {createMutation.isPending ? '进入队列...' : '启动任务'}
             </button>
           </div>
@@ -351,7 +556,7 @@ const AgentCenter: React.FC = () => {
                   {isAgentRunActive(detail.status) && (
                     <button className="btn-ghost" onClick={() => cancelMutation.mutate(detail.id)}>取消</button>
                   )}
-                  {canReview && (
+                  {canReview && (detail.mode !== 'assist' || mapStatus?.current_user_authorized) && (
                     <button className="btn-ghost" onClick={() => replayMutation.mutate(detail.id)}>重放</button>
                   )}
                 </Space>
@@ -372,7 +577,19 @@ const AgentCenter: React.FC = () => {
                 <div className="agent-detail-section">
                   <div className="agent-section-head">候选修正与人工审批</div>
                   {detail.approvals?.map(approval => (
-                    <ApprovalCard key={approval.id} run={detail} approval={approval} canReview={canReview} onReview={reviewApproval} />
+                    <ApprovalCard
+                      key={approval.id}
+                      run={detail}
+                      approval={approval}
+                      canReview={canReview}
+                      canApprove={Boolean(
+                        canReview
+                        && detail.mode === 'assist'
+                        && detail.task_type === 'map_data_quality'
+                        && mapStatus?.can_apply_changes
+                      )}
+                      onReview={reviewApproval}
+                    />
                   ))}
                 </div>
               )}

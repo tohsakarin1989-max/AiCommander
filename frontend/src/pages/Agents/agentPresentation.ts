@@ -29,6 +29,7 @@ const EVENT_LABELS: Record<string, string> = {
   run_cancelled: '任务已取消',
   run_expired: '任务审批窗口已过期',
   dispatch_failed: '独立队列不可用',
+  pilot_suspended: '试用已停用，任务安全终止',
 }
 
 const EXECUTION_MODE_LABELS: Record<string, string> = {
