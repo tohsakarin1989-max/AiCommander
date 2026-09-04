@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 import redis
 
+from app.config import settings
 from app.main import app
 
 
@@ -13,6 +14,7 @@ def test_live_health_echoes_request_id():
     assert response.headers["X-Request-Id"] == "req-test-live"
     payload = response.json()
     assert payload["status"] == "alive"
+    assert payload["version"] == settings.APP_VERSION
     assert payload["dependencies"] == {}
 
 
@@ -25,6 +27,7 @@ def test_ready_health_reports_database_status():
     assert response.headers["X-Request-Id"] == "req-test-ready"
     payload = response.json()
     assert payload["status"] in {"ready", "degraded"}
+    assert payload["version"] == settings.APP_VERSION
     assert payload["dependencies"]["database"]["status"] == "ok"
     assert "latency_ms" in payload["dependencies"]["database"]
     assert payload["dependencies"]["schema"]["status"] in {
@@ -45,6 +48,7 @@ def test_agent_health_is_off_by_default_and_never_affects_core_readiness(monkeyp
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "off"
+    assert payload["version"] == settings.APP_VERSION
     assert payload["worker"] == "not_required"
     assert payload["affects_core_readiness"] is False
 

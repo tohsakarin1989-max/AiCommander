@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/.env.production"
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"
 
 command -v openssl >/dev/null 2>&1 || {
     echo "缺少 openssl，无法生成生产密钥" >&2
@@ -12,7 +12,7 @@ command -v openssl >/dev/null 2>&1 || {
 if [ ! -f "$ENV_FILE" ]; then
     cp "$ROOT_DIR/.env.production.example" "$ENV_FILE"
     chmod 0600 "$ENV_FILE"
-    echo "已创建 $ENV_FILE，请修改 APP_DOMAIN 后再部署"
+    echo "已创建 ${ENV_FILE}，请修改 APP_DOMAIN 后再部署"
 fi
 
 configured_secrets_dir="$(sed -n 's/^SECRETS_DIR=//p' "$ENV_FILE" | tail -1)"
@@ -43,4 +43,4 @@ create_secret redis_password 24
 create_secret secret_key 32
 create_secret bootstrap_token 32
 
-echo "生产配置初始化完成。下一步编辑 $ENV_FILE，并妥善离线备份 secrets 目录。"
+echo "生产配置初始化完成。下一步编辑 ${ENV_FILE}，并妥善离线备份 secrets 目录。"

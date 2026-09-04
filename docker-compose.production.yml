@@ -7,6 +7,7 @@ x-logging: &default-logging
     max-file: "5"
 
 x-backend-environment: &backend-environment
+  APP_VERSION: "${APP_VERSION:-2.0.1-test}"
   ENVIRONMENT: production
   AUTH_REQUIRED: "true"
   AUTO_CREATE_TABLES: "false"
@@ -92,7 +93,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-2.0.1-test}
     build:
       context: ./backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
@@ -125,7 +126,7 @@ services:
     logging: *default-logging
 
   celery:
-    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-2.0.1-test}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -153,7 +154,7 @@ services:
 
   agent-worker:
     profiles: ["agent-lab"]
-    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-2.0.1-test}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=${AGENT_REDIS_QUEUE:-agent_lab}", "--hostname=agent@%h", "--beat", "--schedule=/tmp/agent-celerybeat-schedule"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -180,7 +181,7 @@ services:
     logging: *default-logging
 
   frontend:
-    image: aicommander-frontend:${APP_VERSION:-2.0.1-test}
+    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-2.0.1-test}
     build:
       context: ./frontend
       args:

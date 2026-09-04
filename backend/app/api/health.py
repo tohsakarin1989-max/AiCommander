@@ -26,6 +26,7 @@ class DependencyHealth(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    version: str
     timestamp: datetime
     dependencies: Dict[str, DependencyHealth]
 
@@ -125,6 +126,7 @@ def _check_schema() -> DependencyHealth:
 def health_live() -> HealthResponse:
     return HealthResponse(
         status="alive",
+        version=settings.APP_VERSION,
         timestamp=datetime.now(),
         dependencies={},
     )
@@ -152,6 +154,7 @@ def health_ready():
 
     response = HealthResponse(
         status=status,
+        version=settings.APP_VERSION,
         timestamp=datetime.now(),
         dependencies=dependencies,
     )
@@ -166,6 +169,7 @@ def health_agents():
     if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == "off":
         return {
             "status": "off",
+            "version": settings.APP_VERSION,
             "mode": "off",
             "queue": settings.AGENT_REDIS_QUEUE,
             "worker": "not_required",
@@ -197,6 +201,7 @@ def health_agents():
     ready = redis_health.status == "ok" and worker_status == "online"
     return {
         "status": "ready" if ready else "degraded",
+        "version": settings.APP_VERSION,
         "mode": settings.AGENT_MODE,
         "queue": settings.AGENT_REDIS_QUEUE,
         "redis": redis_health.model_dump(mode="json"),
@@ -213,6 +218,7 @@ def health() -> HealthResponse:
     dependencies = {"database": _check_database()}
     return HealthResponse(
         status="healthy" if dependencies["database"].status == "ok" else "not_ready",
+        version=settings.APP_VERSION,
         timestamp=datetime.now(),
         dependencies=dependencies,
     )

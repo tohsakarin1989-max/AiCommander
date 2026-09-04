@@ -71,4 +71,7 @@ jobs:
           sh -n scripts/preflight-production.sh
           sh -n scripts/backup-production.sh
           sh -n scripts/deploy-production.sh
+          sh -n scripts/verify-test-deployment.sh
+          sh -n scripts/verify-backup-restore.sh
+          sh -n scripts/rehearse-v201-test.sh
           sh -n scripts/verify-agent-lab.sh

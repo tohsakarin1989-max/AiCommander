@@ -214,11 +214,14 @@ aicommander.example.org  A  <服务器 IPv4>
 ## 7. 准备发布代码
 
 生产服务器应使用已评审的 Git 标签或固定提交，不要直接复制开发目录中的临时文件。
+`v2.0.1-test` 尚未通过现场门槛、未创建正式标签时，应固定到 PR #5 最终评审提交：
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/aicommander
-git clone --branch v2.0.0 --depth 1 <代码仓库地址> /opt/aicommander
+git clone <代码仓库地址> /opt/aicommander
 cd /opt/aicommander
+git checkout <PR #5 最终评审提交号>
+test "$(cat VERSION)" = "2.0.1-test"
 git status --short
 git rev-parse HEAD
 chmod 0755 scripts/*.sh backend/docker-entrypoint.sh
@@ -263,11 +266,15 @@ nano .env.production
 ```dotenv
 APP_DOMAIN=aicommander.example.org
 APP_PORT=3000
-APP_VERSION=2.0.0
+APP_VERSION=2.0.1-test
 SECRETS_DIR=./secrets
+BACKUP_DIR=./backups/postgres
 ENABLE_BONUS_ACCOUNTING=false
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 CELERY_CONCURRENCY=2
+ENABLE_AGENT_LAB=false
+AGENT_MODE=off
+AGENT_MUTATIONS_ENABLED=false
 ```
 
 字段说明：
@@ -323,7 +330,16 @@ curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
 五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
-`ok`。
+`ok`，并返回 `version=2.0.1-test`。随后执行自动验收：
+
+```bash
+sudo ./scripts/verify-test-deployment.sh
+```
+
+脚本同时验证前端安全响应头、运行版本、Agent 关闭态、匿名业务接口为 401，以及
+`/docs`、`/redoc`、`/openapi.json` 均为 404。默认把响应和
+`verification.manifest` 写入 `backups/deployment-evidence/<时间>/`；该目录不得包含
+会话 Cookie、初始化令牌或任何业务样本。
 
 ## 10. 迁移现有 SQLite 业务数据
 
@@ -584,9 +600,28 @@ sudo ./scripts/backup-production.sh
 建议策略：保留最近 7 个每日备份、4 个每周备份、12 个每月备份，并至少每天把一份复制
 到异机或受控备份存储。只有实际恢复演练成功，备份才算可用。
 
-### 17.2 恢复演练
+### 17.2 非破坏性恢复验证（每次测试部署必做）
 
-恢复会覆盖当前数据库，必须在维护窗口执行：
+先创建一次迁移后的新备份，再把该备份恢复到临时数据库。脚本验证 SHA-256、恢复过程、
+表数量和 Alembic 版本后会删除临时数据库，不停止服务，也不覆盖当前业务库：
+
+```bash
+cd /opt/aicommander
+sudo ./scripts/backup-production.sh
+sudo ./scripts/verify-backup-restore.sh
+```
+
+通过后会在备份旁生成同名 `.restore-verified` 证据文件。必须把备份、`.sha256`、
+`.manifest` 和 `.restore-verified` 一并复制到受控的异机存储。若要验证指定备份：
+
+```bash
+sudo BACKUP_FILE=/opt/aicommander/backups/postgres/指定备份.dump \
+  ./scripts/verify-backup-restore.sh
+```
+
+### 17.3 灾难恢复（会覆盖业务库）
+
+以下流程会覆盖当前数据库，只允许在已审批的维护窗口或独立测试服务器执行：
 
 ```bash
 cd /opt/aicommander
@@ -603,7 +638,7 @@ sudo docker compose --env-file .env.production \
 curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
-恢复后核对案件数、用户、模型配置和抽样业务记录。首次恢复演练应在独立测试服务器进行。
+恢复后核对案件数、用户、模型配置和抽样业务记录。首次灾难恢复演练应在独立测试服务器进行。
 
 ## 18. Redis 和密钥备份
 
@@ -669,8 +704,8 @@ sudo docker compose --env-file .env.production \
 sudo docker pull postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
 sudo docker pull redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 sudo docker save -o aicommander-v2-images.tar \
-  aicommander-backend:2.0.0 \
-  aicommander-frontend:2.0.0 \
+  aicommander-backend:2.0.1-test \
+  aicommander-frontend:2.0.1-test \
   postgres:16-alpine \
   redis:7-alpine
 sha256sum aicommander-v2-images.tar
@@ -747,7 +782,7 @@ sudo du -sh /var/lib/docker /opt/aicommander/backups
 - [ ] 正式发布标签、服务器提交号和镜像版本一致。
 - [ ] `.env.production`、四个 secrets 和数据库备份均已加密异机保存。
 - [ ] SQLite 正式迁移报告无数量差异，抽查至少 20 起案件。
-- [ ] 167 项后端测试、69 项前端测试和构建在发布提交上通过。
+- [ ] 221 项后端测试、78 项前端测试和构建在发布提交上通过。
 - [ ] Python 与前端依赖审计无已知高危漏洞。
 - [ ] PostgreSQL、Redis、后端、Celery、前端全部健康。
 - [ ] 只有 80/443 对业务网络开放，数据库、Redis、后端不直接暴露。
