@@ -195,9 +195,14 @@ class AgentRunExecutor:
             else:
                 run.status = "completed"
             run.completed_at = datetime.utcnow() if run.status != "waiting_approval" else None
+            execution_mode = "agent_lab"
+            if degraded:
+                execution_mode = "deterministic_fallback"
+            elif self.narrator is None:
+                execution_mode = "deterministic"
             run.result_summary = {
                 **combined,
-                "mode": "deterministic_fallback" if degraded or self.narrator is None else "agent_lab",
+                "mode": execution_mode,
                 "pending_approval_count": pending_approvals,
             }
             AgentRunService.append_event(

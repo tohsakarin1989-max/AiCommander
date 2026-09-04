@@ -5,7 +5,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "2.0.3-stable"
+    APP_VERSION: str = "2.1.0-stable"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     AGENT_MAX_STEPS: int = 8
     AGENT_TIMEOUT_SECONDS: int = 120
     AGENT_REDIS_QUEUE: str = "agent_lab"
-    AGENT_PROVIDER: Literal["deterministic", "openai_agents"] = "openai_agents"
-    AGENT_MODEL: str = "gpt-5-mini"
+    AGENT_PROVIDER: Literal["deterministic", "openai_agents"] = "deterministic"
+    AGENT_MODEL: str = ""
     AGENT_USE_EXTERNAL_MODEL: bool = False
     AGENT_SDK_TRACING_ENABLED: bool = False
     AGENT_APPROVAL_TTL_HOURS: int = 24
@@ -60,6 +60,15 @@ class Settings(BaseSettings):
             raise ValueError("启用 Agent 运行模式前必须先开启 ENABLE_AGENT_LAB")
         if self.AGENT_USE_EXTERNAL_MODEL and self.AGENT_EXTERNAL_DATA_POLICY == "local_only":
             raise ValueError("local_only 数据策略不允许调用外部 Agent 模型")
+        if self.AGENT_USE_EXTERNAL_MODEL:
+            if self.AGENT_PROVIDER == "deterministic":
+                raise ValueError("启用外部模型时必须显式选择外部 Agent 适配器")
+            if self.AGENT_PROVIDER == "openai_agents" and not (
+                self.OPENAI_API_KEY and self.OPENAI_API_KEY.strip()
+            ):
+                raise ValueError("OpenAI Agents 适配器需要 OPENAI_API_KEY")
+            if not self.AGENT_MODEL.strip():
+                raise ValueError("启用外部模型时 AGENT_MODEL 不能为空")
         if not 1 <= self.AGENT_MAX_STEPS <= 32:
             raise ValueError("AGENT_MAX_STEPS 必须在 1-32 之间")
         if not 10 <= self.AGENT_TIMEOUT_SECONDS <= 1800:

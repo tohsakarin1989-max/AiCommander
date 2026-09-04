@@ -173,6 +173,7 @@ def health_agents():
             "mode": "off",
             "queue": settings.AGENT_REDIS_QUEUE,
             "worker": "not_required",
+            "execution_engine": "deterministic",
             "external_model": "disabled",
             "affects_core_readiness": False,
         }
@@ -206,6 +207,11 @@ def health_agents():
         "queue": settings.AGENT_REDIS_QUEUE,
         "redis": redis_health.model_dump(mode="json"),
         "worker": worker_status,
+        "execution_engine": (
+            settings.AGENT_PROVIDER
+            if settings.AGENT_USE_EXTERNAL_MODEL
+            else "deterministic"
+        ),
         "external_model": external_model,
         "external_data_policy": settings.AGENT_EXTERNAL_DATA_POLICY,
         "mutations_enabled": settings.AGENT_MUTATIONS_ENABLED,

@@ -26,6 +26,15 @@ DROP_KEYS = {
     "latitude",
     "longitude",
     "geometry",
+    "attributes",
+    "tags",
+    "source",
+    "source_type",
+    "modus_operandi",
+    "occurred_time",
+    "created_at",
+    "updated_at",
+    "last_seen_at",
     "police_phone",
     "phone",
     "id_card",
@@ -40,6 +49,7 @@ SECRET_KEYS = DROP_KEYS | {
     "asset_name",
     "well_name",
     "person_name",
+    "owner_note",
 }
 
 

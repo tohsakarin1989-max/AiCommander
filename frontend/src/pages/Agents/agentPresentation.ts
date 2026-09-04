@@ -31,12 +31,23 @@ const EVENT_LABELS: Record<string, string> = {
   dispatch_failed: '独立队列不可用',
 }
 
+const EXECUTION_MODE_LABELS: Record<string, string> = {
+  deterministic: '内网规则引擎',
+  agent_lab: '脱敏模型辅助',
+  deterministic_fallback: '模型降级，内网规则接管',
+}
+
 export function agentStatusLabel(status: string): string {
   return STATUS_LABELS[status] ?? '未知状态'
 }
 
 export function agentEventLabel(eventType: string): string {
   return EVENT_LABELS[eventType] ?? eventType
+}
+
+export function agentExecutionModeLabel(mode: string | undefined): string {
+  if (!mode) return '等待执行'
+  return EXECUTION_MODE_LABELS[mode] ?? '受控执行'
 }
 
 export function canReviewAgentRun(role: UserRole | undefined): boolean {
