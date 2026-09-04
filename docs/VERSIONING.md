@@ -1,11 +1,10 @@
 # Version Management
 
-This repository uses a small, clean branch model:
+This repository uses milestone releases to keep GitHub work concentrated:
 
 - `main`: stable public baseline. Keep it releasable.
-- `develop`: integration branch for reviewed ongoing work.
-- `feature/<short-name>`: feature work branched from `develop`.
-- `fix/<short-name>`: bug fixes branched from `develop`, or from `main` for urgent release fixes.
+- Local `codex/vMAJOR.MINOR.PATCH-stable` branches: incremental development and local verification. Do not push each internal checkpoint.
+- Internal labels such as `dev`, `shadow`, `demo`, and `rc`: local progress only; no GitHub tag or Release.
 - `vMAJOR.MINOR.PATCH[-CHANNEL]`: release tags on `main`, where the optional
   channel suffix records a controlled release stage such as `stable`.
 
@@ -13,18 +12,19 @@ Rules:
 
 - Do not commit real secrets, private case data, local databases, office files, or local assistant settings.
 - Keep `.env` local; use `.env.example` for placeholders only.
-- Before pushing release changes, run frontend tests, typecheck, build, and relevant backend tests.
-- Squash or merge reviewed work into `develop`, then fast-forward or merge `develop` into `main` for a release.
+- Public GitHub updates are normally limited to completed minor milestones such as `v2.1.0-stable`, `v2.2.0-stable`, and `v2.3.0-stable`.
+- Before the single milestone push, complete backend tests, frontend tests, typecheck, build, migration, security, and isolated deployment rehearsal locally.
+- Publish one release branch and one pull request, wait for the quality gate, merge to `main`, then create one immutable tag and Release.
+- Routine corrections stay local and roll into the next milestone. A production-blocking or security issue may use an exceptional `v2.x.1-hotfix` release.
 
 Current stable baseline:
 
-- Version: `2.0.3-stable`
-- Release branch: `codex/v2.0-production`
-- Release tag: `v2.0.3-stable` on `main` after review and merge.
+- Version: `2.1.0-stable`
+- Release branch: `codex/v2.1.0-stable`
+- Release tag: `v2.1.0-stable` on `main` after review and merge.
 - The initial public baseline was created from a sanitized single-commit history;
   the v2.0 release merge reconnects the reviewed development history.
-- Purpose: stable code baseline for controlled test-server deployment, with
-  Agent Lab disabled by default.
+- Purpose: stable code baseline for controlled Agent Lab test deployment. Agent Lab and external models remain disabled by default; enabling Agent Lab still uses the internal deterministic engine unless an external adapter is explicitly approved and configured.
 - Repository automation and isolated production rehearsal are release gates.
   Target-server networking, backup evidence, designated-user testing, and the
   business-efficiency baseline remain deployment acceptance gates and must not

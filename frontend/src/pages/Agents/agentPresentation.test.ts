@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   agentErrorMessage,
+  agentExecutionModeLabel,
   agentEventLabel,
   agentResultText,
   agentStatusLabel,
@@ -14,6 +15,12 @@ describe('agent presentation', () => {
     expect(agentStatusLabel('waiting_approval')).toBe('等待人工复核')
     expect(agentStatusLabel('degraded')).toBe('降级完成')
     expect(agentStatusLabel('expired')).toBe('审批已过期')
+  })
+
+  it('distinguishes the primary local rules engine from model fallback', () => {
+    expect(agentExecutionModeLabel('deterministic')).toBe('内网规则引擎')
+    expect(agentExecutionModeLabel('agent_lab')).toBe('脱敏模型辅助')
+    expect(agentExecutionModeLabel('deterministic_fallback')).toBe('模型降级，内网规则接管')
   })
 
   it('only lets admins review candidate mutations', () => {

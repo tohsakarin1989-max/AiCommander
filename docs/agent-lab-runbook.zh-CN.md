@@ -12,7 +12,7 @@
 - 独立 Celery 队列 `agent_lab` 和单并发 `agent-worker`，最多 8 个工具步骤，默认 120 秒超时，普通失败最多重试 2 次。
 - `off`、`shadow`、`assist` 三种模式；前后端双开关隐藏入口。
 - 只读分析、工具白名单、脱敏外发、管理员审批、24 小时审批过期、重复提交幂等、源数据版本复核。
-- OpenAI Agents SDK 可选叙述层。确定性内网工具先形成事实与证据，外部模型只接收脱敏特征；默认不调用外部模型、不启用 SDK 追踪。
+- 内网规则引擎是默认主执行层，不需要任何模型密钥，也不会向外部发送数据。OpenAI Agents SDK 仅作为可选叙述适配器；确定性内网工具先形成事实与证据，外部模型只接收脱敏特征，默认不调用外部模型、不启用 SDK 追踪。
 - 独立 `/health/agents`、JSON 事件轮询、SSE 快照、取消和管理员重放。
 
 当前没有完成、必须在目标环境执行的事项：服务器安装、真实业务人员试用、备份恢复演练、
@@ -52,6 +52,8 @@ AGENT_MUTATIONS_ENABLED=true
 ENABLE_AGENT_LAB=false
 AGENT_MODE=off
 AGENT_MUTATIONS_ENABLED=false
+AGENT_PROVIDER=deterministic
+AGENT_MODEL=
 AGENT_USE_EXTERNAL_MODEL=false
 AGENT_SDK_TRACING_ENABLED=false
 ```
@@ -77,6 +79,8 @@ curl -fsS http://127.0.0.1:3000/health/agents
 ENABLE_AGENT_LAB=true
 AGENT_MODE=shadow
 AGENT_MUTATIONS_ENABLED=false
+AGENT_PROVIDER=deterministic
+AGENT_MODEL=
 AGENT_USE_EXTERNAL_MODEL=false
 ```
 
@@ -123,16 +127,29 @@ docker compose --profile agent-lab --env-file .env.production \
 
 ## 7. 数据出域和模型开关
 
-默认 `AGENT_USE_EXTERNAL_MODEL=false`。在完成安全评审前保持关闭。若开启，必须同时保持：
+默认配置如下，完整案件质检、地图质检、双域融合和证据报告均可在没有 API 密钥、没有外网的情况下运行：
+
+```text
+AGENT_PROVIDER=deterministic
+AGENT_MODEL=
+AGENT_USE_EXTERNAL_MODEL=false
+```
+
+`v2.1.0-stable` 默认生产镜像不安装 OpenAI Agents SDK，也不支持在现场直接打开外部模型开关。
+若后续在隔离实验环境选择该 SDK 作为可选叙述层，须先完成数据出域、供应商、密钥保管和
+网络策略评审，再基于 `backend/requirements-agent-openai.txt` 构建独立实验镜像，并显式配置：
 
 ```text
 AGENT_EXTERNAL_DATA_POLICY=redacted_only
 AGENT_PROVIDER=openai_agents
+AGENT_MODEL=<经评审的模型名称>
+OPENAI_API_KEY=<仅保存在受控环境中>
 AGENT_SDK_TRACING_ENABLED=false
 ```
 
 内网确定性工具先计算事实、距离、风险因素和证据关联。外发层删除姓名、电话、证件号、车牌、
-完整案情、地址、案件编号、井名、精确经纬度和内部路径，只保留临时化名、区间和统计特征。
+完整案情、作案方式原文、线索来源原文、精确案发时间、地址、案件编号、井名、精确经纬度、
+地图扩展属性和内部路径，只保留临时化名、分类标签、区间和统计特征。
 原始查询文本不会传给外部模型。若开启 SDK 追踪，代码仍强制 `trace_include_sensitive_data=false`；
 启用前必须另行完成内网安全评审。
 
@@ -195,9 +212,5 @@ Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。�
 | `v2.0.1-test` | Agent 默认关闭、独立健康检查、增量迁移 | 已完成仓库回归与本机隔离部署演练 |
 | `v2.0.2-stable` | 首次 stable 发布，保留为不可变历史标签 | 已由 `v2.0.3-stable` 安全补丁替代 |
 | `v2.0.3-stable` | 核心流程不依赖 Agent；规范化会话令牌校验；前期测试部署稳定代码基线 | 目标服务器部署、指定用户试用、耗时和故障基线 |
-| `v2.1-agent-lab` | 队列、状态、轨迹、成果、审批、隐藏入口 | 中断恢复和接口性能对照 |
-| `v2.1.1-shadow` | 三类只读工具、规则降级、零正式写入 | 脱敏真实样本影子结果 |
-| `v2.1-demo` | 候选、管理员审批、幂等和源版本校验 | 隔离环境全链路录像/记录 |
-| `v2.1-competition` | 业务评测 Harness 和故障边界 | 五次演示、人工评分和安全说明 |
-| `v2.1.2-hardening` | 权限、脱敏、超时、重试回归 | 并发、断网、Redis/Worker 故障注入 |
+| `v2.1.0-stable` | 内网规则优先的 Agent Runtime、独立队列、状态、轨迹、成果、审批、隐藏入口、三类只读工具、证据报告、幂等、源版本校验、脱敏与评测 Harness | 目标服务器中断恢复和性能对照、脱敏真实样本影子结果、五次连续演示、人工评分和安全说明 |
 | `v2.2-pilot` | 地图候选白名单和一键关闭 | 指定用户试用、零越权写入签字 |

@@ -50,6 +50,8 @@ def test_agent_health_is_off_by_default_and_never_affects_core_readiness(monkeyp
     assert payload["status"] == "off"
     assert payload["version"] == settings.APP_VERSION
     assert payload["worker"] == "not_required"
+    assert payload["execution_engine"] == "deterministic"
+    assert payload["external_model"] == "disabled"
     assert payload["affects_core_readiness"] is False
 
 
@@ -76,6 +78,7 @@ def test_agent_health_requires_the_dedicated_worker(monkeypatch):
     payload = response.json()
     assert payload["status"] == "degraded"
     assert payload["worker"] == "unavailable"
+    assert payload["execution_engine"] == "deterministic"
     assert payload["affects_core_readiness"] is False
 
 

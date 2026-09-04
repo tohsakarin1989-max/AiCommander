@@ -20,6 +20,7 @@ import type { AgentRun, AgentRunApproval, AgentRunTaskType } from '../../types'
 import {
   agentErrorMessage,
   agentEventLabel,
+  agentExecutionModeLabel,
   agentResultText,
   agentStatusLabel,
   canReviewAgentRun,
@@ -249,7 +250,7 @@ const AgentCenter: React.FC = () => {
       </div>
 
       <div className="agent-safety-banner">
-        原始案件、人员、井名和精确坐标留在内网；外部模型仅接收临时别名和派生特征。所有候选修正必须人工审批。
+        默认由内网规则引擎完成分析，不需要模型密钥、也不会向外部发送数据；如经安全评审启用外部模型，模型也只能接收临时别名和派生特征。所有候选修正必须人工审批。
       </div>
 
       <div className="card agent-create-card">
@@ -341,7 +342,11 @@ const AgentCenter: React.FC = () => {
           ) : (
             <>
               <div className="agent-section-head">
-                <div><strong>任务 {detail.id.slice(0, 8)}</strong> <StatusBadge status={detail.status} /></div>
+                <div>
+                  <strong>任务 {detail.id.slice(0, 8)}</strong>{' '}
+                  <StatusBadge status={detail.status} />{' '}
+                  <Tag color="cyan">{agentExecutionModeLabel(result?.mode)}</Tag>
+                </div>
                 <Space>
                   {isAgentRunActive(detail.status) && (
                     <button className="btn-ghost" onClick={() => cancelMutation.mutate(detail.id)}>取消</button>

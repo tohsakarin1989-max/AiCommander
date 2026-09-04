@@ -109,8 +109,8 @@ printf '%s\n' \
     'AGENT_MAX_STEPS=8' \
     'AGENT_TIMEOUT_SECONDS=120' \
     'AGENT_REDIS_QUEUE=agent_lab' \
-    'AGENT_PROVIDER=openai_agents' \
-    'AGENT_MODEL=gpt-5-mini' \
+    'AGENT_PROVIDER=deterministic' \
+    'AGENT_MODEL=' \
     'AGENT_USE_EXTERNAL_MODEL=false' \
     'AGENT_SDK_TRACING_ENABLED=false' \
     'AGENT_APPROVAL_TTL_HOURS=24' \

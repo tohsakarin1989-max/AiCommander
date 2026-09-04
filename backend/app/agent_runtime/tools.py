@@ -390,7 +390,18 @@ class AgentToolRegistry:
                 },
                 "modus_tags": modus_tags,
             })
-            inferences.extend(context_payload["risk_conditions"])
+            # JurisdictionService 的通用上下文会把作案方式、线索来源等原文
+            # 拼进描述。Agent 外发摘要只保留确定性的空间条件和不可逆标签，
+            # 避免自由文本经由推断列表绕过字段级脱敏。
+            inferences.extend(
+                item
+                for item in context_payload["risk_conditions"]
+                if not item.startswith(("已记录作案方式：", "发现来源为"))
+            )
+            if modus_tags:
+                inferences.append(
+                    f"案件 {case.id} 已形成作案手法标签：{'、'.join(modus_tags)}，仅用于条件检索。"
+                )
             recommendations.extend(context_payload["prevention_opportunities"])
             if not context_payload["has_geo"]:
                 gaps.append(f"案件 {case.id} 缺少经纬度，无法形成空间依据。")

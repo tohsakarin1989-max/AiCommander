@@ -83,11 +83,22 @@ def test_external_payload_redactor_removes_identifiers_and_exact_locations():
         "location": "北区英平6002井东侧便道",
         "latitude": 45.612345,
         "longitude": 124.712345,
+        "occurred_time": "2026-08-20T02:10:00",
+        "modus_operandi": "张三通过内部便道实施作案",
+        "source_type": "王五电话举报",
+        "source": "/srv/internal/重点井台账.xlsx",
+        "attributes": {"owner_note": "联系人李四13900139000"},
+        "tags": ["英平6002井", "内部专用"],
         "asset_id": 8,
         "name": "英平6002井",
         "distance_km": 0.83,
         "risk_score": 62,
         "evidence_refs": ["case:12", "asset:8"],
+        "inferences": [
+            "已记录作案方式：张三通过内部便道实施作案",
+            "发现来源为王五电话举报",
+            "资料来自/srv/internal/重点井台账.xlsx",
+        ],
     }
 
     result = AgentPayloadRedactor().redact(payload)
@@ -103,6 +114,11 @@ def test_external_payload_redactor_removes_identifiers_and_exact_locations():
         "英平6002井",
         "45.612345",
         "124.712345",
+        "2026-08-20T02:10:00",
+        "张三通过内部便道实施作案",
+        "王五电话举报",
+        "/srv/internal/重点井台账.xlsx",
+        "联系人李四13900139000",
     ):
         assert secret not in serialized
     assert result.payload["case_id"] == "CASE-001"
@@ -270,12 +286,36 @@ def test_executor_allows_an_explicit_deterministic_narrator(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rule_only_execution_is_primary_mode_not_a_degraded_fallback(agent_db: Session):
+    case = _add_case(agent_db)
+    run = AgentRunService.create_run(
+        agent_db,
+        task_type="case_data_quality",
+        query="仅使用内网规则检查案件质量",
+        case_ids=[case.id],
+        asset_ids=[],
+        mode="shadow",
+        created_by=7,
+    )
+
+    completed = await AgentRunExecutor(narrator=None).execute(agent_db, run.id)
+
+    assert completed.status == "completed"
+    assert completed.result_summary["mode"] == "deterministic"
+    assert completed.model_provider is None
+    assert completed.model_name is None
+
+
+@pytest.mark.asyncio
 async def test_executor_persists_trace_artifacts_approvals_and_redacts_model_input(agent_db: Session):
     case = _add_case(agent_db)
+    case.modus_operandi = "张三联系李四13900139000后从内部便道进入"
+    case.source_type = "王五电话举报"
+    agent_db.commit()
     asset = _add_asset(agent_db)
     run = AgentRunService.create_run(
         agent_db,
-        task_type="map_data_quality",
+        task_type="evidence_report",
         query="检查英平6002井及案件AIC-2026-0001，联系人张三13800138000",
         case_ids=[case.id],
         asset_ids=[asset.id],
@@ -296,11 +336,22 @@ async def test_executor_persists_trace_artifacts_approvals_and_redacts_model_inp
         "run_completed",
     }
     assert completed.artifacts
-    assert completed.artifacts[0].evidence_refs == [f"asset:{asset.id}"]
+    assert completed.artifacts[0].evidence_refs == [f"case:{case.id}", f"asset:{asset.id}"]
     assert completed.approvals
     assert all(item.status == "pending" for item in completed.approvals)
     external_payload = str(narrator.payload)
-    for secret in ("英平6002井", "AIC-2026-0001", "张三", "13800138000", "45.613", "124.713"):
+    for secret in (
+        "英平6002井",
+        "AIC-2026-0001",
+        "张三",
+        "李四",
+        "王五",
+        "13800138000",
+        "13900139000",
+        "2026-08-20T02:10:00",
+        "45.613",
+        "124.713",
+    ):
         assert secret not in external_payload
 
 
