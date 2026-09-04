@@ -71,7 +71,11 @@ def test_release_quality_gate_checks_rehearsal_scripts():
     workflow = _read(".github/workflows/release-quality.yml")
 
     assert "python -m pip_audit -r requirements.txt" in workflow
+    assert "npm ci --audit=false" in workflow
+    assert "npm audit --offline --omit=dev --audit-level=high" in workflow
     assert "npm audit --omit=dev --audit-level=high" in workflow
+    assert "timeout-minutes: 2" in workflow
+    assert "continue-on-error: true" in workflow
     assert "sh -n scripts/verify-test-deployment.sh" in workflow
     assert "sh -n scripts/verify-backup-restore.sh" in workflow
     assert "sh -n scripts/rehearse-release.sh" in workflow

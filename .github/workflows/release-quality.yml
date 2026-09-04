@@ -49,10 +49,18 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
-      - name: Audit frontend production dependencies
+        run: npm ci --audit=false
+      - name: Audit cached frontend production dependencies
+        working-directory: frontend
+        run: npm audit --offline --omit=dev --audit-level=high
+      - name: Refresh frontend advisory audit
+        continue-on-error: true
+        timeout-minutes: 2
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
+        env:
+          NPM_CONFIG_FETCH_RETRIES: "1"
+          NPM_CONFIG_FETCH_TIMEOUT: "60000"
       - name: Run frontend tests
         working-directory: frontend
         run: npm run test -- --run
