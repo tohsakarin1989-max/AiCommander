@@ -13,7 +13,11 @@ from app.models.user import AuditLog, User
 from app.security import AuthMiddleware
 
 
-def _build_client() -> tuple[TestClient, sessionmaker]:
+def _build_client(
+    *,
+    environment: str = "development",
+    bootstrap_token: str = "bootstrap-test-token",
+) -> tuple[TestClient, sessionmaker]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -23,6 +27,7 @@ def _build_client() -> tuple[TestClient, sessionmaker]:
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     app = FastAPI()
+    app.state.environment = environment
 
     def override_get_db():
         db = session_factory()
@@ -46,7 +51,7 @@ def _build_client() -> tuple[TestClient, sessionmaker]:
         AuthMiddleware,
         session_factory=session_factory,
         auth_required=True,
-        bootstrap_token="bootstrap-test-token",
+        bootstrap_token=bootstrap_token,
         secure_cookie=False,
         allowed_origins=("http://testserver",),
     )
@@ -85,7 +90,11 @@ def test_bootstrap_requires_one_time_token_and_creates_admin_session():
     created = _bootstrap_admin(client)
 
     assert status.status_code == 200
-    assert status.json() == {"initialized": False, "bootstrap_available": True}
+    assert status.json() == {
+        "initialized": False,
+        "bootstrap_available": True,
+        "local_bootstrap_available": True,
+    }
     assert denied.status_code == 403
     assert created.status_code == 201
     assert created.json()["user"]["role"] == "admin"
@@ -104,6 +113,42 @@ def test_bootstrap_requires_one_time_token_and_creates_admin_session():
         assert user.password_hash != "StrongPassword!2026"
         assert user.role == "admin"
         assert db.query(AuditLog).filter(AuditLog.action == "auth.bootstrap").count() == 1
+
+
+def test_local_development_bootstrap_does_not_require_token():
+    client, _ = _build_client(bootstrap_token="")
+
+    status_response = client.get("/api/auth/bootstrap-status")
+    created = client.post(
+        "/api/auth/bootstrap-local",
+        json={
+            "username": "administrator",
+            "display_name": "系统管理员",
+            "password": "StrongPassword!2026",
+        },
+    )
+
+    assert status_response.json() == {
+        "initialized": False,
+        "bootstrap_available": False,
+        "local_bootstrap_available": True,
+    }
+    assert created.status_code == 201
+    assert created.json()["user"]["role"] == "admin"
+    assert client.get("/api/protected").status_code == 200
+
+
+def test_local_bootstrap_is_closed_outside_development():
+    client, _ = _build_client(environment="production", bootstrap_token="")
+
+    status_response = client.get("/api/auth/bootstrap-status")
+    denied = client.post(
+        "/api/auth/bootstrap-local",
+        json={"username": "administrator", "password": "StrongPassword!2026"},
+    )
+
+    assert status_response.json()["local_bootstrap_available"] is False
+    assert denied.status_code == 403
 
 
 def test_login_lockout_logout_and_session_revocation():

@@ -7,6 +7,7 @@ from app.models.system_config import SystemConfig
 from app.models.conclusion import Conclusion
 from app.models.conclusion_review import ConclusionReview
 from app.models.agent_task import AgentTask
+from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
 from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
 from app.models.patrol import PatrolRecord, AreaRiskAssessment
 from app.models.meeting_template import MeetingTemplate
@@ -36,6 +37,10 @@ __all__ = [
     "Conclusion",
     "ConclusionReview",
     "AgentTask",
+    "AgentRun",
+    "AgentEvent",
+    "AgentArtifact",
+    "AgentApproval",
     # 事件和区域研判相关
     "Event",
     "AreaProfile",

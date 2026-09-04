@@ -7,31 +7,23 @@ cd "$ROOT_DIR"
 COMPOSE_FILE="docker-compose.production.yml"
 ENV_FILE=".env.production"
 
-if [ ! -f "$ENV_FILE" ]; then
-    echo "缺少 $ENV_FILE，请先执行 ./scripts/init-production.sh" >&2
-    exit 1
-fi
-
-configured_secrets_dir="$(sed -n 's/^SECRETS_DIR=//p' "$ENV_FILE" | tail -1)"
-configured_secrets_dir="${configured_secrets_dir:-./secrets}"
-case "$configured_secrets_dir" in
-    /*) SECRETS_DIR="$configured_secrets_dir" ;;
-    *) SECRETS_DIR="$ROOT_DIR/${configured_secrets_dir#./}" ;;
-esac
-
-for secret in db_password redis_password secret_key bootstrap_token; do
-    if [ ! -s "$SECRETS_DIR/$secret" ]; then
-        echo "缺少生产密钥 $SECRETS_DIR/$secret" >&2
-        exit 1
+compose() {
+    if [ "$(sed -n 's/^ENABLE_AGENT_LAB=//p' "$ENV_FILE" | tail -1)" = "true" ]; then
+        docker compose --profile agent-lab --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+    else
+        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
     fi
-done
+}
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d postgres redis
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm backend alembic upgrade head
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+./scripts/preflight-production.sh
+compose build --pull
+compose run --rm --no-deps backend \
+    python -c "from app.config import settings; print('生产应用配置校验通过')"
+compose up -d --wait --wait-timeout 120 postgres redis
+./scripts/backup-production.sh
+compose run --rm backend alembic upgrade head
+compose up -d --remove-orphans --wait --wait-timeout 180
+compose ps
 
 APP_PORT="$(sed -n 's/^APP_PORT=//p' "$ENV_FILE" | tail -1)"
 APP_PORT="${APP_PORT:-3000}"

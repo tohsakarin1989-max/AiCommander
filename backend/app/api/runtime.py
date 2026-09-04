@@ -61,5 +61,5 @@ def runtime_status(db: Session = Depends(get_db)):
         active_model_count=active_models,
         map_provider=map_provider,
         map_configured=map_configured,
-        version="2.0.0",
+        version=settings.APP_VERSION,
     )

@@ -430,7 +430,9 @@ def test_graph_serial_accepts_frontend_request_shape(api_db_session: Session):
     assert "nodes" in response.json()
 
 
-def test_agent_run_accepts_frontend_request_shape(api_db_session: Session):
+def test_agent_run_accepts_frontend_request_shape(api_db_session: Session, monkeypatch):
+    monkeypatch.setattr(agents.settings, "ENABLE_AGENT_LAB", True)
+    monkeypatch.setattr(agents.settings, "AGENT_MODE", "shadow")
     client = _build_client(api_db_session)
 
     response = client.post("/api/agents/run", json={"query": "研判最近案件"})
@@ -441,6 +443,18 @@ def test_agent_run_accepts_frontend_request_shape(api_db_session: Session):
     assert payload["result"]["steps"]
     assert "facts" in payload["result"]
     assert "自动侦查" not in payload["result"]["result"]
+
+
+def test_legacy_agent_route_is_hidden_when_agent_lab_is_off(api_db_session: Session, monkeypatch):
+    monkeypatch.setattr(agents.settings, "ENABLE_AGENT_LAB", False)
+    monkeypatch.setattr(agents.settings, "AGENT_MODE", "off")
+
+    response = _build_client(api_db_session).post(
+        "/api/agents/run",
+        json={"query": "不应执行"},
+    )
+
+    assert response.status_code == 404
 
 
 def test_suggestions_route_returns_queue_shape(api_db_session: Session):

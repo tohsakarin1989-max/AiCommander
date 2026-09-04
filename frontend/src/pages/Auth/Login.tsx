@@ -14,10 +14,11 @@ interface LoginFormValues {
 }
 
 export default function Login() {
-  const { phase, bootstrapAvailable, login, bootstrap } = useAuth()
+  const { phase, bootstrapAvailable, localBootstrapAvailable, login, bootstrap } = useAuth()
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const isBootstrap = phase === 'bootstrap'
+  const canBootstrap = localBootstrapAvailable || bootstrapAvailable
 
   const submit = async (values: LoginFormValues) => {
     setError('')
@@ -76,7 +77,15 @@ export default function Login() {
           </div>
         </div>
 
-        {isBootstrap && !bootstrapAvailable && (
+        {isBootstrap && localBootstrapAvailable && (
+          <Alert
+            type="info"
+            showIcon
+            message="本机首次初始化"
+            description="当前为本机测试环境，可直接创建首位管理员；正式部署时此入口会自动关闭。"
+          />
+        )}
+        {isBootstrap && !canBootstrap && (
           <Alert
             type="warning"
             showIcon
@@ -94,13 +103,15 @@ export default function Login() {
         >
           {isBootstrap && (
             <>
-              <Form.Item
-                label="一次性初始化令牌"
-                name="bootstrap_token"
-                rules={[{ required: true, message: '请输入服务器初始化令牌' }]}
-              >
-                <Input.Password prefix={<LockOutlined />} autoComplete="off" />
-              </Form.Item>
+              {!localBootstrapAvailable && (
+                <Form.Item
+                  label="一次性初始化令牌"
+                  name="bootstrap_token"
+                  rules={[{ required: true, message: '请输入服务器初始化令牌' }]}
+                >
+                  <Input.Password prefix={<LockOutlined />} autoComplete="off" />
+                </Form.Item>
+              )}
               <Form.Item label="显示名称" name="display_name">
                 <Input placeholder="例如：系统管理员" maxLength={100} />
               </Form.Item>
@@ -147,7 +158,7 @@ export default function Login() {
             htmlType="submit"
             block
             loading={submitting}
-            disabled={isBootstrap && !bootstrapAvailable}
+            disabled={isBootstrap && !canBootstrap}
           >
             {isBootstrap ? '创建管理员并进入系统' : '登录系统'}
           </Button>

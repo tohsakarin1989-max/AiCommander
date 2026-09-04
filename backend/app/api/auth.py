@@ -37,6 +37,7 @@ class UserResponse(BaseModel):
 class BootstrapStatusResponse(BaseModel):
     initialized: bool
     bootstrap_available: bool
+    local_bootstrap_available: bool
 
 
 class BootstrapRequest(BaseModel):
@@ -97,28 +98,24 @@ def _set_session_cookie(response: Response, token: str, expires_at: datetime, re
     )
 
 
-@router.get("/bootstrap-status", response_model=BootstrapStatusResponse)
-def bootstrap_status(request: Request, db: Session = Depends(get_db)):
-    token = getattr(request.app.state, "auth_bootstrap_token", settings.BOOTSTRAP_TOKEN)
-    return BootstrapStatusResponse(
-        initialized=db.query(User.id).first() is not None,
-        bootstrap_available=bool(token),
-    )
+def _local_bootstrap_available(request: Request) -> bool:
+    environment = getattr(request.app.state, "environment", settings.ENVIRONMENT)
+    if environment != "development":
+        return False
+
+    client_host = request.client.host.lower() if request.client else ""
+    request_host = (request.url.hostname or "").lower()
+    local_clients = {"127.0.0.1", "::1", "localhost", "testclient"}
+    local_hosts = {"127.0.0.1", "::1", "localhost", "testserver"}
+    return client_host in local_clients and request_host in local_hosts
 
 
-@router.post("/bootstrap", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-def bootstrap(
+def _create_bootstrap_session(
     payload: BootstrapRequest,
     request: Request,
     response: Response,
-    x_bootstrap_token: Optional[str] = Header(default=None),
-    db: Session = Depends(get_db),
-):
-    expected = getattr(request.app.state, "auth_bootstrap_token", settings.BOOTSTRAP_TOKEN)
-    if not expected:
-        raise HTTPException(status_code=503, detail="服务器未启用首次管理员初始化")
-    if not x_bootstrap_token or not hmac.compare_digest(x_bootstrap_token, expected):
-        raise HTTPException(status_code=403, detail="初始化凭据无效")
+    db: Session,
+) -> SessionResponse:
     try:
         user = AuthService.bootstrap_admin(
             db,
@@ -140,6 +137,44 @@ def bootstrap(
     )
     _set_session_cookie(response, token, expires_at, request)
     return SessionResponse(user=UserResponse.model_validate(user), expires_at=expires_at)
+
+
+@router.get("/bootstrap-status", response_model=BootstrapStatusResponse)
+def bootstrap_status(request: Request, db: Session = Depends(get_db)):
+    token = getattr(request.app.state, "auth_bootstrap_token", settings.BOOTSTRAP_TOKEN)
+    return BootstrapStatusResponse(
+        initialized=db.query(User.id).first() is not None,
+        bootstrap_available=bool(token),
+        local_bootstrap_available=_local_bootstrap_available(request),
+    )
+
+
+@router.post("/bootstrap", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+def bootstrap(
+    payload: BootstrapRequest,
+    request: Request,
+    response: Response,
+    x_bootstrap_token: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    expected = getattr(request.app.state, "auth_bootstrap_token", settings.BOOTSTRAP_TOKEN)
+    if not expected:
+        raise HTTPException(status_code=503, detail="服务器未启用首次管理员初始化")
+    if not x_bootstrap_token or not hmac.compare_digest(x_bootstrap_token, expected):
+        raise HTTPException(status_code=403, detail="初始化凭据无效")
+    return _create_bootstrap_session(payload, request, response, db)
+
+
+@router.post("/bootstrap-local", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+def bootstrap_local(
+    payload: BootstrapRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    if not _local_bootstrap_available(request):
+        raise HTTPException(status_code=403, detail="本机初始化仅在开发环境开放")
+    return _create_bootstrap_session(payload, request, response, db)
 
 
 @router.post("/login", response_model=SessionResponse)

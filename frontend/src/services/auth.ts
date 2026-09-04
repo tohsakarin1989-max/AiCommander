@@ -15,6 +15,7 @@ export interface AuthUser {
 export interface BootstrapStatus {
   initialized: boolean
   bootstrap_available: boolean
+  local_bootstrap_available: boolean
 }
 
 export interface SessionResponse {
@@ -45,6 +46,10 @@ export const authApi = {
     const response = await api.post<SessionResponse>('/auth/bootstrap', payload, {
       headers: { 'X-Bootstrap-Token': bootstrapToken },
     })
+    return response.data
+  },
+  bootstrapLocal: async (payload: UserCreatePayload) => {
+    const response = await api.post<SessionResponse>('/auth/bootstrap-local', payload)
     return response.data
   },
   login: async (username: string, password: string) => {

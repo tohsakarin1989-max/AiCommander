@@ -239,6 +239,15 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
     enabled: detailModalVisible,
   })
 
+  const presentation = report ? buildReportPresentation(report) : null
+  const summaryText = presentation?.summary || ''
+
+  const { data: citationAssist } = useQuery({
+    queryKey: ['report-citation-assist', meetingId, summaryText],
+    queryFn: () => knowledgeApi.citationAssist({ query: summaryText || meetingId }),
+    enabled: detailModalVisible && !!summaryText,
+  })
+
   if (isLoading) {
     return (
       <div className="card rp-card--loading">
@@ -247,9 +256,8 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
     )
   }
 
-  if (!report) return null
+  if (!report || !presentation) return null
 
-  const presentation = buildReportPresentation(report)
   const reportMeta = getReportDraftMeta(report)
   const displayDate = meeting
     ? dayjs(meeting.completed_at || meeting.created_at).format('YYYY-MM-DD HH:mm')
@@ -259,14 +267,6 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
   const disagreementCount = presentation.disagreementPoints.length
   const insightCount      = presentation.keyInsights.length + presentation.chainCorrelations.length
   const caseCount         = meeting?.case_ids?.length || 0
-
-  const summaryText = presentation.summary
-
-  const { data: citationAssist } = useQuery({
-    queryKey: ['report-citation-assist', meetingId, summaryText],
-    queryFn: () => knowledgeApi.citationAssist({ query: summaryText || meetingId }),
-    enabled: detailModalVisible && !!summaryText,
-  })
 
   return (
     <>

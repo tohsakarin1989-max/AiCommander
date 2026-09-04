@@ -5,7 +5,7 @@ import { LogoutOutlined } from '@ant-design/icons'
 import { Tooltip } from 'antd'
 import { runtimeApi } from '../services/runtime'
 import { useAuth } from '../auth/AuthContext'
-import { bonusAccountingEnabled } from '../config/features'
+import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../config/features'
 import type { ThemeMode } from '../theme/themeMode'
 import './Layout.css'
 
@@ -20,13 +20,20 @@ const NAV_ITEMS = [
   { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
   { label: '研判', num: '03', paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
-  { label: '助手', num: '05', paths: ['/assistant', '/agents'] },
+  { label: '助手', num: '05', paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'] },
   { label: '设置', num: '06', paths: ['/settings', '/settings/users'], adminOnly: true },
 ]
 
 type SubNavItem = { label: string; path: string }
 
 const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
+  {
+    paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'],
+    items: [
+      { label: '研判助手', path: '/assistant' },
+      ...(agentLabEnabled ? [{ label: 'Agent Lab', path: '/agents' }] : []),
+    ],
+  },
   {
     paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'],
     items: [
@@ -107,7 +114,13 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
   const dbStatus = backendErr ? 'err' : backendOk ? 'ok' : 'loading'
 
   // ── 子导航计算 ────────────────────────────────────────────────
-  const subNav = SUB_NAVS.find(n => n.paths.includes(location.pathname)) ?? null
+  const rawSubNav = SUB_NAVS.find(n => n.paths.includes(location.pathname)) ?? null
+  const subNav = rawSubNav
+    ? {
+        ...rawSubNav,
+        items: rawSubNav.items.filter(item => item.path !== '/agents' || canAccessAgentLab(user?.role)),
+      }
+    : null
   const isDashboard = location.pathname === '/dashboard'
 
   const visibleNavItems = NAV_ITEMS.filter(item => !item.adminOnly || user?.role === 'admin')
@@ -238,7 +251,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.0.0'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.0.1-test'}</span></span>
         </div>
       </footer>
     </div>

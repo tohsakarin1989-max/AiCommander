@@ -238,6 +238,109 @@ export interface PreventionWorkbench {
   summary?: string
 }
 
+export interface WellAttentionObservation {
+  event_id: number
+  event_number: string
+  observation_type: string
+  observation_label: string
+  title: string
+  description?: string | null
+  occurred_time?: string | null
+  latitude: number
+  longitude: number
+  severity: number
+  freshness: string
+  confidence_score: number
+  review_status: string
+  distance_km: number
+  weighted_score: number
+  related_asset_id: number
+  related_asset_name: string
+}
+
+export interface WellAttentionProfile {
+  asset_id: number
+  name: string
+  latitude: number
+  longitude: number
+  region: string
+  production_output?: number | null
+  is_high_production: boolean
+  attention_score: number
+  attention_level: 'high' | 'medium' | 'watch' | 'stable'
+  signal_count: number
+  signal_types: string[]
+  score_components: {
+    recent_observations: number
+    defense_gaps: number
+    asset_exposure: number
+    historical_cases: number
+  }
+  reasons: string[]
+  data_gaps: string[]
+  observations: WellAttentionObservation[]
+}
+
+export interface WellAttentionAiAnalysis {
+  generated_at?: string
+  days_back?: number
+  model_status: string
+  attention_regions: Array<{
+    name: string
+    level: string
+    confidence: number
+    reasons: string[]
+    evidence_refs: Array<string | number>
+  }>
+  attention_wells: Array<{
+    asset_id: number
+    name: string
+    level: string
+    confidence: number
+    reasons: string[]
+    information_gaps: string[]
+  }>
+  deployment_suggestions: Array<{
+    target: string
+    priority: string
+    action: string
+    basis: string
+  }>
+  boundary: string[]
+}
+
+export interface WellAttentionOverview {
+  generated_at: string
+  days_back: number
+  radius_km: number
+  summary: {
+    total_wells: number
+    high_production_wells: number
+    attention_wells: number
+    high_attention_wells: number
+    recent_observations: number
+    attention_regions: number
+    verified_well_rate: number
+    production_data_rate: number
+  }
+  weights: Record<string, number>
+  wells: WellAttentionProfile[]
+  regions: Array<{
+    name: string
+    attention_score: number
+    attention_level: string
+    well_count: number
+    attention_well_count: number
+    signal_count: number
+    top_wells: string[]
+  }>
+  observations: WellAttentionObservation[]
+  signal_trend: Array<{ date: string; count: number }>
+  data_gaps: string[]
+  boundary: string[]
+  ai_analysis?: WellAttentionAiAnalysis | null
+}
+
 export const jurisdictionApi = {
   listAssets: async (params?: {
     asset_type?: string
@@ -381,6 +484,21 @@ export const jurisdictionApi = {
   getPreventionWorkbench: async (caseId?: number): Promise<PreventionWorkbench> => {
     const response = await api.get<PreventionWorkbench>('/jurisdiction/prevention-workbench', {
       params: caseId ? { case_id: caseId } : undefined,
+    })
+    return response.data
+  },
+
+  getWellAttentionOverview: async (daysBack = 30, radiusKm = 1): Promise<WellAttentionOverview> => {
+    const response = await api.get<WellAttentionOverview>('/jurisdiction/well-attention/overview', {
+      params: { days_back: daysBack, radius_km: radiusKm },
+    })
+    return response.data
+  },
+
+  refreshWellAttention: async (daysBack = 30, radiusKm = 1): Promise<WellAttentionOverview> => {
+    const response = await api.post<WellAttentionOverview>('/jurisdiction/well-attention/refresh', {
+      days_back: daysBack,
+      radius_km: radiusKm,
     })
     return response.data
   },

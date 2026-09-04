@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { AreaRisk, Case, ChainLink } from '../../types'
+import type { WellAttentionOverview } from '../../services/jurisdiction'
 import {
   buildDashboardModel,
+  buildWellAttentionDashboardView,
   buildWeeklyTrend,
   projectChainLinks,
 } from './dashboardCommandModel'
@@ -76,7 +78,15 @@ describe('dashboardCommandModel', () => {
     const lines = projectChainLinks([link, rejected, missingCoordinate])
 
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toMatchObject({ id: 1, status: 'inferred', confidence: 0.82 })
+    expect(lines[0]).toMatchObject({
+      id: 1,
+      status: 'inferred',
+      confidence: 0.82,
+      fromLatitude: 46.6,
+      fromLongitude: 125.1,
+      toLatitude: 46.62,
+      toLongitude: 125.12,
+    })
   })
 
   it('creates empty-state dashboard lists instead of fake numbers when data is missing', () => {
@@ -309,6 +319,127 @@ describe('dashboardCommandModel', () => {
     expect(suggestionItem?.detail).toContain('复核案件质量')
     expect(suggestionItem?.route).toBe('/cases?caseId=7')
     expect(suggestionItem?.mutationAction).toBeUndefined()
+  })
+
+  it('projects source-backed well attention and AI advice for the leadership screen', () => {
+    const overview: WellAttentionOverview = {
+      generated_at: '2026-08-14T08:00:00Z',
+      days_back: 30,
+      radius_km: 1,
+      summary: {
+        total_wells: 2,
+        high_production_wells: 1,
+        attention_wells: 1,
+        high_attention_wells: 1,
+        recent_observations: 1,
+        attention_regions: 1,
+        verified_well_rate: 100,
+        production_data_rate: 100,
+      },
+      weights: {},
+      wells: [{
+        asset_id: 7,
+        name: '北一-12井',
+        latitude: 46.65,
+        longitude: 125.1,
+        region: '萨中作业区',
+        production_output: 18.5,
+        is_high_production: true,
+        attention_score: 78,
+        attention_level: 'high',
+        signal_count: 1,
+        signal_types: ['vehicle_trace'],
+        score_components: {
+          recent_observations: 82,
+          defense_gaps: 70,
+          asset_exposure: 100,
+          historical_cases: 0,
+        },
+        reasons: ['近30天关联风险迹象 1 条。'],
+        data_gaps: [],
+        observations: [],
+      }],
+      regions: [{
+        name: '萨中作业区',
+        attention_score: 78,
+        attention_level: 'high',
+        well_count: 1,
+        attention_well_count: 1,
+        signal_count: 1,
+        top_wells: ['北一-12井'],
+      }],
+      observations: [{
+        event_id: 11,
+        event_number: 'EVT-11',
+        observation_type: 'vehicle_trace',
+        observation_label: '陌生车辆/车迹',
+        title: '发现新鲜车辙',
+        occurred_time: '2026-08-14T07:00:00Z',
+        latitude: 46.65,
+        longitude: 125.1,
+        severity: 4,
+        freshness: 'fresh',
+        confidence_score: 0.9,
+        review_status: 'confirmed',
+        distance_km: 0,
+        weighted_score: 70,
+        related_asset_id: 7,
+        related_asset_name: '北一-12井',
+      }],
+      signal_trend: [
+        { date: '2026-08-08', count: 0 },
+        { date: '2026-08-09', count: 0 },
+        { date: '2026-08-10', count: 0 },
+        { date: '2026-08-11', count: 0 },
+        { date: '2026-08-12', count: 0 },
+        { date: '2026-08-13', count: 0 },
+        { date: '2026-08-14', count: 1 },
+      ],
+      data_gaps: [],
+      boundary: ['关注度不是犯罪预测。'],
+      ai_analysis: {
+        generated_at: '2026-08-14T08:00:00Z',
+        model_status: 'llm_success',
+        attention_regions: [{
+          name: '萨中作业区',
+          level: 'high',
+          confidence: 0.82,
+          reasons: ['近期车迹与防控短板叠加。'],
+          evidence_refs: [11],
+        }],
+        attention_wells: [],
+        deployment_suggestions: [{
+          target: '北一-12井',
+          priority: 'high',
+          action: '复核周边视频和车迹方向。',
+          basis: '事件 11',
+        }],
+        boundary: ['仅供人工研判。'],
+      },
+    }
+
+    const view = buildWellAttentionDashboardView(overview)
+
+    expect(view.kpis.attentionWells.value).toBe('1')
+    expect(view.kpis.aiStatus.detail).toBe('大模型已研判')
+    expect(view.wellPoints[0]).toMatchObject({
+      assetId: 7,
+      attentionLevel: 'high',
+      latitude: 46.65,
+      longitude: 125.1,
+    })
+    expect(view.signalPoints[0]).toMatchObject({ latitude: 46.65, longitude: 125.1 })
+    expect(view.aiAttention[0].title).toContain('萨中作业区')
+    expect(view.deploymentSuggestions[0].detail).toContain('复核周边视频')
+  })
+
+  it('uses explicit empty states when the well attention source is not connected', () => {
+    const view = buildWellAttentionDashboardView(undefined)
+
+    expect(view.kpis.wells.value).toBe('待接入')
+    expect(view.wellPoints).toHaveLength(0)
+    expect(view.topWells[0].tone).toBe('empty')
+    expect(view.boundary).toContain('不代表')
   })
 
 })

@@ -93,19 +93,35 @@ class JurisdictionService:
         return asset
 
     @staticmethod
-    def update_asset(db: Session, asset_id: int, data: Dict[str, Any]) -> JurisdictionAsset:
+    def update_asset(
+        db: Session,
+        asset_id: int,
+        data: Dict[str, Any],
+        *,
+        commit: bool = True,
+        sync_point_geometry: bool = True,
+    ) -> JurisdictionAsset:
         asset = db.query(JurisdictionAsset).filter(JurisdictionAsset.id == asset_id).first()
         if not asset:
             raise ValueError("asset_not_found")
         geometry_type = str(data.get("geometry_type") or asset.geometry_type or "point").lower()
         latitude = data.get("latitude", asset.latitude)
         longitude = data.get("longitude", asset.longitude)
-        if "geometry" not in data and geometry_type == "point" and latitude is not None and longitude is not None:
+        if (
+            sync_point_geometry
+            and "geometry" not in data
+            and geometry_type == "point"
+            and latitude is not None
+            and longitude is not None
+        ):
             data["geometry"] = {"type": "Point", "coordinates": [longitude, latitude]}
         for key, value in data.items():
             setattr(asset, key, value)
-        db.commit()
-        db.refresh(asset)
+        if commit:
+            db.commit()
+            db.refresh(asset)
+        else:
+            db.flush()
         return asset
 
     @staticmethod

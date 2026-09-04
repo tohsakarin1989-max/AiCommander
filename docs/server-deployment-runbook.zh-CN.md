@@ -1,13 +1,16 @@
-# AICommander v2.0 服务器部署与运维手册
+# AICommander v2.0.1-test 服务器部署与运维手册
 
-> 核验日期：2026-08-14
-> 适用版本：AICommander 2.0.0
+> 初次生产链路核验：2026-08-14；部署加固回归：2026-08-27
+> 适用版本：AICommander 2.0.1-test
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
 > 系统边界：涉油案件数智研判与防控辅助系统，生产环境默认部署在单位内网或 VPN 后
 
+> Agent Lab 默认关闭，独立启停且不参与核心就绪判定；启用、验收和紧急关闭步骤见
+> [“油盾·双域研判智能体”部署、运行与验收手册](./agent-lab-runbook.zh-CN.md)。
+
 ## 1. 当前可部署性结论
 
-v2.0 已具备测试服务器部署条件，生产容器链路已经在干净的 PostgreSQL 16 和 Redis 7
+v2.0.1-test 已具备测试服务器部署条件，生产容器链路已经在干净的 PostgreSQL 16 和 Redis 7
 环境中实际启动并验收。正式业务上线前仍需在目标服务器完成域名、HTTPS、备份恢复演练、
 单位网络策略和业务人员验收，这些工作依赖目标服务器，不能由源码仓库代替。
 
@@ -27,7 +30,7 @@ v2.0 已具备测试服务器部署条件，生产容器链路已经在干净的
 | 敏感配置迁移 | 旧密钥解密、新密钥重新加密通过 |
 | 生产容器 | PostgreSQL、Redis、后端、Celery、前端共 5 个服务正常 |
 | 网络暴露 | 仅前端绑定 `127.0.0.1`，8000/5432/6379 均未发布 |
-| 健康检查 | `/health/ready` 返回 PostgreSQL 和 Redis 均为 `ok` |
+| 健康检查 | `/health/ready` 返回 PostgreSQL、Redis 和数据库迁移版本均为 `ok` |
 | 登录权限 | 首次初始化、管理员、分析员、只读账号、锁定、退出均已验证 |
 | WebSocket | 匿名连接被拒绝，登录会话可正常接收大屏数据 |
 | 浏览器验收 | 登录页、业务首页、真实数据、桌面和手机宽度均已检查 |
@@ -50,7 +53,11 @@ bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
 - 浏览器使用 `HttpOnly`、`Secure`、`SameSite=Strict` 会话 Cookie。
 - 写操作检查来源并记录审计日志。
 - AI 模型和系统配置密钥加密入库，查询只返回掩码。
-- 生产环境拒绝弱 `SECRET_KEY`、拒绝关闭认证、拒绝自动建表。
+- 生产环境拒绝 SQLite、无密码 Redis、HTTP 前端地址、通配主机名、开放接口文档、
+  弱密钥、关闭认证和自动建表。
+- 部署前检查域名、端口、版本、密钥长度与文件权限，并在新镜像中再次校验应用配置。
+- 数据库迁移前自动生成 PostgreSQL 备份、版本清单和 SHA-256 校验文件。
+- `/health/ready` 同时检查数据库连接、Redis 和 Alembic 当前迁移版本。
 - PostgreSQL 和 Redis 仅在 Docker 内部网络通信，Redis 已启用密码和 AOF。
 - 后端容器只读运行、非 root 用户、移除 Linux capabilities，并禁止权限提升。
 - 镜像基础层使用固定 digest，日志启用大小和数量轮转。
@@ -271,6 +278,7 @@ CELERY_CONCURRENCY=2
 | `APP_PORT` | 宿主机回环端口，默认 3000；不能绑定公网地址 |
 | `APP_VERSION` | 生产镜像标签，和发布版本一致 |
 | `SECRETS_DIR` | 四个 Docker secret 文件的位置 |
+| `BACKUP_DIR` | 部署前数据库备份目录，默认 `./backups/postgres` |
 | `ENABLE_BONUS_ACCOUNTING` | 是否显示内部奖金核算模块，默认关闭 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 登录有效期，默认 480 分钟 |
 | `CELERY_CONCURRENCY` | 后台任务并发，8 GB 内存建议 2 |
@@ -296,13 +304,14 @@ sudo ./scripts/deploy-production.sh
 
 脚本会依次完成：
 
-1. 校验 `.env.production` 和四个密钥文件。
-2. 解析生产 Compose 配置。
-3. 拉取固定基础镜像并构建前后端镜像。
-4. 启动 PostgreSQL 和 Redis。
-5. 执行 `alembic upgrade head`。
-6. 启动后端、Celery 和前端。
-7. 等待 `/health/ready` 成功。
+1. 运行生产预检，校验域名、端口、版本、密钥长度、文件权限和 Compose 配置。
+2. 拉取固定基础镜像并构建前后端镜像。
+3. 在新后端镜像中校验生产应用配置。
+4. 启动 PostgreSQL 和 Redis，并等待两个服务健康。
+5. 自动在 `BACKUP_DIR` 生成数据库升级前备份、清单和 SHA-256 校验文件。
+6. 执行 `alembic upgrade head`。
+7. 启动后端、Celery 和前端。
+8. 等待 `/health/ready` 成功；数据库迁移版本落后时不会进入就绪状态。
 
 检查服务：
 
@@ -313,7 +322,8 @@ curl -fsS http://127.0.0.1:3000/health/live
 curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
-五个服务应为运行或健康状态，`ready` 返回的 `database` 和 `redis` 都应为 `ok`。
+五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
+`ok`。
 
 ## 10. 迁移现有 SQLite 业务数据
 
@@ -564,16 +574,12 @@ PostgreSQL 是业务主数据。至少每日一次完整备份，并把备份加
 
 ```bash
 cd /opt/aicommander
-mkdir -p backups/postgres
-chmod 0700 backups backups/postgres
-
-sudo docker compose --env-file .env.production \
-  -f docker-compose.production.yml exec -T postgres \
-  pg_dump -U aicommander -d aicommander -Fc \
-  > "backups/postgres/aicommander-$(date +%F-%H%M%S).dump"
-
-sha256sum backups/postgres/*.dump
+sudo ./scripts/backup-production.sh
 ```
+
+脚本会生成 PostgreSQL custom-format 备份、版本清单和同名 `.sha256` 文件。每次执行
+`deploy-production.sh` 也会在 Alembic 升级前自动调用该脚本；备份失败时部署立即停止。
+备份脚本不会自动删除旧文件，避免错误保留策略造成数据丢失。
 
 建议策略：保留最近 7 个每日备份、4 个每周备份、12 个每月备份，并至少每天把一份复制
 到异机或受控备份存储。只有实际恢复演练成功，备份才算可用。
@@ -640,7 +646,8 @@ git checkout <已验收的新标签>
 sudo ./scripts/deploy-production.sh
 ```
 
-部署脚本会先构建，再执行 Alembic 升级，最后启动全部服务并检查就绪状态。
+部署脚本会先完成预检和镜像内配置校验，再启动数据服务并创建升级前备份；只有备份成功
+才执行 Alembic 升级，最后启动全部服务并检查数据库连接、Redis 和迁移版本就绪状态。
 
 应用代码回滚可以切回上一标签重新构建；数据库不能只靠切换 Git 回滚。若新迁移不向后兼容：
 

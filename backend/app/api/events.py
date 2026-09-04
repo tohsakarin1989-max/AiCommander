@@ -58,6 +58,14 @@ def _serialize_event(event: Any) -> Dict[str, Any]:
         "suspects_count": event.suspects_count,
         "discovery_method": event.discovery_method,
         "handling_result": event.handling_result,
+        "related_asset_id": event.related_asset_id,
+        "observation_type": event.observation_type,
+        "severity": event.severity,
+        "freshness": event.freshness,
+        "confidence_score": event.confidence_score,
+        "review_status": event.review_status,
+        "evidence_files": event.evidence_files,
+        "observation_details": event.observation_details,
         "risk_level": event.risk_level,
         "related_case_id": event.related_case_id,
         "created_at": event.created_at,
@@ -113,6 +121,14 @@ def _build_event_model(event: "EventCreate", event_number: str) -> Event:
         suspects_description=event.suspects_description,
         discovery_method=event.discovery_method,
         handling_result=event.handling_result,
+        related_asset_id=event.related_asset_id,
+        observation_type=event.observation_type or event.event_type,
+        severity=event.severity,
+        freshness=event.freshness,
+        confidence_score=event.confidence_score,
+        review_status=event.review_status or "pending_review",
+        evidence_files=event.evidence_files,
+        observation_details=event.observation_details,
         related_case_id=event.related_case_id,
     )
 
@@ -169,6 +185,14 @@ class EventCreate(BaseModel):
     suspects_description: Optional[str] = Field(None, description="人员特征描述")
     discovery_method: Optional[str] = Field(None, description="发现方式")
     handling_result: Optional[str] = Field(None, description="处置结果")
+    related_asset_id: Optional[int] = Field(None, description="关联井点/油区资产ID")
+    observation_type: Optional[str] = Field(None, description="结构化痕迹类型")
+    severity: Optional[int] = Field(None, ge=1, le=5, description="痕迹严重程度，1-5")
+    freshness: Optional[str] = Field(None, description="痕迹新鲜度：fresh/recent/unknown")
+    confidence_score: Optional[float] = Field(None, ge=0, le=1, description="事实识别可信度")
+    review_status: Optional[str] = Field("pending_review", description="人工复核状态")
+    evidence_files: Optional[List[Dict]] = Field(None, description="证据文件索引")
+    observation_details: Optional[Dict] = Field(None, description="痕迹扩展信息")
     related_case_id: Optional[int] = Field(None, description="关联案件ID")
 
 
@@ -190,6 +214,14 @@ class EventUpdate(BaseModel):
     suspects_description: Optional[str] = None
     discovery_method: Optional[str] = None
     handling_result: Optional[str] = None
+    related_asset_id: Optional[int] = None
+    observation_type: Optional[str] = None
+    severity: Optional[int] = Field(None, ge=1, le=5)
+    freshness: Optional[str] = None
+    confidence_score: Optional[float] = Field(None, ge=0, le=1)
+    review_status: Optional[str] = None
+    evidence_files: Optional[List[Dict]] = None
+    observation_details: Optional[Dict] = None
     risk_level: Optional[str] = None
     analysis_notes: Optional[str] = None
     suggested_actions: Optional[List[str]] = None
@@ -216,6 +248,14 @@ class EventResponse(BaseModel):
     suspects_count: Optional[int]
     discovery_method: Optional[str]
     handling_result: Optional[str]
+    related_asset_id: Optional[int]
+    observation_type: Optional[str]
+    severity: Optional[int]
+    freshness: Optional[str]
+    confidence_score: Optional[float]
+    review_status: Optional[str]
+    evidence_files: Optional[List[Dict]]
+    observation_details: Optional[Dict]
     is_analyzed: bool
     risk_level: Optional[str]
     analysis_notes: Optional[str]
@@ -870,7 +910,13 @@ async def get_map_data(
             "longitude": e.longitude,
             "occurred_time": e.occurred_time.isoformat() if e.occurred_time else None,
             "village_name": e.village_name,
-            "risk_level": e.risk_level
+            "risk_level": e.risk_level,
+            "related_asset_id": e.related_asset_id,
+            "observation_type": e.observation_type or e.event_type,
+            "severity": e.severity,
+            "freshness": e.freshness,
+            "confidence_score": e.confidence_score,
+            "review_status": e.review_status,
         } for e in events],
         "event_types": EVENT_TYPES
     }

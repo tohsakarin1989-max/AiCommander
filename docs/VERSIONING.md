@@ -22,3 +22,11 @@ Current public baseline:
 - The `v2.0.0` tag is created on `main` after review and merge.
 - The initial public baseline was created from a sanitized single-commit history;
   the v2.0 release merge reconnects the reviewed development history.
+
+Current test candidate:
+
+- Version: `2.0.1-test`
+- Branch: `codex/v2.0-production`
+- Purpose: test-server deployment with Agent Lab disabled by default.
+- Do not promote to `2.0.2-stable` until backup recovery, core business flows,
+  designated-user testing, and the business-efficiency baseline are signed off.

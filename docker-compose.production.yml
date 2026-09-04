@@ -17,6 +17,18 @@ x-backend-environment: &backend-environment
   ALLOWED_HOSTS: "${APP_DOMAIN:?set APP_DOMAIN},frontend,localhost,127.0.0.1"
   ENABLE_VECTOR_DB: "false"
   ENABLE_BONUS_ACCOUNTING: "${ENABLE_BONUS_ACCOUNTING:-false}"
+  ENABLE_AGENT_LAB: "${ENABLE_AGENT_LAB:-false}"
+  AGENT_MODE: "${AGENT_MODE:-off}"
+  AGENT_MUTATIONS_ENABLED: "${AGENT_MUTATIONS_ENABLED:-false}"
+  AGENT_EXTERNAL_DATA_POLICY: "${AGENT_EXTERNAL_DATA_POLICY:-redacted_only}"
+  AGENT_MAX_STEPS: "${AGENT_MAX_STEPS:-8}"
+  AGENT_TIMEOUT_SECONDS: "${AGENT_TIMEOUT_SECONDS:-120}"
+  AGENT_REDIS_QUEUE: "${AGENT_REDIS_QUEUE:-agent_lab}"
+  AGENT_PROVIDER: "${AGENT_PROVIDER:-openai_agents}"
+  AGENT_MODEL: "${AGENT_MODEL:-gpt-5-mini}"
+  AGENT_USE_EXTERNAL_MODEL: "${AGENT_USE_EXTERNAL_MODEL:-false}"
+  AGENT_SDK_TRACING_ENABLED: "${AGENT_SDK_TRACING_ENABLED:-false}"
+  AGENT_APPROVAL_TTL_HOURS: "${AGENT_APPROVAL_TTL_HOURS:-24}"
   ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-480}"
   DB_HOST: postgres
   DB_PORT: "5432"
@@ -80,7 +92,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: aicommander-backend:${APP_VERSION:-2.0.0}
+    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
     build:
       context: ./backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
@@ -113,7 +125,7 @@ services:
     logging: *default-logging
 
   celery:
-    image: aicommander-backend:${APP_VERSION:-2.0.0}
+    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -139,10 +151,40 @@ services:
     stop_grace_period: 60s
     logging: *default-logging
 
+  agent-worker:
+    profiles: ["agent-lab"]
+    image: aicommander-backend:${APP_VERSION:-2.0.1-test}
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=${AGENT_REDIS_QUEUE:-agent_lab}", "--hostname=agent@%h", "--beat", "--schedule=/tmp/agent-celerybeat-schedule"]
+    environment: *backend-environment
+    secrets: *backend-secrets
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *default-logging
+
   frontend:
-    image: aicommander-frontend:${APP_VERSION:-2.0.0}
+    image: aicommander-frontend:${APP_VERSION:-2.0.1-test}
     build:
       context: ./frontend
+      args:
+        VITE_ENABLE_AGENT_LAB: "${ENABLE_AGENT_LAB:-false}"
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:80"
     networks:

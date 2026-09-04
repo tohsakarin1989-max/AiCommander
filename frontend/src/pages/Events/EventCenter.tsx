@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { eventApi } from '../../services/events'
+import { jurisdictionApi } from '../../services/jurisdiction'
 import type { Event, EventCreateData } from '../../types'
 import { EVENT_TYPES } from '../../types/event'
 import './EventCenter.css'
@@ -18,11 +19,24 @@ const RISK_LABELS: Record<string, string> = {
   critical: '极高风险',
 }
 
+const OBSERVATION_EVENT_TYPES = new Set([
+  'vehicle_trace',
+  'oil_trace',
+  'footprint_trace',
+  'tool_trace',
+  'facility_anomaly',
+  'defense_outage',
+  'suspect_activity',
+  'damage_found',
+])
+
 const EventCenter: React.FC = () => {
   const [form] = Form.useForm()
   const [modalOpen, setModalOpen] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const selectedEventType = Form.useWatch('event_type', form)
+  const isWellObservation = OBSERVATION_EVENT_TYPES.has(selectedEventType)
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['events'],
@@ -34,16 +48,30 @@ const EventCenter: React.FC = () => {
     queryFn: () => eventApi.getStatistics(30),
   })
 
+  const { data: wells = [] } = useQuery({
+    queryKey: ['jurisdiction-assets', 'well'],
+    queryFn: () => jurisdictionApi.listAssets({ asset_type: 'well', limit: 500 }),
+  })
+
   const createMutation = useMutation({
     mutationFn: (data: EventCreateData) => eventApi.create(data),
-    onSuccess: async () => {
-      message.success('事件已录入')
+    onSuccess: async (created) => {
+      message.success(OBSERVATION_EVENT_TYPES.has(created.event_type) ? '风险迹象已录入' : '事件已录入')
       setModalOpen(false)
       form.resetFields()
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['events'] }),
         queryClient.invalidateQueries({ queryKey: ['suggestions'] }),
       ])
+      if (OBSERVATION_EVENT_TYPES.has(created.event_type)) {
+        try {
+          await jurisdictionApi.refreshWellAttention(30, 1)
+          await queryClient.invalidateQueries({ queryKey: ['dashboard-well-attention'] })
+          message.success('井点关注热力与AI研判已刷新')
+        } catch (error) {
+          message.warning(`迹象已保存，关注研判暂未刷新：${(error as Error).message}`)
+        }
+      }
     },
     onError: (error: Error) => message.error(`录入失败：${error.message}`),
   })
@@ -73,8 +101,20 @@ const EventCenter: React.FC = () => {
     const values = await form.validateFields()
     createMutation.mutate({
       ...values,
+      observation_type: isWellObservation ? values.event_type : undefined,
       occurred_time: values.occurred_time?.toISOString(),
     } as EventCreateData)
+  }
+
+  const handleWellChange = (assetId: number) => {
+    const well = wells.find(item => item.id === assetId)
+    if (!well) return
+    form.setFieldsValue({
+      related_asset_id: well.id,
+      location: well.name,
+      latitude: well.latitude ?? undefined,
+      longitude: well.longitude ?? undefined,
+    })
   }
 
   const rows = events ?? []
@@ -103,7 +143,7 @@ const EventCenter: React.FC = () => {
         <div className="ev-stat">
           <span>高风险区域</span>
           <b>{statistics?.high_risk_areas?.length ?? 0}</b>
-          <small>需巡逻跟进</small>
+          <small>需人工核查</small>
         </div>
         <div className="ev-stat wide">
           <span>主要类型</span>
@@ -208,11 +248,15 @@ const EventCenter: React.FC = () => {
           initialValues={{
             event_type: 'suspect_activity',
             occurred_time: dayjs(),
+            severity: 3,
+            freshness: 'unknown',
+            confidence_score: 0.7,
+            review_status: 'pending_review',
           }}
         >
           <div className="ev-form-grid">
             <Form.Item name="event_type" label="事件类型" rules={[{ required: true }]}>
-              <Select>
+              <Select onChange={(value) => form.setFieldValue('observation_type', value)}>
                 {Object.entries(EVENT_TYPES).map(([value, label]) => (
                   <Option key={value} value={value}>{label}</Option>
                 ))}
@@ -221,27 +265,89 @@ const EventCenter: React.FC = () => {
             <Form.Item name="occurred_time" label="发生时间" rules={[{ required: true }]}>
               <DatePicker showTime style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="title" label="事件标题">
-              <Input placeholder="如：夜间异常车辆活动" />
+            {isWellObservation && (
+              <Form.Item
+                name="related_asset_id"
+                label="关联井点"
+                rules={[{ required: true, message: '请选择本次痕迹关联的井点' }]}
+              >
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={wells.length ? '选择井点后自动带入坐标' : '请先在辖区底座导入井点'}
+                  options={wells.map(well => ({
+                    value: well.id,
+                    label: `${well.name}${well.address ? ` · ${well.address}` : ''}`,
+                  }))}
+                  onChange={handleWellChange}
+                />
+              </Form.Item>
+            )}
+            <Form.Item name="title" label={isWellObservation ? '痕迹简述' : '事件标题'}>
+              <Input placeholder={isWellObservation ? '如：井口东侧发现新鲜陌生车辙' : '如：夜间异常车辆活动'} />
             </Form.Item>
             <Form.Item name="location" label="地点">
-              <Input placeholder="村屯、井场、管线区段" />
+              <Input placeholder="选择井点后自动填写，也可补充具体方位" />
             </Form.Item>
-            <Form.Item name="latitude" label="纬度">
-              <InputNumber style={{ width: '100%' }} precision={6} />
-            </Form.Item>
-            <Form.Item name="longitude" label="经度">
-              <InputNumber style={{ width: '100%' }} precision={6} />
-            </Form.Item>
-            <Form.Item name="oil_type" label="油品">
-              <Input placeholder="柴油 / 原油 / 汽油" />
-            </Form.Item>
-            <Form.Item name="oil_volume_liters" label="涉及油量（升）">
-              <InputNumber style={{ width: '100%' }} min={0} />
-            </Form.Item>
+            {isWellObservation ? (
+              <>
+                <Form.Item name="severity" label="明显程度">
+                  <Select options={[
+                    { value: 1, label: '轻微' },
+                    { value: 2, label: '较轻' },
+                    { value: 3, label: '明显' },
+                    { value: 4, label: '较重' },
+                    { value: 5, label: '严重' },
+                  ]} />
+                </Form.Item>
+                <Form.Item name="freshness" label="痕迹新鲜度">
+                  <Select options={[
+                    { value: 'fresh', label: '新鲜' },
+                    { value: 'recent', label: '近期' },
+                    { value: 'unknown', label: '无法判断' },
+                  ]} />
+                </Form.Item>
+                <Form.Item name="confidence_score" label="事实可信度">
+                  <InputNumber style={{ width: '100%' }} min={0} max={1} step={0.05} />
+                </Form.Item>
+                <Form.Item name="review_status" label="复核状态">
+                  <Select options={[
+                    { value: 'pending_review', label: '待复核' },
+                    { value: 'confirmed', label: '已确认事实' },
+                    { value: 'rejected', label: '已排除' },
+                  ]} />
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <Form.Item name="latitude" label="纬度">
+                  <InputNumber style={{ width: '100%' }} precision={6} />
+                </Form.Item>
+                <Form.Item name="longitude" label="经度">
+                  <InputNumber style={{ width: '100%' }} precision={6} />
+                </Form.Item>
+                <Form.Item name="oil_type" label="油品">
+                  <Input placeholder="柴油 / 原油 / 汽油" />
+                </Form.Item>
+                <Form.Item name="oil_volume_liters" label="涉及油量（升）">
+                  <InputNumber style={{ width: '100%' }} min={0} />
+                </Form.Item>
+              </>
+            )}
           </div>
-          <Form.Item name="description" label="事件描述">
-            <TextArea rows={4} placeholder="记录发现过程、人员车辆、处置结果等关键信息" />
+          {isWellObservation && (
+            <>
+              <Form.Item name="latitude" hidden><InputNumber /></Form.Item>
+              <Form.Item name="longitude" hidden><InputNumber /></Form.Item>
+            </>
+          )}
+          <Form.Item name="description" label={isWellObservation ? '事实记录' : '事件描述'}>
+            <TextArea
+              rows={4}
+              placeholder={isWellObservation
+                ? '只记录看到的事实：痕迹位置、方向、范围、照片情况；推断交给研判模块。'
+                : '记录发现过程、人员车辆、处置结果等关键信息'}
+            />
           </Form.Item>
         </Form>
       </Modal>

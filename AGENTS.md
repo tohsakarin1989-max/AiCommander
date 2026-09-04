@@ -20,6 +20,8 @@
 - 本周如改指挥大屏、自动轮播列表、链条地图投屏展示，先读 `docs/superpowers/specs/2026-05-10-dashboard-command-screen-design.md` 和 `docs/superpowers/plans/2026-05-10-dashboard-command-screen.md`，至少补跑 `cd frontend && npm run test -- src/pages/Dashboard/dashboardCommandModel.test.ts` 与 `npm run build`。
 - 本周如改案件录入预检、批量复核、待办中心分流或经验卡复核，先读 `docs/superpowers/specs/2026-06-05-aicommander-abc-upgrade-roadmap-design.md` 与 `docs/superpowers/plans/2026-06-05-aicommander-phase-a-workflow-closure.md`，按“案件录入/导入 -> 保存前预检 -> 批量复核 -> 待办分流”的闭环推进。
 - 上述 A 阶段改动至少补跑：`cd backend && source venv/bin/activate && pytest tests/test_suggestions.py tests/test_batch_review.py -v`、`cd frontend && npm run test -- src/pages/Suggestions/suggestionPresentation.test.ts src/pages/Cases/caseEntryReadiness.test.ts src/pages/Cases/batchReviewPresentation.test.ts`、`cd frontend && npm run build`。
+- 本周如改生产部署、运维、健康检查、来源校验或生产安全配置，先读 `docs/server-deployment-runbook.zh-CN.md`、`scripts/preflight-production.sh`、`scripts/deploy-production.sh` 和 `README.md` 的“生产部署”章节，明确当前能确认的是测试服务器部署链路，不把它写成已正式投产。
+- 上述生产部署/运维类改动至少补跑：`cd backend && source venv/bin/activate && pytest tests/test_production_config.py tests/test_observability.py -v`；如前端或容器入口有变更，再补跑 `cd frontend && npm run build`。
 
 ## 编码风格与命名约定
 - Python 按 PEP 8 使用 4 空格缩进；路由模块 `app/api/<domain>.py`，服务层 `app/services/<domain>_service.py`，模型/仓库对应单复数保持一致；环境变量全大写下划线（如 `SECRET_KEY`、`DATABASE_URL`）。

@@ -12,6 +12,8 @@ RUN npm ci
 COPY . .
 
 # 构建
+ARG VITE_ENABLE_AGENT_LAB=false
+ENV VITE_ENABLE_AGENT_LAB=$VITE_ENABLE_AGENT_LAB
 RUN npm run build
 
 # 生产环境

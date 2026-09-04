@@ -7,7 +7,7 @@ import Layout from './components/Layout'
 import TweaksPanel from './components/TweaksPanel/TweaksPanel'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import Login from './pages/Auth/Login'
-import { bonusAccountingEnabled } from './config/features'
+import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from './config/features'
 import { getThemeTokens, normalizeThemeMode, toggleThemeMode, type ThemeMode } from './theme/themeMode'
 
 const Home = lazy(() => import('./pages/Home/Home'))
@@ -86,7 +86,7 @@ function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
           <Route path="/gangs"           element={<GangAnalysis />} />
           <Route path="/patrols"         element={<Patrols />} />
           <Route path="/assistant"       element={<Assistant />} />
-          <Route path="/agents"          element={<AgentCenter />} />
+          <Route path="/agents"          element={agentLabEnabled && canAccessAgentLab(user.role) ? <AgentCenter /> : <Navigate to="/assistant" replace />} />
           <Route path="/settings"        element={adminOnly(<Settings />)} />
           <Route path="/settings/users"  element={adminOnly(<UserManagement />)} />
           <Route path="/intelli-inspect" element={<IntelliInspect />} />

@@ -481,31 +481,190 @@
 }
 
 .db-command-map::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, oklch(1 0 0 / 0.035) 1px, transparent 1px),
-    linear-gradient(0deg, oklch(1 0 0 / 0.028) 1px, transparent 1px);
-  background-size: 52px 52px;
-  mix-blend-mode: screen;
-  opacity: 0.45;
+  content: none;
 }
 
 :root[data-theme="light"] .db-command-map::after {
-  background:
-    linear-gradient(90deg, oklch(0.32 0.018 250 / 0.09) 1px, transparent 1px),
-    linear-gradient(0deg, oklch(0.32 0.018 250 / 0.08) 1px, transparent 1px);
-  mix-blend-mode: multiply;
-  opacity: 0.7;
+  content: none;
 }
 
-.db-command-map-svg {
+.db-dashboard-map-host,
+.db-dashboard-leaflet {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.db-dashboard-map-host {
+  z-index: 1;
+}
+
+.db-dashboard-leaflet {
   width: 100%;
   height: 100%;
-  display: block;
-  user-select: none;
+  z-index: 1;
+  background: var(--db-map-bg-mid);
+  font-family: var(--sans);
+}
+
+:root[data-theme="dark"] .db-dashboard-leaflet .leaflet-tile-pane {
+  filter: brightness(0.58) saturate(0.5) contrast(1.14);
+}
+
+.db-dashboard-leaflet .leaflet-control-attribution {
+  margin-right: 10px !important;
+  margin-bottom: 86px !important;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in oklch, var(--bg-1) 88%, transparent) !important;
+  color: var(--ink-2);
+  font-size: 8px;
+}
+
+.db-dashboard-leaflet .leaflet-control-attribution a {
+  color: var(--info);
+}
+
+.db-map-popup {
+  min-width: 205px;
+  display: grid;
+  gap: 4px;
+  color: #1f2937;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.db-map-popup strong {
+  margin-bottom: 2px;
+  color: #111827;
+  font-size: 13px;
+}
+
+.db-map-leaflet-tooltip {
+  border: 1px solid var(--accent-line) !important;
+  border-radius: 2px !important;
+  background: color-mix(in oklch, var(--bg-1) 94%, transparent) !important;
+  color: var(--ink-0) !important;
+  box-shadow: 0 5px 16px oklch(0.06 0.01 250 / 0.38) !important;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.db-map-native-controls {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 12;
+  display: grid;
+  border: 1px solid var(--line);
+  background: color-mix(in oklch, var(--bg-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.db-map-native-controls button {
+  width: 34px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-1);
+  font-size: 14px;
+}
+
+.db-map-native-controls button:last-child {
+  border-bottom: 0;
+}
+
+.db-map-native-controls button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.db-map-tile-warning,
+.db-map-real-empty {
+  position: absolute;
+  z-index: 11;
+  border: 1px solid var(--line);
+  background: color-mix(in oklch, var(--bg-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.db-map-tile-warning {
+  top: 52px;
+  left: 50%;
+  max-width: min(420px, calc(100% - 280px));
+  padding: 6px 10px;
+  color: var(--warn);
+  font-size: 10px;
+  transform: translateX(-50%);
+}
+
+.db-map-real-empty {
+  top: 50%;
+  left: 50%;
+  width: min(360px, calc(100% - 80px));
+  display: grid;
+  gap: 7px;
+  padding: 14px 16px;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.db-map-real-empty strong {
+  color: var(--ink-0);
+  font-size: 15px;
+}
+
+.db-map-real-empty span {
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.db-map-layer-tabs {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  border: 1px solid var(--line);
+  background: oklch(0.10 0.012 250 / 0.92);
+  backdrop-filter: blur(10px);
+}
+
+:root[data-theme="light"] .db-map-layer-tabs {
+  background: oklch(0.985 0.006 250 / 0.94);
+  border-color: oklch(0.70 0.018 250 / 0.78);
+  box-shadow: 0 8px 22px oklch(0.40 0.020 250 / 0.10);
+}
+
+.db-map-layer-tabs button {
+  height: 30px;
+  padding: 0 10px;
+  border-right: 1px solid var(--line-soft);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.db-map-layer-tabs button:last-child {
+  border-right: 0;
+}
+
+.db-map-layer-tabs button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.db-map-layer-tabs button.is-active {
+  color: var(--bg-0);
+  background: var(--accent);
+}
+
+:root[data-theme="light"] .db-map-layer-tabs button.is-active {
+  color: oklch(0.99 0.004 80);
 }
 
 .db-map-boundary {
@@ -783,6 +942,114 @@
   opacity: 0.72;
 }
 
+.db-well-point {
+  --well-color: oklch(0.72 0.11 220);
+  --well-heat-opacity: 0.12;
+}
+
+.db-well-point--watch {
+  --well-color: oklch(0.78 0.14 75);
+  --well-heat-opacity: 0.16;
+}
+
+.db-well-point--medium {
+  --well-color: oklch(0.76 0.17 48);
+  --well-heat-opacity: 0.23;
+}
+
+.db-well-point--high {
+  --well-color: oklch(0.70 0.20 25);
+  --well-heat-opacity: 0.32;
+}
+
+.db-well-heat {
+  fill: var(--well-color);
+  opacity: var(--well-heat-opacity);
+  pointer-events: none;
+  filter: blur(10px);
+}
+
+.db-map-wells--signals .db-well-heat {
+  opacity: 0.045;
+}
+
+.db-well-marker {
+  fill: var(--well-color);
+  stroke: var(--ink-0);
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 6px color-mix(in oklch, var(--well-color) 64%, transparent));
+}
+
+.db-well-marker-ring {
+  fill: none;
+  stroke: var(--well-color);
+  stroke-width: 1.7;
+  stroke-dasharray: 5 3;
+}
+
+.db-well-label rect {
+  fill: oklch(0.10 0.012 250 / 0.90);
+  stroke: color-mix(in oklch, var(--well-color) 62%, var(--line));
+  stroke-width: 1;
+}
+
+.db-well-label path {
+  fill: none;
+  stroke: color-mix(in oklch, var(--well-color) 58%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 4;
+}
+
+.db-well-label text {
+  fill: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 15px;
+  paint-order: stroke;
+  stroke: oklch(0.08 0.01 250 / 0.84);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.db-well-label .db-well-label-score {
+  fill: var(--well-color);
+  font-size: 11px;
+}
+
+:root[data-theme="light"] .db-well-marker {
+  stroke: oklch(0.99 0.004 250);
+}
+
+:root[data-theme="light"] .db-well-label rect {
+  fill: oklch(0.99 0.006 250 / 0.94);
+}
+
+:root[data-theme="light"] .db-well-label text {
+  fill: oklch(0.24 0.018 250);
+  stroke: oklch(0.99 0.006 250 / 0.90);
+}
+
+.db-signal-point circle {
+  fill: oklch(0.80 0.16 75 / 0.28);
+  stroke: var(--warn);
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 7px oklch(0.80 0.16 75 / 0.50));
+}
+
+.db-signal-point path {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.6;
+}
+
+.db-signal-point.is-confirmed circle {
+  fill: oklch(0.78 0.11 205 / 0.32);
+  stroke: var(--info);
+}
+
+.db-signal-point.is-confirmed path {
+  stroke: var(--info);
+}
+
 .db-chain-line line {
   stroke-width: 2;
   stroke-linecap: round;
@@ -849,9 +1116,9 @@
 
 .db-map-legend {
   position: absolute;
-  right: 14px;
-  top: 52px;
-  z-index: 4;
+  right: 58px;
+  top: 12px;
+  z-index: 12;
   display: flex;
   flex-direction: column;
   flex-wrap: wrap;
@@ -889,11 +1156,18 @@
 .db-map-legend .pipe::before { background: var(--ok); }
 .db-map-legend .water::before { background: oklch(0.72 0.14 220); }
 .db-map-legend .boundary::before { background: var(--accent); }
+.db-map-legend .well-high::before { background: var(--err); }
+.db-map-legend .well-watch::before { background: var(--warn); }
+.db-map-legend .signal::before {
+  background: var(--info);
+  transform: rotate(45deg);
+}
+.db-map-legend .public-map::before { background: var(--ok); }
 
 .db-map-scale {
   position: absolute;
   left: 22px;
-  top: 16px;
+  top: 54px;
   z-index: 4;
   display: grid;
   grid-template-columns: auto 40px auto 40px auto 40px auto;
@@ -985,11 +1259,11 @@
 .db-map-source {
   position: absolute;
   left: 12px;
-  right: 104px;
+  right: 12px;
   bottom: 12px;
-  z-index: 4;
+  z-index: 12;
   display: grid;
-  grid-template-columns: auto repeat(4, minmax(0, 1fr));
+  grid-template-columns: auto repeat(5, minmax(0, 1fr));
   align-items: center;
   gap: 8px;
   padding: 8px 9px;
@@ -1021,6 +1295,30 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.db-map-boundary-note {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 51px;
+  z-index: 12;
+  min-width: 0;
+  padding: 5px 9px;
+  border-left: 2px solid var(--warn);
+  background: oklch(0.10 0.012 250 / 0.88);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(10px);
+}
+
+:root[data-theme="light"] .db-map-boundary-note {
+  background: oklch(0.985 0.006 250 / 0.92);
+  color: var(--ink-1);
 }
 
 /* ── focus ─────────────────────────────────────────────── */

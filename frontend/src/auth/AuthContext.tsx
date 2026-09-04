@@ -7,6 +7,7 @@ interface AuthContextValue {
   phase: AuthPhase
   user: AuthUser | null
   bootstrapAvailable: boolean
+  localBootstrapAvailable: boolean
   login: (username: string, password: string) => Promise<void>
   bootstrap: (payload: UserCreatePayload, bootstrapToken: string) => Promise<void>
   logout: () => Promise<void>
@@ -19,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<AuthPhase>('loading')
   const [user, setUser] = useState<AuthUser | null>(null)
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false)
+  const [localBootstrapAvailable, setLocalBootstrapAvailable] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -33,9 +35,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const status = await authApi.bootstrapStatus()
       setBootstrapAvailable(status.bootstrap_available)
+      setLocalBootstrapAvailable(status.local_bootstrap_available)
       setPhase(status.initialized ? 'anonymous' : 'bootstrap')
     } catch {
       setBootstrapAvailable(false)
+      setLocalBootstrapAvailable(false)
       setPhase('anonymous')
     }
   }, [])
@@ -60,10 +64,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const bootstrap = useCallback(async (payload: UserCreatePayload, bootstrapToken: string) => {
-    const session = await authApi.bootstrap(payload, bootstrapToken)
+    const session = localBootstrapAvailable
+      ? await authApi.bootstrapLocal(payload)
+      : await authApi.bootstrap(payload, bootstrapToken)
     setUser(session.user)
     setPhase('authenticated')
-  }, [])
+  }, [localBootstrapAvailable])
 
   const logout = useCallback(async () => {
     try {
@@ -78,11 +84,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     phase,
     user,
     bootstrapAvailable,
+    localBootstrapAvailable,
     login,
     bootstrap,
     logout,
     refresh,
-  }), [bootstrap, bootstrapAvailable, login, logout, phase, refresh, user])
+  }), [bootstrap, bootstrapAvailable, localBootstrapAvailable, login, logout, phase, refresh, user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

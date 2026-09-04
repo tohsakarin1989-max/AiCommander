@@ -1124,6 +1124,100 @@ export interface AgentTask {
   created_at: string
 }
 
+export type AgentRunTaskType =
+  | 'case_data_quality'
+  | 'map_data_quality'
+  | 'dual_domain_analysis'
+  | 'evidence_report'
+
+export type AgentRunStatus =
+  | 'queued'
+  | 'planning'
+  | 'running'
+  | 'waiting_approval'
+  | 'verifying'
+  | 'completed'
+  | 'degraded'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+
+export interface AgentRunEvent {
+  id: number
+  run_id: string
+  sequence: number
+  event_type: string
+  status: AgentRunStatus
+  actor_type: string
+  actor_name?: string | null
+  input_summary: Record<string, unknown>
+  output_summary: Record<string, unknown>
+  evidence_refs: string[]
+  error_message?: string | null
+  duration_ms?: number | null
+  created_at: string
+}
+
+export interface AgentRunArtifact {
+  id: string
+  run_id: string
+  artifact_type: string
+  version: number
+  content: AgentRunResult
+  evidence_refs: string[]
+  source_signature: string
+  created_at: string
+}
+
+export interface AgentRunApproval {
+  id: string
+  run_id: string
+  artifact_id: string
+  action_type: string
+  target_type: string
+  target_id: number
+  candidate_patch: Record<string, unknown>
+  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'expired'
+  decision_comment?: string | null
+  execution_result: Record<string, unknown>
+  expires_at?: string | null
+  decided_at?: string | null
+  executed_at?: string | null
+  created_at: string
+}
+
+export interface AgentRunResult extends Omit<AgentTaskResult, 'facts'> {
+  facts?: Array<string | Record<string, unknown>>
+  findings?: Array<Record<string, unknown>>
+  pending_approval_count?: number
+}
+
+export interface AgentRun {
+  id: string
+  task_type: AgentRunTaskType
+  query: string
+  case_ids: number[]
+  asset_ids: number[]
+  mode: 'shadow' | 'assist'
+  status: AgentRunStatus
+  model_provider?: string | null
+  model_name?: string | null
+  data_version: string
+  result_summary: AgentRunResult
+  error_message?: string | null
+  attempt_count: number
+  created_by?: number | null
+  replay_of_id?: string | null
+  created_at: string
+  started_at?: string | null
+  completed_at?: string | null
+  artifact_count: number
+  pending_approval_count: number
+  events?: AgentRunEvent[]
+  artifacts?: AgentRunArtifact[]
+  approvals?: AgentRunApproval[]
+}
+
 // ============ 结论相关类型 ============
 
 export interface MeetingInfo {
@@ -1456,6 +1550,14 @@ export interface EventCreateData {
   suspects_description?: string
   discovery_method?: string
   handling_result?: string
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: 'fresh' | 'recent' | 'unknown'
+  confidence_score?: number
+  review_status?: 'pending_review' | 'confirmed' | 'rejected'
+  evidence_files?: Array<Record<string, unknown>>
+  observation_details?: Record<string, unknown>
   related_case_id?: number
 }
 
@@ -1476,6 +1578,14 @@ export interface EventUpdateData {
   suspects_description?: string
   discovery_method?: string
   handling_result?: string
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: 'fresh' | 'recent' | 'unknown'
+  confidence_score?: number
+  review_status?: 'pending_review' | 'confirmed' | 'rejected'
+  evidence_files?: Array<Record<string, unknown>>
+  observation_details?: Record<string, unknown>
   risk_level?: string
   analysis_notes?: string
   suggested_actions?: string[]

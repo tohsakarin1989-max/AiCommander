@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 PUBLIC_API_PATHS = {
     "/api/auth/bootstrap-status",
     "/api/auth/bootstrap",
+    "/api/auth/bootstrap-local",
     "/api/auth/login",
 }
 ADMIN_PATH_PREFIXES = (

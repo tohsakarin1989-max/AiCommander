@@ -1,4 +1,4 @@
-# AiCommander v2.0
+# AiCommander v2.0.1-test
 
 涉油案件数智研判与防控辅助系统。围绕案件资料治理、模式识别、时空规律、链条线索、
 热点区域、研判报告和部署建议提供辅助能力，所有 AI 结论均保留人工复核边界。
@@ -60,10 +60,21 @@ sudo ./scripts/deploy-production.sh
 - HttpOnly 安全会话、登录锁定、来源检查和写操作审计
 - 模型与系统密钥加密存储和掩码返回
 - SQLite 到 PostgreSQL 的受控数据迁移脚本
-- HTTPS 反向代理样例、健康检查、日志轮转和固定镜像 digest
+- HTTPS 反向代理样例、部署预检、升级前自动备份、迁移版本健康检查
+- 日志轮转和固定基础镜像 digest
 
 完整安装、下载来源、旧数据迁移、HTTPS、备份恢复和回滚步骤见
 [服务器部署与运维手册](./docs/server-deployment-runbook.zh-CN.md)。
+
+## 可选 Agent Lab
+
+“油盾·双域研判智能体”作为独立可选辅助层，默认关闭，不参与核心系统就绪判定。当前提供案件数据质检、
+地图数据质检、双域融合研判、证据成果物、运行轨迹和管理员审批；Agent 不直接修改案件，地图候选也只有
+在 `assist` 模式、写入开关和人工审批同时满足时才能通过现有业务服务执行。
+
+部署开关、数据出域、故障降级、评测 Harness 和八周验收门槛见
+[Agent Lab 部署与验收手册](./docs/agent-lab-runbook.zh-CN.md)，竞赛现场记录使用
+[竞赛冻结与演示清单](./docs/competition-demo-checklist.zh-CN.md)。
 
 ## 验证
 
@@ -77,7 +88,7 @@ npm run test
 npm run build
 ```
 
-当前 v2.0 基线：后端 167 项测试、前端 17 个测试文件共 69 项测试通过。
+当前 `v2.0.1-test` 本地回归基线：后端 217 项测试、前端 18 个测试文件共 78 项测试通过。
 
 ## 项目结构
 

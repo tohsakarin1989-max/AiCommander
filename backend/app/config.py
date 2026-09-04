@@ -1,9 +1,11 @@
 from typing import Literal, Optional
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    APP_VERSION: str = "2.0.1-test"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
@@ -31,6 +33,18 @@ class Settings(BaseSettings):
     ENABLE_VECTOR_DB: bool = True
     ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
+    ENABLE_AGENT_LAB: bool = False
+    AGENT_MODE: Literal["off", "shadow", "assist"] = "off"
+    AGENT_MUTATIONS_ENABLED: bool = False
+    AGENT_EXTERNAL_DATA_POLICY: Literal["redacted_only", "local_only"] = "redacted_only"
+    AGENT_MAX_STEPS: int = 8
+    AGENT_TIMEOUT_SECONDS: int = 120
+    AGENT_REDIS_QUEUE: str = "agent_lab"
+    AGENT_PROVIDER: Literal["deterministic", "openai_agents"] = "openai_agents"
+    AGENT_MODEL: str = "gpt-5-mini"
+    AGENT_USE_EXTERNAL_MODEL: bool = False
+    AGENT_SDK_TRACING_ENABLED: bool = False
+    AGENT_APPROVAL_TTL_HOURS: int = 24
     
     class Config:
         env_file = ".env"
@@ -38,6 +52,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self):
+        if self.AGENT_MUTATIONS_ENABLED and (
+            not self.ENABLE_AGENT_LAB or self.AGENT_MODE != "assist"
+        ):
+            raise ValueError("Agent 正式数据写入仅允许在已启用的 assist 模式开启")
+        if self.AGENT_MODE != "off" and not self.ENABLE_AGENT_LAB:
+            raise ValueError("启用 Agent 运行模式前必须先开启 ENABLE_AGENT_LAB")
+        if self.AGENT_USE_EXTERNAL_MODEL and self.AGENT_EXTERNAL_DATA_POLICY == "local_only":
+            raise ValueError("local_only 数据策略不允许调用外部 Agent 模型")
+        if not 1 <= self.AGENT_MAX_STEPS <= 32:
+            raise ValueError("AGENT_MAX_STEPS 必须在 1-32 之间")
+        if not 10 <= self.AGENT_TIMEOUT_SECONDS <= 1800:
+            raise ValueError("AGENT_TIMEOUT_SECONDS 必须在 10-1800 秒之间")
+        if not self.AGENT_REDIS_QUEUE.strip():
+            raise ValueError("AGENT_REDIS_QUEUE 不能为空")
+
         if self.ENVIRONMENT != "production":
             return self
 
@@ -54,6 +83,50 @@ class Settings(BaseSettings):
             raise ValueError("生产环境必须启用安全会话 Cookie")
         if self.AUTO_CREATE_TABLES:
             raise ValueError("生产环境必须关闭 AUTO_CREATE_TABLES 并使用 Alembic")
+        database_url = urlparse(self.DATABASE_URL)
+        if (
+            database_url.scheme
+            not in {"postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
+            or not database_url.hostname
+            or not database_url.username
+            or not database_url.password
+            or database_url.path in {"", "/"}
+        ):
+            raise ValueError("生产环境 DATABASE_URL 必须使用带认证的 PostgreSQL 地址")
+
+        redis_url = urlparse(self.REDIS_URL)
+        if (
+            redis_url.scheme not in {"redis", "rediss"}
+            or not redis_url.hostname
+            or not redis_url.password
+        ):
+            raise ValueError("生产环境 REDIS_URL 必须使用带密码的 Redis 地址")
+
+        frontend_url = urlparse(self.FRONTEND_URL)
+        if frontend_url.scheme != "https" or not frontend_url.hostname:
+            raise ValueError("生产环境 FRONTEND_URL 必须是完整的 HTTPS 地址")
+
+        cors_origins = [
+            item.strip()
+            for item in self.CORS_ORIGINS.split(",")
+            if item.strip()
+        ]
+        for origin in cors_origins:
+            parsed_origin = urlparse(origin)
+            if parsed_origin.scheme != "https" or not parsed_origin.hostname:
+                raise ValueError("生产环境 CORS_ORIGINS 只允许完整的 HTTPS 地址")
+
+        allowed_hosts = [
+            item.strip()
+            for item in self.ALLOWED_HOSTS.split(",")
+            if item.strip()
+        ]
+        if not allowed_hosts or "*" in allowed_hosts:
+            raise ValueError("生产环境 ALLOWED_HOSTS 不允许为空或使用通配符")
+        if self.ENABLE_API_DOCS:
+            raise ValueError("生产环境必须关闭接口文档")
+        if not self.BOOTSTRAP_TOKEN or len(self.BOOTSTRAP_TOKEN) < 32:
+            raise ValueError("生产环境 BOOTSTRAP_TOKEN 必须是至少 32 位的随机值")
         return self
 
 settings = Settings()

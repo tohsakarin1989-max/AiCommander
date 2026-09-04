@@ -12,6 +12,12 @@ export const EVENT_TYPES = {
   damage_found: '发现设施损坏',
   illegal_station: '非法加油站',
   pipeline_tap: '管线打孔点',
+  vehicle_trace: '陌生车辆/车迹',
+  oil_trace: '井口油迹异常',
+  footprint_trace: '人员活动痕迹',
+  tool_trace: '工具使用痕迹',
+  facility_anomaly: '井场设施异常',
+  defense_outage: '防控设施异常',
 } as const
 
 export type EventType = keyof typeof EVENT_TYPES
@@ -59,6 +65,14 @@ export interface Event {
   suspects_count?: number
   discovery_method?: string
   handling_result?: string
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: 'fresh' | 'recent' | 'unknown'
+  confidence_score?: number
+  review_status?: 'pending_review' | 'confirmed' | 'rejected'
+  evidence_files?: Array<Record<string, unknown>>
+  observation_details?: Record<string, unknown>
   is_analyzed: boolean
   risk_level?: RiskLevel
   analysis_notes?: string
@@ -263,4 +277,10 @@ export interface MapEventData {
   occurred_time: string
   village_name?: string
   risk_level?: RiskLevel
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: string
+  confidence_score?: number
+  review_status?: string
 }
