@@ -30,6 +30,10 @@ import type {
   TrajectoryReplayFrame,
   SemanticSearchResult,
   CaseStatistics,
+  AiIntakeApplyResult,
+  CaseDiagram,
+  CaseProcessingCard,
+  CaseProfile,
 } from '../types'
 
 export interface CaseImportError {
@@ -176,6 +180,32 @@ export const caseApi = {
     return response.data
   },
 
+  getCaseProfile: async (caseId: number): Promise<CaseProfile> => {
+    const response = await api.get<CaseProfile>(`/cases/${caseId}/profile`)
+    return response.data
+  },
+
+  getProcessingCard: async (caseId: number): Promise<CaseProcessingCard> => {
+    const response = await api.get<CaseProcessingCard>(`/cases/${caseId}/processing-card`)
+    return response.data
+  },
+
+  getCaseDiagram: async (caseId: number): Promise<CaseDiagram> => {
+    const response = await api.get<CaseDiagram>(`/cases/${caseId}/diagram`)
+    return response.data
+  },
+
+  applyAiIntake: async (
+    caseId: number,
+    payload: {
+      confirmed_fields: Array<{ field: string; value: unknown }>
+      confirmed_field_names: string[]
+    },
+  ): Promise<AiIntakeApplyResult> => {
+    const response = await api.post<AiIntakeApplyResult>(`/cases/${caseId}/ai-intake-apply`, payload)
+    return response.data
+  },
+
   getCaseVehicles: async (caseId: number): Promise<CaseVehicle[]> => {
     const response = await api.get<CaseVehicle[]>(`/cases/${caseId}/vehicles`)
     return response.data
@@ -208,6 +238,21 @@ export const caseApi = {
 
   getBonusAssessment: async (caseId: number): Promise<BonusAssessment> => {
     const response = await api.get<BonusAssessment>(`/cases/${caseId}/bonus-assessment`)
+    return response.data
+  },
+
+  getBonusPeriodCases: async (
+    caseId: number,
+    scope: 'quarter' | 'annual',
+    options?: { squad?: string; includeAllSquads?: boolean },
+  ): Promise<Case[]> => {
+    const response = await api.get<Case[]>(`/cases/${caseId}/bonus-period-cases`, {
+      params: {
+        scope,
+        squad: options?.squad,
+        include_all_squads: options?.includeAllSquads,
+      },
+    })
     return response.data
   },
 

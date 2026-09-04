@@ -62,6 +62,8 @@ export { aiApi } from './ai'
 export { analysisApi } from './analysis'
 export { reportApi } from './reports'
 export type { ReportListItem } from './reports'
+export { knowledgeApi } from './knowledge'
+export type { CitationAssistResponse, ExperienceKnowledgeResponse } from './knowledge'
 
 // 系统配置（模型、参数）
 export { configApi } from './config'

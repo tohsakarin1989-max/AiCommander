@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  Alert,
   Button,
   Modal,
   Collapse,
@@ -18,21 +19,45 @@ import {
   TeamOutlined,
   ArrowRightOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
+import { knowledgeApi } from '../../services/knowledge'
+import { reportApi } from '../../services/reports'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import { buildReportPresentation, getReportDraftMeta, getReportExportMarkdown } from './reportPresentationModel'
+import {
+  buildReportPresentation,
+  buildReportReviewPresentation,
+  getReportDraftMeta,
+  getReportExportMarkdown,
+} from './reportPresentationModel'
+import type { ReportReviewResult } from '../../types'
 import './Reports.css'
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
+  const [reviewResult, setReviewResult] = useState<ReportReviewResult | null>(null)
+
   const { data: meetings, isLoading } = useQuery({
     queryKey: ['meetings'],
     queryFn: () => aiApi.meeting.list(),
   })
 
+  const { data: storedReports, isLoading: storedReportsLoading } = useQuery({
+    queryKey: ['stored-reports-for-review'],
+    queryFn: () => reportApi.list({ limit: 20 }),
+  })
+
+  const reviewMutation = useMutation({
+    mutationFn: (reportId: number) => knowledgeApi.reviewReport(reportId),
+    onSuccess: (result) => {
+      setReviewResult(result)
+      message.success('报告审稿已完成，结果需人工复核')
+    },
+  })
+
   const completedMeetings = meetings?.filter((m) => m.status === 'completed') || []
+  const reviewPresentation = reviewResult ? buildReportReviewPresentation(reviewResult) : null
 
   const handleExportReport = (meetingId: string, report: any) => {
     try {
@@ -88,6 +113,66 @@ const Reports: React.FC = () => {
         <span className="rp-filter-chip rp-filter-chip--active">全部</span>
         <span className="rp-filter-chip">待审核</span>
         <span className="rp-filter-chip">已完成</span>
+      </div>
+
+      <div className="card rp-review-panel">
+        <div className="card-head">
+          <span className="ico"><FileTextOutlined /></span>
+          <span>报告审稿官</span>
+          <span className="tag" style={{ marginLeft: 6 }}>人工确认后生效</span>
+          <span className="spacer" />
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+            {storedReportsLoading ? '加载中' : `${storedReports?.length || 0} 份可审稿`}
+          </span>
+        </div>
+        <div className="card-body pad">
+          {storedReportsLoading ? (
+            <div className="rp-review-loading"><Spin size="small" /> 正在读取报告底座…</div>
+          ) : storedReports?.length ? (
+            <div className="rp-review-report-list">
+              {storedReports.slice(0, 5).map((report) => (
+                <button
+                  key={report.id}
+                  className="btn-ghost-sm"
+                  disabled={reviewMutation.isPending}
+                  onClick={() => reviewMutation.mutate(report.id)}
+                >
+                  审稿 #{report.id}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>暂无持久化报告，完成圆桌研判后可在此审稿。</span>
+          )}
+          {reviewPresentation && (
+            <Alert
+              type={reviewPresentation.totalFindings > 0 ? 'warning' : 'success'}
+              showIcon
+              className="rp-review-alert"
+              message={`审稿结果：${reviewPresentation.totalFindings} 个问题，需人工复核`}
+              description={(
+                <div className="rp-review-result">
+                  {reviewPresentation.findingLines.length > 0 && (
+                    <>
+                      <div className="rp-review-subtitle">问题清单</div>
+                      {reviewPresentation.findingLines.map((line, index) => (
+                        <div key={`${line}-${index}`} className="rp-modal-list-item">{line}</div>
+                      ))}
+                    </>
+                  )}
+                  {reviewPresentation.suggestedFixes.length > 0 && (
+                    <>
+                      <div className="rp-review-subtitle">建议修改</div>
+                      {reviewPresentation.suggestedFixes.map((line, index) => (
+                        <div key={`${line}-${index}`} className="rp-modal-list-item">{line}</div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            />
+          )}
+        </div>
       </div>
 
       {/* ── 主内容 ── */}
@@ -154,6 +239,15 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
     enabled: detailModalVisible,
   })
 
+  const presentation = report ? buildReportPresentation(report) : null
+  const summaryText = presentation?.summary || ''
+
+  const { data: citationAssist } = useQuery({
+    queryKey: ['report-citation-assist', meetingId, summaryText],
+    queryFn: () => knowledgeApi.citationAssist({ query: summaryText || meetingId }),
+    enabled: detailModalVisible && !!summaryText,
+  })
+
   if (isLoading) {
     return (
       <div className="card rp-card--loading">
@@ -162,9 +256,8 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
     )
   }
 
-  if (!report) return null
+  if (!report || !presentation) return null
 
-  const presentation = buildReportPresentation(report)
   const reportMeta = getReportDraftMeta(report)
   const displayDate = meeting
     ? dayjs(meeting.completed_at || meeting.created_at).format('YYYY-MM-DD HH:mm')
@@ -174,8 +267,6 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
   const disagreementCount = presentation.disagreementPoints.length
   const insightCount      = presentation.keyInsights.length + presentation.chainCorrelations.length
   const caseCount         = meeting?.case_ids?.length || 0
-
-  const summaryText = presentation.summary
 
   return (
     <>
@@ -283,6 +374,20 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             <p className="rp-modal-section__text">{presentation.conclusions}</p>
           </div>
         )}
+
+        {citationAssist?.citations?.length ? (
+          <div className="rp-modal-section">
+            <div className="rp-modal-section__title">引用助手</div>
+            {citationAssist.citations.slice(0, 4).map((item, index) => (
+              <div key={`${item.source_type}-${item.source_id}-${index}`} className="rp-modal-list-item">
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+                  Q{index + 1}
+                </span>
+                <span>{item.snippet}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {/* 共识 / 分歧 / 洞察 / 建议 */}
         <Collapse

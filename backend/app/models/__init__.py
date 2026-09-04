@@ -7,6 +7,7 @@ from app.models.system_config import SystemConfig
 from app.models.conclusion import Conclusion
 from app.models.conclusion_review import ConclusionReview
 from app.models.agent_task import AgentTask
+from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
 from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
 from app.models.patrol import PatrolRecord, AreaRiskAssessment
 from app.models.meeting_template import MeetingTemplate
@@ -15,6 +16,7 @@ from app.models.key_location import KeyLocation
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.automation_alert import AutomationAlert
 from app.models.chain_link import ChainLink
+from app.models.user import AuditLog, User, UserSession
 
 __all__ = [
     "AIModel",
@@ -35,6 +37,10 @@ __all__ = [
     "Conclusion",
     "ConclusionReview",
     "AgentTask",
+    "AgentRun",
+    "AgentEvent",
+    "AgentArtifact",
+    "AgentApproval",
     # 事件和区域研判相关
     "Event",
     "AreaProfile",
@@ -54,4 +60,7 @@ __all__ = [
     "JurisdictionFeedback",
     "AutomationAlert",
     "ChainLink",
+    "User",
+    "UserSession",
+    "AuditLog",
 ]

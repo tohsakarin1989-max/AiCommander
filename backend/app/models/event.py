@@ -18,6 +18,12 @@ EVENT_TYPES = {
     "damage_found": "发现设施损坏",      # 发现的盗油痕迹/管线损坏
     "illegal_station": "非法加油站",     # 发现的黑加油站
     "pipeline_tap": "管线打孔点",        # 发现的管线盗油点
+    "vehicle_trace": "陌生车辆/车迹",    # 井点周边陌生车辆、车辙或异常停留迹象
+    "oil_trace": "井口油迹异常",         # 井口或周边漏油、油污等异常痕迹
+    "footprint_trace": "人员活动痕迹",   # 陌生脚印、踩踏或停留痕迹
+    "tool_trace": "工具使用痕迹",        # 撬动、切割、钻孔等工具使用痕迹
+    "facility_anomaly": "井场设施异常",  # 锁具、阀门、围栏等设施异常
+    "defense_outage": "防控设施异常",    # 监控、照明、报警等设备离线或故障
 }
 
 
@@ -99,9 +105,20 @@ class Event(Base):
     discovery_method = Column(String(50))  # 发现方式：巡逻发现/群众举报/其他
     handling_result = Column(String(100))  # 处置结果：移交公安/内部处理/持续关注
 
+    # 井点周边风险迹象。保持事件与案件分离，供关注热力和防控研判使用。
+    related_asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id"), nullable=True, index=True)
+    observation_type = Column(String(50), nullable=True, index=True)
+    severity = Column(Integer, nullable=True)  # 1-5，仅表达痕迹严重程度
+    freshness = Column(String(20), nullable=True)  # fresh/recent/unknown
+    confidence_score = Column(Float, nullable=True)  # 0-1，人工或模型识别可信度
+    review_status = Column(String(30), nullable=True, default="pending_review")
+    evidence_files = Column(JSON, nullable=True)
+    observation_details = Column(JSON, nullable=True)
+
     # 关联案件（如果由案件转化而来）
     related_case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     related_case = relationship("Case", backref="events")
+    related_asset = relationship("JurisdictionAsset", backref="risk_observations")
 
     # 研判标记
     is_analyzed = Column(Boolean, default=False)  # 是否已纳入研判

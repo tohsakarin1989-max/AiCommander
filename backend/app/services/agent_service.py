@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from app.models.agent_task import AgentTask
 from app.models.ai_model import AIModel
 from app.ai.model_factory import ModelFactory
+from app.agent_runtime.redaction import AgentPayloadRedactor
+from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.utils.logger import logger
@@ -143,8 +145,12 @@ class AgentService:
             for pack in context_packs
         ]
 
-        llm = AgentService._get_llm(db)
+        llm = AgentService._get_llm(db) if settings.AGENT_USE_EXTERNAL_MODEL else None
         if llm:
+            external_context = AgentPayloadRedactor().redact({
+                "case_brief": case_brief,
+                "context": compact_context,
+            }).payload
             prompt = f"""你是涉油案件研判辅助 Agent。请只基于系统给出的案件研判上下文输出 JSON，不要编造未掌握事实。
 必须遵守：
 1. 区分 facts、inferences、recommendations、information_gaps；
@@ -154,9 +160,8 @@ class AgentService:
 
 JSON字段：
 steps(字符串数组)，result(字符串)，confidence(0-1)，facts(字符串数组)，inferences(字符串数组)，recommendations(字符串数组)，information_gaps(字符串数组)，evidence_refs(字符串数组)，boundary(字符串数组)。
-用户目标：{query}
-相关案件：{json.dumps(case_brief, ensure_ascii=False)}
-研判上下文：{json.dumps(compact_context, ensure_ascii=False, default=str)}
+用户目标：整理脱敏案件的事实依据、模式推断、防控参考和信息缺口
+脱敏上下文：{json.dumps(external_context, ensure_ascii=False, default=str)}
 """
             try:
                 response = await llm.ainvoke(prompt)

@@ -5,12 +5,6 @@
 echo "=== 设置数据库和Redis ==="
 echo ""
 
-generate_secret() {
-    python3 -c 'import secrets; print(secrets.token_urlsafe(24))'
-}
-
-export DB_PASSWORD="${DB_PASSWORD:-$(generate_secret)}"
-
 # 检查docker-compose
 if command -v docker-compose &> /dev/null; then
     echo "使用 docker-compose 启动服务..."
@@ -31,7 +25,7 @@ elif docker ps &> /dev/null; then
         docker run -d --name postgres-aicommander \
             -e POSTGRES_DB=aicommander \
             -e POSTGRES_USER=aicommander \
-            -e POSTGRES_PASSWORD="$DB_PASSWORD" \
+            -e POSTGRES_PASSWORD=aicommander123 \
             -p 5432:5432 \
             postgres:14 || echo "⚠️  PostgreSQL启动失败，请检查网络或手动启动"
     fi
@@ -58,3 +52,4 @@ echo ""
 echo "✅ 数据库服务已启动"
 echo "PostgreSQL: localhost:5432"
 echo "Redis: localhost:6379"
+

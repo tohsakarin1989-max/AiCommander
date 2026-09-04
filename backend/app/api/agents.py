@@ -3,10 +3,16 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 from app.database import get_db
+from app.config import settings
 from app.models.agent_task import AgentTask
 from app.services.agent_service import AgentService
 
 router = APIRouter()
+
+
+def _require_agent_enabled() -> None:
+    if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == "off":
+        raise HTTPException(status_code=404, detail="Agent Lab 未启用")
 
 
 class AgentRunRequest(BaseModel):
@@ -16,6 +22,7 @@ class AgentRunRequest(BaseModel):
 
 @router.post("/run")
 async def run_agent(request: AgentRunRequest, db: Session = Depends(get_db)):
+    _require_agent_enabled()
     if not request.query:
         raise HTTPException(status_code=400, detail="query不能为空")
     task = await AgentService.run_task(db, query=request.query, case_ids=request.case_ids)
@@ -31,6 +38,7 @@ async def run_agent(request: AgentRunRequest, db: Session = Depends(get_db)):
 
 @router.get("/tasks")
 def list_tasks(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    _require_agent_enabled()
     rows = db.query(AgentTask).order_by(AgentTask.created_at.desc()).offset(skip).limit(limit).all()
     return [
         {

@@ -232,7 +232,7 @@ def test_case_profile_uses_structured_vehicle_person_and_evidence():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
         },
     )
     assert case_response.status_code == 200
@@ -253,7 +253,7 @@ def test_case_profile_uses_structured_vehicle_person_and_evidence():
         f"/api/cases/{case_id}/persons",
         json={
             "name": "王某",
-            "id_number": "TEST-ID-0001",
+            "id_number": "210000199001010000",
             "home_address": "测试住址",
             "handling_status": "移交公安",
         },

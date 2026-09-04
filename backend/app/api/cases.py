@@ -10,6 +10,9 @@ from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_knowledge_service import CaseKnowledgeService
+from app.services.case_processing_card_service import CaseProcessingCardService
+from app.services.case_profile_service import CaseProfileService
 from app.services.preprocess_service import CasePreprocessService
 from app.services.case_quality_service import CaseQualityService
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
@@ -66,6 +69,29 @@ NULLABLE_CASE_UPDATE_FIELDS = {
     "oil_handling",
     "operation_role",
     "current_stage",
+}
+AI_INTAKE_WRITABLE_FIELDS = {
+    "occurred_time",
+    "location",
+    "case_type",
+    "description",
+    "oil_type",
+    "oil_volume",
+    "oil_value",
+    "oil_nature",
+    "water_cut",
+    "source_type",
+    "police_reported",
+    "case_filed",
+    "person_handling",
+    "vehicle_handling",
+    "oil_handling",
+    "vehicle_info",
+    "report_unit",
+    "source_detail",
+    "facility_type",
+    "facility_owner",
+    "modus_operandi",
 }
 
 
@@ -276,6 +302,26 @@ class BatchReviewRequest(BaseModel):
     only_missing: bool = False
     limit: Optional[int] = None
     use_llm: bool = False
+
+
+class AiIntakeField(BaseModel):
+    field: str
+    value: Any
+
+
+class AiIntakeApplyRequest(BaseModel):
+    confirmed_fields: List[AiIntakeField] = []
+    confirmed_field_names: List[str] = []
+
+
+def _normalize_ai_intake_value(field: str, value: Any) -> Any:
+    if field in {"occurred_time", "report_time"} and isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if field in {"oil_volume", "water_cut", "latitude", "longitude"} and value is not None:
+        return float(value)
+    if field in {"oil_value", "loss_amount"} and value is not None:
+        return int(value)
+    return value
 
 
 class CaseLocationUpdate(BaseModel):
@@ -664,11 +710,12 @@ def get_case_statistics(db: Session = Depends(get_db)):
 
 
 @router.post("/structure-preview")
-def structure_case_text(payload: CaseStructureRequest):
+def structure_case_text(payload: CaseStructureRequest, db: Session = Depends(get_db)):
     """从案情文本中自动提取案件录入字段，供人工确认后写入。"""
     if not payload.text or not payload.text.strip():
         raise HTTPException(status_code=400, detail="案情文本不能为空")
-    return CaseAutomationService.structure_case_text(payload.text)
+    llm = CasePreprocessService._build_llm(db)
+    return CaseAutomationService.structure_case_text(payload.text, llm=llm)
 
 
 @router.post("/evidence/classify")
@@ -1016,6 +1063,74 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="案件不存在")
     return case
 
+
+@router.get("/{case_id:int}/profile")
+def get_case_profile(case_id: int, db: Session = Depends(get_db)):
+    """获取统一案件画像。该接口只读，不刷新质量评分、不生成经验卡。"""
+    try:
+        return CaseProfileService.build_case_profile(db, case_id)
+    except ValueError as exc:
+        if str(exc) == "case_not_found":
+            raise HTTPException(status_code=404, detail="案件不存在")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{case_id:int}/processing-card")
+def get_case_processing_card(case_id: int, db: Session = Depends(get_db)):
+    """获取同案质量、奖金、经验卡、报告缺口归并后的处理卡。"""
+    try:
+        return CaseProcessingCardService.build_processing_card(db, case_id)
+    except ValueError as exc:
+        if str(exc) == "case_not_found":
+            raise HTTPException(status_code=404, detail="案件不存在")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{case_id:int}/diagram")
+def get_case_diagram(case_id: int, db: Session = Depends(get_db)):
+    """获取一案一图渲染数据。"""
+    try:
+        return CaseKnowledgeService.build_case_diagram(db, case_id)
+    except ValueError as exc:
+        if str(exc) == "case_not_found":
+            raise HTTPException(status_code=404, detail="案件不存在")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{case_id:int}/ai-intake-apply")
+def apply_ai_intake_preview(
+    case_id: int,
+    payload: AiIntakeApplyRequest,
+    db: Session = Depends(get_db),
+):
+    """仅写入人工确认的 AI 录入候选字段。"""
+    case = _get_case_or_404(db, case_id)
+    confirmed = set(payload.confirmed_field_names or [])
+    applied: List[str] = []
+    rejected: List[Dict[str, Any]] = []
+    for item in payload.confirmed_fields:
+        field = item.field
+        if field not in confirmed:
+            rejected.append({"field": field, "reason": "未在 confirmed_field_names 中确认"})
+            continue
+        if field not in AI_INTAKE_WRITABLE_FIELDS:
+            rejected.append({"field": field, "reason": "字段不允许由 AI 录入写入"})
+            continue
+        value = _normalize_ai_intake_value(field, item.value)
+        setattr(case, field, value)
+        applied.append(field)
+    if applied:
+        case.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(case)
+    return {
+        "case_id": case.id,
+        "applied_fields": applied,
+        "rejected_fields": rejected,
+        "human_confirmation_required": True,
+        "boundary": "只写入人工确认字段；未确认候选不改变案件。",
+    }
+
 @router.put("/{case_id:int}", response_model=CaseResponse)
 def update_case(
     case_id: int,
@@ -1094,6 +1209,28 @@ def get_bonus_assessment(case_id: int, db: Session = Depends(get_db)):
     _require_bonus_accounting_enabled()
     case = _get_case_or_404(db, case_id)
     return CaseAutomationService.build_bonus_assessment(db, case)
+
+
+@router.get("/{case_id:int}/bonus-period-cases", response_model=List[CaseResponse])
+def get_bonus_period_cases(
+    case_id: int,
+    scope: str = "quarter",
+    squad: Optional[str] = None,
+    include_all_squads: bool = False,
+    db: Session = Depends(get_db),
+):
+    """获取与选中案件同一奖金考核周期的案件列表，默认收窄到同一主控班组。"""
+    _require_bonus_accounting_enabled()
+    if scope not in {"quarter", "annual"}:
+        raise HTTPException(status_code=400, detail="scope must be quarter or annual")
+    case = _get_case_or_404(db, case_id)
+    return CaseAutomationService.list_bonus_period_cases(
+        db,
+        case,
+        scope=scope,
+        squad=squad,
+        include_all_squads=include_all_squads,
+    )
 
 
 @router.get("/{case_id:int}/automation-workbench")

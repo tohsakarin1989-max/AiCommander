@@ -59,7 +59,7 @@ describe('caseBonusEntryHints', () => {
       oil_handling: '检斤入库',
       police_reported: true,
       police_officer: '张警官',
-      police_phone: '00000000000',
+      police_phone: '13800000000',
     })
 
     expect(hints).toEqual([])

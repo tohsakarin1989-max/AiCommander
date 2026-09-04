@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI
@@ -10,6 +11,20 @@ import app.models  # noqa: F401
 from app.api import cases
 from app.config import settings
 from app.database import Base, get_db
+from app.services.case_automation_service import CaseAutomationService
+
+
+class _FakeLLMResponse:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _FakeLLM:
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def invoke(self, _prompt: str):
+        return _FakeLLMResponse(json.dumps(self.payload, ensure_ascii=False))
 
 
 def _session() -> Session:
@@ -93,9 +108,85 @@ def test_structure_preview_extracts_case_fields_and_material_hints():
     assert fields["source_type"] == "巡逻发现"
     assert fields["police_reported"] is True
     assert fields["person_handling"] == "移交公安"
+    assert payload["model_status"] == "deterministic_fallback"
+    assert payload["intake_mode"] == "rules_fallback"
+    assert "未使用大模型" in payload["ai_intake_boundary"]
     requirement_keys = {item["requirement_key"] for item in payload["suggested_evidence"]}
     assert "weigh_water_document" in requirement_keys
     assert "oil_disposition_document" in requirement_keys
+
+
+def test_structure_preview_extracts_standard_reporting_fields_without_llm():
+    payload = CaseAutomationService.structure_case_text(
+        "2023年3月8日04:26，敖南保卫班在肇源县茂兴镇幸福村东大约一公里，"
+        "抓获蓝色京奥牌电动三轮盗油车辆1台，无牌照，车内被盗原油0.18吨，含水5%，"
+        "抓获嫌疑人1名，报茂兴派出所，立案侦查，嫌疑人治安拘留。"
+        "茂兴派出所出警人：姚佳良，联系电话：18846680071，"
+        "敖南保卫班出警人：张伟、王艳龙。巡逻发现。"
+    )
+
+    fields = payload["case_fields"]
+    assert payload["model_status"] == "deterministic_fallback"
+    assert fields["report_unit"] == "敖南保卫班"
+    assert fields["location"] == "肇源县茂兴镇幸福村东大约一公里"
+    assert fields["oil_nature"] == "被盗原油"
+    assert fields["oil_volume"] == 0.18
+    assert fields["water_cut"] == 5.0
+    assert fields["source_type"] == "巡逻发现"
+    assert fields["case_filed"] is True
+    assert fields["police_officer"] == "姚佳良"
+    assert fields["police_phone"] == "18846680071"
+    assert fields["security_officers"] == ["张伟", "王艳龙"]
+
+
+def test_structure_preview_uses_llm_to_standardize_nonstandard_case_text():
+    llm = _FakeLLM({
+        "case_fields": {
+            "occurred_time": "2026-05-06T02:30:00",
+            "report_time": "2026-05-06T03:00:00",
+            "report_unit": "敖南保卫班",
+            "location": "三号井场东侧临时便道",
+            "case_type": "涉油盗窃",
+            "description": "2026年5月6日2时30分，巡逻人员在三号井场东侧临时便道发现辽A12345车辆盗运被盗原油1.5吨，含水率8%，现场抓获2人并移交公安，涉案原油已检斤入库。",
+            "oil_type": "原油",
+            "oil_nature": "被盗原油",
+            "oil_volume": "1.5",
+            "water_cut": "8",
+            "source_type": "巡逻发现",
+            "person_handling": "移交公安",
+            "oil_handling": "检斤入库",
+            "police_officer": "姚警官",
+            "police_phone": "18846680071",
+            "security_officers": ["张伟", "王艳龙"],
+        },
+        "field_sources": {
+            "location": "原文‘三号井场东侧小道’标准化为录入地点",
+            "description": "对口语化案情做标准摘要",
+        },
+        "entities": {"plate_numbers": ["辽A12345"], "person_count": 2},
+        "suggested_evidence": [
+            {"requirement_key": "weigh_water_document", "label": "检斤含水单据", "reason": "含油量和含水率已出现"}
+        ],
+        "follow_up_questions": ["请确认车辆考核类别。"],
+        "confidence": 0.91,
+    })
+
+    payload = CaseAutomationService.structure_case_text(
+        "5月6日凌晨两点半，巡逻到三号井场东侧小道，看见辽A12345拉油，大概1.5吨，含水8，俩人交公安，油入库。",
+        llm=llm,
+    )
+
+    assert payload["model_status"] == "llm_success"
+    assert payload["intake_mode"] == "llm"
+    assert payload["case_fields"]["location"] == "三号井场东侧临时便道"
+    assert payload["case_fields"]["description"].startswith("2026年5月6日2时30分")
+    assert payload["case_fields"]["report_unit"] == "敖南保卫班"
+    assert payload["case_fields"]["oil_volume"] == 1.5
+    assert payload["case_fields"]["water_cut"] == 8.0
+    assert payload["case_fields"]["police_phone"] == "18846680071"
+    assert payload["case_fields"]["security_officers"] == ["张伟", "王艳龙"]
+    assert payload["field_sources"]["location"].startswith("大模型整理")
+    assert "请确认车辆考核类别。" in payload["follow_up_questions"]
 
 
 def test_evidence_create_auto_classifies_bonus_material():
@@ -155,7 +246,7 @@ def test_bonus_assessment_calculates_from_case_data_and_gates_review_by_evidence
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件一班:张三、李四"],
         },
     )
@@ -441,7 +532,7 @@ def test_official_bonus_uses_largest_remainder_for_cross_squad_distribution():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件一班:张三、李四", "龙虎泡保卫班:王五"],
         },
     )
@@ -498,7 +589,7 @@ def test_official_bonus_switches_to_high_tier_after_target_is_exceeded():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件三班:张三"],
         },
     )
@@ -551,7 +642,7 @@ def test_bonus_assessment_uses_case_quarter_for_management_targets():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件三班:张三"],
         },
     )
@@ -584,7 +675,7 @@ def test_bonus_assessment_uses_case_quarter_for_management_targets():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件三班:李四"],
         },
     )
@@ -619,6 +710,61 @@ def test_bonus_assessment_uses_case_quarter_for_management_targets():
     assert "单案金额进入该周期人工复核" in management["pricing_basis"]
 
 
+def test_bonus_period_cases_use_full_backend_period_and_primary_squad_scope():
+    db = _session()
+    client = _client(db)
+
+    q1_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 1, 15, 9, 0).isoformat(),
+            "location": "一季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+        },
+    )
+    q1_id = q1_response.json()["id"]
+
+    q2_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 4, 6, 9, 30).isoformat(),
+            "location": "二季度井场",
+            "case_type": "涉油盗窃",
+            "description": "抓获1台小型机动车盗运原油，车辆移交公安，检斤入库。",
+            "report_unit": "案件三班",
+        },
+    )
+    q2_id = q2_response.json()["id"]
+
+    other_squad_response = client.post(
+        "/api/cases/",
+        json={
+            "occurred_time": datetime(2026, 5, 2, 8, 0).isoformat(),
+            "location": "联合案件",
+            "case_type": "涉油盗窃",
+            "description": "案件三班联合泰来保卫班办理，车辆移交公安，检斤入库。",
+        },
+    )
+    other_squad_id = other_squad_response.json()["id"]
+
+    annual_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=annual")
+    quarter_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=quarter")
+    annual_all_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=annual&include_all_squads=true")
+    annual_other_squad_response = client.get(f"/api/cases/{q2_id}/bonus-period-cases?scope=annual&squad=泰来保卫班")
+
+    assert annual_response.status_code == 200
+    assert quarter_response.status_code == 200
+    assert annual_all_response.status_code == 200
+    assert annual_other_squad_response.status_code == 200
+    assert [item["id"] for item in annual_response.json()] == [q2_id, q1_id]
+    assert [item["id"] for item in quarter_response.json()] == [q2_id]
+    assert other_squad_id not in {item["id"] for item in annual_response.json()}
+    assert [item["id"] for item in annual_all_response.json()] == [other_squad_id, q2_id, q1_id]
+    assert [item["id"] for item in annual_other_squad_response.json()] == [other_squad_id]
+
+
 def test_case_automation_workbench_surfaces_456_modules():
     db = _session()
     client = _client(db)
@@ -647,7 +793,7 @@ def test_case_automation_workbench_surfaces_456_modules():
             "police_reported": True,
             "case_filed": True,
             "police_officer": "张警官",
-            "police_phone": "00000000000",
+            "police_phone": "13800000000",
             "security_officers": ["案件一班:张三、李四"],
         },
     )

@@ -3,15 +3,6 @@
 echo "=== AI案件分析系统 - 本地开发环境设置 ==="
 echo ""
 
-generate_secret() {
-    python3 -c 'import secrets; print(secrets.token_urlsafe(24))'
-}
-
-ensure_local_secrets() {
-    export DB_PASSWORD="${DB_PASSWORD:-$(generate_secret)}"
-    export SECRET_KEY="${SECRET_KEY:-$(generate_secret)}"
-}
-
 # 检查Python
 if ! command -v python3 &> /dev/null; then
     echo "❌ Python3 未安装"
@@ -54,7 +45,6 @@ case $choice in
             echo "❌ Docker未运行，无法使用此方式"
             exit 1
         fi
-        ensure_local_secrets
         echo "启动Docker服务..."
         docker-compose up -d
         echo "✅ 服务已启动"
@@ -66,7 +56,6 @@ case $choice in
             echo "❌ Docker未运行，无法使用此方式"
             exit 1
         fi
-        ensure_local_secrets
         echo "启动数据库和Redis..."
         docker-compose up -d postgres redis
         sleep 5
@@ -84,7 +73,7 @@ case $choice in
         pip install -q -r requirements.txt
         
         echo "初始化数据库..."
-        export DATABASE_URL="postgresql://aicommander:${DB_PASSWORD}@localhost:5432/aicommander"
+        export DATABASE_URL=postgresql://aicommander:aicommander123@localhost:5432/aicommander
         export REDIS_URL=redis://localhost:6379/0
         python init_db.py
         
@@ -93,10 +82,8 @@ case $choice in
         echo "请在新终端运行以下命令启动后端:"
         echo "  cd backend"
         echo "  source venv/bin/activate"
-        echo "  export DB_PASSWORD='<本次生成或自定义的数据库密码>'"
-        echo "  export DATABASE_URL=\"postgresql://aicommander:\${DB_PASSWORD}@localhost:5432/aicommander\""
+        echo "  export DATABASE_URL=postgresql://aicommander:aicommander123@localhost:5432/aicommander"
         echo "  export REDIS_URL=redis://localhost:6379/0"
-        echo "  export SECRET_KEY='<本次生成或自定义的本机密钥>'"
         echo "  uvicorn app.main:app --reload"
         echo ""
         
@@ -126,3 +113,4 @@ case $choice in
         exit 1
         ;;
 esac
+

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.case_knowledge_service import CaseKnowledgeService
 from app.services.case_intelligence_service import CaseIntelligenceService
 
 
@@ -25,6 +26,10 @@ class TagOverrideItem(BaseModel):
 class TagOverrideRequest(BaseModel):
     added: Optional[List[TagOverrideItem]] = None
     removed_keys: Optional[List[str]] = None
+
+
+class TagCurationRequest(BaseModel):
+    confirm: bool = False
 
 
 def _handle_service_error(exc: ValueError) -> None:
@@ -82,6 +87,19 @@ def update_case_tag_overrides(
             added=added,
             removed_keys=payload.removed_keys or [],
         )
+    except ValueError as exc:
+        _handle_service_error(exc)
+
+
+@router.post("/cases/{case_id:int}/tag-curation")
+def curate_case_tags(
+    case_id: int,
+    payload: TagCurationRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """生成智能标签策展候选；confirm=true 时才写入人工标签覆盖。"""
+    try:
+        return CaseKnowledgeService.curate_tags(db, case_id, confirm=payload.confirm)
     except ValueError as exc:
         _handle_service_error(exc)
 

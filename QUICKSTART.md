@@ -1,316 +1,190 @@
-# 快速启动指南
+# AiCommander v2.0 本地开发指南
 
-## 方式零：本地快速测试（最简单，推荐优先使用）
+本文件只用于本地开发和测试。服务器生产上线请使用
+[生产部署手册](./docs/server-deployment-runbook.zh-CN.md)。
 
-> 使用内置 SQLite，**无需 Docker、PostgreSQL、Redis**，适合快速开发和测试。
+## 1. 环境要求
 
-### 前提条件
-- Python 3.10+
-- Node.js 18+
+- Python 3.12
+- Node.js 24 和 npm
+- 可选：Docker Engine 或 Docker Desktop
 
-### 步骤
+生产数据库使用 PostgreSQL，后端测试和轻量本地开发可以使用 SQLite。
 
-**1. 启动后端**
+## 2. Docker 一键开发
 
-```bash
-cd backend
-
-# 首次：创建虚拟环境并安装依赖
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 首次：初始化数据库（生成 aicommander.db）
-python init_db.py
-
-# 启动（指定本机生成的 SECRET_KEY，SQLite 为默认数据库）
-export SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**2. 启动前端**（新开终端）
+Docker 正常运行后：
 
 ```bash
-cd frontend
-npm install  # 首次
-npm run dev
-```
-
-### 访问地址
-- 前端：http://localhost:5173
-- 后端 API：http://localhost:8000
-- API 文档：http://localhost:8000/docs
-
-### 配置 AI 模型（可选）
-
-在后端启动命令中添加 API Key：
-
-```bash
-SECRET_KEY="$SECRET_KEY" ANTHROPIC_API_KEY=<your-anthropic-api-key> uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-# 或
-SECRET_KEY="$SECRET_KEY" OPENAI_API_KEY=<your-openai-api-key> uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-也可创建 `backend/.env` 文件避免每次输入：
-
-```bash
-# backend/.env
-SECRET_KEY=<generate-a-local-secret-key>
-ANTHROPIC_API_KEY=<your-anthropic-api-key>
-# OPENAI_API_KEY=<your-openai-api-key>
-```
-
-然后直接运行：
-
-```bash
-cd backend && source venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### 运行测试
-
-```bash
-cd backend && source venv/bin/activate
-
-pytest                                              # 全部测试
-pytest -v                                           # 详细输出
-pytest tests/test_case_service.py                  # 单个文件
-pytest tests/test_case_service.py::test_case_number_generation_increments  # 单个函数
-```
-
-测试文件一览：
-
-| 文件 | 覆盖范围 |
-|------|---------|
-| `test_case_service.py` | 案件服务层逻辑 |
-| `test_geo_analysis.py` | 地理分析（热点、距离计算） |
-| `test_meeting_manager.py` | 圆桌会议流程 |
-| `test_analyst_prompts.py` | 分析师 Prompt 生成 |
-| `test_moderator_prompts.py` | 主持人 Prompt 生成 |
-
-> 所有测试使用内存 SQLite，无需外部数据库或 Redis。
-
----
-
-## 方式一：使用Docker（推荐生产/集成测试）
-
-### 前提条件
-1. Docker Desktop 已安装并运行
-2. 如果使用Colima，需要先启动：
-```bash
-colima start
-```
-
-### 启动步骤
-
-1. **启动Docker服务**
-```bash
-# 如果使用Colima
-colima start
-
-# 或者启动Docker Desktop应用
-```
-
-2. **启动所有服务**
-```bash
-# 首次需要先添加执行权限
-chmod +x start.sh stop.sh
-
 ./start.sh
 ```
 
-3. **查看服务状态**
-```bash
-docker-compose ps
+开发 Compose 会启动 PostgreSQL 14、Redis 7、后端、Celery 和前端，并启用源码挂载与
+后端热重载。它只绑定本机回环地址，但仍使用开发密码，不能作为生产配置。
+
+访问地址：
+
+- 前端：<http://localhost:3000>
+- 后端 API：<http://localhost:8000>
+- 接口文档：<http://localhost:8000/docs>
+
+首次打开页面时创建本地管理员：
+
+```text
+初始化令牌：dev-bootstrap-token-change-me
+密码要求：至少 12 位
 ```
 
-4. **查看日志**
-```bash
-# 查看所有服务日志
-docker-compose logs -f
+查看状态和日志：
 
-# 查看特定服务日志
-docker-compose logs -f backend
-docker-compose logs -f frontend
+```bash
+docker compose ps
+docker compose logs --tail=100 backend celery frontend
 ```
 
-5. **访问系统**
-- 前端: http://localhost:3000
-- 后端API: http://localhost:8000
-- API文档: http://localhost:8000/docs
+停止但保留开发数据：
 
-6. **停止服务**
 ```bash
 ./stop.sh
-
-# 或者
-docker-compose down
 ```
 
----
+如需删除开发数据卷，先确认没有需要保留的数据，再单独处理。不要把清理开发卷的命令用于
+生产环境。
 
-## 方式二：本地开发（PostgreSQL + Redis，不使用Docker）
+## 3. SQLite 本地开发
 
-### 前提条件
-1. Python 3.10+ ✅ (已安装: 3.13.4)
-2. Node.js 18+ (需要安装)
-3. PostgreSQL 14+ (需要安装或使用Docker仅运行数据库)
-4. Redis 7+ (需要安装或使用Docker仅运行Redis)
-
-### 安装Node.js
-
-**使用Homebrew:**
-```bash
-brew install node
-```
-
-**或下载安装包:**
-访问 https://nodejs.org/ 下载安装
-
-### 安装PostgreSQL和Redis
-
-**使用Homebrew:**
-```bash
-brew install postgresql@14 redis
-```
-
-**或仅使用Docker运行数据库:**
-```bash
-# 只启动数据库和Redis
-docker-compose up -d postgres redis
-```
-
-### 启动步骤
-
-1. **启动数据库和Redis**（如果本地安装）
-```bash
-# PostgreSQL
-brew services start postgresql@14
-
-# Redis
-brew services start redis
-```
-
-2. **设置环境变量**
-```bash
-export DB_PASSWORD=<your-local-database-password>
-export DATABASE_URL="postgresql://aicommander:${DB_PASSWORD}@localhost:5432/aicommander"
-export REDIS_URL=redis://localhost:6379/0
-export SECRET_KEY=<generate-a-local-secret-key>
-```
-
-3. **创建数据库**
-```bash
-# 连接到PostgreSQL
-psql postgres
-
-# 创建数据库和用户
-CREATE DATABASE aicommander;
-CREATE USER aicommander WITH PASSWORD '<choose-a-local-database-password>';
-GRANT ALL PRIVILEGES ON DATABASE aicommander TO aicommander;
-\q
-```
-
-4. **启动后端**
+### 3.1 后端
 
 ```bash
 cd backend
-
-# 创建虚拟环境
-python3 -m venv venv
-
-# 激活虚拟环境
+python3.12 -m venv venv
 source venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 初始化数据库
-python init_db.py
-
-# 启动服务
-uvicorn app.main:app --reload
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-后端将在 http://localhost:8000 运行
+首次启动：
 
-5. **启动前端**（新开一个终端）
+```bash
+SECRET_KEY=local-development-secret-key-change-me \
+BOOTSTRAP_TOKEN=local-bootstrap-token \
+SESSION_COOKIE_SECURE=false \
+ENABLE_API_DOCS=true \
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+默认数据库是 `backend/aicommander.db`。开发环境 `AUTO_CREATE_TABLES` 默认为 true；生产
+环境强制关闭并使用 Alembic。
+
+### 3.2 前端
+
+另开终端：
 
 ```bash
 cd frontend
-
-# 安装依赖
-npm install
-
-# 启动开发服务器
+npm ci
 npm run dev
 ```
 
-前端将在 http://localhost:3000 运行
+前端默认运行在 <http://localhost:3000>，并把 `/api` 和 WebSocket 代理到
+`http://127.0.0.1:8000`。
 
----
+首次打开页面时使用 `local-bootstrap-token` 创建本地管理员。
 
-## 方式三：混合模式（推荐用于开发）
+## 4. PostgreSQL 和 Redis 混合开发
 
-使用Docker运行数据库和Redis，本地运行后端和前端：
+只启动基础服务：
 
-1. **启动数据库和Redis**
 ```bash
-docker-compose up -d postgres redis
+docker compose up -d postgres redis
 ```
 
-2. **设置环境变量并启动后端**
-```bash
-export DB_PASSWORD=<your-local-database-password>
-export DATABASE_URL="postgresql://aicommander:${DB_PASSWORD}@localhost:5432/aicommander"
-export REDIS_URL=redis://localhost:6379/0
+本地后端连接开发容器：
 
+```bash
 cd backend
-python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-python init_db.py
-uvicorn app.main:app --reload
+
+DATABASE_URL=postgresql://aicommander:aicommander-dev-only@127.0.0.1:5432/aicommander \
+REDIS_URL=redis://127.0.0.1:6379/0 \
+SECRET_KEY=local-development-secret-key-change-me \
+BOOTSTRAP_TOKEN=local-bootstrap-token \
+SESSION_COOKIE_SECURE=false \
+ENABLE_API_DOCS=true \
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-3. **启动前端**（新开终端）
+当前开发 Compose 没有把 PostgreSQL 和 Redis 端口发布到宿主机。如确需混合开发，应在
+本机专用 override 文件中绑定 `127.0.0.1`，不要修改生产 Compose，也不要绑定
+`0.0.0.0`。
+
+## 5. 运行测试
+
+后端：
+
+```bash
+cd backend
+source venv/bin/activate
+python -m pytest
+```
+
+前端：
+
 ```bash
 cd frontend
-npm install
-npm run dev
+npm run typecheck
+npm run test
+npm run build
 ```
 
----
+依赖审计：
 
-## 常见问题
-
-### Docker无法连接
 ```bash
-# 检查Docker状态
-docker info
+cd frontend
+npm audit
 
-# 如果使用Colima
-colima status
-colima start
+cd ../backend
+python -m pip_audit
 ```
 
-### 端口被占用
+## 6. 数据库迁移开发
+
+修改 SQLAlchemy 模型后应创建 Alembic 迁移，并在 SQLite 测试之外至少对真实
+PostgreSQL 验证一次：
+
 ```bash
-# 检查端口占用
-lsof -i :8000  # 后端
-lsof -i :3000  # 前端
-lsof -i :5432  # PostgreSQL
-lsof -i :6379  # Redis
-
-# 停止占用端口的进程或修改docker-compose.yml中的端口
+cd backend
+alembic heads
+alembic upgrade head
 ```
 
-### 数据库连接失败
-- 检查PostgreSQL是否运行
-- 检查数据库用户名和密码
-- 检查DATABASE_URL环境变量
+生产部署脚本会显式执行 `alembic upgrade head`，不会依赖应用自动建表。
+
+## 7. 常见问题
+
+### 页面要求初始化管理员
+
+这是 v2.0 的正常行为。使用启动时设置的 `BOOTSTRAP_TOKEN` 创建首个管理员，初始化只允许
+执行一次。
+
+### 登录后立即回到登录页
+
+本地 HTTP 开发必须设置 `SESSION_COOKIE_SECURE=false`。生产环境必须保持 true 并通过
+HTTPS 访问。
 
 ### 前端无法连接后端
-- 检查后端是否运行在8000端口
-- 检查vite.config.ts中的proxy配置
-- 查看浏览器控制台错误
+
+确认后端在 8000 端口运行，并检查：
+
+```bash
+curl -fsS http://127.0.0.1:8000/health/live
+```
+
+### Redis 未启动
+
+SQLite 开发时部分同步功能仍可运行，但后台任务和生产就绪状态需要 Redis。生产环境中
+Redis 不可用会让 `/health/ready` 返回 503。
+
+### 忘记本地管理员密码
+
+不要修改生产数据库。仅对可丢弃的本地开发环境，停止服务、备份需要的数据后重建开发库。

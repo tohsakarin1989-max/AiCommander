@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Alert, Button, List, Spin, Switch } from 'antd'
+import { Button, List, Spin, Switch } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -14,7 +14,6 @@ import LeafletMap from '../../components/Map/LeafletMap'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import type { Case } from '../../types'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
-import { getCasesMapViewState } from './casesMapModel'
 import './CasesMap.css'
 
 const RISK_LEVEL = (score: number): 'high' | 'medium' | 'low' =>
@@ -40,7 +39,7 @@ const CasesMap: React.FC = () => {
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
   const selectedCaseId = Number(searchParams.get('caseId') || 0) || undefined
 
-  const { data: cases, isLoading, isError } = useQuery({
+  const { data: cases, isLoading } = useQuery({
     queryKey: ['cases'],
     queryFn: () => caseApi.getCases(),
   })
@@ -62,7 +61,7 @@ const CasesMap: React.FC = () => {
   })
 
   // 有坐标的案件 → LeafletMap markers
-  const coordinateMarkers: CaseMarker[] = (cases || [])
+  const markers: CaseMarker[] = (cases || [])
     .filter((c) => c.latitude != null && c.longitude != null)
     .map((c) => {
       const chainPosition = getChainPosition(c)
@@ -79,8 +78,6 @@ const CasesMap: React.FC = () => {
         modus: c.modus_operandi,
       }
     })
-
-  const markers: CaseMarker[] = coordinateMarkers
     .filter((marker) => visiblePositions.includes(marker.chainPosition || 'unknown'))
 
   const chainLinks: ChainLinkLine[] = showChainLinks
@@ -122,12 +119,6 @@ const CasesMap: React.FC = () => {
 
   // 热点列表（取前5）
   const topHotspots = (hotspots || []).slice(0, 5)
-  const mapViewState = getCasesMapViewState({
-    isLoading,
-    isError,
-    markerCount: coordinateMarkers.length,
-    totalCases: (cases || []).length,
-  })
 
   React.useEffect(() => {
     if (!selectedCaseId || !cases) return
@@ -256,35 +247,22 @@ const CasesMap: React.FC = () => {
 
         {/* 地图主体 */}
         <div className="cases-map-container">
-          {mapViewState.kind === 'loading' ? (
+          {isLoading ? (
             <div className="cases-map-loading">
               <Spin size="large" />
-              <span>{mapViewState.message}</span>
-            </div>
-          ) : mapViewState.kind === 'error' ? (
-            <div className="cases-map-loading">
-              <Alert type="error" showIcon message={mapViewState.message} />
-            </div>
-          ) : mapViewState.kind === 'empty' ? (
-            <div className="cases-map-loading">
-              <span>{mapViewState.message}</span>
+              <span>加载地图数据…</span>
             </div>
           ) : (
-            <>
-              {mapViewState.warning && (
-                <Alert type="warning" showIcon message={mapViewState.warning} />
-              )}
-              <LeafletMap
-                markers={markers}
-                serialGroups={serialGroups}
-                chainLinks={chainLinks}
-                height="100%"
-                onMarkerClick={(m) => {
-                  const found = (cases || []).find((c) => c.id === m.id)
-                  if (found) setSelectedCase(found)
-                }}
-              />
-            </>
+            <LeafletMap
+              markers={markers}
+              serialGroups={serialGroups}
+              chainLinks={chainLinks}
+              height="100%"
+              onMarkerClick={(m) => {
+                const found = (cases || []).find((c) => c.id === m.id)
+                if (found) setSelectedCase(found)
+              }}
+            />
           )}
         </div>
 

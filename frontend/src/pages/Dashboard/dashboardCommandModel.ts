@@ -1,5 +1,6 @@
 import type { AreaRisk, Case, ChainLink, ChainPosition } from '../../types'
 import type { WorkSuggestion } from '../../services/suggestions'
+import type { WellAttentionOverview } from '../../services/jurisdiction'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 
 const DAY_MS = 86_400_000
@@ -70,6 +71,8 @@ export interface DashboardFocusCard {
 export interface DashboardMapPoint {
   id: number
   caseNumber: string
+  latitude: number
+  longitude: number
   x: number
   y: number
   chainPosition: ChainPosition
@@ -84,6 +87,10 @@ export interface ProjectedChainLine {
   confidence: number
   distanceKm: number
   timeDiffDays: number
+  fromLatitude: number
+  fromLongitude: number
+  toLatitude: number
+  toLongitude: number
   fromX: number
   fromY: number
   toX: number
@@ -98,6 +105,52 @@ export interface DashboardSourceStats {
   hotspotCount: number
   chainLineCount: number
   highPrioritySuggestionCount: number
+}
+
+export interface DashboardWellPoint {
+  assetId: number
+  name: string
+  latitude: number
+  longitude: number
+  x: number
+  y: number
+  attentionScore: number
+  attentionLevel: 'high' | 'medium' | 'watch' | 'stable'
+  signalCount: number
+  isHighProduction: boolean
+  region: string
+}
+
+export interface DashboardSignalPoint {
+  eventId: number
+  label: string
+  latitude: number
+  longitude: number
+  x: number
+  y: number
+  severity: number
+  reviewStatus: string
+  relatedAssetName: string
+}
+
+export interface DashboardWellAttentionView {
+  kpis: {
+    wells: DashboardKpi
+    attentionWells: DashboardKpi
+    observations: DashboardKpi
+    attentionRegions: DashboardKpi
+    aiStatus: DashboardKpi
+  }
+  signalTrend: TrendBucket[]
+  topWells: DashboardListItem[]
+  recentSignals: DashboardListItem[]
+  aiAttention: DashboardListItem[]
+  deploymentSuggestions: DashboardListItem[]
+  dataQuality: DashboardListItem[]
+  focusCards: DashboardFocusCard[]
+  wellPoints: DashboardWellPoint[]
+  signalPoints: DashboardSignalPoint[]
+  boundary: string
 }
 
 export interface DashboardReportDraft {
@@ -317,6 +370,10 @@ export function projectChainLinks(links: ChainLink[]): ProjectedChainLine[] {
         confidence: link.confidence,
         distanceKm: link.distance_km,
         timeDiffDays: link.time_diff_days,
+        fromLatitude: from.latitude,
+        fromLongitude: from.longitude!,
+        toLatitude: to.latitude,
+        toLongitude: to.longitude!,
         fromX,
         fromY,
         toX,
@@ -338,6 +395,8 @@ function buildMapPoints(cases: Case[]): DashboardMapPoint[] {
       return {
         id: caseItem.id,
         caseNumber: caseItem.case_number,
+        latitude: caseItem.latitude!,
+        longitude: caseItem.longitude!,
         x,
         y,
         chainPosition,
@@ -531,6 +590,183 @@ function buildFocusCards(riskChanges: DashboardListItem[], chainLines: Projected
     { label: '重点链条', value: topChain ? `${topChain.fromLabel} → ${topChain.toLabel}` : '待形成' },
     { label: '待补数据', value: missingCoordinateCount > 0 ? `坐标 ${missingCoordinateCount} 起` : '暂无缺口' },
   ]
+}
+
+export function buildWellAttentionDashboardView(
+  overview?: WellAttentionOverview | null,
+): DashboardWellAttentionView {
+  const emptyKpi = (label: string, detail: string): DashboardKpi => ({
+    label,
+    value: '待接入',
+    detail,
+    scope: '近30天',
+    tone: 'empty',
+  })
+  if (!overview) {
+    return {
+      kpis: {
+        wells: emptyKpi('高产井监测', '等待井点资产'),
+        attentionWells: emptyKpi('关注井点', '等待关注度计算'),
+        observations: emptyKpi('异常痕迹', '等待现场录入'),
+        attentionRegions: emptyKpi('关注区域', '等待区域聚合'),
+        aiStatus: emptyKpi('AI关注研判', '等待研判快照'),
+      },
+      signalTrend: Array.from({ length: 7 }, (_, index) => ({ label: `D${index + 1}`, count: 0, height: 18, tone: 'normal' })),
+      topWells: [listItem('暂无井点关注数据', '请先导入井号、坐标、作业区和产量指标。', 'empty')],
+      recentSignals: [listItem('暂无风险迹象', '录入陌生车迹、油迹或设施异常后展示。', 'empty')],
+      aiAttention: [listItem('AI关注研判待形成', '现场痕迹录入后自动刷新。', 'empty')],
+      deploymentSuggestions: [listItem('暂无布置建议', '需先形成可追溯的井点和风险迹象数据。', 'empty')],
+      dataQuality: [listItem('井点数据待接入', '大屏不会使用模拟井点或虚构热区。', 'empty')],
+      focusCards: [
+        { label: '首要关注', value: '待形成' },
+        { label: '近期痕迹', value: '0 条' },
+        { label: '研判边界', value: '非犯罪预测' },
+      ],
+      wellPoints: [],
+      signalPoints: [],
+      boundary: '关注度表示风险迹象和防控条件，不代表将要发生案件。',
+    }
+  }
+
+  const summary = overview.summary
+  const ai = overview.ai_analysis
+  const modelStatusLabel: Record<string, string> = {
+    llm_success: '大模型已研判',
+    llm_failed_fallback: '模型失败·规则降级',
+    deterministic_fallback: '规则研判',
+    insufficient_data: '数据不足',
+  }
+  const signalMax = Math.max(...overview.signal_trend.map(item => item.count), 1)
+  const signalTrend: TrendBucket[] = overview.signal_trend.map((item, index, all) => {
+    const previous = index > 0 ? all[index - 1].count : item.count
+    return {
+      label: item.date.slice(5),
+      count: item.count,
+      height: Math.max(18, Math.round(item.count / signalMax * 100)),
+      tone: item.count > previous && item.count > 0 ? 'hot' : item.count === signalMax && item.count > 0 ? 'warn' : 'normal',
+    }
+  })
+  const topWells = overview.wells.slice(0, 8).map(well => listItem(
+    `${well.name} · ${well.attention_score}`,
+    `${well.region} · 痕迹 ${well.signal_count} 条 · ${well.reasons[0] || '基础监测'}`,
+    well.attention_level === 'high' ? 'hot' : well.attention_level === 'medium' ? 'warn' : well.attention_level === 'watch' ? 'ai' : 'good',
+  ))
+  const recentSignals = overview.observations.slice(0, 8).map(signal => listItem(
+    `${signal.related_asset_name} · ${signal.observation_label}`,
+    `${signal.title} · 可信度 ${Math.round(signal.confidence_score * 100)}% · ${signal.review_status === 'confirmed' ? '已确认' : '待复核'}`,
+    signal.review_status === 'confirmed' ? 'warn' : 'ai',
+  ))
+  const aiAttention = [
+    ...(ai?.attention_regions || []).map(region => listItem(
+      `关注区域：${region.name}`,
+      `${region.reasons?.[0] || '模型建议结合现场信息复核'} · 置信 ${Math.round((region.confidence || 0) * 100)}%`,
+      region.level === 'high' ? 'hot' : 'ai',
+    )),
+    ...(ai?.attention_wells || []).map(well => listItem(
+      `关注井点：${well.name}`,
+      `${well.reasons?.[0] || '综合关注度升高'} · 置信 ${Math.round((well.confidence || 0) * 100)}%`,
+      well.level === 'high' ? 'hot' : 'warn',
+    )),
+  ]
+  const deploymentSuggestions = (ai?.deployment_suggestions || []).map(item => listItem(
+    item.target,
+    `${item.action}${item.basis ? ` · 依据：${item.basis}` : ''}`,
+    item.priority === 'high' ? 'hot' : item.priority === 'medium' ? 'warn' : 'ai',
+  ))
+  const dataQuality = [
+    listItem('井点坐标校验率', `${summary.verified_well_rate}% 已人工校验。`, summary.verified_well_rate >= 80 ? 'good' : 'warn'),
+    listItem('产量指标覆盖率', `${summary.production_data_rate}% 可识别高产井暴露度。`, summary.production_data_rate >= 80 ? 'good' : 'warn'),
+    ...overview.data_gaps.map(gap => listItem('数据缺口', gap, 'warn')),
+  ]
+  const wellPoints = overview.wells
+    .filter(well => isValidCoordinate(well.latitude, well.longitude))
+    .map(well => {
+      const [x, y] = latLngToSvg(well.latitude, well.longitude)
+      return {
+        assetId: well.asset_id,
+        name: well.name,
+        latitude: well.latitude,
+        longitude: well.longitude,
+        x,
+        y,
+        attentionScore: well.attention_score,
+        attentionLevel: well.attention_level,
+        signalCount: well.signal_count,
+        isHighProduction: well.is_high_production,
+        region: well.region,
+      }
+    })
+  const signalPoints = overview.observations
+    .filter(signal => isValidCoordinate(signal.latitude, signal.longitude))
+    .map(signal => {
+      const [x, y] = latLngToSvg(signal.latitude, signal.longitude)
+      return {
+        eventId: signal.event_id,
+        label: signal.observation_label,
+        latitude: signal.latitude,
+        longitude: signal.longitude,
+        x,
+        y,
+        severity: signal.severity,
+        reviewStatus: signal.review_status,
+        relatedAssetName: signal.related_asset_name,
+      }
+    })
+  const topFocus = overview.wells.slice(0, 2)
+
+  return {
+    kpis: {
+      wells: {
+        label: '高产井监测',
+        value: summary.total_wells ? String(summary.high_production_wells) : '待导入',
+        detail: summary.total_wells ? `共 ${summary.total_wells} 口井纳入监测` : '缺少井点资产',
+        scope: '全量井点',
+        tone: summary.total_wells ? 'normal' : 'empty',
+      },
+      attentionWells: {
+        label: '关注井点',
+        value: String(summary.attention_wells),
+        detail: `${summary.high_attention_wells} 口高关注`,
+        scope: '近30天',
+        tone: summary.high_attention_wells ? 'hot' : summary.attention_wells ? 'warn' : 'good',
+      },
+      observations: {
+        label: '异常痕迹',
+        value: String(summary.recent_observations),
+        detail: '车迹 / 油迹 / 设施异常',
+        scope: '近30天',
+        tone: summary.recent_observations ? 'warn' : 'empty',
+      },
+      attentionRegions: {
+        label: '关注区域',
+        value: String(summary.attention_regions),
+        detail: '按井点作业区聚合',
+        scope: '近30天',
+        tone: summary.attention_regions ? 'hot' : 'good',
+      },
+      aiStatus: {
+        label: 'AI关注研判',
+        value: ai ? '已形成' : '待形成',
+        detail: modelStatusLabel[ai?.model_status || ''] || '等待风险迹象',
+        scope: '最新快照',
+        tone: ai?.model_status === 'llm_success' ? 'ai' : ai ? 'warn' : 'empty',
+      },
+    },
+    signalTrend,
+    topWells: topWells.length ? topWells : [listItem('暂无井点关注数据', '请先导入井点并补齐产量指标。', 'empty')],
+    recentSignals: recentSignals.length ? recentSignals : [listItem('暂无风险迹象', '录入后将在地图和趋势中显示。', 'empty')],
+    aiAttention: aiAttention.length ? aiAttention : [listItem('AI关注研判待形成', '录入风险迹象后自动刷新。', 'empty')],
+    deploymentSuggestions: deploymentSuggestions.length ? deploymentSuggestions : [listItem('暂无布置建议', '需先形成可追溯的井点风险迹象。', 'empty')],
+    dataQuality,
+    focusCards: [
+      { label: '首要关注', value: topFocus[0] ? `${topFocus[0].name} · ${topFocus[0].attention_score}` : '待形成' },
+      { label: '次要关注', value: topFocus[1] ? `${topFocus[1].name} · ${topFocus[1].attention_score}` : '待形成' },
+      { label: '近期痕迹', value: `${summary.recent_observations} 条` },
+    ],
+    wellPoints,
+    signalPoints,
+    boundary: overview.boundary[0] || '关注度表示风险迹象和防控条件，不代表将要发生案件。',
+  }
 }
 
 export function buildDashboardModel(input: DashboardModelInput): DashboardModel {

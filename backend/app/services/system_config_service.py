@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.system_config import SystemConfig
 from typing import Optional, Dict, List
+from app.utils.encryption import decrypt_secret, encrypt_secret
 
 class SystemConfigService:
     """系统配置服务"""
@@ -16,7 +17,13 @@ class SystemConfigService:
     def get_config_value(db: Session, config_key: str, default: str = None) -> Optional[str]:
         """获取配置值"""
         config = SystemConfigService.get_config(db, config_key)
-        return config.config_value if config else default
+        if not config:
+            return default
+        if config.config_type == "api_key" and config.is_encrypted == "true":
+            if not config.config_value:
+                return ""
+            return decrypt_secret(config.config_value)
+        return config.config_value
     
     @staticmethod
     def set_config(
@@ -26,32 +33,69 @@ class SystemConfigService:
         config_type: str = "api_key",
         category: str = "general",
         description: str = None,
-        extra_data: Dict = None
+        extra_data: Dict = None,
+        preserve_blank_secret: bool = False,
     ) -> SystemConfig:
         """设置配置"""
         config = SystemConfigService.get_config(db, config_key)
+        is_secret = config_type == "api_key"
+        should_preserve = bool(
+            config
+            and is_secret
+            and preserve_blank_secret
+            and not config_value
+            and SystemConfigService.get_config_value(db, config_key, "")
+        )
+        stored_value = config.config_value if should_preserve else config_value
+        encrypted_flag = config.is_encrypted if should_preserve else "false"
+        if is_secret and not should_preserve:
+            stored_value = encrypt_secret(config_value) if config_value else ""
+            encrypted_flag = "true"
         if config:
-            config.config_value = config_value
+            config.config_value = stored_value
             config.config_type = config_type
             config.category = category
-            if description:
+            config.is_encrypted = encrypted_flag
+            if description is not None:
                 config.description = description
-            if extra_data:
+            if extra_data is not None:
                 config.extra_data = extra_data
         else:
             config = SystemConfig(
                 config_key=config_key,
-                config_value=config_value,
+                config_value=stored_value,
                 config_type=config_type,
                 category=category,
                 description=description,
-                extra_data=extra_data or {}
+                is_encrypted=encrypted_flag,
+                extra_data=extra_data or {},
             )
             db.add(config)
         
         db.commit()
         db.refresh(config)
         return config
+
+    @staticmethod
+    def is_configured(db: Session, config: SystemConfig) -> bool:
+        value = SystemConfigService.get_config_value(db, config.config_key, "")
+        return bool(value and value.strip())
+
+    @staticmethod
+    def encrypt_legacy_secrets(db: Session) -> int:
+        """一次性加密旧版本中以明文保存的 API 密钥。"""
+        legacy = db.query(SystemConfig).filter(
+            SystemConfig.config_type == "api_key",
+            SystemConfig.is_encrypted != "true",
+        ).all()
+        changed = 0
+        for config in legacy:
+            config.config_value = encrypt_secret(config.config_value) if config.config_value else ""
+            config.is_encrypted = "true"
+            changed += 1
+        if changed:
+            db.commit()
+        return changed
     
     @staticmethod
     def get_configs_by_category(db: Session, category: str) -> List[SystemConfig]:

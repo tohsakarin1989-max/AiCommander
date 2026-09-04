@@ -9,7 +9,7 @@
 ## 项目结构与模块组织
 - 核心后端位于 `backend/app`：`api` 存放 FastAPI 路由，`services` 聚合业务逻辑，`repositories` 处理持久化，`models` 定义 SQLAlchemy 实体，`tasks`/`ai` 承载异步与大模型调用。数据库迁移配置在 `backend/alembic`。
 - 前端位于 `frontend/src`：`pages` 对应页面视图，`components` 复用组件，`services` 统一封装 HTTP/状态管理，样式入口 `index.css`。Vite 配置在 `vite.config.ts`。
-- 测试入口位于 `backend/tests`；当前与本周链条研判迭代直接相关的用例包括 `test_case_service.py`、`test_chain_analysis.py`，默认使用内存 SQLite。
+- 测试入口位于 `backend/tests`；链条研判相关用例包括 `test_case_service.py`、`test_chain_analysis.py`，本周 A 阶段工作流闭环相关用例包括 `test_suggestions.py`、`test_batch_review.py`，默认使用内存 SQLite。
 
 ## 构建、测试与开发命令
 - 一键启动（Docker 全栈）：在仓库根目录执行 `./start.sh`（等价 `docker-compose up -d`），停止用 `./stop.sh` 或 `docker-compose down`。
@@ -18,6 +18,10 @@
 - 后端测试：`cd backend && source venv/bin/activate && pytest`。如依赖外部数据库，请先设置 `DATABASE_URL` 和 `REDIS_URL`。
 - 本周涉及链条研判、地图连线或相关回归时，先读 `docs/superpowers/specs/2026-05-08-upgrade-roadmap.md`，至少补跑 `pytest tests/test_chain_analysis.py -v` 与 `cd frontend && npm run build`。
 - 本周如改指挥大屏、自动轮播列表、链条地图投屏展示，先读 `docs/superpowers/specs/2026-05-10-dashboard-command-screen-design.md` 和 `docs/superpowers/plans/2026-05-10-dashboard-command-screen.md`，至少补跑 `cd frontend && npm run test -- src/pages/Dashboard/dashboardCommandModel.test.ts` 与 `npm run build`。
+- 本周如改案件录入预检、批量复核、待办中心分流或经验卡复核，先读 `docs/superpowers/specs/2026-06-05-aicommander-abc-upgrade-roadmap-design.md` 与 `docs/superpowers/plans/2026-06-05-aicommander-phase-a-workflow-closure.md`，按“案件录入/导入 -> 保存前预检 -> 批量复核 -> 待办分流”的闭环推进。
+- 上述 A 阶段改动至少补跑：`cd backend && source venv/bin/activate && pytest tests/test_suggestions.py tests/test_batch_review.py -v`、`cd frontend && npm run test -- src/pages/Suggestions/suggestionPresentation.test.ts src/pages/Cases/caseEntryReadiness.test.ts src/pages/Cases/batchReviewPresentation.test.ts`、`cd frontend && npm run build`。
+- 本周如改生产部署、运维、健康检查、来源校验或生产安全配置，先读 `docs/server-deployment-runbook.zh-CN.md`、`scripts/preflight-production.sh`、`scripts/deploy-production.sh` 和 `README.md` 的“生产部署”章节，明确当前能确认的是测试服务器部署链路，不把它写成已正式投产。
+- 上述生产部署/运维类改动至少补跑：`cd backend && source venv/bin/activate && pytest tests/test_production_config.py tests/test_observability.py -v`；如前端或容器入口有变更，再补跑 `cd frontend && npm run build`。
 
 ## 编码风格与命名约定
 - Python 按 PEP 8 使用 4 空格缩进；路由模块 `app/api/<domain>.py`，服务层 `app/services/<domain>_service.py`，模型/仓库对应单复数保持一致；环境变量全大写下划线（如 `SECRET_KEY`、`DATABASE_URL`）。

@@ -8,6 +8,7 @@ from app.models.conclusion_review import ConclusionReview
 from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_knowledge_service import CaseKnowledgeService
 from app.services.conclusion_factory_service import ConclusionFactoryService
 
 router = APIRouter()
@@ -22,6 +23,10 @@ class ReviewConclusionRequest(BaseModel):
     feedback: Optional[str] = None
     note: Optional[str] = None
     approved: Optional[bool] = None
+
+
+class ConclusionDraftRequest(BaseModel):
+    case_id: int
 
 
 def _review_status(status: str) -> str:
@@ -176,6 +181,17 @@ async def generate_from_meeting(meeting_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"从会议生成结论失败: {e}")
+
+
+@router.post("/draft")
+def draft_conclusion(payload: ConclusionDraftRequest, db: Session = Depends(get_db)):
+    """生成带引用的结论草稿，不发布、不创建正式结论。"""
+    try:
+        return CaseKnowledgeService.draft_conclusion(db, payload.case_id)
+    except ValueError as exc:
+        if str(exc) == "case_not_found":
+            raise HTTPException(status_code=404, detail="案件不存在")
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{conclusion_id:int}/link-meeting")

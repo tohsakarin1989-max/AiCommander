@@ -1,0 +1,77 @@
+name: Release quality gate
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+
+concurrency:
+  group: release-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+      - name: Run backend tests
+        working-directory: backend
+        run: python -m pytest
+
+  frontend:
+    name: Frontend tests and build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test -- --run
+      - name: Type check
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build
+
+  deployment-static:
+    name: Deployment configuration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Check patch formatting
+        run: git diff --check
+      - name: Validate production Compose
+        run: docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
+      - name: Validate deployment scripts
+        run: |
+          sh -n scripts/preflight-production.sh
+          sh -n scripts/backup-production.sh
+          sh -n scripts/deploy-production.sh
+          sh -n scripts/verify-test-deployment.sh
+          sh -n scripts/verify-backup-restore.sh
+          sh -n scripts/rehearse-release.sh
+          sh -n scripts/verify-agent-lab.sh

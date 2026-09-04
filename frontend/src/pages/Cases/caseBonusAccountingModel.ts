@@ -57,6 +57,87 @@ export interface BonusManagementDisplay {
   annualMetrics: BonusManagementMetricDisplay[]
 }
 
+export interface BonusSquadOption {
+  value: string
+  label: string
+  count: number
+  primary: boolean
+}
+
+export const BONUS_SQUAD_NAMES = [
+  '案件一班',
+  '案件二班',
+  '案件三班',
+  '案件四班',
+  '防范一班',
+  '防范二班',
+  '防范三班',
+  '龙虎泡保卫班',
+  '葡西保卫班',
+  '敖古拉保卫班',
+  '新站保卫班',
+  '新肇保卫班',
+  '敖南保卫班',
+  '齐家保卫班',
+  '泰来保卫班',
+  '龙西保卫班',
+  '页岩油保卫班',
+]
+
+const SQUAD_ALIASES: Record<string, string> = {
+  ...Object.fromEntries(BONUS_SQUAD_NAMES.map(name => [name, name])),
+  '龙虎泡': '龙虎泡保卫班',
+  '葡西': '葡西保卫班',
+  '敖古拉': '敖古拉保卫班',
+  '新站': '新站保卫班',
+  '新肇': '新肇保卫班',
+  '敖南': '敖南保卫班',
+  '齐家': '齐家保卫班',
+  '泰来': '泰来保卫班',
+  '龙西': '龙西保卫班',
+  '页岩油': '页岩油保卫班',
+}
+
+export function resolveCaseBonusSquad(caseItem: Case): string | null {
+  const values = [caseItem.report_unit, caseItem.operation_role, caseItem.description]
+  const aliases = Object.entries(SQUAD_ALIASES).sort((left, right) => right[0].length - left[0].length)
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (!text) continue
+    const match = aliases.find(([alias]) => text.includes(alias))
+    if (match) return match[1]
+  }
+  return null
+}
+
+export function buildBonusSquadOptions(
+  cases: Case[],
+  primarySquad?: string | null,
+  options: { includeKnownSquads?: boolean } = {},
+): BonusSquadOption[] {
+  const counts = cases.reduce<Record<string, number>>((acc, caseItem) => {
+    const squad = resolveCaseBonusSquad(caseItem) || '未识别班组'
+    acc[squad] = (acc[squad] || 0) + 1
+    return acc
+  }, {})
+  if (options.includeKnownSquads) {
+    BONUS_SQUAD_NAMES.forEach(name => {
+      counts[name] = counts[name] || 0
+    })
+  }
+  return Object.entries(counts)
+    .map(([squad, count]) => ({
+      value: squad,
+      label: `${squad} · ${count} 起`,
+      count,
+      primary: Boolean(primarySquad && squad === primarySquad),
+    }))
+    .sort((left, right) => {
+      if (left.primary !== right.primary) return left.primary ? -1 : 1
+      return left.value.localeCompare(right.value, 'zh-CN')
+    })
+}
+
 export function getMissingRequiredCount(caseItem: Case): number {
   return caseItem.quality_issues?.missing_required?.length ?? 0
 }

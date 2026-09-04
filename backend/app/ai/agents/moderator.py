@@ -2,12 +2,7 @@ from app.ai.agents.base_agent import BaseAgent
 from typing import List, Dict
 import json
 
-try:
-    # 兼容新版本 langchain-core
-    from langchain_core.prompts import ChatPromptTemplate  # type: ignore
-except Exception:  # pragma: no cover
-    # 兼容旧版本 langchain
-    from langchain.prompts import ChatPromptTemplate  # type: ignore
+from langchain_core.prompts import ChatPromptTemplate
 
 
 class ModeratorAgent(BaseAgent):
@@ -418,4 +413,3 @@ class ModeratorAgent(BaseAgent):
                 "infrastructure_risks": [],
                 "error": str(e)
             }
-

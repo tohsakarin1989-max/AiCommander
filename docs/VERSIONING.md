@@ -6,7 +6,8 @@ This repository uses a small, clean branch model:
 - `develop`: integration branch for reviewed ongoing work.
 - `feature/<short-name>`: feature work branched from `develop`.
 - `fix/<short-name>`: bug fixes branched from `develop`, or from `main` for urgent release fixes.
-- `vMAJOR.MINOR.PATCH`: release tags on `main`.
+- `vMAJOR.MINOR.PATCH[-CHANNEL]`: release tags on `main`, where the optional
+  channel suffix records a controlled release stage such as `stable`.
 
 Rules:
 
@@ -15,8 +16,16 @@ Rules:
 - Before pushing release changes, run frontend tests, typecheck, build, and relevant backend tests.
 - Squash or merge reviewed work into `develop`, then fast-forward or merge `develop` into `main` for a release.
 
-Current public baseline:
+Current stable baseline:
 
-- Version: `1.0.0`
-- Tag: `v1.0.0`
-- Initial public commit: sanitized single-commit history.
+- Version: `2.0.2-stable`
+- Release branch: `codex/v2.0-production`
+- Release tag: `v2.0.2-stable` on `main` after review and merge.
+- The initial public baseline was created from a sanitized single-commit history;
+  the v2.0 release merge reconnects the reviewed development history.
+- Purpose: stable code baseline for controlled test-server deployment, with
+  Agent Lab disabled by default.
+- Repository automation and isolated production rehearsal are release gates.
+  Target-server networking, backup evidence, designated-user testing, and the
+  business-efficiency baseline remain deployment acceptance gates and must not
+  be represented as completed by the source release alone.

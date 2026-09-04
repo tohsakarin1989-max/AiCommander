@@ -231,7 +231,7 @@ const Meetings: React.FC = () => {
   })
 
   const meetingConfig = meetingConfigRaw as
-    | { provider?: string; api_key?: string; api_base_url?: string }
+    | { provider?: string; api_key_configured?: boolean; api_base_url?: string }
     | undefined
 
   // 详情数据
@@ -733,7 +733,7 @@ const Meetings: React.FC = () => {
       </div>
 
       {/* 配置告警 */}
-      {meetingConfig?.provider === 'openrouter' && !meetingConfig?.api_key && (
+      {meetingConfig?.provider === 'openrouter' && !meetingConfig?.api_key_configured && (
         <div style={{ position: 'fixed', top: 70, right: 20, zIndex: 300, maxWidth: 400 }}>
           <Alert
             message="圆桌会议 API 配置缺失"

@@ -87,6 +87,11 @@
   border-radius: 0;
 }
 
+.intel-search-row {
+  margin-top: 12px;
+  align-items: center;
+}
+
 .intel-loading {
   min-height: 260px;
   display: flex;
@@ -94,6 +99,10 @@
   justify-content: center;
   gap: 12px;
   color: var(--ink-2);
+}
+
+.intel-loading--small {
+  min-height: 96px;
 }
 
 .intel-tabs .ant-tabs-nav {
@@ -237,6 +246,37 @@
 
 .intel-context-prompt {
   max-height: 420px;
+}
+
+.intel-diagram-card .ant-alert {
+  margin-top: 12px;
+}
+
+.intel-diagram-node-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.intel-diagram-node {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+}
+
+.intel-diagram-node b {
+  color: var(--ink-1);
+  font-size: 12.5px;
+}
+
+.intel-diagram-node small {
+  grid-column: 2;
+  color: var(--ink-3);
+  line-height: 1.5;
 }
 
 @media (max-width: 780px) {

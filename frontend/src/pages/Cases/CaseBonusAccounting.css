@@ -74,6 +74,11 @@
   line-height: 1.6;
 }
 
+.case-bonus-management-scope {
+  margin-top: 6px !important;
+  color: var(--accent) !important;
+}
+
 .case-bonus-management-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

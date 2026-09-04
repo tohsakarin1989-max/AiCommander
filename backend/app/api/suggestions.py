@@ -13,6 +13,7 @@ from app.models.event import Event
 from app.models.meeting import Meeting
 from app.models.patrol import AreaRiskAssessment
 from app.services.case_automation_service import CaseAutomationService
+from app.services.case_processing_card_service import CaseProcessingCardService
 from app.services.case_quality_service import CaseQualityService
 
 router = APIRouter()
@@ -111,6 +112,31 @@ def get_suggestions(
         .limit(20)
         .all()
     ):
+        try:
+            processing_card = CaseProcessingCardService.build_processing_card(db, case.id)
+            gap_groups = processing_card.get("gap_groups") or []
+            if gap_groups:
+                add_item(
+                    item_id=f"case-processing-card-{case.id}",
+                    item_type="processing_card",
+                    priority=processing_card.get("priority") or "medium",
+                    title=f"处理案件缺口卡：{case.case_number}",
+                    description="同案质量、奖金、经验卡和报告缺口已归并，请按处理卡统一复核。",
+                    target_type="case",
+                    target_id=case.id,
+                    action="review_processing_card",
+                    created_at=case.updated_at or case.created_at,
+                    meta={
+                        "status": processing_card.get("status"),
+                        "gap_group_count": len(gap_groups),
+                        "gap_labels": [group.get("label") for group in gap_groups if group.get("label")],
+                        "impacted_modules": processing_card.get("impacted_modules") or [],
+                    },
+                )
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to build processing card suggestion for case %s", case.id)
+
         missing_geo = case.latitude is None or case.longitude is None
         if missing_geo:
             add_item(

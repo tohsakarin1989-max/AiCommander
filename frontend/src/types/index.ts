@@ -134,6 +134,178 @@ export interface CaseStructurePreview {
   warnings: string[]
   confidence: number
   boundary: string
+  model_status?: 'deterministic_fallback' | 'llm_success' | 'llm_failed' | string
+  intake_mode?: 'llm' | 'rules_fallback' | string
+  model_error?: string
+  candidates?: AiIntakeCandidate[]
+  evidence_anchors?: AiEvidenceAnchor[]
+  follow_up_questions?: string[]
+  material_recommendations?: Array<{
+    requirement_key: string
+    label: string
+    reason: string
+  }>
+  human_confirmation_required?: boolean
+  ai_intake_boundary?: string
+}
+
+export interface AiIntakeCandidate {
+  field: string
+  value: unknown
+  label: string
+  source: string
+  confidence: number
+  status: 'candidate' | string
+}
+
+export interface AiEvidenceAnchor {
+  id: string
+  field: string
+  text: string
+  source: string
+}
+
+export interface AiIntakeApplyResult {
+  case_id: number
+  applied_fields: string[]
+  rejected_fields: Array<{ field: string; reason: string }>
+  human_confirmation_required: boolean
+  boundary: string
+}
+
+export interface CaseProfile {
+  case: {
+    id: number
+    case_number: string
+    occurred_time?: string | null
+    location?: string | null
+    case_type?: string | null
+    description?: string | null
+    status?: string
+    report_unit?: string | null
+    source_type?: string | null
+  }
+  facts: Record<string, unknown>
+  related: {
+    vehicles: Array<Partial<CaseVehicle>>
+    persons: Array<Partial<CasePerson>>
+    evidence: Array<Partial<CaseEvidence>>
+    oil_recovery: Array<Partial<OilRecoveryRecord>>
+    tips: Array<Partial<CaseTip>>
+  }
+  quality: Partial<CaseQuality> & Record<string, unknown>
+  quality_gaps: Array<{ field?: string; label?: string; reason?: string }>
+  ai_summary: {
+    summary?: string | null
+    preprocess_mode?: string | null
+    analysis_readiness?: Record<string, unknown>
+    features?: Record<string, unknown>
+  }
+  tags: Array<Record<string, unknown>>
+  similar_cases: Record<string, unknown>
+  experience_card?: Record<string, unknown> | null
+  knowledge_refs: Record<string, unknown>
+  availability: {
+    has_geo: boolean
+    has_evidence: boolean
+    has_ai_features: boolean
+    has_quality: boolean
+    has_confirmed_experience: boolean
+    needs_human_review: boolean
+  }
+  source_map: Record<string, unknown>
+  boundary: string[]
+}
+
+export interface CaseProcessingCard {
+  case_id: number
+  case_number: string
+  status: 'ready' | 'needs_review' | string
+  priority: 'high' | 'medium' | 'low' | string
+  gap_groups: Array<{
+    key: string
+    label: string
+    severity: string
+    items: Array<Record<string, unknown>>
+    impacted_modules: string[]
+    route: string
+  }>
+  impacted_modules: string[]
+  suggested_actions: Array<{
+    key: string
+    label: string
+    route: string
+    mutation_allowed: boolean
+    reason: string
+  }>
+  manual_review_required: boolean
+  profile_snapshot: Record<string, unknown>
+  boundary: string
+}
+
+export interface KnowledgeSearchResult {
+  source_type: string
+  source_id: number | string
+  title: string
+  snippet: string
+  score: number
+  route: string
+  evidence_refs: Array<Record<string, unknown>>
+}
+
+export interface KnowledgeSearchResponse {
+  query: string
+  items: KnowledgeSearchResult[]
+  total: number
+  insufficient_evidence?: boolean
+  boundary?: string
+}
+
+export interface EvidenceQaResponse {
+  answer: string
+  facts: string[]
+  inferences: Array<Record<string, unknown>>
+  citations: Array<Record<string, unknown>>
+  insufficient_evidence: boolean
+  boundary: string
+}
+
+export interface ReportReviewResult {
+  report_id: number
+  findings: Array<{ type: string; severity: string; message: string }>
+  suggested_fixes: string[]
+  manual_review_required: boolean
+  boundary: string
+}
+
+export interface ConclusionDraft {
+  case_id: number
+  status: 'draft' | string
+  not_published: boolean
+  facts: string[]
+  inferences: Array<Record<string, unknown>>
+  recommendations: Array<Record<string, unknown>>
+  information_gaps: string[]
+  evidence_refs: Array<Record<string, unknown>>
+  ai_output?: Record<string, unknown>
+  manual_review_required: boolean
+}
+
+export interface CaseDiagram {
+  case_id: number
+  nodes: Array<{ id: string; type: string; label: string; detail?: string | null }>
+  edges: Array<{ from: string; to: string; label: string }>
+  boundary: string
+}
+
+export interface TagCurationResult {
+  case_id: number
+  recommended_tags: Array<Record<string, unknown>>
+  merge_suggestions: Array<Record<string, unknown>>
+  low_confidence_tags: Array<Record<string, unknown>>
+  human_confirmation_required: boolean
+  applied: boolean
+  boundary: string
 }
 
 export interface CaseEvidenceClassification {
@@ -800,6 +972,9 @@ export interface SystemConfig {
   id: number
   config_key: string
   config_value: string
+  value_masked: string
+  is_configured: boolean
+  config_type: 'api_key' | 'string' | 'number' | 'url' | string
   category: string
   description?: string
   created_at?: string
@@ -809,6 +984,7 @@ export interface SystemConfig {
 export interface MapConfig {
   provider: 'openstreetmap' | 'mapbox' | 'amap' | 'google' | 'baidu'
   api_key?: string
+  api_key_configured?: boolean
   api_base_url?: string
   default_center?: GeoPoint
   default_zoom?: number
@@ -946,6 +1122,100 @@ export interface AgentTask {
   status: string
   result: AgentTaskResult | null
   created_at: string
+}
+
+export type AgentRunTaskType =
+  | 'case_data_quality'
+  | 'map_data_quality'
+  | 'dual_domain_analysis'
+  | 'evidence_report'
+
+export type AgentRunStatus =
+  | 'queued'
+  | 'planning'
+  | 'running'
+  | 'waiting_approval'
+  | 'verifying'
+  | 'completed'
+  | 'degraded'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+
+export interface AgentRunEvent {
+  id: number
+  run_id: string
+  sequence: number
+  event_type: string
+  status: AgentRunStatus
+  actor_type: string
+  actor_name?: string | null
+  input_summary: Record<string, unknown>
+  output_summary: Record<string, unknown>
+  evidence_refs: string[]
+  error_message?: string | null
+  duration_ms?: number | null
+  created_at: string
+}
+
+export interface AgentRunArtifact {
+  id: string
+  run_id: string
+  artifact_type: string
+  version: number
+  content: AgentRunResult
+  evidence_refs: string[]
+  source_signature: string
+  created_at: string
+}
+
+export interface AgentRunApproval {
+  id: string
+  run_id: string
+  artifact_id: string
+  action_type: string
+  target_type: string
+  target_id: number
+  candidate_patch: Record<string, unknown>
+  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'expired'
+  decision_comment?: string | null
+  execution_result: Record<string, unknown>
+  expires_at?: string | null
+  decided_at?: string | null
+  executed_at?: string | null
+  created_at: string
+}
+
+export interface AgentRunResult extends Omit<AgentTaskResult, 'facts'> {
+  facts?: Array<string | Record<string, unknown>>
+  findings?: Array<Record<string, unknown>>
+  pending_approval_count?: number
+}
+
+export interface AgentRun {
+  id: string
+  task_type: AgentRunTaskType
+  query: string
+  case_ids: number[]
+  asset_ids: number[]
+  mode: 'shadow' | 'assist'
+  status: AgentRunStatus
+  model_provider?: string | null
+  model_name?: string | null
+  data_version: string
+  result_summary: AgentRunResult
+  error_message?: string | null
+  attempt_count: number
+  created_by?: number | null
+  replay_of_id?: string | null
+  created_at: string
+  started_at?: string | null
+  completed_at?: string | null
+  artifact_count: number
+  pending_approval_count: number
+  events?: AgentRunEvent[]
+  artifacts?: AgentRunArtifact[]
+  approvals?: AgentRunApproval[]
 }
 
 // ============ 结论相关类型 ============
@@ -1280,6 +1550,14 @@ export interface EventCreateData {
   suspects_description?: string
   discovery_method?: string
   handling_result?: string
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: 'fresh' | 'recent' | 'unknown'
+  confidence_score?: number
+  review_status?: 'pending_review' | 'confirmed' | 'rejected'
+  evidence_files?: Array<Record<string, unknown>>
+  observation_details?: Record<string, unknown>
   related_case_id?: number
 }
 
@@ -1300,6 +1578,14 @@ export interface EventUpdateData {
   suspects_description?: string
   discovery_method?: string
   handling_result?: string
+  related_asset_id?: number
+  observation_type?: string
+  severity?: number
+  freshness?: 'fresh' | 'recent' | 'unknown'
+  confidence_score?: number
+  review_status?: 'pending_review' | 'confirmed' | 'rejected'
+  evidence_files?: Array<Record<string, unknown>>
+  observation_details?: Record<string, unknown>
   risk_level?: string
   analysis_notes?: string
   suggested_actions?: string[]

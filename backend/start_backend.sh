@@ -16,7 +16,7 @@ fi
 
 export DATABASE_URL=${DATABASE_URL:-sqlite:///./aicommander.db}
 export REDIS_URL=${REDIS_URL:-redis://localhost:6379/0}
-export SECRET_KEY=${SECRET_KEY:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')}
+export SECRET_KEY=${SECRET_KEY:-local-dev-secret}
 export OPENAI_API_KEY=${OPENAI_API_KEY:-}
 export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 export CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://localhost:6379/0}

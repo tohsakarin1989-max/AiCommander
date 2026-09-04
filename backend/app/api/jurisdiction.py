@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.services.jurisdiction_service import JurisdictionService
+from app.services.well_attention_service import WellAttentionService
 
 router = APIRouter()
 
@@ -76,6 +77,11 @@ class PublicMapSyncRequest(BaseModel):
     center_lng: Optional[float] = Field(None, description="中心点经度；不填则按已有案件/资产坐标推断")
     radius_km: float = Field(6.0, ge=0.2, le=20.0, description="自动拉取半径，默认 6 公里")
     max_features: int = Field(160, ge=1, le=500, description="最多入库的公共地图要素数")
+
+
+class WellAttentionRefreshRequest(BaseModel):
+    days_back: int = Field(30, ge=1, le=365)
+    radius_km: float = Field(1.0, ge=0.1, le=5.0)
 
 
 class JurisdictionAssetResponse(BaseModel):
@@ -285,6 +291,33 @@ async def get_assets_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
 async def get_data_quality(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """审计业务资产完整度、坐标缺失、重复点、校验状态和公共地图参考缺口。"""
     return JurisdictionService.audit_data_quality(db)
+
+
+@router.get("/well-attention/overview")
+async def get_well_attention_overview(
+    days_back: int = Query(30, ge=1, le=365),
+    radius_km: float = Query(1.0, ge=0.1, le=5.0),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """获取领导大屏使用的井点风险迹象热力与最新大模型研判快照。"""
+    return WellAttentionService.build_overview(
+        db,
+        days_back=days_back,
+        radius_km=radius_km,
+    )
+
+
+@router.post("/well-attention/refresh")
+async def refresh_well_attention(
+    payload: WellAttentionRefreshRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """基于最新井点和痕迹事实刷新关注区域、关注井点与布置建议。"""
+    return await WellAttentionService.refresh_ai_analysis(
+        db,
+        days_back=payload.days_back,
+        radius_km=payload.radius_km,
+    )
 
 
 @router.get("/assets/{asset_id:int}/risk-profile")

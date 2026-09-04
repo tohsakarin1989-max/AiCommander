@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from app.api import agent_runs, auth, cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, runtime
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -8,14 +10,22 @@ import app.models  # noqa: F401
 from app.observability import install_observability
 from app.schema_maintenance import ensure_auto_created_schema
 from app.services.system_config_service import SystemConfigService
+from app.security import AuthMiddleware, SecurityHeadersMiddleware
 
 app = FastAPI(
     title="AI案件分析系统",
     description="基于人工智能的案件分析系统，支持多AI模型协作决策",
-    version="1.0.0"
+    version=settings.APP_VERSION,
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
 
 install_observability(app)
+app.state.auth_session_factory = SessionLocal
+app.state.auth_bootstrap_token = settings.BOOTSTRAP_TOKEN
+app.state.auth_secure_cookie = settings.SESSION_COOKIE_SECURE
+app.state.environment = settings.ENVIRONMENT
 
 def _prepare_schema() -> None:
     if settings.AUTO_CREATE_TABLES:
@@ -35,9 +45,22 @@ def startup() -> None:
     try:
         db = SessionLocal()
         SystemConfigService.init_default_configs(db)
+        SystemConfigService.encrypt_legacy_secrets(db)
         db.close()
     except Exception as e:
         print(f"初始化默认配置时出错（可忽略）: {e}")
+
+# 安全中间件。CORS 最后注册，使预检和错误响应也带正确的 CORS 头。
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[item.strip() for item in settings.ALLOWED_HOSTS.split(",") if item.strip()],
+)
+app.add_middleware(
+    AuthMiddleware,
+    session_factory=SessionLocal,
+    allowed_origins=build_cors_origins(settings.FRONTEND_URL, settings.CORS_ORIGINS),
+)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS配置
 app.add_middleware(
@@ -50,6 +73,8 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(health.router, tags=["health"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
@@ -62,6 +87,7 @@ app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"]
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
+app.include_router(agent_runs.router, prefix="/api/agent-runs", tags=["agent-runs"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])
@@ -73,7 +99,8 @@ app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["juris
 app.include_router(case_intelligence.router, prefix="/api/case-intelligence", tags=["case-intelligence"])
 app.include_router(automation_alerts.router, prefix="/api/automation-alerts", tags=["automation-alerts"])
 app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-links"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 
 @app.get("/")
 async def root():
-    return {"message": "AI案件分析系统API", "version": "1.0.0"}
+    return {"message": "AI案件分析系统API", "version": settings.APP_VERSION}
