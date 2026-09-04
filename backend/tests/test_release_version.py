@@ -31,6 +31,7 @@ def test_github_quality_gate_covers_release_checks():
 
     required_steps = (
         "python-version: '3.12'",
+        "python -m pip install -r requirements-dev.txt",
         "npm ci",
         "python -m pytest",
         "npm run test -- --run",
