@@ -20,7 +20,7 @@ def test_deployment_scripts_support_isolated_configuration():
     assert 'COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/' in deploy
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"' in init
     assert "$ENV_FILE，" not in init
-    assert 'APP_VERSION: "${APP_VERSION:-2.0.2-stable}"' in compose
+    assert 'APP_VERSION: "${APP_VERSION:-2.0.3-stable}"' in compose
     assert '${IMAGE_PREFIX:-aicommander}-backend:' in compose
     assert '${IMAGE_PREFIX:-aicommander}-frontend:' in compose
     assert "AICommander v2.0.0" not in deploy
@@ -88,10 +88,10 @@ headers_file = Path(args[args.index('-D') + 1])
 body_file = Path(args[args.index('-o') + 1])
 path = urlparse(args[-1]).path
 payloads = {
-    '/health/live': {'status': 'alive', 'version': '2.0.2-stable', 'dependencies': {}},
+    '/health/live': {'status': 'alive', 'version': '2.0.3-stable', 'dependencies': {}},
     '/health/ready': {
         'status': 'ready',
-        'version': '2.0.2-stable',
+        'version': '2.0.3-stable',
         'dependencies': {
             'database': {'status': 'ok'},
             'schema': {'status': 'ok'},
@@ -100,7 +100,7 @@ payloads = {
     },
     '/health/agents': {
         'status': 'off',
-        'version': '2.0.2-stable',
+        'version': '2.0.3-stable',
         'mode': 'off',
         'affects_core_readiness': False,
     },
@@ -134,7 +134,7 @@ sys.stdout.write(str(status))
         "\n".join(
             (
                 "APP_PORT=3000",
-                "APP_VERSION=2.0.2-stable",
+                "APP_VERSION=2.0.3-stable",
                 "ENABLE_AGENT_LAB=false",
                 "AGENT_MODE=off",
                 "AGENT_MUTATIONS_ENABLED=false",
@@ -165,6 +165,6 @@ sys.stdout.write(str(status))
 
     assert result.returncode == 0, result.stderr
     manifest = (evidence_dir / "verification.manifest").read_text(encoding="utf-8")
-    assert "application_version=2.0.2-stable" in manifest
+    assert "application_version=2.0.3-stable" in manifest
     assert "agent_mode=off" in manifest
     assert "overall=passed" in manifest

@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -224,8 +225,21 @@ class AuthService:
 
     @staticmethod
     def _base64url_decode(value: str) -> bytes:
-        padding = "=" * (-len(value) % 4)
-        return base64.urlsafe_b64decode((value + padding).encode())
+        if not value or "=" in value:
+            raise ValueError("base64url 编码不规范")
+        try:
+            encoded = value.encode("ascii")
+            padding = b"=" * (-len(encoded) % 4)
+            decoded = base64.b64decode(
+                encoded + padding,
+                altchars=b"-_",
+                validate=True,
+            )
+        except (UnicodeEncodeError, binascii.Error) as exc:
+            raise ValueError("base64url 编码无效") from exc
+        if not hmac.compare_digest(AuthService._base64url_encode(decoded), value):
+            raise ValueError("base64url 编码不规范")
+        return decoded
 
     @staticmethod
     def _encode_token(payload: dict) -> str:

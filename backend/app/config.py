@@ -5,7 +5,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "2.0.2-stable"
+    APP_VERSION: str = "2.0.3-stable"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
