@@ -73,5 +73,5 @@ jobs:
           sh -n scripts/deploy-production.sh
           sh -n scripts/verify-test-deployment.sh
           sh -n scripts/verify-backup-restore.sh
-          sh -n scripts/rehearse-v201-test.sh
+          sh -n scripts/rehearse-release.sh
           sh -n scripts/verify-agent-lab.sh

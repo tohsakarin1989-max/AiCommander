@@ -35,11 +35,11 @@ AGENT_MUTATIONS_ENABLED="$(read_env AGENT_MUTATIONS_ENABLED)"
 AGENT_MUTATIONS_ENABLED="${AGENT_MUTATIONS_ENABLED:-false}"
 
 [ "$ENABLE_AGENT_LAB" = "false" ] \
-    || fail "v2.0.1-test 验收要求 ENABLE_AGENT_LAB=false"
+    || fail "$APP_VERSION 稳定基线验收要求 ENABLE_AGENT_LAB=false"
 [ "$AGENT_MODE" = "off" ] \
-    || fail "v2.0.1-test 验收要求 AGENT_MODE=off"
+    || fail "$APP_VERSION 稳定基线验收要求 AGENT_MODE=off"
 [ "$AGENT_MUTATIONS_ENABLED" = "false" ] \
-    || fail "v2.0.1-test 验收要求 AGENT_MUTATIONS_ENABLED=false"
+    || fail "$APP_VERSION 稳定基线验收要求 AGENT_MUTATIONS_ENABLED=false"
 
 timestamp="$(date '+%Y%m%d-%H%M%S')"
 EVIDENCE_DIR="${EVIDENCE_DIR:-$ROOT_DIR/backups/deployment-evidence/$timestamp}"

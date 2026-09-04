@@ -20,18 +20,18 @@ def test_deployment_scripts_support_isolated_configuration():
     assert 'COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/' in deploy
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"' in init
     assert "$ENV_FILE，" not in init
-    assert 'APP_VERSION: "${APP_VERSION:-2.0.1-test}"' in compose
+    assert 'APP_VERSION: "${APP_VERSION:-2.0.2-stable}"' in compose
     assert '${IMAGE_PREFIX:-aicommander}-backend:' in compose
     assert '${IMAGE_PREFIX:-aicommander}-frontend:' in compose
     assert "AICommander v2.0.0" not in deploy
 
 
-def test_v201_rehearsal_has_smoke_restore_and_cleanup_guardrails():
-    rehearsal = _read("scripts/rehearse-v201-test.sh")
+def test_release_rehearsal_has_smoke_restore_and_cleanup_guardrails():
+    rehearsal = _read("scripts/rehearse-release.sh")
     smoke = _read("scripts/verify-test-deployment.sh")
     restore = _read("scripts/verify-backup-restore.sh")
 
-    assert "aicommander_v201_rehearsal_" in rehearsal
+    assert "aicommander_release_rehearsal_" in rehearsal
     assert 'COMPOSE_PROJECT_NAME' in rehearsal
     assert 'REHEARSAL_IMAGE_PREFIX' in rehearsal
     assert 'ENABLE_AGENT_LAB=false' in rehearsal
@@ -69,7 +69,7 @@ def test_release_quality_gate_checks_rehearsal_scripts():
 
     assert "sh -n scripts/verify-test-deployment.sh" in workflow
     assert "sh -n scripts/verify-backup-restore.sh" in workflow
-    assert "sh -n scripts/rehearse-v201-test.sh" in workflow
+    assert "sh -n scripts/rehearse-release.sh" in workflow
 
 
 def test_smoke_verifier_records_evidence_without_credentials(tmp_path):
@@ -88,10 +88,10 @@ headers_file = Path(args[args.index('-D') + 1])
 body_file = Path(args[args.index('-o') + 1])
 path = urlparse(args[-1]).path
 payloads = {
-    '/health/live': {'status': 'alive', 'version': '2.0.1-test', 'dependencies': {}},
+    '/health/live': {'status': 'alive', 'version': '2.0.2-stable', 'dependencies': {}},
     '/health/ready': {
         'status': 'ready',
-        'version': '2.0.1-test',
+        'version': '2.0.2-stable',
         'dependencies': {
             'database': {'status': 'ok'},
             'schema': {'status': 'ok'},
@@ -100,7 +100,7 @@ payloads = {
     },
     '/health/agents': {
         'status': 'off',
-        'version': '2.0.1-test',
+        'version': '2.0.2-stable',
         'mode': 'off',
         'affects_core_readiness': False,
     },
@@ -134,7 +134,7 @@ sys.stdout.write(str(status))
         "\n".join(
             (
                 "APP_PORT=3000",
-                "APP_VERSION=2.0.1-test",
+                "APP_VERSION=2.0.2-stable",
                 "ENABLE_AGENT_LAB=false",
                 "AGENT_MODE=off",
                 "AGENT_MUTATIONS_ENABLED=false",
@@ -165,6 +165,6 @@ sys.stdout.write(str(status))
 
     assert result.returncode == 0, result.stderr
     manifest = (evidence_dir / "verification.manifest").read_text(encoding="utf-8")
-    assert "application_version=2.0.1-test" in manifest
+    assert "application_version=2.0.2-stable" in manifest
     assert "agent_mode=off" in manifest
     assert "overall=passed" in manifest

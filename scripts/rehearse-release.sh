@@ -5,30 +5,36 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_VERSION="$(tr -d '\r\n' < VERSION)"
-[ "$APP_VERSION" = "2.0.1-test" ] || {
-    echo "隔离演练仅适用于 v2.0.1-test，当前版本为 $APP_VERSION" >&2
+[ -n "$APP_VERSION" ] || {
+    echo "VERSION 不能为空" >&2
     exit 1
 }
+case "$APP_VERSION" in
+    *[!a-zA-Z0-9._-]*)
+        echo "VERSION 含有不安全字符: $APP_VERSION" >&2
+        exit 1
+        ;;
+esac
 
 TMP_ROOT="${TMPDIR:-/tmp}"
-WORK_DIR="$(mktemp -d "$TMP_ROOT/aicommander-v201.XXXXXX")"
+WORK_DIR="$(mktemp -d "$TMP_ROOT/aicommander-release.XXXXXX")"
 timestamp="$(date '+%Y%m%d-%H%M%S')"
-EVIDENCE_DIR="${EVIDENCE_DIR:-$TMP_ROOT/aicommander-v201-evidence-${timestamp}-$$}"
+EVIDENCE_DIR="${EVIDENCE_DIR:-$TMP_ROOT/aicommander-release-evidence-${timestamp}-$$}"
 ENV_FILE="$WORK_DIR/.env.production"
 SECRETS_DIR="$WORK_DIR/secrets"
 BACKUP_DIR="$WORK_DIR/backups"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.production.yml}"
-COMPOSE_PROJECT_NAME="aicommander_v201_rehearsal_$$"
-REHEARSAL_IMAGE_PREFIX="aicommander-v201-rehearsal-$$"
+COMPOSE_PROJECT_NAME="aicommander_release_rehearsal_$$"
+REHEARSAL_IMAGE_PREFIX="aicommander-release-rehearsal-$$"
 REHEARSAL_PORT="${REHEARSAL_PORT:-33080}"
 export COMPOSE_PROJECT_NAME
 
 case "$COMPOSE_PROJECT_NAME" in
-    aicommander_v201_rehearsal_[0-9]*) ;;
+    aicommander_release_rehearsal_[0-9]*) ;;
     *) echo "隔离演练项目名不安全，已停止" >&2; exit 1 ;;
 esac
 case "$REHEARSAL_IMAGE_PREFIX" in
-    aicommander-v201-rehearsal-[0-9]*) ;;
+    aicommander-release-rehearsal-[0-9]*) ;;
     *) echo "隔离演练镜像前缀不安全，已停止" >&2; exit 1 ;;
 esac
 
@@ -77,7 +83,7 @@ cleanup() {
         "${REHEARSAL_IMAGE_PREFIX}-frontend:${APP_VERSION}" \
         >/dev/null 2>&1 || true
     case "$WORK_DIR" in
-        "$TMP_ROOT"/aicommander-v201.*) rm -rf -- "$WORK_DIR" ;;
+        "$TMP_ROOT"/aicommander-release.*) rm -rf -- "$WORK_DIR" ;;
     esac
     echo "隔离演练证据目录: $EVIDENCE_DIR"
 }
@@ -124,7 +130,7 @@ expected_frontend_bindings="{\"80/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":
 [ "$frontend_bindings" = "$expected_frontend_bindings" ] \
     || fail "前端必须且只能绑定 127.0.0.1:${REHEARSAL_PORT}"
 if compose ps --services --status running | grep -x 'agent-worker' >/dev/null; then
-    fail "v2.0.1-test 不应启动 Agent Worker"
+    fail "$APP_VERSION 稳定基线不应启动 Agent Worker"
 fi
 printf '%s\n' \
     "frontend_binding=127.0.0.1:$REHEARSAL_PORT" \
@@ -150,4 +156,4 @@ COMPOSE_FILE="$COMPOSE_FILE" \
 compose ps > "$EVIDENCE_DIR/compose-ps-passed.txt"
 cp "${BACKUP_FILE}.manifest" "$EVIDENCE_DIR/database-backup.manifest"
 
-echo "v2.0.1-test 隔离部署、自动冒烟和备份恢复验证全部通过"
+echo "$APP_VERSION 隔离部署、自动冒烟和备份恢复验证全部通过"
