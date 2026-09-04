@@ -30,6 +30,9 @@ def test_github_quality_gate_covers_release_checks():
     ).read_text()
 
     required_steps = (
+        "actions/checkout@v7.0.1",
+        "actions/setup-python@v7.0.0",
+        "actions/setup-node@v7.0.0",
         "python-version: '3.12'",
         "python -m pip install -r requirements-dev.txt",
         "npm ci",
