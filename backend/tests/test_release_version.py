@@ -42,3 +42,6 @@ def test_github_quality_gate_covers_release_checks():
     )
     for required_step in required_steps:
         assert required_step in workflow
+
+    # 功能分支由 pull_request 触发，避免同一次更新重复跑 push 和 PR 两套任务。
+    assert "      - codex/v2.0-production" not in workflow
