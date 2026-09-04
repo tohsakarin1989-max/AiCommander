@@ -228,8 +228,35 @@ def test_tampered_session_cookie_is_rejected():
     assert _bootstrap_admin(client).status_code == 201
     token = client.cookies.get("aicommander_session")
     assert token
-    replacement = "a" if token[-1] != "a" else "b"
-    client.cookies.set("aicommander_session", token[:-1] + replacement)
+    header, payload, signature = token.split(".")
+    replacement = "a" if signature[0] != "a" else "b"
+    client.cookies.set(
+        "aicommander_session",
+        f"{header}.{payload}.{replacement}{signature[1:]}",
+    )
+
+    response = client.get("/api/protected")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "登录状态无效或已过期"
+
+
+def test_noncanonical_session_signature_encoding_is_rejected():
+    client, _ = _build_client()
+    assert _bootstrap_admin(client).status_code == 201
+    token = client.cookies.get("aicommander_session")
+    assert token
+    header, payload, signature = token.split(".")
+
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    final_index = alphabet.index(signature[-1])
+    noncanonical_final = alphabet[(final_index // 4) * 4 + 1]
+    if noncanonical_final == signature[-1]:
+        noncanonical_final = alphabet[(final_index // 4) * 4 + 2]
+    client.cookies.set(
+        "aicommander_session",
+        f"{header}.{payload}.{signature[:-1]}{noncanonical_final}",
+    )
 
     response = client.get("/api/protected")
 

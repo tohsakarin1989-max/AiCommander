@@ -1,7 +1,7 @@
-# AICommander v2.0.2-stable 服务器部署与运维手册
+# AICommander v2.0.3-stable 服务器部署与运维手册
 
 > 初次生产链路核验：2026-08-14；部署加固回归：2026-09-04
-> 适用版本：AICommander 2.0.2-stable
+> 适用版本：AICommander 2.0.3-stable
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
 > 系统边界：涉油案件数智研判与防控辅助系统，生产环境默认部署在单位内网或 VPN 后
 
@@ -10,7 +10,7 @@
 
 ## 1. 当前可部署性结论
 
-v2.0.2-stable 已作为前期测试部署的稳定代码基线。生产容器链路已经在干净的
+v2.0.3-stable 已作为前期测试部署的稳定代码基线。生产容器链路已经在干净的
 PostgreSQL 16 和 Redis 7 环境中完成隔离启动、冒烟与备份恢复验收。正式业务上线前仍需
 在目标服务器完成域名、HTTPS、备份恢复记录、单位网络策略和业务人员验收；这些现场工作
 依赖目标服务器，不能由源码仓库的自动化结果代替。
@@ -215,13 +215,13 @@ aicommander.example.org  A  <服务器 IPv4>
 ## 7. 准备发布代码
 
 生产服务器应使用已评审的 Git 标签或固定提交，不要直接复制开发目录中的临时文件。
-本版本发布后应固定使用 `v2.0.2-stable` 标签，不要从开发分支直接部署：
+本版本发布后应固定使用 `v2.0.3-stable` 标签，不要从开发分支直接部署：
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/aicommander
-git clone --branch v2.0.2-stable --depth 1 <代码仓库地址> /opt/aicommander
+git clone --branch v2.0.3-stable --depth 1 <代码仓库地址> /opt/aicommander
 cd /opt/aicommander
-test "$(cat VERSION)" = "2.0.2-stable"
+test "$(cat VERSION)" = "2.0.3-stable"
 git status --short
 git rev-parse HEAD
 chmod 0755 scripts/*.sh backend/docker-entrypoint.sh
@@ -267,7 +267,7 @@ nano .env.production
 ```dotenv
 APP_DOMAIN=aicommander.example.org
 APP_PORT=3000
-APP_VERSION=2.0.2-stable
+APP_VERSION=2.0.3-stable
 SECRETS_DIR=./secrets
 BACKUP_DIR=./backups/postgres
 ENABLE_BONUS_ACCOUNTING=false
@@ -331,7 +331,7 @@ curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
 五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
-`ok`，并返回 `version=2.0.2-stable`。随后执行自动验收：
+`ok`，并返回 `version=2.0.3-stable`。随后执行自动验收：
 
 ```bash
 sudo ./scripts/verify-test-deployment.sh
@@ -705,8 +705,8 @@ sudo docker compose --env-file .env.production \
 sudo docker pull postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
 sudo docker pull redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 sudo docker save -o aicommander-v2-images.tar \
-  aicommander-backend:2.0.2-stable \
-  aicommander-frontend:2.0.2-stable \
+  aicommander-backend:2.0.3-stable \
+  aicommander-frontend:2.0.3-stable \
   postgres:16-alpine \
   redis:7-alpine
 sha256sum aicommander-v2-images.tar
@@ -783,7 +783,7 @@ sudo du -sh /var/lib/docker /opt/aicommander/backups
 - [ ] 正式发布标签、服务器提交号和镜像版本一致。
 - [ ] `.env.production`、四个 secrets 和数据库备份均已加密异机保存。
 - [ ] SQLite 正式迁移报告无数量差异，抽查至少 20 起案件。
-- [ ] 221 项后端测试、78 项前端测试和构建在发布提交上通过。
+- [ ] 222 项后端测试、78 项前端测试和构建在发布提交上通过。
 - [ ] Python 与前端依赖审计无已知高危漏洞。
 - [ ] PostgreSQL、Redis、后端、Celery、前端全部健康。
 - [ ] 只有 80/443 对业务网络开放，数据库、Redis、后端不直接暴露。

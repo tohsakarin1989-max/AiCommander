@@ -18,9 +18,9 @@ Rules:
 
 Current stable baseline:
 
-- Version: `2.0.2-stable`
+- Version: `2.0.3-stable`
 - Release branch: `codex/v2.0-production`
-- Release tag: `v2.0.2-stable` on `main` after review and merge.
+- Release tag: `v2.0.3-stable` on `main` after review and merge.
 - The initial public baseline was created from a sanitized single-commit history;
   the v2.0 release merge reconnects the reviewed development history.
 - Purpose: stable code baseline for controlled test-server deployment, with
