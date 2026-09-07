@@ -17,6 +17,7 @@ from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, Agent
 from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_steward_service import CaseStewardPilotService
+from app.services.dual_domain_pilot_service import DualDomainPilotService
 from app.services.map_steward_service import MapStewardPilotService
 
 
@@ -141,6 +142,43 @@ def _validate_case_assist_scope(
         raise HTTPException(status_code=403, detail="当前账号未被加入案件数据管家试用名单")
 
 
+def _validate_dual_domain_assist_scope(
+    db: Session,
+    *,
+    case_ids: list[int],
+    asset_ids: list[int],
+    principal_user_id: int | None,
+) -> None:
+    if not case_ids or not asset_ids:
+        raise HTTPException(status_code=422, detail="双域研判必须同时明确选择案件和地图资源")
+    selected_case_ids = set(case_ids)
+    selected_asset_ids = set(asset_ids)
+    if len(selected_case_ids) > settings.AGENT_DUAL_DOMAIN_PILOT_MAX_CASES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"双域研判单次最多选择{settings.AGENT_DUAL_DOMAIN_PILOT_MAX_CASES}起案件",
+        )
+    if len(selected_asset_ids) > settings.AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"双域研判单次最多选择{settings.AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS}个地图资源",
+        )
+    available_case_count = db.query(Case.id).filter(Case.id.in_(selected_case_ids)).count()
+    if available_case_count != len(selected_case_ids):
+        raise HTTPException(status_code=422, detail="所选案件不存在或已删除")
+    available_asset_count = db.query(JurisdictionAsset.id).filter(
+        JurisdictionAsset.id.in_(selected_asset_ids),
+        JurisdictionAsset.status == "active",
+    ).count()
+    if available_asset_count != len(selected_asset_ids):
+        raise HTTPException(status_code=422, detail="所选地图资源不存在或已失效")
+    control = DualDomainPilotService.get_control(db)
+    if not control.enabled:
+        raise HTTPException(status_code=409, detail="双域融合研判试用尚未开启")
+    if not DualDomainPilotService.is_pilot_user(control, principal_user_id):
+        raise HTTPException(status_code=403, detail="当前账号未被加入双域融合研判试用名单")
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def create_agent_run(
     payload: AgentRunCreate,
@@ -164,11 +202,15 @@ def create_agent_run(
                 asset_ids=payload.asset_ids,
                 principal_user_id=principal_user_id,
             )
-        else:
-            raise HTTPException(
-                status_code=403,
-                detail="v2.3受控辅助模式仅开放地图与案件数据管家",
+        elif payload.task_type in {"dual_domain_analysis", "evidence_report"}:
+            _validate_dual_domain_assist_scope(
+                db,
+                case_ids=payload.case_ids,
+                asset_ids=payload.asset_ids,
+                principal_user_id=principal_user_id,
             )
+        else:
+            raise HTTPException(status_code=403, detail="当前任务未开放受控辅助模式")
     run = AgentRunService.create_run(
         db,
         task_type=payload.task_type,
@@ -290,7 +332,7 @@ def review_agent_approval(
         and belongs_to_run.status == "pending"
     ):
         if run.task_type != "map_data_quality":
-            raise HTTPException(status_code=403, detail="v2.3案件数据管家保持只读，不允许修改案件或研判结论")
+            raise HTTPException(status_code=403, detail="案件数据管家和双域研判保持只读，不允许修改案件或研判结论")
         control = MapStewardPilotService.get_control(db)
         if not control.enabled or control.mutations_suspended:
             raise HTTPException(status_code=409, detail="地图数据管家候选写入已暂停")
@@ -333,8 +375,15 @@ def replay_agent_run(run_id: str, request: Request, db: Session = Depends(get_db
                     asset_ids=list(original.asset_ids or []),
                     principal_user_id=principal_user_id,
                 )
+            elif original.task_type in {"dual_domain_analysis", "evidence_report"}:
+                _validate_dual_domain_assist_scope(
+                    db,
+                    case_ids=list(original.case_ids or []),
+                    asset_ids=list(original.asset_ids or []),
+                    principal_user_id=principal_user_id,
+                )
             else:
-                raise HTTPException(status_code=403, detail="旧任务不属于v2.3受控辅助开放范围")
+                raise HTTPException(status_code=403, detail="旧任务不属于受控辅助开放范围")
         replay = AgentRunService.replay_run(db, run_id, created_by=principal_user_id)
     except AgentReplayConflict as exc:
         raise HTTPException(

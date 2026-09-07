@@ -313,8 +313,19 @@ class JurisdictionService:
         }
 
     @staticmethod
-    def audit_data_quality(db: Session) -> Dict[str, Any]:
-        assets = db.query(JurisdictionAsset).all()
+    def audit_data_quality(
+        db: Session,
+        asset_ids: Optional[Iterable[int]] = None,
+    ) -> Dict[str, Any]:
+        query = db.query(JurisdictionAsset)
+        if asset_ids is not None:
+            selected_ids = list(dict.fromkeys(int(item) for item in asset_ids))
+            if not selected_ids:
+                assets = []
+            else:
+                assets = query.filter(JurisdictionAsset.id.in_(selected_ids)).all()
+        else:
+            assets = query.all()
         total = len(assets)
         missing_coordinates = sum(
             1 for asset in assets
@@ -374,10 +385,19 @@ class JurisdictionService:
         }
 
     @staticmethod
-    def build_case_risk_context(db: Session, case_id: int) -> Dict[str, Any]:
+    def build_case_risk_context(
+        db: Session,
+        case_id: int,
+        asset_ids: Optional[Iterable[int]] = None,
+    ) -> Dict[str, Any]:
         case = db.query(Case).filter(Case.id == case_id).first()
         if not case:
             raise ValueError("case_not_found")
+        selected_asset_ids = (
+            tuple(dict.fromkeys(int(item) for item in asset_ids))
+            if asset_ids is not None
+            else None
+        )
 
         base = {
             "case_id": case.id,
@@ -396,13 +416,21 @@ class JurisdictionService:
             return base
 
         nearest = {
-            "road": JurisdictionService._nearest_asset(db, case.latitude, case.longitude, ROAD_TYPES),
-            "village": JurisdictionService._nearest_asset(db, case.latitude, case.longitude, VILLAGE_TYPES),
-            "production_target": JurisdictionService._nearest_asset(
-                db, case.latitude, case.longitude, PRODUCTION_TARGET_TYPES
+            "road": JurisdictionService._nearest_asset(
+                db, case.latitude, case.longitude, ROAD_TYPES, asset_ids=selected_asset_ids
             ),
-            "tech": JurisdictionService._nearest_asset(db, case.latitude, case.longitude, TECH_TYPES),
-            "patrol_point": JurisdictionService._nearest_asset(db, case.latitude, case.longitude, PATROL_TYPES),
+            "village": JurisdictionService._nearest_asset(
+                db, case.latitude, case.longitude, VILLAGE_TYPES, asset_ids=selected_asset_ids
+            ),
+            "production_target": JurisdictionService._nearest_asset(
+                db, case.latitude, case.longitude, PRODUCTION_TARGET_TYPES, asset_ids=selected_asset_ids
+            ),
+            "tech": JurisdictionService._nearest_asset(
+                db, case.latitude, case.longitude, TECH_TYPES, asset_ids=selected_asset_ids
+            ),
+            "patrol_point": JurisdictionService._nearest_asset(
+                db, case.latitude, case.longitude, PATROL_TYPES, asset_ids=selected_asset_ids
+            ),
         }
         base["nearest"] = {
             key: JurisdictionService._distance_to_dict(value)
@@ -782,13 +810,20 @@ class JurisdictionService:
         latitude: float,
         longitude: float,
         asset_types: Iterable[str],
+        asset_ids: Optional[Iterable[int]] = None,
     ) -> Optional[AssetDistance]:
-        assets = db.query(JurisdictionAsset).filter(
+        query = db.query(JurisdictionAsset).filter(
             JurisdictionAsset.asset_type.in_(list(asset_types)),
             JurisdictionAsset.status == "active",
             JurisdictionAsset.latitude.isnot(None),
             JurisdictionAsset.longitude.isnot(None),
-        ).all()
+        )
+        if asset_ids is not None:
+            selected_ids = list(dict.fromkeys(int(item) for item in asset_ids))
+            if not selected_ids:
+                return None
+            query = query.filter(JurisdictionAsset.id.in_(selected_ids))
+        assets = query.all()
         if not assets:
             return None
 

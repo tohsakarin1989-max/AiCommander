@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Input, List, Modal, Progress, Select, Space, Tag, message } from 'antd'
 import {
   CheckCircleOutlined,
@@ -17,6 +17,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
 import { caseApi } from '../../services/cases'
 import { caseStewardApi } from '../../services/caseSteward'
+import { dualDomainApi } from '../../services/dualDomain'
 import { jurisdictionApi } from '../../services/jurisdiction'
 import { mapStewardApi } from '../../services/mapSteward'
 import type { AgentRun, AgentRunApproval, AgentRunTaskType } from '../../types'
@@ -36,6 +37,13 @@ import {
   caseStewardControlHint,
   caseStewardStateLabel,
 } from './caseStewardPresentation'
+import {
+  canStartDualDomain,
+  canSubmitDualDomainRun,
+  dualDomainControlHint,
+  dualDomainControlReason,
+  dualDomainStateLabel,
+} from './dualDomainPresentation'
 import {
   canSubmitMapStewardRun,
   canStartMapSteward,
@@ -177,6 +185,8 @@ const AgentCenter: React.FC = () => {
   const [controlReason, setControlReason] = useState('启动地图数据管家受控试用')
   const [casePilotUserIds, setCasePilotUserIds] = useState<number[]>([])
   const [caseControlReason, setCaseControlReason] = useState('启动案件数据管家只读试用')
+  const [dualPilotUserIds, setDualPilotUserIds] = useState<number[]>([])
+  const [dualControlReason, setDualControlReason] = useState('启动双域融合只读试用')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
 
   const runsQuery = useQuery({
@@ -200,6 +210,11 @@ const AgentCenter: React.FC = () => {
     queryFn: caseStewardApi.status,
     refetchInterval: 10000,
   })
+  const dualStatusQuery = useQuery({
+    queryKey: ['agent-dual-domain-status'],
+    queryFn: dualDomainApi.status,
+    refetchInterval: 10000,
+  })
   const casesQuery = useQuery({
     queryKey: ['agent-cases'],
     queryFn: () => caseApi.getCases({ limit: 200 }),
@@ -214,6 +229,7 @@ const AgentCenter: React.FC = () => {
   const runs = runsQuery.data ?? []
   const pilotUserIdsKey = mapStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
   const casePilotUserIdsKey = caseStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
+  const dualPilotUserIdsKey = dualStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
   useEffect(() => {
     if (!selectedRunId && runs[0]) setSelectedRunId(runs[0].id)
   }, [runs, selectedRunId])
@@ -223,30 +239,22 @@ const AgentCenter: React.FC = () => {
     }
   }, [pilotUserIdsKey])
   useEffect(() => {
-    if (
-      mapStatusQuery.data?.global_mode === 'assist'
-      && !['map_data_quality', 'case_data_quality'].includes(taskType)
-    ) {
-      setTaskType('map_data_quality')
-      setSelectedCaseIds([])
-    }
-  }, [mapStatusQuery.data?.global_mode, taskType])
-  useEffect(() => {
     if (caseStatusQuery.data?.pilot_user_ids) {
       setCasePilotUserIds(caseStatusQuery.data.pilot_user_ids)
     }
   }, [casePilotUserIdsKey])
+  useEffect(() => {
+    if (dualStatusQuery.data?.pilot_user_ids) {
+      setDualPilotUserIds(dualStatusQuery.data.pilot_user_ids)
+    }
+  }, [dualPilotUserIdsKey])
 
   const selectedTask = TASK_OPTIONS.find(item => item.value === taskType)
   const mapStatus = mapStatusQuery.data
   const caseStatus = caseStatusQuery.data
+  const dualStatus = dualStatusQuery.data
   const isAssistMode = mapStatus?.global_mode === 'assist'
-  const visibleTaskOptions = useMemo(
-    () => isAssistMode
-      ? TASK_OPTIONS.filter(item => ['map_data_quality', 'case_data_quality'].includes(item.value))
-      : TASK_OPTIONS,
-    [isAssistMode],
-  )
+  const visibleTaskOptions = TASK_OPTIONS
 
   const createMutation = useMutation({
     mutationFn: agentRunApi.create,
@@ -256,6 +264,7 @@ const AgentCenter: React.FC = () => {
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, 'Agent任务启动失败'))
@@ -269,6 +278,7 @@ const AgentCenter: React.FC = () => {
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '取消任务失败'))
@@ -295,6 +305,7 @@ const AgentCenter: React.FC = () => {
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '审批失败'))
@@ -338,6 +349,25 @@ const AgentCenter: React.FC = () => {
     },
     onError: error => messageApi.error(agentErrorMessage(error, '停用案件数据管家失败')),
   })
+  const dualControlMutation = useMutation({
+    mutationFn: dualDomainApi.updateControl,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-dual-domain-status'], status)
+      messageApi.success(status.enabled ? '双域融合只读试用已开启' : '双域融合试用已关闭')
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '双域试用设置更新失败')),
+  })
+  const dualSuspendMutation = useMutation({
+    mutationFn: dualDomainApi.suspend,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-dual-domain-status'], status)
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      if (selectedRunId) void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
+      messageApi.success('双域试用已停用，正式案件和地图数据未发生变化')
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '停用双域融合研判失败')),
+  })
 
   const handleCreate = () => {
     if (!query.trim()) {
@@ -361,6 +391,16 @@ const AgentCenter: React.FC = () => {
       }
       if (!selectedCaseIds.length) {
         messageApi.warning('请先选择需要检查的案件')
+        return
+      }
+    }
+    if (isAssistMode && ['dual_domain_analysis', 'evidence_report'].includes(taskType)) {
+      if (!canStartDualDomain(dualStatus)) {
+        messageApi.warning('当前账号暂不能发起双域融合研判任务')
+        return
+      }
+      if (!selectedCaseIds.length || !selectedAssetIds.length) {
+        messageApi.warning('双域研判必须同时选择案件和地图资源')
         return
       }
     }
@@ -426,6 +466,33 @@ const AgentCenter: React.FC = () => {
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: () => caseSuspendMutation.mutate(caseStewardControlReason(caseControlReason, 'disable')),
+    })
+  }
+
+  const updateDualPilotControl = () => {
+    if (!dualPilotUserIds.length) {
+      messageApi.warning('请至少选择一名双域融合研判试用人员')
+      return
+    }
+    if (dualControlReason.trim().length < 2) {
+      messageApi.warning('请填写至少2个字的调整原因')
+      return
+    }
+    dualControlMutation.mutate({
+      enabled: true,
+      pilot_user_ids: dualPilotUserIds,
+      reason: dualDomainControlReason(dualControlReason, 'enable'),
+    })
+  }
+
+  const confirmSuspendDualPilot = () => {
+    modalApi.confirm({
+      title: '停用双域融合研判试用？',
+      content: '活动中的双域分析和综合证据报告将取消；正式案件、井位和研判结论不会被修改。',
+      okText: '确认停用',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: () => dualSuspendMutation.mutate(dualDomainControlReason(dualControlReason, 'disable')),
     })
   }
 
@@ -608,6 +675,74 @@ const AgentCenter: React.FC = () => {
         </div>
       )}
 
+      {dualStatus && (
+        <div className="card agent-pilot-card">
+          <div className="card-head agent-pilot-head">
+            <div>
+              <RadarChartOutlined className="ico" />
+              <span className="ti">双域融合研判 · 指定人员只读试用</span>
+            </div>
+            <Tag color={dualStatus.state === 'ready' ? 'green' : 'default'}>
+              {dualDomainStateLabel(dualStatus.state)}
+            </Tag>
+          </div>
+          <div className="card-body pad">
+            <div className="agent-pilot-summary">
+              <span>{dualDomainControlHint(dualStatus)}</span>
+              {dualStatus.reason && <span className="agent-muted">最近调整：{dualStatus.reason}</span>}
+            </div>
+            <div className="agent-metric-grid">
+              <div><strong>{dualStatus.metrics.runs_total}</strong><span>研判任务</span></div>
+              <div><strong>{dualStatus.metrics.analyzed_case_count}</strong><span>分析案件</span></div>
+              <div><strong>{dualStatus.metrics.analyzed_asset_count}</strong><span>关联资源</span></div>
+              <div><strong>{dualStatus.metrics.evidence_coverage_percent}%</strong><span>证据覆盖率</span></div>
+            </div>
+            {user?.role === 'admin' && (
+              <div className="agent-pilot-controls">
+                <div>
+                  <div className="agent-result-label">指定试用人员</div>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    className="agent-full-width"
+                    placeholder="选择管理员或分析员"
+                    value={dualPilotUserIds}
+                    onChange={setDualPilotUserIds}
+                    options={(dualStatus.eligible_users ?? []).map(item => ({
+                      value: item.id,
+                      label: `${item.display_name || item.username} · ${item.role === 'admin' ? '管理员' : '分析员'}`,
+                    }))}
+                  />
+                </div>
+                <div>
+                  <div className="agent-result-label">调整原因</div>
+                  <Input
+                    value={dualControlReason}
+                    onChange={event => setDualControlReason(event.target.value)}
+                    maxLength={500}
+                    placeholder="说明开启或停用原因"
+                  />
+                </div>
+                <div className="agent-pilot-actions">
+                  <button
+                    className="btn-primary"
+                    disabled={dualControlMutation.isPending}
+                    onClick={updateDualPilotControl}
+                  >开启只读研判</button>
+                  <button
+                    className="btn-ghost agent-danger-action"
+                    disabled={dualSuspendMutation.isPending}
+                    onClick={confirmSuspendDualPilot}
+                  >一键停用试用</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="card agent-create-card">
         <div className="card-head"><RadarChartOutlined className="ico" /><span className="ti">新建受控任务</span></div>
         <div className="card-body pad agent-form-grid">
@@ -636,8 +771,11 @@ const AgentCenter: React.FC = () => {
               placeholder={isAssistMode && taskType === 'map_data_quality' ? '地图数据管家试用不读取案件' : '选择需要质检的案件'}
               value={isAssistMode && taskType === 'map_data_quality' ? [] : selectedCaseIds}
               onChange={values => {
-                const maxCases = caseStatus?.max_cases_per_run ?? 30
-                if (isAssistMode && taskType === 'case_data_quality' && values.length > maxCases) {
+                const isDualTask = ['dual_domain_analysis', 'evidence_report'].includes(taskType)
+                const maxCases = isDualTask
+                  ? dualStatus?.max_cases_per_run ?? 10
+                  : caseStatus?.max_cases_per_run ?? 30
+                if (isAssistMode && taskType !== 'map_data_quality' && values.length > maxCases) {
                   messageApi.warning(`单次最多选择 ${maxCases} 起案件`)
                   return
                 }
@@ -663,7 +801,10 @@ const AgentCenter: React.FC = () => {
               placeholder={isAssistMode && taskType === 'case_data_quality' ? '案件数据管家试用不读取地图资源' : '选择需要检查的地图资源'}
               value={isAssistMode && taskType === 'case_data_quality' ? [] : selectedAssetIds}
               onChange={values => {
-                const maxAssets = mapStatus?.max_assets_per_run ?? 500
+                const isDualTask = ['dual_domain_analysis', 'evidence_report'].includes(taskType)
+                const maxAssets = isDualTask
+                  ? dualStatus?.max_assets_per_run ?? 100
+                  : mapStatus?.max_assets_per_run ?? 500
                 if (isAssistMode && values.length > maxAssets) {
                   messageApi.warning(`单次最多选择 ${maxAssets} 项地图资源`)
                   return
@@ -683,6 +824,11 @@ const AgentCenter: React.FC = () => {
             )}
             {isAssistMode && taskType === 'case_data_quality' && caseStatus && (
               <div className="agent-muted">单次最多选择 {caseStatus.max_cases_per_run} 起案件，只生成证据化质检结果。</div>
+            )}
+            {isAssistMode && ['dual_domain_analysis', 'evidence_report'].includes(taskType) && dualStatus && (
+              <div className="agent-muted">
+                必须同时选择案件和地图资源；单次最多 {dualStatus.max_cases_per_run} 起案件、{dualStatus.max_assets_per_run} 项资源，全程只读。
+              </div>
             )}
           </div>
           <div className="agent-query-field">
@@ -704,7 +850,9 @@ const AgentCenter: React.FC = () => {
                   ? !canSubmitMapStewardRun(mapStatus, selectedAssetIds.length)
                   : isAssistMode && taskType === 'case_data_quality'
                     ? !canSubmitCaseStewardRun(caseStatus, selectedCaseIds.length)
-                    : false
+                    : isAssistMode && ['dual_domain_analysis', 'evidence_report'].includes(taskType)
+                      ? !canSubmitDualDomainRun(dualStatus, selectedCaseIds.length, selectedAssetIds.length)
+                      : false
               )}
             >
               <PlayCircleOutlined /> {createMutation.isPending ? '进入队列...' : '启动任务'}
@@ -758,6 +906,7 @@ const AgentCenter: React.FC = () => {
                     detail.mode !== 'assist'
                     || (detail.task_type === 'map_data_quality' && mapStatus?.current_user_authorized)
                     || (detail.task_type === 'case_data_quality' && caseStatus?.current_user_authorized)
+                    || (['dual_domain_analysis', 'evidence_report'].includes(detail.task_type) && dualStatus?.current_user_authorized)
                   ) && (
                     <button className="btn-ghost" onClick={() => replayMutation.mutate(detail.id)}>重放</button>
                   )}
@@ -769,6 +918,8 @@ const AgentCenter: React.FC = () => {
                 <Space className="agent-confidence"><span>依据强度</span><Progress percent={Math.round(result.confidence * 100)} size="small" style={{ width: 160 }} /></Space>
               )}
               <ResultList title="事实依据" items={result?.facts} />
+              <ResultList title="案件—地图空间关联" items={result?.case_asset_links} />
+              <ResultList title="历史聚合热点（待人工复核）" items={result?.hotspots} />
               <ResultList title="模式推断" items={result?.inferences} />
               <ResultList title="防控参考" items={result?.recommendations} />
               <ResultList title="信息缺口" items={result?.information_gaps} />

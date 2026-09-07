@@ -148,7 +148,10 @@ class AgentRunExecutor:
             )
             db.add(artifact)
             db.flush()
-            self._stage_approvals(db, run, artifact, tool_outputs)
+            # 影子模式保留候选轨迹用于离线评测；受控辅助模式中只有独立的
+            # 地图数据管家可以进入审批，综合报告和双域研判始终只读。
+            if run.task_type == "map_data_quality" or run.mode != "assist":
+                self._stage_approvals(db, run, artifact, tool_outputs)
 
             degraded = False
             if self.narrator is not None:
@@ -187,6 +190,13 @@ class AgentRunExecutor:
                         error_message=type(exc).__name__,
                         output_summary={"fallback": "deterministic"},
                     )
+
+            db.refresh(run)
+            if run.status == "cancelled":
+                # 管理员停用或用户取消优先于迟到的模型结果；丢弃本事务中尚未
+                # 提交的成果物和模型事件，保留取消事件作为最终状态。
+                db.rollback()
+                return AgentRunService.get_run(db, run.id)
 
             pending_approvals = db.query(AgentApproval).filter(
                 AgentApproval.run_id == run.id,
@@ -276,6 +286,8 @@ class AgentRunExecutor:
         recommendations = list(dict.fromkeys(str(item) for item in collect("recommendations") if item))
         information_gaps = list(dict.fromkeys(str(item) for item in collect("information_gaps") if item))
         boundary = list(dict.fromkeys(str(item) for item in collect("boundary") if item))
+        case_asset_links = collect("case_asset_links")
+        hotspots = collect("hotspots")
         result = (
             f"已完成 {len(tool_outputs)} 项只读分析，形成 {len(facts)} 条事实记录、"
             f"{len(findings)} 个数据问题和 {len(evidence_refs)} 条证据引用。"
@@ -290,6 +302,8 @@ class AgentRunExecutor:
             "information_gaps": information_gaps,
             "evidence_refs": evidence_refs,
             "boundary": boundary,
+            "case_asset_links": case_asset_links,
+            "hotspots": hotspots,
             "confidence": AgentRunExecutor._confidence(facts, evidence_refs, information_gaps),
         }
 

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_quality_service import CaseQualityService
-from app.services.jurisdiction_service import JurisdictionService
+from app.services.jurisdiction_service import PRODUCTION_TARGET_TYPES, JurisdictionService
 from app.utils.geo import haversine_km
 
 
@@ -203,7 +203,10 @@ class AgentToolRegistry:
         if context.asset_ids:
             query = query.filter(JurisdictionAsset.id.in_(context.asset_ids))
         assets = query.order_by(JurisdictionAsset.id.asc()).limit(500).all()
-        aggregate = JurisdictionService.audit_data_quality(db)
+        aggregate = JurisdictionService.audit_data_quality(
+            db,
+            asset_ids=context.asset_ids if context.asset_ids else None,
+        )
 
         findings: List[Dict[str, Any]] = []
         candidates: List[Dict[str, Any]] = []
@@ -339,22 +342,38 @@ class AgentToolRegistry:
             query = query.filter(Case.id.in_(context.case_ids))
         cases = query.order_by(Case.occurred_time.desc()).limit(10).all()
 
+        asset_query = db.query(JurisdictionAsset).filter(
+            JurisdictionAsset.status == "active",
+            JurisdictionAsset.asset_type.in_(PRODUCTION_TARGET_TYPES),
+            JurisdictionAsset.latitude.isnot(None),
+            JurisdictionAsset.longitude.isnot(None),
+        )
+        if context.asset_ids:
+            asset_query = asset_query.filter(JurisdictionAsset.id.in_(context.asset_ids))
+        production_targets = asset_query.order_by(JurisdictionAsset.id.asc()).limit(500).all()
+
         facts: List[Dict[str, Any]] = []
+        case_asset_links: List[Dict[str, Any]] = []
+        hotspots: List[Dict[str, Any]] = []
         inferences: List[str] = []
         recommendations: List[str] = []
         gaps: List[str] = []
         evidence_refs: List[str] = []
-        history_candidates = (
-            db.query(Case)
-            .filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
-            .order_by(Case.occurred_time.desc())
-            .limit(500)
-            .all()
+        history_query = db.query(Case).filter(
+            Case.latitude.isnot(None),
+            Case.longitude.isnot(None),
         )
+        if context.case_ids:
+            history_query = history_query.filter(Case.id.in_(context.case_ids))
+        history_candidates = history_query.order_by(Case.occurred_time.desc()).limit(500).all()
         for case in cases:
             case_ref = f"case:{case.id}"
             evidence_refs.append(case_ref)
-            context_payload = JurisdictionService.build_case_risk_context(db, case.id)
+            context_payload = JurisdictionService.build_case_risk_context(
+                db,
+                case.id,
+                asset_ids=context.asset_ids,
+            )
             historical_cases: list[Case] = []
             case_time = _naive_utc(case.occurred_time)
             if _valid_coordinates(case.latitude, case.longitude) and case_time:
@@ -415,11 +434,56 @@ class AgentToolRegistry:
                 if nearest and nearest.get("asset", {}).get("id") is not None:
                     evidence_refs.append(f"asset:{nearest['asset']['id']}")
 
+            nearest_target = context_payload["nearest"].get("production_target")
+            if nearest_target and nearest_target.get("asset", {}).get("id") is not None:
+                target = nearest_target["asset"]
+                asset_ref = f"asset:{target['id']}"
+                case_asset_links.append({
+                    "case_id": case.id,
+                    "asset_id": target["id"],
+                    "asset_type": target.get("asset_type"),
+                    "distance_km": round(float(nearest_target["distance_km"]), 3),
+                    "case_ref": case_ref,
+                    "asset_ref": asset_ref,
+                    "basis": "所选范围内最近生产目标",
+                })
+                evidence_refs.append(asset_ref)
+
+        for asset in production_targets:
+            nearby_cases = [
+                case
+                for case in cases
+                if _valid_coordinates(case.latitude, case.longitude)
+                and _valid_coordinates(asset.latitude, asset.longitude)
+                and haversine_km(
+                    case.latitude,
+                    case.longitude,
+                    asset.latitude,
+                    asset.longitude,
+                ) <= context.radius_km
+            ]
+            if not nearby_cases:
+                continue
+            asset_ref = f"asset:{asset.id}"
+            case_refs = [f"case:{case.id}" for case in nearby_cases]
+            hotspots.append({
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "historical_case_count": len(nearby_cases),
+                "radius_km": context.radius_km,
+                "case_refs": case_refs,
+                "asset_ref": asset_ref,
+                "label": "历史案件相对集中点（待人工复核）",
+            })
+            evidence_refs.extend([asset_ref, *case_refs])
+
         if not cases:
             gaps.append("当前范围没有案件，无法开展案件与重点井时空融合研判。")
         return {
             "tool": "dual_domain_analysis",
             "facts": facts,
+            "case_asset_links": case_asset_links,
+            "hotspots": hotspots,
             "findings": [],
             "inferences": list(dict.fromkeys(inferences)),
             "recommendations": list(dict.fromkeys(recommendations)),

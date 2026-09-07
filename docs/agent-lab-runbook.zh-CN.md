@@ -21,7 +21,7 @@
 每次准备部署前可先运行代码级一键验收：
 
 ```bash
-./scripts/verify-agent-lab.sh
+sh ./scripts/verify-agent-lab.sh
 ```
 
 ## 2. 三种模式
@@ -109,6 +109,37 @@ AGENT_USE_EXTERNAL_MODEL=false
 
 案件只读试用不要求开启 `AGENT_MUTATIONS_ENABLED`。如需同时试用 v2.2 地图候选审批，应另行完成地图
 写入安全验收后再开启全局写入保护；该开关不会赋予案件数据管家写入能力。
+
+### 2.3 v2.4 双域融合研判只读试用
+
+v2.4 将“双域融合研判”和“综合证据报告”从影子实验能力开放为指定人员只读试用。管理员需单独
+维护双域试用名单；试用人员每次必须同时明确选择案件和状态有效的地图资源，单次默认最多 10 起案件、
+100 项资源。系统只在所选范围内计算案件—生产目标距离、时间窗口、历史频次、作案手法标签和历史
+聚合热点，不读取范围外案件或资源来补足结论。
+
+接口包括：
+
+| 方法 | 地址 | 权限与作用 |
+|---|---|---|
+| `GET` | `/api/agent-dual-domain/status` | 管理员和分析员查看只读试用状态与指标；只有管理员能看到可选人员名单 |
+| `PUT` | `/api/agent-dual-domain/control` | 管理员指定试用人员并开启或关闭双域只读试用 |
+| `POST` | `/api/agent-dual-domain/suspend` | 管理员一键停用并取消活动双域分析和综合报告任务 |
+
+隔离试用环境配置示例：
+
+```text
+ENABLE_AGENT_LAB=true
+AGENT_MODE=assist
+AGENT_MUTATIONS_ENABLED=false
+AGENT_DUAL_DOMAIN_PILOT_MAX_CASES=10
+AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS=100
+AGENT_PROVIDER=deterministic
+AGENT_USE_EXTERNAL_MODEL=false
+```
+
+双域研判和综合证据报告不会生成审批项，也不需要开启 `AGENT_MUTATIONS_ENABLED`。其输出必须保留
+“历史复盘、待人工复核、不是犯罪预测、相邻不自动构成串并案、不自动派发巡逻”的适用边界。
+管理员一键停用后，新任务立即被拒绝，活动任务取消，已有成果和轨迹继续保留。
 
 ## 3. 首次稳定测试部署：保持 Agent 关闭
 
@@ -201,7 +232,7 @@ AGENT_MODEL=
 AGENT_USE_EXTERNAL_MODEL=false
 ```
 
-`v2.3.0-stable` 默认生产镜像不安装 OpenAI Agents SDK，也不支持在现场直接打开外部模型开关。
+`v2.4.0-stable` 默认生产镜像不安装 OpenAI Agents SDK，也不支持在现场直接打开外部模型开关。
 若后续在隔离实验环境选择该 SDK 作为可选叙述层，须先完成数据出域、供应商、密钥保管和
 网络策略评审，再基于 `backend/requirements-agent-openai.txt` 构建独立实验镜像，并显式配置：
 
@@ -281,3 +312,4 @@ Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。�
 | `v2.1.0-stable` | 内网规则优先的 Agent Runtime、独立队列、状态、轨迹、成果、审批、隐藏入口、三类只读工具、证据报告、幂等、源版本校验、脱敏与评测 Harness | 目标服务器中断恢复和性能对照、脱敏真实样本影子结果、五次连续演示、人工评分和安全说明 |
 | `v2.2.0-stable` | 指定人员地图数据管家、真实资源限界、试用指标、管理员审批和一键停用 | 目标服务器指定人员试用、零越权写入签字、真实耗时和采纳率 |
 | `v2.3.0-stable` | 服务端保存前预检、指定人员案件数据管家、显式案件范围、只读批量质检和一键停用 | 目标服务器案件样本试用、人工采纳率、零案件自动写入和核心链路降级记录 |
+| `v2.4.0-stable` | 指定人员双域研判、显式案件与地图双范围、范围内距离与历史热点、只读证据报告和一键停用 | 目标服务器双域样本复核、范围隔离证据、零正式数据写入、人工有效关联率和连续五次演示 |

@@ -1194,6 +1194,8 @@ export interface AgentRunApproval {
 export interface AgentRunResult extends Omit<AgentTaskResult, 'facts'> {
   facts?: Array<string | Record<string, unknown>>
   findings?: Array<Record<string, unknown>>
+  case_asset_links?: Array<Record<string, unknown>>
+  hotspots?: Array<Record<string, unknown>>
   pending_approval_count?: number
 }
 

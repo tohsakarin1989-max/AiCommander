@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.api import agent_runs, auth, case_steward, cases, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime
+from app.api import agent_runs, auth, case_steward, cases, dual_domain_pilot, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -90,6 +90,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(agent_runs.router, prefix="/api/agent-runs", tags=["agent-runs"])
 app.include_router(map_steward.router, prefix="/api/agent-map-steward", tags=["agent-map-steward"])
 app.include_router(case_steward.router, prefix="/api/agent-case-steward", tags=["agent-case-steward"])
+app.include_router(dual_domain_pilot.router, prefix="/api/agent-dual-domain", tags=["agent-dual-domain"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])
