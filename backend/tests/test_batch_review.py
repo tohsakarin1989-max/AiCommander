@@ -105,6 +105,39 @@ def test_batch_review_runs_with_deterministic_fallback_and_exposes_progress():
     assert fetched.json()["job_id"] == payload["job_id"]
 
 
+def test_quality_preview_is_read_only_and_understands_draft_related_records():
+    db = _session()
+    client = _client(db)
+
+    response = client.post(
+        "/api/cases/quality-preview",
+        json={
+            "occurred_time": "2026-09-01T01:20:00",
+            "location": "重点井周边便道",
+            "case_type": "涉油盗窃",
+            "description": "夜间发现一辆涉案车辆和两名人员，现场有原油，处置材料待补。",
+            "oil_nature": "被盗原油",
+            "oil_volume": 1.2,
+            "initial_vehicles": [
+                {"vehicle_type": "5吨以下机动车", "plate_number": "黑A00001"}
+            ],
+            "initial_persons": [
+                {"name": "测试人员", "handling_status": "待核验"}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["facts"]["vehicle_count"] == 1
+    assert payload["facts"]["person_count"] == 1
+    assert payload["missing_required"]
+    assert payload["human_confirmation_required"] is True
+    assert payload["boundary"] == "预检只生成质量提示，不创建或修改案件。"
+    assert db.query(Case).count() == 0
+    assert db.query(CaseVehicle).count() == 0
+
+
 def test_batch_review_allows_empty_body_and_rejects_non_positive_limit():
     db = _session()
     client = _client(db)

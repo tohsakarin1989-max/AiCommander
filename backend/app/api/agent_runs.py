@@ -14,7 +14,9 @@ from app.agent_runtime.service import AgentReplayConflict, AgentRunService, FINA
 from app.config import settings
 from app.database import get_db
 from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
+from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
+from app.services.case_steward_service import CaseStewardPilotService
 from app.services.map_steward_service import MapStewardPilotService
 
 
@@ -82,6 +84,63 @@ def _require_lab(request: Request, *, admin_only: bool = False):
     return principal
 
 
+def _validate_map_assist_scope(
+    db: Session,
+    *,
+    asset_ids: list[int],
+    case_ids: list[int],
+    principal_user_id: int | None,
+) -> None:
+    if not asset_ids:
+        raise HTTPException(status_code=422, detail="受控辅助模式必须明确选择地图资源")
+    if case_ids:
+        raise HTTPException(status_code=422, detail="地图数据管家试用不得混入案件范围")
+    selected_asset_ids = set(asset_ids)
+    if len(selected_asset_ids) > settings.AGENT_MAP_PILOT_MAX_ASSETS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"单次最多选择{settings.AGENT_MAP_PILOT_MAX_ASSETS}个地图资源",
+        )
+    available_asset_count = db.query(JurisdictionAsset.id).filter(
+        JurisdictionAsset.id.in_(selected_asset_ids),
+        JurisdictionAsset.status == "active",
+    ).count()
+    if available_asset_count != len(selected_asset_ids):
+        raise HTTPException(status_code=422, detail="所选地图资源不存在或已失效")
+    control = MapStewardPilotService.get_control(db)
+    if not control.enabled:
+        raise HTTPException(status_code=409, detail="地图数据管家试用尚未开启")
+    if not MapStewardPilotService.is_pilot_user(control, principal_user_id):
+        raise HTTPException(status_code=403, detail="当前账号未被加入地图数据管家试用名单")
+
+
+def _validate_case_assist_scope(
+    db: Session,
+    *,
+    case_ids: list[int],
+    asset_ids: list[int],
+    principal_user_id: int | None,
+) -> None:
+    if not case_ids:
+        raise HTTPException(status_code=422, detail="受控辅助模式必须明确选择案件")
+    if asset_ids:
+        raise HTTPException(status_code=422, detail="案件数据管家试用不得混入地图资源范围")
+    selected_case_ids = set(case_ids)
+    if len(selected_case_ids) > settings.AGENT_CASE_PILOT_MAX_CASES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"单次最多选择{settings.AGENT_CASE_PILOT_MAX_CASES}起案件",
+        )
+    available_case_count = db.query(Case.id).filter(Case.id.in_(selected_case_ids)).count()
+    if available_case_count != len(selected_case_ids):
+        raise HTTPException(status_code=422, detail="所选案件不存在或已删除")
+    control = CaseStewardPilotService.get_control(db)
+    if not control.enabled:
+        raise HTTPException(status_code=409, detail="案件数据管家试用尚未开启")
+    if not CaseStewardPilotService.is_pilot_user(control, principal_user_id):
+        raise HTTPException(status_code=403, detail="当前账号未被加入案件数据管家试用名单")
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def create_agent_run(
     payload: AgentRunCreate,
@@ -91,32 +150,25 @@ def create_agent_run(
     principal = _require_lab(request)
     principal_user_id = _principal_user_id(principal)
     if settings.AGENT_MODE == "assist":
-        if payload.task_type != "map_data_quality":
+        if payload.task_type == "map_data_quality":
+            _validate_map_assist_scope(
+                db,
+                asset_ids=payload.asset_ids,
+                case_ids=payload.case_ids,
+                principal_user_id=principal_user_id,
+            )
+        elif payload.task_type == "case_data_quality":
+            _validate_case_assist_scope(
+                db,
+                case_ids=payload.case_ids,
+                asset_ids=payload.asset_ids,
+                principal_user_id=principal_user_id,
+            )
+        else:
             raise HTTPException(
                 status_code=403,
-                detail="v2.2受控辅助模式仅开放地图数据管家",
+                detail="v2.3受控辅助模式仅开放地图与案件数据管家",
             )
-        if not payload.asset_ids:
-            raise HTTPException(status_code=422, detail="受控辅助模式必须明确选择地图资源")
-        if payload.case_ids:
-            raise HTTPException(status_code=422, detail="地图数据管家试用不得混入案件范围")
-        if len(set(payload.asset_ids)) > settings.AGENT_MAP_PILOT_MAX_ASSETS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"单次最多选择{settings.AGENT_MAP_PILOT_MAX_ASSETS}个地图资源",
-            )
-        selected_asset_ids = set(payload.asset_ids)
-        available_asset_count = db.query(JurisdictionAsset.id).filter(
-            JurisdictionAsset.id.in_(selected_asset_ids),
-            JurisdictionAsset.status == "active",
-        ).count()
-        if available_asset_count != len(selected_asset_ids):
-            raise HTTPException(status_code=422, detail="所选地图资源不存在或已失效")
-        control = MapStewardPilotService.get_control(db)
-        if not control.enabled:
-            raise HTTPException(status_code=409, detail="地图数据管家试用尚未开启")
-        if not MapStewardPilotService.is_pilot_user(control, principal_user_id):
-            raise HTTPException(status_code=403, detail="当前账号未被加入地图数据管家试用名单")
     run = AgentRunService.create_run(
         db,
         task_type=payload.task_type,
@@ -238,7 +290,7 @@ def review_agent_approval(
         and belongs_to_run.status == "pending"
     ):
         if run.task_type != "map_data_quality":
-            raise HTTPException(status_code=403, detail="v2.2不允许辅助模式修改案件或研判结论")
+            raise HTTPException(status_code=403, detail="v2.3案件数据管家保持只读，不允许修改案件或研判结论")
         control = MapStewardPilotService.get_control(db)
         if not control.enabled or control.mutations_suspended:
             raise HTTPException(status_code=409, detail="地图数据管家候选写入已暂停")
@@ -267,24 +319,22 @@ def replay_agent_run(run_id: str, request: Request, db: Session = Depends(get_db
         original = AgentRunService.get_run(db, run_id)
         principal_user_id = _principal_user_id(principal)
         if original.mode == "assist":
-            control = MapStewardPilotService.get_control(db)
-            if original.task_type != "map_data_quality":
-                raise HTTPException(status_code=403, detail="v2.2受控辅助模式仅开放地图数据管家")
-            if not control.enabled:
-                raise HTTPException(status_code=409, detail="地图数据管家试用尚未开启")
-            if not MapStewardPilotService.is_pilot_user(control, principal_user_id):
-                raise HTTPException(status_code=403, detail="当前管理员未被加入地图数据管家试用名单")
-            replay_asset_ids = set(original.asset_ids or [])
-            if original.case_ids or not replay_asset_ids:
-                raise HTTPException(status_code=422, detail="旧任务不符合v2.2地图资源限界，不能重放")
-            if len(replay_asset_ids) > settings.AGENT_MAP_PILOT_MAX_ASSETS:
-                raise HTTPException(status_code=422, detail="旧任务超出地图资源试用上限，不能重放")
-            available_asset_count = db.query(JurisdictionAsset.id).filter(
-                JurisdictionAsset.id.in_(replay_asset_ids),
-                JurisdictionAsset.status == "active",
-            ).count()
-            if available_asset_count != len(replay_asset_ids):
-                raise HTTPException(status_code=422, detail="旧任务包含不存在或已失效的地图资源")
+            if original.task_type == "map_data_quality":
+                _validate_map_assist_scope(
+                    db,
+                    asset_ids=list(original.asset_ids or []),
+                    case_ids=list(original.case_ids or []),
+                    principal_user_id=principal_user_id,
+                )
+            elif original.task_type == "case_data_quality":
+                _validate_case_assist_scope(
+                    db,
+                    case_ids=list(original.case_ids or []),
+                    asset_ids=list(original.asset_ids or []),
+                    principal_user_id=principal_user_id,
+                )
+            else:
+                raise HTTPException(status_code=403, detail="旧任务不属于v2.3受控辅助开放范围")
         replay = AgentRunService.replay_run(db, run_id, created_by=principal_user_id)
     except AgentReplayConflict as exc:
         raise HTTPException(

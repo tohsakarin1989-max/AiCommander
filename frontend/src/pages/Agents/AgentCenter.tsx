@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
 import { caseApi } from '../../services/cases'
+import { caseStewardApi } from '../../services/caseSteward'
 import { jurisdictionApi } from '../../services/jurisdiction'
 import { mapStewardApi } from '../../services/mapSteward'
 import type { AgentRun, AgentRunApproval, AgentRunTaskType } from '../../types'
@@ -29,6 +30,13 @@ import {
   isAgentRunActive,
 } from './agentPresentation'
 import {
+  canStartCaseSteward,
+  canSubmitCaseStewardRun,
+  caseStewardControlReason,
+  caseStewardControlHint,
+  caseStewardStateLabel,
+} from './caseStewardPresentation'
+import {
   canSubmitMapStewardRun,
   canStartMapSteward,
   mapStewardControlHint,
@@ -39,11 +47,36 @@ import './AgentCenter.css'
 
 const { TextArea } = Input
 
-const TASK_OPTIONS: Array<{ value: AgentRunTaskType; label: string; description: string }> = [
-  { value: 'case_data_quality', label: '案件数据管家', description: '检查案件完整性、一致性和研判可用性' },
-  { value: 'map_data_quality', label: '地图数据管家', description: '检查重点井、坐标、几何和核验状态' },
-  { value: 'dual_domain_analysis', label: '双域融合研判', description: '分析案件与重点井的时空条件和证据缺口' },
-  { value: 'evidence_report', label: '综合证据报告', description: '串联三组只读工具形成可复核报告' },
+const TASK_OPTIONS: Array<{
+  value: AgentRunTaskType
+  label: string
+  description: string
+  defaultQuery: string
+}> = [
+  {
+    value: 'case_data_quality',
+    label: '案件数据管家',
+    description: '检查案件完整性、一致性和研判可用性',
+    defaultQuery: '检查所选案件并形成可复核的问题清单和证据索引',
+  },
+  {
+    value: 'map_data_quality',
+    label: '地图数据管家',
+    description: '检查重点井、坐标、几何和核验状态',
+    defaultQuery: '检查所选地图资源并形成可复核的问题清单和证据依据',
+  },
+  {
+    value: 'dual_domain_analysis',
+    label: '双域融合研判',
+    description: '分析案件与重点井的时空条件和证据缺口',
+    defaultQuery: '分析所选案件与地图资源的时空条件并说明证据边界',
+  },
+  {
+    value: 'evidence_report',
+    label: '综合证据报告',
+    description: '串联三组只读工具形成可复核报告',
+    defaultQuery: '基于所选数据生成事实、推断、建议、缺口和证据索引报告',
+  },
 ]
 
 function statusClass(status: string): string {
@@ -137,11 +170,13 @@ const AgentCenter: React.FC = () => {
   const [messageApi, messageContextHolder] = message.useMessage()
   const [modalApi, modalContextHolder] = Modal.useModal()
   const [taskType, setTaskType] = useState<AgentRunTaskType>('map_data_quality')
-  const [query, setQuery] = useState('检查所选地图资源并形成可复核的问题清单和证据依据')
+  const [query, setQuery] = useState(TASK_OPTIONS[1].defaultQuery)
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([])
   const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([])
   const [pilotUserIds, setPilotUserIds] = useState<number[]>([])
   const [controlReason, setControlReason] = useState('启动地图数据管家受控试用')
+  const [casePilotUserIds, setCasePilotUserIds] = useState<number[]>([])
+  const [caseControlReason, setCaseControlReason] = useState('启动案件数据管家只读试用')
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
 
   const runsQuery = useQuery({
@@ -160,10 +195,16 @@ const AgentCenter: React.FC = () => {
     queryFn: mapStewardApi.status,
     refetchInterval: 10000,
   })
+  const caseStatusQuery = useQuery({
+    queryKey: ['agent-case-steward-status'],
+    queryFn: caseStewardApi.status,
+    refetchInterval: 10000,
+  })
   const casesQuery = useQuery({
     queryKey: ['agent-cases'],
     queryFn: () => caseApi.getCases({ limit: 200 }),
-    enabled: Boolean(mapStatusQuery.data) && mapStatusQuery.data?.global_mode !== 'assist',
+    enabled: Boolean(mapStatusQuery.data)
+      && (mapStatusQuery.data?.global_mode !== 'assist' || Boolean(caseStatusQuery.data)),
   })
   const assetsQuery = useQuery({
     queryKey: ['agent-map-assets'],
@@ -172,6 +213,7 @@ const AgentCenter: React.FC = () => {
 
   const runs = runsQuery.data ?? []
   const pilotUserIdsKey = mapStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
+  const casePilotUserIdsKey = caseStatusQuery.data?.pilot_user_ids?.join(',') ?? ''
   useEffect(() => {
     if (!selectedRunId && runs[0]) setSelectedRunId(runs[0].id)
   }, [runs, selectedRunId])
@@ -181,18 +223,27 @@ const AgentCenter: React.FC = () => {
     }
   }, [pilotUserIdsKey])
   useEffect(() => {
-    if (mapStatusQuery.data?.global_mode === 'assist' && taskType !== 'map_data_quality') {
+    if (
+      mapStatusQuery.data?.global_mode === 'assist'
+      && !['map_data_quality', 'case_data_quality'].includes(taskType)
+    ) {
       setTaskType('map_data_quality')
       setSelectedCaseIds([])
     }
   }, [mapStatusQuery.data?.global_mode, taskType])
+  useEffect(() => {
+    if (caseStatusQuery.data?.pilot_user_ids) {
+      setCasePilotUserIds(caseStatusQuery.data.pilot_user_ids)
+    }
+  }, [casePilotUserIdsKey])
 
   const selectedTask = TASK_OPTIONS.find(item => item.value === taskType)
   const mapStatus = mapStatusQuery.data
+  const caseStatus = caseStatusQuery.data
   const isAssistMode = mapStatus?.global_mode === 'assist'
   const visibleTaskOptions = useMemo(
     () => isAssistMode
-      ? TASK_OPTIONS.filter(item => item.value === 'map_data_quality')
+      ? TASK_OPTIONS.filter(item => ['map_data_quality', 'case_data_quality'].includes(item.value))
       : TASK_OPTIONS,
     [isAssistMode],
   )
@@ -204,6 +255,7 @@ const AgentCenter: React.FC = () => {
       setSelectedRunId(run.id)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, 'Agent任务启动失败'))
@@ -216,6 +268,7 @@ const AgentCenter: React.FC = () => {
       queryClient.setQueryData(['agent-run', run.id], run)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '取消任务失败'))
@@ -241,6 +294,7 @@ const AgentCenter: React.FC = () => {
       void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
     },
     onError: error => {
       messageApi.error(agentErrorMessage(error, '审批失败'))
@@ -265,6 +319,25 @@ const AgentCenter: React.FC = () => {
     },
     onError: error => messageApi.error(agentErrorMessage(error, '停用地图数据管家失败')),
   })
+  const caseControlMutation = useMutation({
+    mutationFn: caseStewardApi.updateControl,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-case-steward-status'], status)
+      messageApi.success(status.enabled ? '案件数据管家只读试用已开启' : '案件数据管家试用已关闭')
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '案件试用设置更新失败')),
+  })
+  const caseSuspendMutation = useMutation({
+    mutationFn: caseStewardApi.suspend,
+    onSuccess: status => {
+      queryClient.setQueryData(['agent-case-steward-status'], status)
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      if (selectedRunId) void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
+      messageApi.success('案件数据管家试用已停用，正式案件数据未发生变化')
+    },
+    onError: error => messageApi.error(agentErrorMessage(error, '停用案件数据管家失败')),
+  })
 
   const handleCreate = () => {
     if (!query.trim()) {
@@ -281,11 +354,21 @@ const AgentCenter: React.FC = () => {
         return
       }
     }
+    if (isAssistMode && taskType === 'case_data_quality') {
+      if (!canStartCaseSteward(caseStatus)) {
+        messageApi.warning('当前账号暂不能发起案件数据管家试用任务')
+        return
+      }
+      if (!selectedCaseIds.length) {
+        messageApi.warning('请先选择需要检查的案件')
+        return
+      }
+    }
     createMutation.mutate({
       task_type: taskType,
       query: query.trim(),
-      case_ids: isAssistMode ? [] : selectedCaseIds,
-      asset_ids: selectedAssetIds,
+      case_ids: isAssistMode && taskType === 'map_data_quality' ? [] : selectedCaseIds,
+      asset_ids: isAssistMode && taskType === 'case_data_quality' ? [] : selectedAssetIds,
     })
   }
 
@@ -316,6 +399,33 @@ const AgentCenter: React.FC = () => {
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: () => suspendMutation.mutate(mapStewardControlReason(controlReason, 'disable')),
+    })
+  }
+
+  const updateCasePilotControl = () => {
+    if (!casePilotUserIds.length) {
+      messageApi.warning('请至少选择一名案件数据管家试用人员')
+      return
+    }
+    if (caseControlReason.trim().length < 2) {
+      messageApi.warning('请填写至少2个字的调整原因')
+      return
+    }
+    caseControlMutation.mutate({
+      enabled: true,
+      pilot_user_ids: casePilotUserIds,
+      reason: caseStewardControlReason(caseControlReason, 'enable'),
+    })
+  }
+
+  const confirmSuspendCasePilot = () => {
+    modalApi.confirm({
+      title: '停用案件数据管家试用？',
+      content: '活动中的案件只读质检任务将取消；正式案件、人员和车辆数据不会被修改。',
+      okText: '确认停用',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: () => caseSuspendMutation.mutate(caseStewardControlReason(caseControlReason, 'disable')),
     })
   }
 
@@ -430,6 +540,74 @@ const AgentCenter: React.FC = () => {
         </div>
       )}
 
+      {caseStatus && (
+        <div className="card agent-pilot-card">
+          <div className="card-head agent-pilot-head">
+            <div>
+              <SafetyCertificateOutlined className="ico" />
+              <span className="ti">案件数据管家 · 指定人员只读试用</span>
+            </div>
+            <Tag color={caseStatus.state === 'ready' ? 'green' : 'default'}>
+              {caseStewardStateLabel(caseStatus.state)}
+            </Tag>
+          </div>
+          <div className="card-body pad">
+            <div className="agent-pilot-summary">
+              <span>{caseStewardControlHint(caseStatus)}</span>
+              {caseStatus.reason && <span className="agent-muted">最近调整：{caseStatus.reason}</span>}
+            </div>
+            <div className="agent-metric-grid">
+              <div><strong>{caseStatus.metrics.runs_total}</strong><span>质检任务</span></div>
+              <div><strong>{caseStatus.metrics.reviewed_case_count}</strong><span>复核案件</span></div>
+              <div><strong>{caseStatus.metrics.runs_failed}</strong><span>失败任务</span></div>
+              <div><strong>{caseStatus.metrics.evidence_coverage_percent}%</strong><span>证据覆盖率</span></div>
+            </div>
+            {user?.role === 'admin' && (
+              <div className="agent-pilot-controls">
+                <div>
+                  <div className="agent-result-label">指定试用人员</div>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    className="agent-full-width"
+                    placeholder="选择管理员或分析员"
+                    value={casePilotUserIds}
+                    onChange={setCasePilotUserIds}
+                    options={(caseStatus.eligible_users ?? []).map(item => ({
+                      value: item.id,
+                      label: `${item.display_name || item.username} · ${item.role === 'admin' ? '管理员' : '分析员'}`,
+                    }))}
+                  />
+                </div>
+                <div>
+                  <div className="agent-result-label">调整原因</div>
+                  <Input
+                    value={caseControlReason}
+                    onChange={event => setCaseControlReason(event.target.value)}
+                    maxLength={500}
+                    placeholder="说明开启或停用原因"
+                  />
+                </div>
+                <div className="agent-pilot-actions">
+                  <button
+                    className="btn-primary"
+                    disabled={caseControlMutation.isPending}
+                    onClick={updateCasePilotControl}
+                  >开启只读试用</button>
+                  <button
+                    className="btn-ghost agent-danger-action"
+                    disabled={caseSuspendMutation.isPending}
+                    onClick={confirmSuspendCasePilot}
+                  >一键停用试用</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="card agent-create-card">
         <div className="card-head"><RadarChartOutlined className="ico" /><span className="ti">新建受控任务</span></div>
         <div className="card-body pad agent-form-grid">
@@ -437,7 +615,12 @@ const AgentCenter: React.FC = () => {
             <div className="agent-result-label">能力类型</div>
             <Select
               value={taskType}
-              onChange={setTaskType}
+              onChange={value => {
+                setTaskType(value)
+                setQuery(TASK_OPTIONS.find(item => item.value === value)?.defaultQuery ?? '')
+                if (isAssistMode && value === 'map_data_quality') setSelectedCaseIds([])
+                if (isAssistMode && value === 'case_data_quality') setSelectedAssetIds([])
+              }}
               className="agent-full-width"
               options={visibleTaskOptions.map(item => ({ value: item.value, label: item.label }))}
             />
@@ -450,10 +633,17 @@ const AgentCenter: React.FC = () => {
               allowClear
               showSearch
               className="agent-full-width"
-              placeholder={isAssistMode ? '地图数据管家试用不读取案件' : '不选则分析最近案件'}
-              value={isAssistMode ? [] : selectedCaseIds}
-              onChange={setSelectedCaseIds}
-              disabled={isAssistMode}
+              placeholder={isAssistMode && taskType === 'map_data_quality' ? '地图数据管家试用不读取案件' : '选择需要质检的案件'}
+              value={isAssistMode && taskType === 'map_data_quality' ? [] : selectedCaseIds}
+              onChange={values => {
+                const maxCases = caseStatus?.max_cases_per_run ?? 30
+                if (isAssistMode && taskType === 'case_data_quality' && values.length > maxCases) {
+                  messageApi.warning(`单次最多选择 ${maxCases} 起案件`)
+                  return
+                }
+                setSelectedCaseIds(values)
+              }}
+              disabled={isAssistMode && taskType === 'map_data_quality'}
               optionFilterProp="label"
               loading={casesQuery.isLoading}
               options={(casesQuery.data ?? []).map(item => ({
@@ -470,8 +660,8 @@ const AgentCenter: React.FC = () => {
               showSearch
               optionFilterProp="label"
               className="agent-full-width"
-              placeholder={isAssistMode ? '必须明确选择，不会执行全库扫描' : '不选则按当前能力的默认范围检查'}
-              value={selectedAssetIds}
+              placeholder={isAssistMode && taskType === 'case_data_quality' ? '案件数据管家试用不读取地图资源' : '选择需要检查的地图资源'}
+              value={isAssistMode && taskType === 'case_data_quality' ? [] : selectedAssetIds}
               onChange={values => {
                 const maxAssets = mapStatus?.max_assets_per_run ?? 500
                 if (isAssistMode && values.length > maxAssets) {
@@ -481,14 +671,18 @@ const AgentCenter: React.FC = () => {
                 setSelectedAssetIds(values)
               }}
               maxTagCount="responsive"
+              disabled={isAssistMode && taskType === 'case_data_quality'}
               loading={assetsQuery.isLoading}
               options={(assetsQuery.data ?? []).map(item => ({
                 value: item.id,
                 label: `${item.name} · ${item.asset_type} · #${item.id}`,
               }))}
             />
-            {isAssistMode && mapStatus && (
+            {isAssistMode && taskType === 'map_data_quality' && mapStatus && (
               <div className="agent-muted">单次最多选择 {mapStatus.max_assets_per_run} 项地图资源。</div>
+            )}
+            {isAssistMode && taskType === 'case_data_quality' && caseStatus && (
+              <div className="agent-muted">单次最多选择 {caseStatus.max_cases_per_run} 起案件，只生成证据化质检结果。</div>
             )}
           </div>
           <div className="agent-query-field">
@@ -506,7 +700,11 @@ const AgentCenter: React.FC = () => {
               className="btn-primary"
               onClick={handleCreate}
               disabled={createMutation.isPending || (
-                isAssistMode && !canSubmitMapStewardRun(mapStatus, selectedAssetIds.length)
+                isAssistMode && taskType === 'map_data_quality'
+                  ? !canSubmitMapStewardRun(mapStatus, selectedAssetIds.length)
+                  : isAssistMode && taskType === 'case_data_quality'
+                    ? !canSubmitCaseStewardRun(caseStatus, selectedCaseIds.length)
+                    : false
               )}
             >
               <PlayCircleOutlined /> {createMutation.isPending ? '进入队列...' : '启动任务'}
@@ -556,7 +754,11 @@ const AgentCenter: React.FC = () => {
                   {isAgentRunActive(detail.status) && (
                     <button className="btn-ghost" onClick={() => cancelMutation.mutate(detail.id)}>取消</button>
                   )}
-                  {canReview && (detail.mode !== 'assist' || mapStatus?.current_user_authorized) && (
+                  {canReview && (
+                    detail.mode !== 'assist'
+                    || (detail.task_type === 'map_data_quality' && mapStatus?.current_user_authorized)
+                    || (detail.task_type === 'case_data_quality' && caseStatus?.current_user_authorized)
+                  ) && (
                     <button className="btn-ghost" onClick={() => replayMutation.mutate(detail.id)}>重放</button>
                   )}
                 </Space>

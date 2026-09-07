@@ -50,6 +50,11 @@ export interface CaseQuality {
   facts: Record<string, unknown>
 }
 
+export interface CaseQualityPreview extends CaseQuality {
+  human_confirmation_required: boolean
+  boundary: string
+}
+
 export interface CaseVehicle {
   id: number
   case_id: number

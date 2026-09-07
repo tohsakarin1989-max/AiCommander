@@ -82,13 +82,22 @@ class CaseQualityService:
         }
 
     @staticmethod
-    def evaluate_case(db: Session, case: Case) -> Dict[str, Any]:
-        related = CaseQualityService.get_related_data(db, case.id) if case.id else {
-            "vehicles": [],
-            "persons": [],
-            "evidence": [],
-            "oil_recovery": [],
-        }
+    def evaluate_case(
+        db: Session,
+        case: Case,
+        *,
+        related_data: Optional[Dict[str, List[Any]]] = None,
+    ) -> Dict[str, Any]:
+        related = related_data or (
+            CaseQualityService.get_related_data(db, case.id)
+            if case.id
+            else {
+                "vehicles": [],
+                "persons": [],
+                "evidence": [],
+                "oil_recovery": [],
+            }
+        )
         vehicles: List[CaseVehicle] = related["vehicles"]
         persons: List[CasePerson] = related["persons"]
         evidence: List[CaseEvidence] = related["evidence"]
