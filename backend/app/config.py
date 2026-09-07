@@ -1,11 +1,11 @@
 from typing import Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "2.4.0-stable"
+    APP_VERSION: str = "2.5.0-stable"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
@@ -40,8 +40,11 @@ class Settings(BaseSettings):
     AGENT_MAX_STEPS: int = 8
     AGENT_TIMEOUT_SECONDS: int = 120
     AGENT_REDIS_QUEUE: str = "agent_lab"
-    AGENT_PROVIDER: Literal["deterministic", "openai_agents"] = "deterministic"
+    AGENT_PROVIDER: Literal["deterministic", "openai_agents", "model_registry"] = "deterministic"
     AGENT_MODEL: str = ""
+    AGENT_MODEL_ID: Optional[int] = None
+    AGENT_MODEL_INPUT_COST_PER_MILLION_USD: float = 0
+    AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD: float = 0
     AGENT_USE_EXTERNAL_MODEL: bool = False
     AGENT_SDK_TRACING_ENABLED: bool = False
     AGENT_APPROVAL_TTL_HOURS: int = 24
@@ -53,6 +56,11 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    @field_validator("AGENT_MODEL_ID", mode="before")
+    @classmethod
+    def empty_agent_model_id_is_unset(cls, value):
+        return None if value == "" else value
 
     @model_validator(mode="after")
     def validate_production_security(self):
@@ -71,8 +79,17 @@ class Settings(BaseSettings):
                 self.OPENAI_API_KEY and self.OPENAI_API_KEY.strip()
             ):
                 raise ValueError("OpenAI Agents 适配器需要 OPENAI_API_KEY")
-            if not self.AGENT_MODEL.strip():
+            if self.AGENT_PROVIDER == "openai_agents" and not self.AGENT_MODEL.strip():
                 raise ValueError("启用外部模型时 AGENT_MODEL 不能为空")
+            if self.AGENT_PROVIDER == "model_registry" and not (
+                self.AGENT_MODEL_ID and self.AGENT_MODEL_ID > 0
+            ):
+                raise ValueError("模型注册表适配器需要有效的 AGENT_MODEL_ID")
+        if (
+            self.AGENT_MODEL_INPUT_COST_PER_MILLION_USD < 0
+            or self.AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD < 0
+        ):
+            raise ValueError("Agent 模型价格配置不能为负数")
         if not 1 <= self.AGENT_MAX_STEPS <= 32:
             raise ValueError("AGENT_MAX_STEPS 必须在 1-32 之间")
         if not 10 <= self.AGENT_TIMEOUT_SECONDS <= 1800:

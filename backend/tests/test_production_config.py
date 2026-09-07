@@ -66,6 +66,9 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     assert "AGENT_MUTATIONS_ENABLED: \"${AGENT_MUTATIONS_ENABLED:-false}\"" in compose
     assert "AGENT_PROVIDER: \"${AGENT_PROVIDER:-deterministic}\"" in compose
     assert "AGENT_MODEL: \"${AGENT_MODEL:-}\"" in compose
+    assert "AGENT_MODEL_ID: \"${AGENT_MODEL_ID:-}\"" in compose
+    assert "AGENT_MODEL_INPUT_COST_PER_MILLION_USD: \"${AGENT_MODEL_INPUT_COST_PER_MILLION_USD:-0}\"" in compose
+    assert "AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD: \"${AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD:-0}\"" in compose
     assert "AGENT_MAP_PILOT_MAX_ASSETS: \"${AGENT_MAP_PILOT_MAX_ASSETS:-100}\"" in compose
     assert "AGENT_CASE_PILOT_MAX_CASES: \"${AGENT_CASE_PILOT_MAX_CASES:-30}\"" in compose
     assert "AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: \"${AGENT_DUAL_DOMAIN_PILOT_MAX_CASES:-10}\"" in compose
@@ -79,6 +82,9 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     assert "AGENT_MUTATIONS_ENABLED=false" in env_example
     assert "AGENT_PROVIDER=deterministic" in env_example
     assert "AGENT_MODEL=" in env_example
+    assert "AGENT_MODEL_ID=" in env_example
+    assert "AGENT_MODEL_INPUT_COST_PER_MILLION_USD=0" in env_example
+    assert "AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD=0" in env_example
     assert "AGENT_MAP_PILOT_MAX_ASSETS=100" in env_example
     assert "AGENT_CASE_PILOT_MAX_CASES=30" in env_example
     assert "AGENT_DUAL_DOMAIN_PILOT_MAX_CASES=10" in env_example
@@ -90,3 +96,29 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     task_source = (project_root / "backend/app/tasks/agent_tasks.py").read_text(encoding="utf-8")
     assert "acks_late=True" in task_source
     assert "reject_on_worker_lost=True" in task_source
+
+
+def test_model_registry_requires_an_explicit_model_and_non_negative_prices():
+    unset = production_settings(AGENT_MODEL_ID="")
+    assert unset.AGENT_MODEL_ID is None
+
+    with pytest.raises(ValidationError):
+        production_settings(
+            ENABLE_AGENT_LAB=True,
+            AGENT_MODE="shadow",
+            AGENT_USE_EXTERNAL_MODEL=True,
+            AGENT_PROVIDER="model_registry",
+            AGENT_MODEL_ID=None,
+        )
+
+    configured = production_settings(
+        ENABLE_AGENT_LAB=True,
+        AGENT_MODE="shadow",
+        AGENT_USE_EXTERNAL_MODEL=True,
+        AGENT_PROVIDER="model_registry",
+        AGENT_MODEL_ID=12,
+    )
+    assert configured.AGENT_MODEL_ID == 12
+
+    with pytest.raises(ValidationError):
+        production_settings(AGENT_MODEL_INPUT_COST_PER_MILLION_USD=-0.01)

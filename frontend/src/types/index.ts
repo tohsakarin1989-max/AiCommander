@@ -1199,6 +1199,33 @@ export interface AgentRunResult extends Omit<AgentTaskResult, 'facts'> {
   pending_approval_count?: number
 }
 
+export interface AgentRunPerformance {
+  duration_ms?: number | null
+  tool_duration_ms: number
+  model_duration_ms: number
+  model_calls: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  estimated_cost_usd: number
+}
+
+export interface AgentUsageRecord {
+  id: number
+  run_id: string
+  provider: string
+  model_name: string
+  status: 'completed' | 'failed' | string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  duration_ms: number
+  estimated_cost_usd: number
+  error_code?: string | null
+  created_at: string
+}
+
 export interface AgentRun {
   id: string
   task_type: AgentRunTaskType
@@ -1220,9 +1247,75 @@ export interface AgentRun {
   completed_at?: string | null
   artifact_count: number
   pending_approval_count: number
+  performance: AgentRunPerformance
   events?: AgentRunEvent[]
   artifacts?: AgentRunArtifact[]
   approvals?: AgentRunApproval[]
+  usage_records?: AgentUsageRecord[]
+}
+
+export interface AgentProviderMetrics {
+  provider: string
+  runs: number
+  completed_runs: number
+  degraded_runs: number
+  failed_runs: number
+  model_calls: number
+  total_tokens: number
+  estimated_cost_usd: number
+  average_model_duration_ms: number
+  models: string[]
+}
+
+export interface AgentModelCatalogItem {
+  id: number
+  name: string
+  provider: string
+  model_name: string
+  role: string
+  is_default: boolean
+}
+
+export interface AgentOperationsOverview {
+  window_days: number
+  generated_at: string
+  summary: {
+    runs_total: number
+    completed_runs: number
+    degraded_runs: number
+    failed_runs: number
+    active_runs: number
+    completion_rate_percent: number
+    average_duration_ms: number
+    p95_duration_ms: number
+    tool_calls: number
+    average_tool_duration_ms: number
+    model_calls: number
+    total_tokens: number
+    estimated_cost_usd: number
+  }
+  status_counts: Record<string, number>
+  providers: AgentProviderMetrics[]
+  daily: Array<{
+    date: string
+    runs: number
+    completed_runs: number
+    degraded_runs: number
+    failed_runs: number
+    average_duration_ms: number
+    total_tokens: number
+    estimated_cost_usd: number
+  }>
+  runtime: {
+    deterministic_available: boolean
+    external_model_enabled: boolean
+    configured_provider: string
+    configured_model?: string | null
+    configured_model_id?: number | null
+    model_configuration_ready: boolean
+    supported_adapters: string[]
+  }
+  model_catalog: AgentModelCatalogItem[]
 }
 
 // ============ 结论相关类型 ============

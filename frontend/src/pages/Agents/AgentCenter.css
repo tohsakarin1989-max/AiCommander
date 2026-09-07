@@ -155,6 +155,7 @@
 
 .agent-create-card { margin-bottom: var(--gap); }
 .agent-pilot-card { margin-bottom: var(--gap); }
+.agent-operations-card { margin-bottom: var(--gap); }
 .agent-pilot-head > div {
   display: flex;
   align-items: center;
@@ -188,6 +189,31 @@
   font-size: 10px;
   margin-top: 3px;
 }
+.agent-operations-metrics {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+.agent-operations-metrics strong {
+  font-size: 15px;
+}
+.agent-provider-list {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+.agent-provider-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.4fr) repeat(4, minmax(80px, 0.65fr));
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 8px 0;
+  color: var(--ink-2);
+  font-size: 10.5px;
+}
+.agent-provider-row > div strong,
+.agent-provider-row > div span { display: block; }
+.agent-provider-row > div strong { color: var(--ink-1); }
+.agent-provider-row > div span { color: var(--ink-3); margin-top: 2px; }
 .agent-pilot-controls {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.2fr);
@@ -233,6 +259,27 @@
   min-width: 0;
 }
 .agent-run-detail { min-height: 420px; }
+.agent-run-performance {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr)) minmax(160px, 1.35fr);
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.agent-run-performance > div {
+  border: 1px solid var(--line-soft);
+  background: var(--bg-0);
+  padding: 8px;
+  min-width: 0;
+}
+.agent-run-performance strong,
+.agent-run-performance span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-run-performance strong { color: var(--accent); font-family: var(--mono); font-size: 11px; }
+.agent-run-performance span { color: var(--ink-3); font-size: 9px; margin-top: 3px; }
 .agent-section-head {
   font-family: var(--mono);
   font-size: 10px;
@@ -314,7 +361,9 @@
 @media (max-width: 980px) {
   .agent-form-grid,
   .agent-workspace,
-  .agent-pilot-controls { grid-template-columns: 1fr; }
+  .agent-pilot-controls,
+  .agent-provider-row,
+  .agent-run-performance { grid-template-columns: 1fr; }
   .agent-query-field,
   .agent-create-actions,
   .agent-pilot-actions { grid-column: 1; }

@@ -12,7 +12,8 @@
 - 独立 Celery 队列 `agent_lab` 和单并发 `agent-worker`，最多 8 个工具步骤，默认 120 秒超时，普通失败最多重试 2 次。
 - `off`、`shadow`、`assist` 三种模式；前后端双开关隐藏入口。
 - 只读分析、工具白名单、脱敏外发、管理员审批、24 小时审批过期、重复提交幂等、源数据版本复核。
-- 内网规则引擎是默认主执行层，不需要任何模型密钥，也不会向外部发送数据。OpenAI Agents SDK 仅作为可选叙述适配器；确定性内网工具先形成事实与证据，外部模型只接收脱敏特征，默认不调用外部模型、不启用 SDK 追踪。
+- 内网规则引擎是默认主执行层，不需要任何模型密钥，也不会向外部发送数据。OpenAI Agents SDK 和系统模型注册表均为可选叙述适配器；确定性内网工具先形成事实与证据，外部模型只接收脱敏特征，默认不调用外部模型、不启用 SDK 追踪。
+- v2.5 统一运行中心按任务、提供方和模型汇总完成率、降级、耗时、Token 与估算成本；计量表不保存提示词、模型响应正文、密钥或网关地址。
 - 独立 `/health/agents`、JSON 事件轮询、SSE 快照、取消和管理员重放。
 
 当前没有完成、必须在目标环境执行的事项：服务器安装、真实业务人员试用、备份恢复演练、
@@ -141,6 +142,35 @@ AGENT_USE_EXTERNAL_MODEL=false
 “历史复盘、待人工复核、不是犯罪预测、相邻不自动构成串并案、不自动派发巡逻”的适用边界。
 管理员一键停用后，新任务立即被拒绝，活动任务取消，已有成果和轨迹继续保留。
 
+### 2.4 v2.5 统一运行中心与多模型适配
+
+v2.5 不改变两个数据管家和双域研判的业务权限，只补齐统一运行观测与可替换模型叙述层。Agent Lab
+首页展示近 30 天任务总量、完成率、平均/P95 总耗时、模型请求、Token、估算成本和降级接管次数；
+提供方明细展示任务数、模型耗时和估算成本。运行详情展示单次任务的总耗时、工具耗时、模型耗时、
+Token 与估算成本，便于竞赛演示和实际试用使用同一套证据。
+
+新增只读接口：
+
+| 方法 | 地址 | 权限与作用 |
+|---|---|---|
+| `GET` | `/api/agent-runs/overview?days=30` | 管理员和分析员查看 1—90 天统一运行指标、运行时状态和脱敏模型目录 |
+
+模型目录只返回模型 ID、显示名称、提供方、模型名、角色和默认标记，不返回密钥、网关地址或完整配置。
+模型用量写入追加式 `agent_usage_records`，成本按配置的每百万 Token 单价估算，不作为供应商账单。
+
+默认继续使用 `deterministic`。若通过内网安全评审，可使用现有模型注册表：
+
+```text
+AGENT_EXTERNAL_DATA_POLICY=redacted_only
+AGENT_PROVIDER=model_registry
+AGENT_MODEL_ID=<已启用的系统模型ID>
+AGENT_USE_EXTERNAL_MODEL=true
+```
+
+注册表适配器支持系统已有的 `openai`、`openai-compatible`、`azure-openai`、`anthropic` 和 `claude`
+提供方。模型选择属于部署配置，不开放给普通用户逐任务切换；提供方不可用、响应非法或配置失效时，
+任务标记为 `degraded`，保留内网规则结果并记录失败提供方、耗时和错误类型。
+
 ## 3. 首次稳定测试部署：保持 Agent 关闭
 
 `.env.production` 保持以下值：
@@ -204,6 +234,7 @@ docker compose --profile agent-lab --env-file .env.production \
 |---|---|---|
 | `POST` | `/api/agent-runs` | 创建任务，返回 202 |
 | `GET` | `/api/agent-runs` | 最近运行列表 |
+| `GET` | `/api/agent-runs/overview` | 统一运行指标、提供方状态和安全模型目录 |
 | `GET` | `/api/agent-runs/{run_id}` | 状态、成果、审批和轨迹 |
 | `GET` | `/api/agent-runs/{run_id}/events` | JSON 增量事件；支持 `after_sequence` |
 | `GET` | `/api/agent-runs/{run_id}/events?stream=true` | 持续 SSE 事件流，终态发送 `stream_end` |
@@ -232,9 +263,20 @@ AGENT_MODEL=
 AGENT_USE_EXTERNAL_MODEL=false
 ```
 
-`v2.4.0-stable` 默认生产镜像不安装 OpenAI Agents SDK，也不支持在现场直接打开外部模型开关。
-若后续在隔离实验环境选择该 SDK 作为可选叙述层，须先完成数据出域、供应商、密钥保管和
-网络策略评审，再基于 `backend/requirements-agent-openai.txt` 构建独立实验镜像，并显式配置：
+`v2.5.0-stable` 默认生产镜像不安装 OpenAI Agents SDK，默认配置也不会调用任何外部模型。
+系统不强制使用 OpenAI API：经评审可优先复用已有模型注册表，接入内网或第三方兼容网关；也可在
+隔离实验环境选择 OpenAI Agents SDK。两种方式都必须先完成数据出域、供应商、密钥保管和网络策略评审。
+
+使用模型注册表时配置：
+
+```text
+AGENT_EXTERNAL_DATA_POLICY=redacted_only
+AGENT_PROVIDER=model_registry
+AGENT_MODEL_ID=<已启用的系统模型ID>
+AGENT_USE_EXTERNAL_MODEL=true
+```
+
+如选择 OpenAI Agents SDK，需基于 `backend/requirements-agent-openai.txt` 构建独立实验镜像，并配置：
 
 ```text
 AGENT_EXTERNAL_DATA_POLICY=redacted_only
@@ -297,7 +339,7 @@ Harness 会拒绝默认业务库、内存库、非 SQLite 库、缺表数据库�
 1. 将 `ENABLE_AGENT_LAB=false`、`AGENT_MODE=off`、`AGENT_MUTATIONS_ENABLED=false`。
 2. 停止 `agent-worker`，重新构建前端使入口消失。
 3. 验证 `/health/ready` 和核心业务回归。
-4. 保留 `agent_runs`、`agent_events`、`agent_artifacts`、`agent_approvals` 作为审计证据。
+4. 保留 `agent_runs`、`agent_events`、`agent_artifacts`、`agent_approvals`、`agent_usage_records` 作为审计证据。
 5. 只有在确认版本整体回滚且备份可恢复时，才按主部署手册回滚应用或数据库。
 
 Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。不要为了关闭 Agent 删除轨迹或审批记录。
@@ -313,3 +355,4 @@ Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。�
 | `v2.2.0-stable` | 指定人员地图数据管家、真实资源限界、试用指标、管理员审批和一键停用 | 目标服务器指定人员试用、零越权写入签字、真实耗时和采纳率 |
 | `v2.3.0-stable` | 服务端保存前预检、指定人员案件数据管家、显式案件范围、只读批量质检和一键停用 | 目标服务器案件样本试用、人工采纳率、零案件自动写入和核心链路降级记录 |
 | `v2.4.0-stable` | 指定人员双域研判、显式案件与地图双范围、范围内距离与历史热点、只读证据报告和一键停用 | 目标服务器双域样本复核、范围隔离证据、零正式数据写入、人工有效关联率和连续五次演示 |
+| `v2.5.0-stable` | 统一运行中心、模型注册表适配、提供方/耗时/Token/估算成本计量和模型失败归因 | 目标服务器真实提供方连通性、价格口径签字、成本与账单抽样核对、性能基线和连续五次演示 |

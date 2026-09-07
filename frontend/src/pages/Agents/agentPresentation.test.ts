@@ -4,10 +4,13 @@ import {
   agentErrorMessage,
   agentExecutionModeLabel,
   agentEventLabel,
+  agentProviderLabel,
   agentResultText,
   agentStatusLabel,
   canReviewAgentRun,
   evidenceCoverage,
+  formatAgentCost,
+  formatAgentDuration,
 } from './agentPresentation'
 
 describe('agent presentation', () => {
@@ -68,5 +71,16 @@ describe('agent presentation', () => {
       historical_case_count: 2,
       label: '历史案件相对集中点（待人工复核）',
     })).toContain('1.5 公里内历史案件 2 起')
+  })
+
+  it('formats provider, duration and estimated model cost for operations staff', () => {
+    expect(agentProviderLabel('deterministic')).toBe('内网规则引擎')
+    expect(agentProviderLabel('openai-compatible')).toBe('兼容模型网关')
+    expect(agentProviderLabel('anthropic')).toBe('Anthropic（可选）')
+    expect(formatAgentDuration(850)).toBe('850毫秒')
+    expect(formatAgentDuration(3250)).toBe('3.3秒')
+    expect(formatAgentDuration(null)).toBe('—')
+    expect(formatAgentCost(0)).toBe('US$0.0000')
+    expect(formatAgentCost(0.0048)).toBe('US$0.0048')
   })
 })

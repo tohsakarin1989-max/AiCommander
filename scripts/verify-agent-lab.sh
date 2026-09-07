@@ -21,6 +21,7 @@ cd "$BACKEND_DIR"
     tests/test_agent_lab_config.py \
     tests/test_agent_lab_runtime.py \
     tests/test_agent_lab_eval.py \
+    tests/test_agent_observability.py \
     tests/test_case_steward_pilot.py \
     tests/test_dual_domain_pilot.py \
     tests/test_map_steward_pilot.py \
@@ -43,7 +44,7 @@ AGENT_MODE=off \
 "$PYTHON" -m alembic upgrade head
 
 VERIFY_DB="$VERIFY_DB" "$PYTHON" -c \
-    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'agent_runs','agent_events','agent_artifacts','agent_approvals'}; missing=required-t; c.close(); assert not missing, sorted(missing)"
+    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'agent_runs','agent_events','agent_artifacts','agent_approvals','agent_usage_records'}; missing=required-t; c.close(); assert not missing, sorted(missing)"
 
 echo "[3/6] 前端 Agent 展示和功能开关测试"
 cd "$FRONTEND_DIR"

@@ -1,5 +1,6 @@
 """受控 Agent 运行、事件、成果物与审批模型。"""
 from sqlalchemy import (
+    BigInteger,
     Column,
     DateTime,
     ForeignKey,
@@ -63,6 +64,12 @@ class AgentRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="AgentApproval.created_at",
+    )
+    usage_records = relationship(
+        "AgentUsageRecord",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="AgentUsageRecord.created_at",
     )
 
 
@@ -138,3 +145,30 @@ class AgentApproval(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     run = relationship("AgentRun", back_populates="approvals")
+
+
+class AgentUsageRecord(Base):
+    """模型调用计量记录；不保存提示词、响应正文或密钥。"""
+
+    __tablename__ = "agent_usage_records"
+    __table_args__ = (
+        Index("ix_agent_usage_run_created", "run_id", "created_at"),
+        Index("ix_agent_usage_provider_created", "provider", "created_at"),
+        Index("ix_agent_usage_status_created", "status", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
+    provider = Column(String(50), nullable=False)
+    model_name = Column(String(100), nullable=False)
+    status = Column(String(20), nullable=False)
+    request_count = Column(Integer, nullable=False, default=0)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    estimated_cost_microusd = Column(BigInteger, nullable=False, default=0)
+    error_code = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    run = relationship("AgentRun", back_populates="usage_records")

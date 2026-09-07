@@ -8,9 +8,9 @@ from typing import Any, Iterable, Optional
 from uuid import uuid4
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, selectinload
 
-from app.models.agent_run import AgentApproval, AgentEvent, AgentRun
+from app.models.agent_run import AgentApproval, AgentEvent, AgentRun, AgentUsageRecord
 from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
 from app.agent_runtime.tools import asset_source_signature
@@ -82,9 +82,10 @@ class AgentRunService:
         run = (
             db.query(AgentRun)
             .options(
-                joinedload(AgentRun.events),
-                joinedload(AgentRun.artifacts),
-                joinedload(AgentRun.approvals),
+                selectinload(AgentRun.events),
+                selectinload(AgentRun.artifacts),
+                selectinload(AgentRun.approvals),
+                selectinload(AgentRun.usage_records),
             )
             .filter(AgentRun.id == run_id)
             .first()
@@ -97,7 +98,12 @@ class AgentRunService:
     def list_runs(db: Session, *, limit: int = 50, skip: int = 0) -> list[AgentRun]:
         return (
             db.query(AgentRun)
-            .options(joinedload(AgentRun.artifacts), joinedload(AgentRun.approvals))
+            .options(
+                selectinload(AgentRun.events),
+                selectinload(AgentRun.artifacts),
+                selectinload(AgentRun.approvals),
+                selectinload(AgentRun.usage_records),
+            )
             .order_by(AgentRun.created_at.desc())
             .offset(skip)
             .limit(limit)
@@ -143,6 +149,38 @@ class AgentRunService:
         db.add(event)
         db.flush()
         return event
+
+    @staticmethod
+    def record_usage(
+        db: Session,
+        run: AgentRun,
+        *,
+        provider: str,
+        model_name: str,
+        status: str,
+        request_count: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        duration_ms: int = 0,
+        estimated_cost_microusd: int = 0,
+        error_code: Optional[str] = None,
+    ) -> AgentUsageRecord:
+        usage = AgentUsageRecord(
+            run_id=run.id,
+            provider=provider[:50],
+            model_name=model_name[:100],
+            status=status,
+            request_count=max(0, int(request_count)),
+            input_tokens=max(0, int(input_tokens)),
+            output_tokens=max(0, int(output_tokens)),
+            total_tokens=max(0, int(input_tokens)) + max(0, int(output_tokens)),
+            duration_ms=max(0, int(duration_ms)),
+            estimated_cost_microusd=max(0, int(estimated_cost_microusd)),
+            error_code=error_code[:100] if error_code else None,
+        )
+        db.add(usage)
+        db.flush()
+        return usage
 
     @staticmethod
     def cancel_run(db: Session, run_id: str, *, actor_user_id: Optional[int]) -> AgentRun:
