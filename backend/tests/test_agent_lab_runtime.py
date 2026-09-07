@@ -307,6 +307,50 @@ async def test_rule_only_execution_is_primary_mode_not_a_degraded_fallback(agent
 
 
 @pytest.mark.asyncio
+async def test_cancelled_map_run_does_not_stage_late_candidate_changes(agent_db: Session):
+    asset = _add_asset(agent_db)
+    run = AgentRunService.create_run(
+        agent_db,
+        task_type="map_data_quality",
+        query="地图质检",
+        case_ids=[],
+        asset_ids=[asset.id],
+        mode="assist",
+        created_by=7,
+    )
+
+    class _CancellingRegistry:
+        def execute(self, tool_name, db, context):
+            AgentRunService.cancel_run(db, run.id, actor_user_id=1)
+            return {
+                "tool": tool_name,
+                "facts": [],
+                "findings": [],
+                "inferences": [],
+                "recommendations": [],
+                "information_gaps": [],
+                "evidence_refs": [f"asset:{asset.id}"],
+                "boundary": [],
+                "candidate_actions": [{
+                    "action_type": "asset_patch",
+                    "target_type": "jurisdiction_asset",
+                    "target_id": asset.id,
+                    "patch": {"name": "不应进入审批"},
+                    "source_signature": asset_source_signature(asset),
+                }],
+            }
+
+    cancelled = await AgentRunExecutor(
+        narrator=None,
+        tool_registry=_CancellingRegistry(),
+    ).execute(agent_db, run.id)
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.artifacts == []
+    assert cancelled.approvals == []
+
+
+@pytest.mark.asyncio
 async def test_executor_persists_trace_artifacts_approvals_and_redacts_model_input(agent_db: Session):
     case = _add_case(agent_db)
     case.modus_operandi = "张三联系李四13900139000后从内部便道进入"
@@ -653,6 +697,74 @@ def test_approved_map_patch_executes_once_when_all_guards_pass(agent_db: Session
     assert repeated.status == "executed"
     assert asset.name == "英平6002井"
     assert executed.execution_result["fields"] == ["name"]
+
+
+@pytest.mark.parametrize(
+    ("candidate_patch", "expected_reason"),
+    [
+        ({"name": "任意改名"}, "candidate_name_outside_policy"),
+        (
+            {"geometry": {"type": "Point", "coordinates": [1.0, 2.0]}},
+            "candidate_geometry_outside_policy",
+        ),
+    ],
+)
+def test_approval_rejects_candidate_values_outside_map_steward_policy(
+    agent_db: Session,
+    candidate_patch,
+    expected_reason,
+):
+    asset = _add_asset(agent_db)
+    original_name = asset.name
+    original_geometry = dict(asset.geometry)
+    run = AgentRunService.create_run(
+        agent_db,
+        task_type="map_data_quality",
+        query="地图质检",
+        case_ids=[],
+        asset_ids=[asset.id],
+        mode="assist",
+        created_by=7,
+    )
+    artifact = AgentArtifact(
+        run_id=run.id,
+        artifact_type="candidate_patch",
+        version=1,
+        content={},
+        evidence_refs=[f"asset:{asset.id}"],
+        source_signature="artifact-source",
+    )
+    agent_db.add(artifact)
+    agent_db.flush()
+    approval = AgentApproval(
+        run_id=run.id,
+        artifact_id=artifact.id,
+        action_type="asset_patch",
+        target_type="jurisdiction_asset",
+        target_id=asset.id,
+        candidate_patch=candidate_patch,
+        source_signature=asset_source_signature(asset),
+        status="pending",
+        requested_by=7,
+        idempotency_key=f"policy-{expected_reason}",
+    )
+    agent_db.add(approval)
+    agent_db.commit()
+
+    reviewed = AgentRunService.review_approval(
+        agent_db,
+        approval_id=approval.id,
+        decision="approve",
+        decided_by=1,
+        comment="安全边界测试",
+        allow_mutations=True,
+    )
+
+    agent_db.refresh(asset)
+    assert reviewed.status == "approved"
+    assert reviewed.execution_result["reason"] == expected_reason
+    assert asset.name == original_name
+    assert asset.geometry == original_geometry
 
 
 def test_verified_assets_are_never_mutated_by_agent_approval(agent_db: Session):
