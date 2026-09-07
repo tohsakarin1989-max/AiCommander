@@ -21,7 +21,9 @@ cd "$BACKEND_DIR"
     tests/test_agent_lab_config.py \
     tests/test_agent_lab_runtime.py \
     tests/test_agent_lab_eval.py \
+    tests/test_case_steward_pilot.py \
     tests/test_map_steward_pilot.py \
+    tests/test_batch_review.py \
     tests/test_api_contracts.py \
     tests/test_observability.py \
     tests/test_production_config.py \
@@ -47,7 +49,9 @@ cd "$FRONTEND_DIR"
 npm run test -- --run \
     src/config/features.test.ts \
     src/pages/Agents/agentPresentation.test.ts \
-    src/pages/Agents/mapStewardPresentation.test.ts
+    src/pages/Agents/caseStewardPresentation.test.ts \
+    src/pages/Agents/mapStewardPresentation.test.ts \
+    src/pages/Cases/caseQualityPreview.test.ts
 
 echo "[4/6] 前端类型检查"
 npm run typecheck

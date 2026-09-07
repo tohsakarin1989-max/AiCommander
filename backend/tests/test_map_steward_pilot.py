@@ -195,7 +195,8 @@ def test_assist_mode_only_allows_bounded_map_runs_from_pilot_users(
     )
 
     assert outsider_response.status_code == 403
-    assert wrong_task.status_code == 403
+    # v2.3 已开放独立的案件只读试用；此处没有合法案件范围，因此按范围校验拒绝。
+    assert wrong_task.status_code == 422
     assert unbounded.status_code == 422
     assert mixed_scope.status_code == 422
     assert allowed.status_code == 202

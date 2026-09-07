@@ -223,6 +223,22 @@ class SystemConfigService:
                 "description": "地图数据管家指定试用用户 ID 列表",
                 "extra_data": {},
             },
+            {
+                "config_key": "agent_case_pilot_enabled",
+                "config_value": "false",
+                "config_type": "boolean",
+                "category": "agent_case_pilot",
+                "description": "案件数据管家指定用户只读试用总开关",
+                "extra_data": {},
+            },
+            {
+                "config_key": "agent_case_pilot_user_ids",
+                "config_value": "[]",
+                "config_type": "json",
+                "category": "agent_case_pilot",
+                "description": "案件数据管家指定试用用户 ID 列表",
+                "extra_data": {},
+            },
         ]
         
         for config_data in default_configs:

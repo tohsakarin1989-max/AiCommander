@@ -212,6 +212,42 @@ class AgentRunService:
         return {"cancelled_run_count": len(runs), "expired_approval_count": expired_approvals}
 
     @staticmethod
+    def suspend_case_pilot(
+        db: Session,
+        *,
+        actor_user_id: Optional[int],
+        reason: str,
+    ) -> dict[str, int]:
+        """停止案件只读试用运行，不触碰正式案件数据。"""
+        now = datetime.utcnow()
+        runs = db.query(AgentRun).filter(
+            AgentRun.task_type == "case_data_quality",
+            AgentRun.mode == "assist",
+            AgentRun.status.in_({
+                "queued",
+                "planning",
+                "running",
+                "verifying",
+                "waiting_approval",
+            }),
+        ).all()
+        for run in runs:
+            run.status = "cancelled"
+            run.completed_at = now
+            AgentRunService.append_event(
+                db,
+                run,
+                event_type="case_pilot_suspended",
+                status="cancelled",
+                actor_type="user",
+                actor_user_id=actor_user_id,
+                input_summary={"reason": reason.strip()[:500]},
+                output_summary={"formal_case_changes": 0},
+            )
+        db.commit()
+        return {"cancelled_run_count": len(runs)}
+
+    @staticmethod
     def replay_run(db: Session, run_id: str, *, created_by: Optional[int]) -> AgentRun:
         original = AgentRunService.get_run(db, run_id)
         current_data_version = AgentRunService._data_version(

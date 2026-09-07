@@ -14,6 +14,7 @@ import type {
   ChainLink,
   CasePerson,
   CaseQuality,
+  CaseQualityPreview,
   CaseStructurePreview,
   CaseTip,
   CaseVehicle,
@@ -52,6 +53,12 @@ export interface CaseImportResult {
 }
 
 export const caseApi = {
+  /** 保存前服务端质量预检；只返回提示，不创建或修改案件。 */
+  previewCaseQuality: async (data: CaseCreate): Promise<CaseQualityPreview> => {
+    const response = await api.post<CaseQualityPreview>('/cases/quality-preview', data)
+    return response.data
+  },
+
   /**
    * 从案情文本中预提取案件字段
    */

@@ -1,7 +1,7 @@
-# AICommander v2.2.0-stable 服务器部署与运维手册
+# AICommander v2.3.0-stable 服务器部署与运维手册
 
 > 初次生产链路核验：2026-08-14；部署加固回归：2026-09-04
-> 适用版本：AICommander 2.2.0-stable
+> 适用版本：AICommander 2.3.0-stable
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
 > 系统边界：涉油案件数智研判与防控辅助系统，生产环境默认部署在单位内网或 VPN 后
 
@@ -10,7 +10,8 @@
 
 ## 1. 当前可部署性结论
 
-v2.2.0-stable 已作为地图数据管家指定人员试用的稳定代码基线。Agent 默认关闭；即使开启，
+v2.3.0-stable 已作为保存前服务端预检和案件数据管家指定人员只读试用的稳定代码基线，并继承
+v2.2 地图数据管家能力。Agent 默认关闭；即使开启，
 默认也只运行内网规则引擎，不需要模型密钥或外网。生产容器链路已经在干净的
 PostgreSQL 16 和 Redis 7 环境中完成隔离启动、冒烟与备份恢复验收。正式业务上线前仍需
 在目标服务器完成域名、HTTPS、备份恢复记录、单位网络策略和业务人员验收；这些现场工作
@@ -65,7 +66,23 @@ bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
 上述结果证明发布代码和生产编排具备受控测试部署条件，不代表目标服务器、单位网络和真实
 业务人员已经完成现场验收。
 
-### 1.3 v2.2 继承并扩展的生产保护
+### 1.3 2026-09-07 v2.3.0-stable 代码级验证
+
+| 检查项 | 结果 |
+| --- | --- |
+| 后端测试 | 253 项全部通过 |
+| 前端测试 | 21 个测试文件、89 项全部通过 |
+| TypeScript 类型检查 | 通过 |
+| 前端生产构建 | 通过 |
+| 案件保存前服务端预检 | 只读返回评分、缺项和提醒；不创建或修改案件 |
+| 案件数据管家 | 指定人员、显式案件范围、单次最多 30 起、任何模式下禁止案件写入 |
+| 真实浏览器链路 | 保存前预检、人工确认、只读质检、证据轨迹和一键停用全部通过 |
+| 隔离生产部署 | 五服务健康、全量迁移、Agent 默认关闭、自动冒烟和备份恢复全部通过 |
+
+上述是源码发布提交的代码级结果和本机隔离生产演练结果。目标服务器部署、单位网络、真实业务数据和
+业务人员验收仍应分别留存证据，未完成前不得表述为正式投产。
+
+### 1.4 v2.3 继承并扩展的生产保护
 
 - 所有业务 `/api` 和 WebSocket 默认要求登录。
 - 角色分为管理员、分析员、只读账号；只读账号不能写入，配置、模型、用户和部署接口仅管理员可用。
@@ -86,6 +103,9 @@ bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
 - Agent 默认不调用外部模型；候选变更必须通过管理员审批、写入开关、字段白名单和源版本校验。
 - 地图受控辅助只允许指定管理员或分析员发起、必须明确选择有效地图资源，单次默认最多 100 项。
 - 管理员可在系统内一键停用试用；活动地图任务会取消，待审批候选会失效，正式数据不变。
+- 案件受控辅助只允许指定管理员或分析员发起、必须明确选择现有案件，单次默认最多 30 起。
+- 案件数据管家始终只读，不生成或批准案件字段写入；管理员可一键停用并取消活动案件任务。
+- 保存前服务端预检不依赖 Agent Worker、Redis 或外部模型；异常时允许人工确认后继续走核心保存链路。
 
 ## 2. 推荐部署架构
 
@@ -238,13 +258,13 @@ aicommander.example.org  A  <服务器 IPv4>
 ## 7. 准备发布代码
 
 生产服务器应使用已评审的 Git 标签或固定提交，不要直接复制开发目录中的临时文件。
-本版本发布后应固定使用 `v2.2.0-stable` 标签，不要从开发分支直接部署：
+本版本发布后应固定使用 `v2.3.0-stable` 标签，不要从开发分支直接部署：
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/aicommander
-git clone --branch v2.2.0-stable --depth 1 <代码仓库地址> /opt/aicommander
+git clone --branch v2.3.0-stable --depth 1 <代码仓库地址> /opt/aicommander
 cd /opt/aicommander
-test "$(cat VERSION)" = "2.2.0-stable"
+test "$(cat VERSION)" = "2.3.0-stable"
 git status --short
 git rev-parse HEAD
 chmod 0755 scripts/*.sh backend/docker-entrypoint.sh
@@ -290,7 +310,7 @@ nano .env.production
 ```dotenv
 APP_DOMAIN=aicommander.example.org
 APP_PORT=3000
-APP_VERSION=2.2.0-stable
+APP_VERSION=2.3.0-stable
 SECRETS_DIR=./secrets
 BACKUP_DIR=./backups/postgres
 ENABLE_BONUS_ACCOUNTING=false
@@ -303,6 +323,7 @@ AGENT_PROVIDER=deterministic
 AGENT_MODEL=
 AGENT_USE_EXTERNAL_MODEL=false
 AGENT_MAP_PILOT_MAX_ASSETS=100
+AGENT_CASE_PILOT_MAX_CASES=30
 ```
 
 字段说明：
@@ -358,7 +379,7 @@ curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
 五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
-`ok`，并返回 `version=2.2.0-stable`。随后执行自动验收：
+`ok`，并返回 `version=2.3.0-stable`。随后执行自动验收：
 
 ```bash
 sudo ./scripts/verify-test-deployment.sh
@@ -732,8 +753,8 @@ sudo docker compose --env-file .env.production \
 sudo docker pull postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
 sudo docker pull redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 sudo docker save -o aicommander-v2-images.tar \
-  aicommander-backend:2.2.0-stable \
-  aicommander-frontend:2.2.0-stable \
+  aicommander-backend:2.3.0-stable \
+  aicommander-frontend:2.3.0-stable \
   postgres:16-alpine \
   redis:7-alpine
 sha256sum aicommander-v2-images.tar
@@ -810,7 +831,7 @@ sudo du -sh /var/lib/docker /opt/aicommander/backups
 - [ ] 正式发布标签、服务器提交号和镜像版本一致。
 - [ ] `.env.production`、四个 secrets 和数据库备份均已加密异机保存。
 - [ ] SQLite 正式迁移报告无数量差异，抽查至少 20 起案件。
-- [ ] 244 项后端测试、83 项前端测试和构建在发布提交上通过。
+- [ ] 253 项后端测试、89 项前端测试和构建在发布提交上通过。
 - [ ] Python 与前端依赖审计无已知高危漏洞。
 - [ ] PostgreSQL、Redis、后端、Celery、前端全部健康。
 - [ ] 只有 80/443 对业务网络开放，数据库、Redis、后端不直接暴露。

@@ -279,6 +279,8 @@ class CaseQualityResponse(BaseModel):
     warnings: List[Dict[str, str]]
     recommendations: List[str]
     facts: Dict[str, Any]
+    human_confirmation_required: bool = True
+    boundary: str = "质量结果仅用于人工复核，不自动修改案件。"
 
 
 class CaseStructureRequest(BaseModel):
@@ -302,6 +304,38 @@ class BatchReviewRequest(BaseModel):
     only_missing: bool = False
     limit: Optional[int] = None
     use_llm: bool = False
+
+
+@router.post("/quality-preview", response_model=CaseQualityResponse)
+def preview_case_quality(payload: CaseCreate, db: Session = Depends(get_db)):
+    """保存前执行确定性质量预检；不创建案件，不写入相关台账。"""
+    draft_data = payload.model_dump()
+    vehicle_drafts = draft_data.pop("initial_vehicles", None) or []
+    person_drafts = draft_data.pop("initial_persons", None) or []
+    case = Case(**draft_data)
+    vehicles = [
+        CaseVehicle(**{key: value for key, value in item.items() if key != "id"})
+        for item in vehicle_drafts
+    ]
+    persons = [
+        CasePerson(**{key: value for key, value in item.items() if key != "id"})
+        for item in person_drafts
+    ]
+    result = CaseQualityService.evaluate_case(
+        db,
+        case,
+        related_data={
+            "vehicles": vehicles,
+            "persons": persons,
+            "evidence": [],
+            "oil_recovery": [],
+        },
+    )
+    return {
+        **result,
+        "human_confirmation_required": True,
+        "boundary": "预检只生成质量提示，不创建或修改案件。",
+    }
 
 
 class AiIntakeField(BaseModel):

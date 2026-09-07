@@ -19,12 +19,12 @@ Rules:
 
 Current stable baseline:
 
-- Version: `2.2.0-stable`
-- Release branch: `codex/v2.2.0-stable`
-- Release tag: `v2.2.0-stable` on `main` after review and merge.
+- Version: `2.3.0-stable`
+- Release branch: `codex/v2.3.0-stable`
+- Release tag: `v2.3.0-stable` on `main` after review and merge.
 - The initial public baseline was created from a sanitized single-commit history;
   the v2.0 release merge reconnects the reviewed development history.
-- Purpose: stable code baseline for designated-user Map Data Steward pilot deployment. Agent Lab and external models remain disabled by default; the pilot uses the internal deterministic engine, bounded map asset selection, administrator approval, and a persisted one-click suspension control.
+- Purpose: stable code baseline for server-side case precheck and designated-user Case Data Steward pilot deployment while retaining the v2.2 Map Data Steward. Agent Lab and external models remain disabled by default; case review uses the internal deterministic engine, explicit bounded case selection, read-only results, and a persisted one-click suspension control.
 - Repository automation and isolated production rehearsal are release gates.
   Target-server networking, backup evidence, designated-user testing, and the
   business-efficiency baseline remain deployment acceptance gates and must not

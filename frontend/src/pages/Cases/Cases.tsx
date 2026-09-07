@@ -6,7 +6,7 @@ import {
   Input,
   DatePicker,
   InputNumber,
-  message,
+  message as messageFactory,
   Popconfirm,
   Upload,
   Alert,
@@ -23,21 +23,26 @@ import {
   EnvironmentOutlined,
   NodeIndexOutlined,
   DatabaseOutlined,
+  SafetyCertificateOutlined,
   DownOutlined,
   UpOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '../../auth/AuthContext'
+import { agentRunApi } from '../../services/agentRuns'
 import { caseApi, type CaseImportResult } from '../../services/cases'
-import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseUpdatePayload, CaseVehicle } from '../../types'
+import { caseStewardApi } from '../../services/caseSteward'
+import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
-import { bonusAccountingEnabled } from '../../config/features'
+import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../../config/features'
 import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import { summarizeBatchReview } from './batchReviewPresentation'
+import { summarizeCaseQualityPreview } from './caseQualityPreview'
 import {
   buildCaseAiIntakeApplication,
   buildCaseAiIntakeEntryFlags,
@@ -452,8 +457,8 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
 const Cases: React.FC = () => {
   const [form] = Form.useForm()
   const [evidenceForm] = Form.useForm()
-  const watchedLat = Form.useWatch('latitude', form)
-  const watchedLng = Form.useWatch('longitude', form)
+  const [modal, modalContextHolder] = Modal.useModal()
+  const [message, messageContextHolder] = messageFactory.useMessage()
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
@@ -474,6 +479,7 @@ const Cases: React.FC = () => {
   const [keyword, setKeyword] = useState('')
   const [sidebarFilter, setSidebarFilter] = useState<FilterState>(defaultFilterState)
   const queryClient = useQueryClient()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const editRequestRef = useRef(0)
@@ -495,6 +501,13 @@ const Cases: React.FC = () => {
   const { data: cases, isLoading } = useQuery({
     queryKey: ['cases', queryParams],
     queryFn: () => caseApi.getCases(queryParams),
+  })
+
+  const { data: caseStewardStatus } = useQuery({
+    queryKey: ['agent-case-steward-status'],
+    queryFn: caseStewardApi.status,
+    enabled: canAccessAgentLab(user?.role, agentLabEnabled),
+    retry: false,
   })
 
   const renderQualityBadge = (caseItem: Case) => {
@@ -633,6 +646,10 @@ const Cases: React.FC = () => {
     },
   })
 
+  const qualityPreviewMutation = useMutation<CaseQualityPreview, Error, CaseCreate>({
+    mutationFn: caseApi.previewCaseQuality,
+  })
+
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: CaseUpdatePayload }) =>
       caseApi.updateCase(id, data),
@@ -688,6 +705,23 @@ const Cases: React.FC = () => {
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
       message.error(`批量复核失败: ${err.response?.data?.detail || err.message}`)
+    },
+  })
+
+  const caseStewardMutation = useMutation({
+    mutationFn: (caseIds: number[]) => agentRunApi.create({
+      task_type: 'case_data_quality',
+      query: '对当前筛选范围内的案件执行只读质量复核，输出缺项、异常、疑似重复和证据索引',
+      case_ids: caseIds,
+      asset_ids: [],
+    }),
+    onSuccess: run => {
+      message.success(`案件数据管家任务 ${run.id.slice(0, 8)} 已进入独立队列`)
+      navigate('/agents')
+    },
+    onError: (error: unknown) => {
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      message.error(`案件数据管家启动失败: ${err.response?.data?.detail || err.message}`)
     },
   })
 
@@ -919,13 +953,19 @@ const Cases: React.FC = () => {
   }
 
   const handleSubmit = async () => {
+    let values: Record<string, unknown>
     try {
-      const values = await form.validateFields()
-      const payload = buildCaseEntrySubmitPayload(values, {
-        mode: editingCase ? 'edit' : 'create',
-        includeVehicleDrafts: !editingCase || bonusDraftLoadState.vehicles || bonusDraftTouched.vehicles,
-        includePersonDrafts: !editingCase || bonusDraftLoadState.persons || bonusDraftTouched.persons,
-      })
+      values = await form.validateFields()
+    } catch (error) {
+      console.error('Validation failed:', error)
+      return
+    }
+    const payload = buildCaseEntrySubmitPayload(values, {
+      mode: editingCase ? 'edit' : 'create',
+      includeVehicleDrafts: !editingCase || bonusDraftLoadState.vehicles || bonusDraftTouched.vehicles,
+      includePersonDrafts: !editingCase || bonusDraftLoadState.persons || bonusDraftTouched.persons,
+    })
+    const persist = () => {
       if (editingCase) {
         updateMutation.mutate({
           id: editingCase.id,
@@ -934,8 +974,35 @@ const Cases: React.FC = () => {
       } else {
         createMutation.mutate(payload as CaseCreate)
       }
+    }
+
+    try {
+      const preview = await qualityPreviewMutation.mutateAsync(payload as CaseCreate)
+      const summary = summarizeCaseQualityPreview(preview)
+      if (!summary.requiresConfirmation) {
+        persist()
+        return
+      }
+      modal.confirm({
+        title: summary.title,
+        content: (
+          <div>
+            <p>{summary.description}</p>
+            <p style={{ color: 'var(--ink-3)' }}>{preview.boundary}</p>
+          </div>
+        ),
+        okText: '已核对，继续保存',
+        cancelText: '返回补充',
+        onOk: persist,
+      })
     } catch (error) {
-      console.error('Validation failed:', error)
+      modal.confirm({
+        title: '服务端预检暂不可用',
+        content: '核心案件保存不依赖智能体。可返回稍后重试，也可由人工确认后继续保存。',
+        okText: '人工确认，继续保存',
+        cancelText: '返回检查',
+        onOk: persist,
+      })
     }
   }
 
@@ -1032,6 +1099,23 @@ const Cases: React.FC = () => {
       limit: filteredCases.length,
       use_llm: false,
     })
+  }
+
+  const handleCaseStewardReview = () => {
+    if (!caseStewardStatus?.can_start) {
+      message.warning('当前账号不在案件数据管家指定试用名单内')
+      return
+    }
+    if (!filteredCases.length) {
+      message.warning('当前筛选范围内没有可质检案件')
+      return
+    }
+    const maxCases = caseStewardStatus.max_cases_per_run
+    const caseIds = filteredCases.slice(0, maxCases).map(item => item.id)
+    if (filteredCases.length > maxCases) {
+      message.info(`本次按当前排序检查前 ${maxCases} 起案件，其余案件可调整筛选后分批执行`)
+    }
+    caseStewardMutation.mutate(caseIds)
   }
 
   const handleEvidenceSubmit = async () => {
@@ -1284,6 +1368,8 @@ const Cases: React.FC = () => {
 
   return (
     <div className="page page-cases">
+      {modalContextHolder}
+      {messageContextHolder}
       {/* 预处理状态提醒 */}
       {preprocessStatus && (
         <Alert
@@ -1419,6 +1505,16 @@ const Cases: React.FC = () => {
               <span className="kbd">⌘K</span>
             </div>
             <div className="tools-bar-right">
+              {caseStewardStatus?.can_start && (
+                <button
+                  className="btn-ghost"
+                  disabled={caseStewardMutation.isPending || filteredCases.length === 0}
+                  onClick={handleCaseStewardReview}
+                  title="只生成质量问题和证据索引，不修改案件字段"
+                >
+                  <SafetyCertificateOutlined /> {caseStewardMutation.isPending ? '提交中' : '管家质检'}
+                </button>
+              )}
               <button
                 className="btn-ghost"
                 disabled={batchReviewMutation.isPending || filteredCases.length === 0}
@@ -1891,6 +1987,7 @@ const Cases: React.FC = () => {
           </div>
         }
         open={isModalVisible}
+        forceRender
         onOk={handleSubmit}
         onCancel={() => {
           setIsModalVisible(false)
@@ -1898,7 +1995,7 @@ const Cases: React.FC = () => {
           form.resetFields()
         }}
         width={760}
-        confirmLoading={createMutation.isPending || updateMutation.isPending}
+        confirmLoading={qualityPreviewMutation.isPending || createMutation.isPending || updateMutation.isPending}
         okText="确认"
         cancelText="取消"
         styles={{
@@ -1935,12 +2032,22 @@ const Cases: React.FC = () => {
               >
                 AI 辅助录入
               </Button>
-              <Button
-                onClick={() => setAiIntakeText(String(form.getFieldValue('description') || ''))}
-                disabled={!form.getFieldValue('description')}
+              <Form.Item
+                noStyle
+                shouldUpdate={(previous, current) => previous.description !== current.description}
               >
-                读取案情描述
-              </Button>
+                {({ getFieldValue }) => {
+                  const description = String(getFieldValue('description') || '')
+                  return (
+                    <Button
+                      onClick={() => setAiIntakeText(description)}
+                      disabled={!description}
+                    >
+                      读取案情描述
+                    </Button>
+                  )
+                }}
+              </Form.Item>
               <span>结果已写入表单，可继续人工修改。</span>
             </div>
 
@@ -1994,53 +2101,68 @@ const Cases: React.FC = () => {
             <Input placeholder="如：××路××小区南门" />
           </Form.Item>
 
-          <div
-            className="cases-map-toggle"
-            onClick={() => setShowMapPicker(!showMapPicker)}
-          >
-            {showMapPicker ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-            地图坐标（可选，用于地图与空间分析）
-            {watchedLat != null && watchedLng != null && (
-              <span>{Number(watchedLat).toFixed(5)}, {Number(watchedLng).toFixed(5)}</span>
+          <Form.Item
+            noStyle
+            shouldUpdate={(previous, current) => (
+              previous.latitude !== current.latitude || previous.longitude !== current.longitude
             )}
-          </div>
+          >
+            {({ getFieldValue, setFieldsValue }) => {
+              const latitude = getFieldValue('latitude')
+              const longitude = getFieldValue('longitude')
+              return (
+                <>
+                  <div
+                    className="cases-map-toggle"
+                    onClick={() => setShowMapPicker(!showMapPicker)}
+                  >
+                    {showMapPicker ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+                    地图坐标（可选，用于地图与空间分析）
+                    {latitude != null && longitude != null && (
+                      <span>{Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}</span>
+                    )}
+                  </div>
 
-          {showMapPicker && (
-            <div className="cases-map-entry">
-              <Form.Item label="经纬度" style={{ marginBottom: 0 }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="纬度，例如 31.2304"
-                      min={-90}
-                      max={90}
-                      step={0.000001}
-                    />
-                  </Form.Item>
-                  <Form.Item name="longitude" style={{ flex: 1, marginBottom: 8 }}>
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="经度，例如 121.4737"
-                      min={-180}
-                      max={180}
-                      step={0.000001}
-                    />
-                  </Form.Item>
-                </div>
-              </Form.Item>
+                  {showMapPicker && (
+                    <div className="cases-map-entry">
+                      <Form.Item label="经纬度" style={{ marginBottom: 0 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              placeholder="纬度，例如 31.2304"
+                              min={-90}
+                              max={90}
+                              step={0.000001}
+                            />
+                          </Form.Item>
+                          <Form.Item name="longitude" style={{ flex: 1, marginBottom: 8 }}>
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              placeholder="经度，例如 121.4737"
+                              min={-180}
+                              max={180}
+                              step={0.000001}
+                            />
+                          </Form.Item>
+                        </div>
+                      </Form.Item>
 
-              <Form.Item label="地图选点">
-                <MapPicker
-                  lat={watchedLat}
-                  lng={watchedLng}
-                  onChange={(lat, lng) => {
-                    form.setFieldsValue({ latitude: lat, longitude: lng })
-                  }}
-                />
-              </Form.Item>
-            </div>
-          )}
+                      <Form.Item label="地图选点">
+                        <MapPicker
+                          lat={latitude}
+                          lng={longitude}
+                          onChange={(lat, lng) => {
+                            setFieldsValue({ latitude: lat, longitude: lng })
+                          }}
+                        />
+                      </Form.Item>
+                    </div>
+                  )}
+                </>
+              )
+            }}
+          </Form.Item>
 
           <Form.Item name="case_type" label="类型（可选）">
             <Input placeholder="如：管线开孔、油库入侵、罐车劫持等" />
@@ -2323,6 +2445,7 @@ const Cases: React.FC = () => {
           </span>
         }
         open={evidenceModalVisible}
+        forceRender
         onOk={handleEvidenceSubmit}
         onCancel={() => {
           setEvidenceModalVisible(false)
