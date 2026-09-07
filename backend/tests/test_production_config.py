@@ -68,6 +68,8 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     assert "AGENT_MODEL: \"${AGENT_MODEL:-}\"" in compose
     assert "AGENT_MAP_PILOT_MAX_ASSETS: \"${AGENT_MAP_PILOT_MAX_ASSETS:-100}\"" in compose
     assert "AGENT_CASE_PILOT_MAX_CASES: \"${AGENT_CASE_PILOT_MAX_CASES:-30}\"" in compose
+    assert "AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: \"${AGENT_DUAL_DOMAIN_PILOT_MAX_CASES:-10}\"" in compose
+    assert "AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS: \"${AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS:-100}\"" in compose
     assert "agent-worker:" in compose
     assert 'profiles: ["agent-lab"]' in compose
     assert '--queues=${AGENT_REDIS_QUEUE:-agent_lab}' in compose
@@ -79,6 +81,8 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     assert "AGENT_MODEL=" in env_example
     assert "AGENT_MAP_PILOT_MAX_ASSETS=100" in env_example
     assert "AGENT_CASE_PILOT_MAX_CASES=30" in env_example
+    assert "AGENT_DUAL_DOMAIN_PILOT_MAX_CASES=10" in env_example
+    assert "AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS=100" in env_example
     assert "ARG VITE_ENABLE_AGENT_LAB=false" in frontend_dockerfile
     assert "openai-agents==" not in production_requirements
     assert "openai-agents==0.19.1" in optional_openai_requirements

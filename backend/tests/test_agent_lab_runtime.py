@@ -175,6 +175,19 @@ def test_case_quality_tool_flags_probable_duplicates_as_review_only(agent_db: Se
 
 def test_map_quality_tool_stages_deterministic_patch_without_mutating(agent_db: Session):
     asset = _add_asset(agent_db)
+    outside_scope = JurisdictionAsset(
+        name="范围外资源",
+        external_id="OUTSIDE-SCOPE-ASSET",
+        asset_type="well",
+        geometry_type="point",
+        latitude=None,
+        longitude=None,
+        source="ledger",
+        status="active",
+        verified=False,
+    )
+    agent_db.add(outside_scope)
+    agent_db.commit()
     original_name = asset.name
     original_geometry = dict(asset.geometry)
 
@@ -188,6 +201,8 @@ def test_map_quality_tool_stages_deterministic_patch_without_mutating(agent_db: 
     assert asset.name == original_name
     assert asset.geometry == original_geometry
     assert f"asset:{asset.id}" in output["evidence_refs"]
+    assert output["aggregate"]["total_assets"] == 1
+    assert output["aggregate"]["missing_coordinates"] == 0
     actions = output["candidate_actions"]
     assert any(item["patch"] == {"name": "英平6002井"} for item in actions)
     assert any(
@@ -231,6 +246,30 @@ def test_map_quality_tool_reports_duplicate_points_without_merging(agent_db: Ses
 def test_dual_domain_tool_uses_case_and_asset_evidence(agent_db: Session):
     case = _add_case(agent_db)
     asset = _add_asset(agent_db)
+    outside_asset = JurisdictionAsset(
+        name="范围外更近井",
+        external_id="OUTSIDE-WELL",
+        asset_type="well",
+        geometry_type="point",
+        latitude=case.latitude,
+        longitude=case.longitude,
+        geometry={"type": "Point", "coordinates": [case.longitude, case.latitude]},
+        source="ledger",
+        status="active",
+        verified=True,
+    )
+    outside_case = Case(
+        case_number="OUTSIDE-CASE",
+        occurred_time=case.occurred_time + timedelta(days=1),
+        location="范围外案件",
+        latitude=case.latitude,
+        longitude=case.longitude,
+        case_type=case.case_type,
+        description="范围外历史记录",
+        status="closed",
+    )
+    agent_db.add_all([outside_asset, outside_case])
+    agent_db.commit()
 
     output = AgentToolRegistry().execute(
         "dual_domain_analysis",
@@ -242,9 +281,38 @@ def test_dual_domain_tool_uses_case_and_asset_evidence(agent_db: Session):
     assert any(ref.startswith("asset:") for ref in output["evidence_refs"])
     assert output["facts"]
     assert "historical_frequency" in output["facts"][0]
+    assert output["facts"][0]["historical_frequency"]["case_count"] == 0
     assert "modus_tags" in output["facts"][0]
+    assert output["case_asset_links"]
+    assert output["case_asset_links"][0]["case_id"] == case.id
+    assert output["case_asset_links"][0]["asset_id"] == asset.id
+    assert output["hotspots"]
+    assert output["hotspots"][0]["asset_id"] == asset.id
+    assert f"asset:{outside_asset.id}" not in output["evidence_refs"]
+    assert f"case:{outside_case.id}" not in output["evidence_refs"]
     assert output["recommendations"]
     assert "不是犯罪预测" in " ".join(output["boundary"])
+
+
+@pytest.mark.asyncio
+async def test_assist_evidence_report_never_stages_formal_data_changes(agent_db: Session):
+    case = _add_case(agent_db)
+    asset = _add_asset(agent_db)
+    run = AgentRunService.create_run(
+        agent_db,
+        task_type="evidence_report",
+        query="形成双域综合证据报告",
+        case_ids=[case.id],
+        asset_ids=[asset.id],
+        mode="assist",
+        created_by=7,
+    )
+
+    completed = await AgentRunExecutor(narrator=None).execute(agent_db, run.id)
+
+    assert completed.status == "completed"
+    assert completed.approvals == []
+    assert completed.result_summary["pending_approval_count"] == 0
 
 
 def test_tool_registry_rejects_everything_outside_the_business_allowlist(agent_db: Session):
@@ -348,6 +416,35 @@ async def test_cancelled_map_run_does_not_stage_late_candidate_changes(agent_db:
     assert cancelled.status == "cancelled"
     assert cancelled.artifacts == []
     assert cancelled.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_pilot_suspend_during_model_summary_wins_over_late_result(agent_db: Session):
+    case = _add_case(agent_db)
+    asset = _add_asset(agent_db)
+    run = AgentRunService.create_run(
+        agent_db,
+        task_type="dual_domain_analysis",
+        query="双域研判",
+        case_ids=[case.id],
+        asset_ids=[asset.id],
+        mode="assist",
+        created_by=7,
+    )
+
+    class _SuspendingNarrator(_RecordingNarrator):
+        async def summarize(self, query: str, payload: dict) -> dict:
+            AgentRunService.cancel_run(agent_db, run.id, actor_user_id=1)
+            return await super().summarize(query, payload)
+
+    cancelled = await AgentRunExecutor(narrator=_SuspendingNarrator()).execute(
+        agent_db,
+        run.id,
+    )
+
+    assert cancelled.status == "cancelled"
+    assert not cancelled.result_summary
+    assert not any(event.event_type == "run_completed" for event in cancelled.events)
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "2.3.0-stable"
+    APP_VERSION: str = "2.4.0-stable"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     AGENT_APPROVAL_TTL_HOURS: int = 24
     AGENT_MAP_PILOT_MAX_ASSETS: int = 100
     AGENT_CASE_PILOT_MAX_CASES: int = 30
+    AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: int = 10
+    AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS: int = 100
     
     class Config:
         env_file = ".env"
@@ -81,6 +83,10 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_MAP_PILOT_MAX_ASSETS 必须在 1-500 之间")
         if not 1 <= self.AGENT_CASE_PILOT_MAX_CASES <= 30:
             raise ValueError("AGENT_CASE_PILOT_MAX_CASES 必须在 1-30 之间")
+        if not 1 <= self.AGENT_DUAL_DOMAIN_PILOT_MAX_CASES <= 30:
+            raise ValueError("AGENT_DUAL_DOMAIN_PILOT_MAX_CASES 必须在 1-30 之间")
+        if not 1 <= self.AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS <= 500:
+            raise ValueError("AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS 必须在 1-500 之间")
 
         if self.ENVIRONMENT != "production":
             return self

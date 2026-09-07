@@ -11,7 +11,7 @@
 | 结论工厂 | `backend/app/services/conclusion_factory_service.py` | 基于案件证据链或会议报告生成结论 | 下一步优先引用结构化研判依据 |
 | 地图位置研判 | `backend/app/services/map_mcp_service.py` | 汇聚村屯、道路、加油站、储油设施、天气、来路后调用 LLM | 继续保留，输出需区分事实与建议 |
 | 多模型复核 | `backend/app/ai/meeting_manager.py`、`backend/app/ai/agents/*` | 多模型独立分析、互评、主持人汇总 | 降级为高级复核，不作为主线入口 |
-| Agent 任务 | `backend/app/services/agent_service.py` | 根据用户目标和案件简表输出步骤、结果、置信度 | 后续改成研判辅助 Agent，避免“自动侦查”口径 |
+| Agent 任务 | `backend/app/agent_runtime/`、`backend/app/services/*_steward_service.py`、`backend/app/services/dual_domain_pilot_service.py` | 内网规则先完成案件质检、地图质检、双域历史复盘和证据报告；外部模型仅可选归纳脱敏特征 | 保持指定人员、显式范围、只读双域和人工审批边界，不扩展任意执行能力 |
 
 ## 使用模型能力但不是 Chat LLM 的模块
 

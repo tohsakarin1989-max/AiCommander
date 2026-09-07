@@ -30,6 +30,8 @@ const EVENT_LABELS: Record<string, string> = {
   run_expired: '任务审批窗口已过期',
   dispatch_failed: '独立队列不可用',
   pilot_suspended: '试用已停用，任务安全终止',
+  case_pilot_suspended: '案件试用已停用，任务安全终止',
+  dual_domain_pilot_suspended: '双域试用已停用，任务安全终止',
 }
 
 const EXECUTION_MODE_LABELS: Record<string, string> = {
@@ -87,6 +89,12 @@ export function agentResultText(item: unknown): string {
       ? `｜手法标签 ${value.modus_tags.join('、')}`
       : '｜手法标签待补充'
     return `案件证据 #${value.case_id}｜风险条件强度 ${value.risk_score ?? 0}｜${history.days ?? '-'}天/${history.radius_km ?? '-'}公里内历史记录 ${history.case_count ?? 0} 条${tags}`
+  }
+  if (value.case_id != null && value.asset_id != null && value.distance_km != null) {
+    return `案件证据 #${value.case_id}｜地图证据 #${value.asset_id}｜距离 ${value.distance_km} 公里｜${value.basis ?? '所选范围内空间条件'}`
+  }
+  if (value.asset_id != null && value.historical_case_count != null) {
+    return `地图证据 #${value.asset_id}｜${value.radius_km ?? '-'} 公里内历史案件 ${value.historical_case_count} 起｜${value.label ?? '历史聚合，待人工复核'}`
   }
   if (value.case_id != null && value.quality_score != null) {
     return `案件证据 #${value.case_id}｜质量分 ${value.quality_score}（${value.quality_level ?? '待评估'}）｜缺项 ${value.missing_count ?? 0}｜提醒 ${value.warning_count ?? 0}`

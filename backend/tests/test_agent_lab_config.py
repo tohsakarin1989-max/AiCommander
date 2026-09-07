@@ -26,6 +26,8 @@ def test_agent_lab_defaults_to_fail_closed():
     assert settings.AGENT_SDK_TRACING_ENABLED is False
     assert settings.AGENT_MAP_PILOT_MAX_ASSETS == 100
     assert settings.AGENT_CASE_PILOT_MAX_CASES == 30
+    assert settings.AGENT_DUAL_DOMAIN_PILOT_MAX_CASES == 10
+    assert settings.AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS == 100
 
 
 def test_agent_mutations_require_assist_mode():
@@ -84,3 +86,15 @@ def test_map_pilot_asset_limit_is_bounded(limit):
 def test_case_pilot_case_limit_is_bounded(limit):
     with pytest.raises(ValidationError):
         Settings(**BASE, AGENT_CASE_PILOT_MAX_CASES=limit)
+
+
+@pytest.mark.parametrize("limit", [0, 31])
+def test_dual_domain_case_limit_is_bounded(limit):
+    with pytest.raises(ValidationError):
+        Settings(**BASE, AGENT_DUAL_DOMAIN_PILOT_MAX_CASES=limit)
+
+
+@pytest.mark.parametrize("limit", [0, 501])
+def test_dual_domain_asset_limit_is_bounded(limit):
+    with pytest.raises(ValidationError):
+        Settings(**BASE, AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS=limit)

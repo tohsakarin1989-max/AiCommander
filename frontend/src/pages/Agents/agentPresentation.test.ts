@@ -56,5 +56,17 @@ describe('agent presentation', () => {
       historical_frequency: { case_count: 3, days: 365, radius_km: 1.5 },
       modus_tags: ['夜间活动'],
     })).toContain('365天/1.5公里内历史记录 3 条')
+    expect(agentResultText({
+      case_id: 8,
+      asset_id: 19,
+      distance_km: 0.42,
+      basis: '所选范围内最近生产目标',
+    })).toContain('案件证据 #8｜地图证据 #19｜距离 0.42 公里')
+    expect(agentResultText({
+      asset_id: 19,
+      radius_km: 1.5,
+      historical_case_count: 2,
+      label: '历史案件相对集中点（待人工复核）',
+    })).toContain('1.5 公里内历史案件 2 起')
   })
 })
