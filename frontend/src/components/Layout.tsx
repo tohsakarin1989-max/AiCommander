@@ -251,7 +251,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.4.0-stable'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.5.0-stable'}</span></span>
         </div>
       </footer>
     </div>

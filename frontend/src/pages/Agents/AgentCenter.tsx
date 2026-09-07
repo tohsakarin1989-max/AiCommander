@@ -25,9 +25,12 @@ import {
   agentErrorMessage,
   agentEventLabel,
   agentExecutionModeLabel,
+  agentProviderLabel,
   agentResultText,
   agentStatusLabel,
   canReviewAgentRun,
+  formatAgentCost,
+  formatAgentDuration,
   isAgentRunActive,
 } from './agentPresentation'
 import {
@@ -194,6 +197,11 @@ const AgentCenter: React.FC = () => {
     queryFn: agentRunApi.list,
     refetchInterval: queryState => queryState.state.data?.some(item => isAgentRunActive(item.status)) ? 2500 : false,
   })
+  const overviewQuery = useQuery({
+    queryKey: ['agent-runs-overview', 30],
+    queryFn: () => agentRunApi.overview(30),
+    refetchInterval: 10000,
+  })
   const detailQuery = useQuery({
     queryKey: ['agent-run', selectedRunId],
     queryFn: () => agentRunApi.get(selectedRunId as string),
@@ -262,6 +270,7 @@ const AgentCenter: React.FC = () => {
       messageApi.success('Agent任务已进入独立队列')
       setSelectedRunId(run.id)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs-overview'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
@@ -276,6 +285,7 @@ const AgentCenter: React.FC = () => {
       messageApi.success('Agent任务已取消，核心业务不受影响')
       queryClient.setQueryData(['agent-run', run.id], run)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs-overview'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
@@ -289,6 +299,7 @@ const AgentCenter: React.FC = () => {
     onSuccess: run => {
       setSelectedRunId(run.id)
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs-overview'] })
       messageApi.success('已创建可追踪的重放任务')
     },
     onError: error => {
@@ -303,6 +314,7 @@ const AgentCenter: React.FC = () => {
       messageApi.success('审批决定已记录')
       void queryClient.invalidateQueries({ queryKey: ['agent-run', selectedRunId] })
       void queryClient.invalidateQueries({ queryKey: ['agent-runs'] })
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs-overview'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-map-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-case-steward-status'] })
       void queryClient.invalidateQueries({ queryKey: ['agent-dual-domain-status'] })
@@ -515,6 +527,7 @@ const AgentCenter: React.FC = () => {
 
   const detail = detailQuery.data
   const result = detail?.result_summary
+  const overview = overviewQuery.data
   const canReview = canReviewAgentRun(user?.role)
 
   return (
@@ -533,6 +546,53 @@ const AgentCenter: React.FC = () => {
       <div className="agent-safety-banner">
         默认由内网规则引擎完成分析，不需要模型密钥、也不会向外部发送数据；如经安全评审启用外部模型，模型也只能接收临时别名和派生特征。所有候选修正必须人工审批。
       </div>
+
+      {overview && (
+        <div className="card agent-operations-card">
+          <div className="card-head agent-pilot-head">
+            <div>
+              <SyncOutlined className="ico" />
+              <span className="ti">Agent 统一运行中心 · 近 {overview.window_days} 天</span>
+            </div>
+            <Tag color={overview.runtime.model_configuration_ready ? 'green' : 'gold'}>
+              {overview.runtime.external_model_enabled
+                ? overview.runtime.model_configuration_ready ? '模型适配已就绪' : '模型配置待检查'
+                : '内网规则模式'}
+            </Tag>
+          </div>
+          <div className="card-body pad">
+            <div className="agent-metric-grid agent-operations-metrics">
+              <div><strong>{overview.summary.runs_total}</strong><span>任务总量</span></div>
+              <div><strong>{overview.summary.completion_rate_percent}%</strong><span>完成率（含降级）</span></div>
+              <div><strong>{formatAgentDuration(overview.summary.average_duration_ms)}</strong><span>平均总耗时</span></div>
+              <div><strong>{formatAgentDuration(overview.summary.p95_duration_ms)}</strong><span>P95总耗时</span></div>
+              <div><strong>{overview.summary.model_calls}</strong><span>模型请求</span></div>
+              <div><strong>{overview.summary.total_tokens.toLocaleString()}</strong><span>模型Token</span></div>
+              <div><strong>{formatAgentCost(overview.summary.estimated_cost_usd)}</strong><span>估算模型成本</span></div>
+              <div><strong>{overview.summary.degraded_runs}</strong><span>规则降级接管</span></div>
+            </div>
+            <div className="agent-provider-list">
+              {overview.providers.length === 0 ? (
+                <span className="agent-muted">当前窗口暂无运行数据；系统仍可使用内网规则模式。</span>
+              ) : overview.providers.map(provider => (
+                <div className="agent-provider-row" key={provider.provider}>
+                  <div>
+                    <strong>{agentProviderLabel(provider.provider)}</strong>
+                    <span>{provider.models.length ? provider.models.join('、') : '无需外部模型'}</span>
+                  </div>
+                  <span>任务 {provider.runs}</span>
+                  <span>降级 {provider.degraded_runs}</span>
+                  <span>模型耗时 {formatAgentDuration(provider.average_model_duration_ms)}</span>
+                  <span>{formatAgentCost(provider.estimated_cost_usd)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="agent-muted">
+              运行中心只保存提供方、模型名、耗时、Token和估算成本，不保存提示词、模型原始响应或密钥。成本为配置单价估算值，不作为账单。
+            </div>
+          </div>
+        </div>
+      )}
 
       {mapStatus && (
         <div className="card agent-pilot-card">
@@ -911,6 +971,14 @@ const AgentCenter: React.FC = () => {
                     <button className="btn-ghost" onClick={() => replayMutation.mutate(detail.id)}>重放</button>
                   )}
                 </Space>
+              </div>
+
+              <div className="agent-run-performance">
+                <div><strong>{formatAgentDuration(detail.performance.duration_ms)}</strong><span>总耗时</span></div>
+                <div><strong>{detail.performance.model_calls}</strong><span>模型请求</span></div>
+                <div><strong>{detail.performance.total_tokens.toLocaleString()}</strong><span>模型Token</span></div>
+                <div><strong>{formatAgentCost(detail.performance.estimated_cost_usd)}</strong><span>估算成本</span></div>
+                <div><strong>{agentProviderLabel(detail.model_provider ?? 'deterministic')}</strong><span>{detail.model_name || '确定性工具链'}</span></div>
               </div>
 
               {result?.result && <div className="agent-result-box"><div className="agent-result-label">研判结果</div><div>{result.result}</div></div>}

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.agent_runtime.providers import AgentNarrator, build_narrator
+from app.agent_runtime.providers import AgentNarrationOutcome, AgentNarrator, build_narrator
 from app.agent_runtime.redaction import AgentPayloadRedactor
 from app.agent_runtime.service import AgentRunService
 from app.agent_runtime.tools import AgentToolContext, AgentToolRegistry
@@ -43,7 +43,8 @@ class AgentRunExecutor:
         narrator: Optional[AgentNarrator] | object = _AUTO_NARRATOR,
         tool_registry: Optional[AgentToolRegistry] = None,
     ) -> None:
-        self.narrator = build_narrator() if narrator is _AUTO_NARRATOR else narrator
+        self._auto_narrator = narrator is _AUTO_NARRATOR
+        self.narrator = build_narrator() if self._auto_narrator else narrator
         self.tool_registry = tool_registry or AgentToolRegistry()
 
     async def execute(self, db: Session, run_id: str) -> AgentRun:
@@ -154,41 +155,128 @@ class AgentRunExecutor:
                 self._stage_approvals(db, run, artifact, tool_outputs)
 
             degraded = False
-            if self.narrator is not None:
+            narrator = self.narrator
+            narrator_resolution_error: Exception | None = None
+            if (
+                self._auto_narrator
+                and narrator is None
+                and settings.AGENT_USE_EXTERNAL_MODEL
+                and settings.AGENT_PROVIDER == "model_registry"
+            ):
+                try:
+                    narrator = build_narrator(db)
+                except Exception as exc:
+                    narrator_resolution_error = exc
+
+            if narrator_resolution_error is not None:
+                degraded = True
+                run.model_provider = settings.AGENT_PROVIDER
+                run.model_name = f"configured-model-{settings.AGENT_MODEL_ID or 'unknown'}"
+                AgentRunService.record_usage(
+                    db,
+                    run,
+                    provider=run.model_provider,
+                    model_name=run.model_name,
+                    status="failed",
+                    error_code=type(narrator_resolution_error).__name__,
+                )
+                AgentRunService.append_event(
+                    db,
+                    run,
+                    event_type="model_degraded",
+                    status="degraded",
+                    actor_type="model",
+                    actor_name=settings.AGENT_PROVIDER,
+                    error_message=type(narrator_resolution_error).__name__,
+                    output_summary={"fallback": "deterministic"},
+                )
+            elif narrator is not None:
                 external = AgentPayloadRedactor().redact({
                     "task_type": run.task_type,
                     "tool_outputs": tool_outputs,
                 })
+                run.model_provider = narrator.provider_name
+                run.model_name = narrator.model_name
+                model_started = perf_counter()
                 try:
-                    narrative = await self.narrator.summarize(
+                    raw_outcome = await narrator.summarize(
                         EXTERNAL_TASK_GOALS[run.task_type],
                         external.payload,
                     )
+                    if isinstance(raw_outcome, AgentNarrationOutcome):
+                        narrative = raw_outcome.content
+                        usage = raw_outcome.usage
+                    else:
+                        narrative = raw_outcome
+                        usage = None
+                    model_duration_ms = round((perf_counter() - model_started) * 1000)
+                    input_tokens = usage.input_tokens if usage else 0
+                    output_tokens = usage.output_tokens if usage else 0
+                    request_count = usage.request_count if usage else 0
+                    estimated_cost_microusd = self._estimated_cost_microusd(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        input_price=getattr(narrator, "input_cost_per_million_usd", 0),
+                        output_price=getattr(narrator, "output_cost_per_million_usd", 0),
+                    )
                     combined = self._merge_narrative(combined, narrative)
-                    run.model_provider = self.narrator.provider_name
-                    run.model_name = self.narrator.model_name
                     artifact.content = combined
+                    AgentRunService.record_usage(
+                        db,
+                        run,
+                        provider=narrator.provider_name,
+                        model_name=narrator.model_name,
+                        status="completed",
+                        request_count=request_count,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        duration_ms=model_duration_ms,
+                        estimated_cost_microusd=estimated_cost_microusd,
+                    )
                     AgentRunService.append_event(
                         db,
                         run,
                         event_type="model_completed",
                         status="verifying",
                         actor_type="model",
-                        actor_name=self.narrator.provider_name,
-                        output_summary={"external_policy": settings.AGENT_EXTERNAL_DATA_POLICY},
+                        actor_name=narrator.provider_name,
+                        output_summary={
+                            "external_policy": settings.AGENT_EXTERNAL_DATA_POLICY,
+                            "request_count": request_count,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "total_tokens": input_tokens + output_tokens,
+                            "estimated_cost_usd": round(
+                                estimated_cost_microusd / 1_000_000,
+                                6,
+                            ),
+                        },
                         evidence_refs=combined["evidence_refs"],
+                        duration_ms=model_duration_ms,
                     )
                 except Exception as exc:
                     degraded = True
+                    model_duration_ms = round((perf_counter() - model_started) * 1000)
+                    AgentRunService.record_usage(
+                        db,
+                        run,
+                        provider=narrator.provider_name,
+                        model_name=narrator.model_name,
+                        status="failed",
+                        request_count=1,
+                        duration_ms=model_duration_ms,
+                        error_code=type(exc).__name__,
+                    )
                     AgentRunService.append_event(
                         db,
                         run,
                         event_type="model_degraded",
                         status="degraded",
                         actor_type="model",
-                        actor_name=self.narrator.provider_name,
+                        actor_name=narrator.provider_name,
                         error_message=type(exc).__name__,
                         output_summary={"fallback": "deterministic"},
+                        duration_ms=model_duration_ms,
                     )
 
             db.refresh(run)
@@ -212,7 +300,7 @@ class AgentRunExecutor:
             execution_mode = "agent_lab"
             if degraded:
                 execution_mode = "deterministic_fallback"
-            elif self.narrator is None:
+            elif narrator is None:
                 execution_mode = "deterministic"
             run.result_summary = {
                 **combined,
@@ -325,6 +413,20 @@ class AgentRunExecutor:
             return 0.2
         penalty = min(len(gaps) * 0.03, 0.3)
         return round(max(0.35, min(0.9, 0.55 + len(evidence_refs) * 0.03 - penalty)), 2)
+
+    @staticmethod
+    def _estimated_cost_microusd(
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        input_price: float,
+        output_price: float,
+    ) -> int:
+        # 美元/百万 token 转换成微美元后，数值等于 token 数乘以对应单价。
+        return max(0, round(
+            max(0, input_tokens) * max(0.0, input_price)
+            + max(0, output_tokens) * max(0.0, output_price)
+        ))
 
     @staticmethod
     def _fail(db: Session, run: AgentRun, reason: str) -> AgentRun:

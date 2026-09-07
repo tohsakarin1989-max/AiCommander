@@ -12,19 +12,19 @@ Rules:
 
 - Do not commit real secrets, private case data, local databases, office files, or local assistant settings.
 - Keep `.env` local; use `.env.example` for placeholders only.
-- Public GitHub updates are normally limited to completed minor milestones such as `v2.2.0-stable`, `v2.3.0-stable`, and `v2.4.0-stable`.
+- Public GitHub updates are normally limited to completed minor milestones such as `v2.3.0-stable`, `v2.4.0-stable`, and `v2.5.0-stable`.
 - Before the single milestone push, complete backend tests, frontend tests, typecheck, build, migration, security, and isolated deployment rehearsal locally.
 - Publish one release branch and one pull request, wait for the quality gate, merge to `main`, then create one immutable tag and Release.
 - Routine corrections stay local and roll into the next milestone. A production-blocking or security issue may use an exceptional `v2.x.1-hotfix` release.
 
 Current stable baseline:
 
-- Version: `2.4.0-stable`
-- Release branch: `codex/v2.4.0-stable`
-- Release tag: `v2.4.0-stable` on `main` after review and merge.
+- Version: `2.5.0-stable`
+- Release branch: `codex/v2.5.0-stable`
+- Release tag: `v2.5.0-stable` on `main` after review and merge.
 - The initial public baseline was created from a sanitized single-commit history;
   the v2.0 release merge reconnects the reviewed development history.
-- Purpose: stable code baseline for designated-user, read-only dual-domain analysis and evidence reporting while retaining both data stewards. Agent Lab and external models remain disabled by default; dual-domain work uses the internal deterministic engine, explicit bounded case and asset selection, evidence-linked historical aggregation, and a persisted one-click suspension control.
+- Purpose: stable code baseline for the unified Agent operations center, provider/model registry adaptation, and token/cost/performance attribution while retaining both data stewards and read-only dual-domain analysis. Agent Lab and external models remain disabled by default; deterministic execution, evidence boundaries, approvals, explicit data scope, and one-click suspension remain unchanged.
 - Repository automation and isolated production rehearsal are release gates.
   Target-server networking, backup evidence, designated-user testing, and the
   business-efficiency baseline remain deployment acceptance gates and must not

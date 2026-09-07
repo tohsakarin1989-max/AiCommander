@@ -1,5 +1,10 @@
 import api from './api'
-import type { AgentRun, AgentRunEvent, AgentRunTaskType } from '../types'
+import type {
+  AgentOperationsOverview,
+  AgentRun,
+  AgentRunEvent,
+  AgentRunTaskType,
+} from '../types'
 
 export interface AgentRunCreatePayload {
   task_type: AgentRunTaskType
@@ -15,6 +20,12 @@ export const agentRunApi = {
   },
   list: async () => {
     const response = await api.get<AgentRun[]>('/agent-runs')
+    return response.data
+  },
+  overview: async (days = 30) => {
+    const response = await api.get<AgentOperationsOverview>('/agent-runs/overview', {
+      params: { days },
+    })
     return response.data
   },
   get: async (runId: string) => {

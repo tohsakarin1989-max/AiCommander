@@ -16,6 +16,7 @@ from app.database import get_db
 from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
 from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
+from app.services.agent_observability_service import AgentObservabilityService
 from app.services.case_steward_service import CaseStewardPilotService
 from app.services.dual_domain_pilot_service import DualDomainPilotService
 from app.services.map_steward_service import MapStewardPilotService
@@ -239,6 +240,16 @@ def list_agent_runs(
     return [_run_payload(run, detail=False) for run in AgentRunService.list_runs(db, skip=skip, limit=limit)]
 
 
+@router.get("/overview")
+def get_agent_operations_overview(
+    request: Request,
+    days: int = Query(30, ge=1, le=90),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    _require_lab(request)
+    return AgentObservabilityService.build_overview(db, days=days)
+
+
 @router.get("/{run_id}")
 def get_agent_run(run_id: str, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     _require_lab(request)
@@ -422,11 +433,16 @@ def _run_payload(run: AgentRun, *, detail: bool) -> dict[str, Any]:
         "completed_at": _iso(run.completed_at),
         "artifact_count": len(run.artifacts),
         "pending_approval_count": sum(1 for item in run.approvals if item.status == "pending"),
+        "performance": AgentObservabilityService.summarize_run(run),
     }
     if detail:
         payload["events"] = [_event_payload(item) for item in run.events]
         payload["artifacts"] = [_artifact_payload(item) for item in run.artifacts]
         payload["approvals"] = [_approval_payload(item) for item in run.approvals]
+        payload["usage_records"] = [
+            AgentObservabilityService.usage_payload(item)
+            for item in run.usage_records
+        ]
     return payload
 
 

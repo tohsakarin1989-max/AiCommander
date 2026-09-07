@@ -40,6 +40,17 @@ const EXECUTION_MODE_LABELS: Record<string, string> = {
   deterministic_fallback: '模型降级，内网规则接管',
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  deterministic: '内网规则引擎',
+  openai_agents: 'OpenAI Agents（可选）',
+  openai: 'OpenAI（可选）',
+  'openai-compatible': '兼容模型网关',
+  'azure-openai': 'Azure OpenAI（可选）',
+  anthropic: 'Anthropic（可选）',
+  claude: 'Anthropic（可选）',
+  model_registry: '系统模型注册表',
+}
+
 export function agentStatusLabel(status: string): string {
   return STATUS_LABELS[status] ?? '未知状态'
 }
@@ -51,6 +62,22 @@ export function agentEventLabel(eventType: string): string {
 export function agentExecutionModeLabel(mode: string | undefined): string {
   if (!mode) return '等待执行'
   return EXECUTION_MODE_LABELS[mode] ?? '受控执行'
+}
+
+export function agentProviderLabel(provider: string | undefined): string {
+  if (!provider) return '未配置'
+  return PROVIDER_LABELS[provider] ?? provider
+}
+
+export function formatAgentDuration(durationMs: number | null | undefined): string {
+  if (durationMs == null) return '—'
+  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))}毫秒`
+  return `${(Math.max(0, durationMs) / 1000).toFixed(1)}秒`
+}
+
+export function formatAgentCost(costUsd: number | null | undefined): string {
+  const normalized = Number.isFinite(costUsd) ? Math.max(0, Number(costUsd)) : 0
+  return `US$${normalized.toFixed(4)}`
 }
 
 export function canReviewAgentRun(role: UserRole | undefined): boolean {
