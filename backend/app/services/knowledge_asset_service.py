@@ -884,6 +884,7 @@ class KnowledgeAssetService:
                 KnowledgeAsset.asset_type == asset_type,
                 KnowledgeAsset.source_case_id == case_id,
                 KnowledgeAsset.source_signature == source_signature,
+                KnowledgeAsset.status != "archived",
             )
             .order_by(KnowledgeAsset.version.desc())
             .first()

@@ -20,7 +20,7 @@ def test_deployment_scripts_support_isolated_configuration():
     assert 'COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/' in deploy
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"' in init
     assert "$ENV_FILE，" not in init
-    assert 'APP_VERSION: "${APP_VERSION:-2.6.0-stable}"' in compose
+    assert 'APP_VERSION: "${APP_VERSION:-2.8.0-stable}"' in compose
     assert '${IMAGE_PREFIX:-aicommander}-backend:' in compose
     assert '${IMAGE_PREFIX:-aicommander}-frontend:' in compose
     assert "AICommander v2.0.0" not in deploy
@@ -87,6 +87,11 @@ def test_release_quality_gate_checks_rehearsal_scripts():
     assert "tests/test_dual_domain_pilot.py" in agent_gate
     assert "src/pages/Agents/dualDomainPresentation.test.ts" in agent_gate
 
+    workbench_gate = _read("scripts/verify-workbench.sh")
+    assert "tests/test_workbench.py" in workbench_gate
+    assert "src/pages/Workbench/workbenchPresentation.test.ts" in workbench_gate
+    assert "a7d9e1f2b304" in workbench_gate
+
 
 def test_smoke_verifier_records_evidence_without_credentials(tmp_path):
     fake_bin = tmp_path / "bin"
@@ -104,10 +109,10 @@ headers_file = Path(args[args.index('-D') + 1])
 body_file = Path(args[args.index('-o') + 1])
 path = urlparse(args[-1]).path
 payloads = {
-    '/health/live': {'status': 'alive', 'version': '2.6.0-stable', 'dependencies': {}},
+    '/health/live': {'status': 'alive', 'version': '2.8.0-stable', 'dependencies': {}},
     '/health/ready': {
         'status': 'ready',
-        'version': '2.6.0-stable',
+        'version': '2.8.0-stable',
         'dependencies': {
             'database': {'status': 'ok'},
             'schema': {'status': 'ok'},
@@ -116,7 +121,7 @@ payloads = {
     },
     '/health/agents': {
         'status': 'off',
-        'version': '2.6.0-stable',
+        'version': '2.8.0-stable',
         'mode': 'off',
         'affects_core_readiness': False,
     },
@@ -150,7 +155,7 @@ sys.stdout.write(str(status))
         "\n".join(
             (
                 "APP_PORT=3000",
-                "APP_VERSION=2.6.0-stable",
+                "APP_VERSION=2.8.0-stable",
                 "ENABLE_AGENT_LAB=false",
                 "AGENT_MODE=off",
                 "AGENT_MUTATIONS_ENABLED=false",
@@ -181,6 +186,6 @@ sys.stdout.write(str(status))
 
     assert result.returncode == 0, result.stderr
     manifest = (evidence_dir / "verification.manifest").read_text(encoding="utf-8")
-    assert "application_version=2.6.0-stable" in manifest
+    assert "application_version=2.8.0-stable" in manifest
     assert "agent_mode=off" in manifest
     assert "overall=passed" in manifest

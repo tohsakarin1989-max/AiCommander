@@ -44,7 +44,7 @@ AGENT_MODE=off \
 "$PYTHON" -m alembic upgrade head
 
 VERIFY_DB="$VERIFY_DB" "$PYTHON" -c \
-    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'agent_runs','agent_events','agent_artifacts','agent_approvals','agent_usage_records','knowledge_assets','knowledge_reuse_records'}; missing=required-t; c.close(); assert not missing, sorted(missing)"
+    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'agent_runs','agent_events','agent_artifacts','agent_approvals','agent_usage_records','knowledge_assets','knowledge_reuse_records','workbench_task_sessions'}; missing=required-t; c.close(); assert not missing, sorted(missing)"
 
 echo "[3/6] 前端 Agent 展示和功能开关测试"
 cd "$FRONTEND_DIR"
