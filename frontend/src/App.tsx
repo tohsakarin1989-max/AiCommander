@@ -27,6 +27,7 @@ const ConclusionFactory = lazy(() => import('./pages/Conclusions/ConclusionFacto
 const AgentCenter = lazy(() => import('./pages/Agents/AgentCenter'))
 const CaseGraph = lazy(() => import('./pages/Graphs/CaseGraph'))
 const EvidenceGraph = lazy(() => import('./pages/Graphs/EvidenceGraph'))
+const SituationWorkbench = lazy(() => import('./pages/Situation/SituationWorkbench'))
 const CaseReviewCockpit = lazy(() => import('./pages/CaseReviewCockpit/CaseReviewCockpit'))
 const AreaAnalysis = lazy(() => import('./pages/AreaAnalysis/AreaAnalysis'))
 const Patrols = lazy(() => import('./pages/Patrols/Patrols'))
@@ -75,6 +76,7 @@ function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
           <Route path="/cases/bonus"     element={bonusAccountingEnabled ? <CaseBonusAccounting /> : <Navigate to="/cases" replace />} />
           <Route path="/cases/features"  element={<CaseFeatures />} />
           <Route path="/case-intelligence" element={<CaseIntelligence />} />
+          <Route path="/situation"       element={<SituationWorkbench />} />
           <Route path="/cases/spacetime" element={<SpaceTimeAnalysis />} />
           <Route path="/meetings"        element={<Meetings />} />
           <Route path="/reports"         element={<Reports />} />

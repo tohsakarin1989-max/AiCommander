@@ -91,3 +91,4 @@ jobs:
           sh -n scripts/verify-agent-lab.sh
           sh -n scripts/verify-workbench.sh
           sh -n scripts/verify-evidence-graph.sh
+          sh -n scripts/verify-situation.sh

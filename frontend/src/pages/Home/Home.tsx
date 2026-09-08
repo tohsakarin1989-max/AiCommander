@@ -38,6 +38,7 @@ const RISK_LABEL: Record<string, string> = {
 }
 
 const INTELLIGENCE_ACTIONS = [
+  { title: '生成双域态势研判', desc: '比较新增案件变化，联动热点与重点井形成今日核查重点', path: '/situation' },
   { title: '进入案件研判工作台', desc: '从单案出发生成标签、相似条件、区域画像和报告', path: '/case-intelligence' },
   { title: '补齐案件结构化字段', desc: '提升时空、相似条件和现场要素分析质量', path: '/cases/features' },
   { title: '维护油区业务资产', desc: '井点、管线节点、技防设施和盲区支撑相似条件研判', path: '/jurisdiction' },
@@ -78,6 +79,7 @@ const Home: React.FC = () => {
   const alertSuggestions = suggestions.filter(item => item.type === 'alert').length
 
   const workEntries = [
+    { label: '双域态势研判', metric: '新增变化', desc: '比较相邻时间窗口，形成热点、重点井和三项核查重点', action: '生成简报', path: '/situation', tone: 'hot' },
     { label: '待办中心', metric: `${suggestions.length} 项`, desc: '坐标、材料、结论、报告、经验卡统一分流', action: '进入队列', path: '/suggestions', tone: highPrioritySuggestions > 0 ? 'hot' : 'normal' },
     { label: '案件录入预检', metric: `${stats.pendingCases} 起`, desc: '保存前提示关键字段，不强制阻断录入', action: '录入案件', path: '/cases', tone: stats.pendingCases > 0 ? 'warn' : 'normal' },
     { label: '奖金核算内业', metric: `${bonusSuggestions} 项`, desc: '仅在案件/奖金页处理指标和佐证材料', action: '进入核算', path: '/cases/bonus', tone: bonusSuggestions > 0 ? 'hot' : 'normal' },
