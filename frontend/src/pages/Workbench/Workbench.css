@@ -155,6 +155,7 @@
 .wb-evidence span { width: 100%; color: var(--ink-3); font: 9px var(--mono); }
 .wb-evidence code { padding: 3px 6px; border: 1px solid var(--line); color: var(--info); font: 10px var(--mono); }
 .wb-start { width: 100%; }
+.wb-evidence-link { width: 100%; }
 .wb-detail-boundary { color: var(--ink-3); font-size: 10.5px; line-height: 1.5; }
 
 .wb-metrics-body {

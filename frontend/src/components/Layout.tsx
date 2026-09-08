@@ -18,7 +18,7 @@ interface LayoutProps {
 
 const NAV_ITEMS = [
   { label: '总览', num: '01', paths: ['/workbench', '/dashboard', '/'] },
-  { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'] },
+  { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial', '/graphs/evidence'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial', '/graphs/evidence'] },
   { label: '研判', num: '03', paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
   { label: '助手', num: '05', paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'] },
@@ -44,7 +44,7 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
     ],
   },
   {
-    paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial'],
+    paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial', '/graphs/evidence'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial', '/graphs/evidence'],
     items: [
       { label: '案件列表', path: '/cases' },
       { label: '地图视图', path: '/cases/map' },
@@ -52,6 +52,7 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
       ...(bonusAccountingEnabled ? [{ label: '奖金核算', path: '/cases/bonus' }] : []),
       { label: '特征提取', path: '/cases/features' },
       { label: '关系图谱', path: '/graphs/serial' },
+      { label: '证据图谱', path: '/graphs/evidence' },
     ],
   },
   {
@@ -262,7 +263,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.8.0-stable'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.9.0-stable'}</span></span>
         </div>
       </footer>
     </div>
