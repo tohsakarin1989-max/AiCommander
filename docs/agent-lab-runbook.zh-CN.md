@@ -339,7 +339,8 @@ Harness 会拒绝默认业务库、内存库、非 SQLite 库、缺表数据库�
 1. 将 `ENABLE_AGENT_LAB=false`、`AGENT_MODE=off`、`AGENT_MUTATIONS_ENABLED=false`。
 2. 停止 `agent-worker`，重新构建前端使入口消失。
 3. 验证 `/health/ready` 和核心业务回归。
-4. 保留 `agent_runs`、`agent_events`、`agent_artifacts`、`agent_approvals`、`agent_usage_records` 作为审计证据。
+4. 保留 `agent_runs`、`agent_events`、`agent_artifacts`、`agent_approvals`、`agent_usage_records`，以及
+   `knowledge_assets`、`knowledge_reuse_records` 作为审计证据。
 5. 只有在确认版本整体回滚且备份可恢复时，才按主部署手册回滚应用或数据库。
 
 Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。不要为了关闭 Agent 删除轨迹或审批记录。
@@ -356,3 +357,4 @@ Agent 表为增量对象，单纯关闭功能无需执行 Alembic downgrade。�
 | `v2.3.0-stable` | 服务端保存前预检、指定人员案件数据管家、显式案件范围、只读批量质检和一键停用 | 目标服务器案件样本试用、人工采纳率、零案件自动写入和核心链路降级记录 |
 | `v2.4.0-stable` | 指定人员双域研判、显式案件与地图双范围、范围内距离与历史热点、只读证据报告和一键停用 | 目标服务器双域样本复核、范围隔离证据、零正式数据写入、人工有效关联率和连续五次演示 |
 | `v2.5.0-stable` | 统一运行中心、模型注册表适配、提供方/耗时/Token/估算成本计量和模型失败归因 | 目标服务器真实提供方连通性、价格口径签字、成本与账单抽样核对、性能基线和连续五次演示 |
+| `v2.6.0-stable` | 经验卡与研判报告独立版本、历史案例条件推荐、人工采纳/排除和报告引用轨迹 | 真实历史案例适用性复核、报告节时、采纳率、误推荐率和业务人员签字 |

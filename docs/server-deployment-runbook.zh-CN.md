@@ -1,7 +1,7 @@
-# AICommander v2.5.0-stable 服务器部署与运维手册
+# AICommander v2.6.0-stable 服务器部署与运维手册
 
 > 初次生产链路核验：2026-08-14；部署加固回归：2026-09-04
-> 适用版本：AICommander 2.5.0-stable
+> 适用版本：AICommander 2.6.0-stable
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
 > 系统边界：涉油案件数智研判与防控辅助系统，生产环境默认部署在单位内网或 VPN 后
 
@@ -10,8 +10,8 @@
 
 ## 1. 当前可部署性结论
 
-v2.5.0-stable 已作为统一 Agent 运行中心、多模型适配和成本/性能监控的稳定代码基线，并继承
-双域融合研判、案件数据管家和地图数据管家能力。Agent 默认关闭；即使开启，
+v2.6.0-stable 已作为版本化研判报告、经验卡和历史优秀案例受控复用的稳定代码基线，并继承
+统一 Agent 运行中心、双域融合研判、案件数据管家和地图数据管家能力。Agent 默认关闭；即使开启，
 默认也只运行内网规则引擎，不需要模型密钥或外网。生产容器链路已经在干净的
 PostgreSQL 16 和 Redis 7 环境中完成隔离启动、冒烟与备份恢复验收。正式业务上线前仍需
 在目标服务器完成域名、HTTPS、备份恢复记录、单位网络策略和业务人员验收；这些现场工作
@@ -115,7 +115,24 @@ bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
 上述结果证明 v2.5 发布代码具备前期测试部署条件。没有调用真实模型，也没有代替目标服务器、单位网络、
 真实业务数据和业务人员验收；外部/内网模型的连通、单价与账单核对仍需现场留痕。
 
-### 1.6 v2.5 继承并扩展的生产保护
+### 1.6 2026-09-08 v2.6.0-stable 代码级验证
+
+| 检查项 | 结果 |
+| --- | --- |
+| 后端测试 | 285 项全部通过；知识资产专项 38 项、Agent 专项 121 项全部通过 |
+| 前端测试 | 22 个测试文件、95 项全部通过；知识资产呈现 5 项、Agent 专项 6 个文件、24 项全部通过 |
+| TypeScript 与生产构建 | 通过；仅有既有的大分块体积提示 |
+| 生产依赖审计 | Python 和前端生产依赖均未发现已知漏洞 |
+| SQLite/PostgreSQL 空库迁移 | 均到达 `f6c8d2e4a913` |
+| 知识资产浏览器链路 | 经验卡保存/确认、历史推荐、采纳、报告引用、报告确认和复用轨迹全部通过 |
+| 隔离生产部署 | 五服务健康、Agent 默认关闭、自动冒烟、备份校验和临时库恢复全部通过 |
+| 备份恢复 | 临时库恢复 42 张表，迁移版本 `f6c8d2e4a913` |
+| 网络与认证 | 仅前端绑定 `127.0.0.1:33080`；匿名案件请求 401；接口文档关闭 |
+
+上述结果证明 v2.6 发布代码具备前期测试部署条件。浏览器知识链路没有配置模型 API、Redis 客户端或
+Agent Worker；目标服务器、单位网络、真实案件适用性、报告节时和业务人员签字仍需现场验收。
+
+### 1.7 v2.6 继承并扩展的生产保护
 
 - 所有业务 `/api` 和 WebSocket 默认要求登录。
 - 角色分为管理员、分析员、只读账号；只读账号不能写入，配置、模型、用户和部署接口仅管理员可用。
@@ -143,6 +160,9 @@ bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
 - 双域分析和综合证据报告始终只读，只复盘历史时空条件；不形成犯罪预测、自动串并案结论或巡逻指令。
 - 管理员可独立一键停用双域试用；活动双域任务和综合报告取消，已有证据轨迹保留，正式数据不变。
 - 保存前服务端预检不依赖 Agent Worker、Redis 或外部模型；异常时允许人工确认后继续走核心保存链路。
+- 经验卡和案件研判报告采用独立版本；源数据或报告统计范围变化后，旧草稿不能被确认。
+- 只有已人工确认且未归档的历史经验可以被推荐；采纳、排除和报告引用均保留复用轨迹。
+- 历史经验只进入报告参考章节，不自动修改案件、复制旧案结论或生成处置任务。
 - 统一运行中心只保存提供方、模型名、耗时、Token、估算成本和错误类型，不保存提示词、响应正文、密钥或网关地址。
 - 可选模型可以使用 OpenAI Agents 适配器或现有模型注册表；默认 `deterministic`，不强制使用 OpenAI API。
 - 模型注册表只能按部署配置选择已启用模型，普通用户不能逐任务任意切换；模型失败时内网规则结果保留。
@@ -298,13 +318,13 @@ aicommander.example.org  A  <服务器 IPv4>
 ## 7. 准备发布代码
 
 生产服务器应使用已评审的 Git 标签或固定提交，不要直接复制开发目录中的临时文件。
-本版本发布后应固定使用 `v2.5.0-stable` 标签，不要从开发分支直接部署：
+本版本发布后应固定使用 `v2.6.0-stable` 标签，不要从开发分支直接部署：
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/aicommander
-git clone --branch v2.5.0-stable --depth 1 <代码仓库地址> /opt/aicommander
+git clone --branch v2.6.0-stable --depth 1 <代码仓库地址> /opt/aicommander
 cd /opt/aicommander
-test "$(cat VERSION)" = "2.5.0-stable"
+test "$(cat VERSION)" = "2.6.0-stable"
 git status --short
 git rev-parse HEAD
 chmod 0755 scripts/*.sh backend/docker-entrypoint.sh
@@ -350,7 +370,7 @@ nano .env.production
 ```dotenv
 APP_DOMAIN=aicommander.example.org
 APP_PORT=3000
-APP_VERSION=2.5.0-stable
+APP_VERSION=2.6.0-stable
 SECRETS_DIR=./secrets
 BACKUP_DIR=./backups/postgres
 ENABLE_BONUS_ACCOUNTING=false
@@ -424,7 +444,7 @@ curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
 五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
-`ok`，并返回 `version=2.5.0-stable`。随后执行自动验收：
+`ok`，并返回 `version=2.6.0-stable`。随后执行自动验收：
 
 ```bash
 sudo ./scripts/verify-test-deployment.sh
@@ -798,8 +818,8 @@ sudo docker compose --env-file .env.production \
 sudo docker pull postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
 sudo docker pull redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
 sudo docker save -o aicommander-v2-images.tar \
-  aicommander-backend:2.5.0-stable \
-  aicommander-frontend:2.5.0-stable \
+  aicommander-backend:2.6.0-stable \
+  aicommander-frontend:2.6.0-stable \
   postgres:16-alpine \
   redis:7-alpine
 sha256sum aicommander-v2-images.tar
@@ -876,7 +896,7 @@ sudo du -sh /var/lib/docker /opt/aicommander/backups
 - [ ] 正式发布标签、服务器提交号和镜像版本一致。
 - [ ] `.env.production`、四个 secrets 和数据库备份均已加密异机保存。
 - [ ] SQLite 正式迁移报告无数量差异，抽查至少 20 起案件。
-- [ ] 273 项后端测试、94 项前端测试和构建在发布提交上通过。
+- [ ] 285 项后端测试、95 项前端测试和构建在发布提交上通过。
 - [ ] Python 与前端依赖审计无已知高危漏洞。
 - [ ] PostgreSQL、Redis、后端、Celery、前端全部健康。
 - [ ] 只有 80/443 对业务网络开放，数据库、Redis、后端不直接暴露。

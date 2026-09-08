@@ -17,6 +17,7 @@ from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.automation_alert import AutomationAlert
 from app.models.chain_link import ChainLink
 from app.models.user import AuditLog, User, UserSession
+from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
 
 __all__ = [
     "AIModel",
@@ -64,4 +65,6 @@ __all__ = [
     "User",
     "UserSession",
     "AuditLog",
+    "KnowledgeAsset",
+    "KnowledgeReuseRecord",
 ]
