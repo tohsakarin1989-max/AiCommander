@@ -19,7 +19,7 @@ interface LayoutProps {
 const NAV_ITEMS = [
   { label: '总览', num: '01', paths: ['/workbench', '/dashboard', '/'] },
   { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial', '/graphs/evidence'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial', '/graphs/evidence'] },
-  { label: '研判', num: '03', paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
+  { label: '研判', num: '03', paths: ['/situation', '/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
   { label: '助手', num: '05', paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'] },
   { label: '设置', num: '06', paths: ['/settings', '/settings/users'], adminOnly: true },
@@ -56,8 +56,9 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
     ],
   },
   {
-    paths: ['/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'],
+    paths: ['/situation', '/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'],
     items: [
+      { label: '态势研判', path: '/situation' },
       { label: '闭环工作台', path: '/case-review' },
       { label: '待办中心', path: '/suggestions' },
       { label: '案件研判', path: '/case-intelligence' },
@@ -263,7 +264,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '2.9.0-stable'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '3.0.0-stable'}</span></span>
         </div>
       </footer>
     </div>
