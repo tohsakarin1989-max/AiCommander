@@ -1242,6 +1242,15 @@ class CaseIntelligenceService:
 
     @staticmethod
     def _case_text_pool(case: Case) -> str:
+        # 经验卡是由本函数所依赖的标签生成的派生结果，不能再反向进入
+        # 下一轮标签提取，否则“软管抽油”等总结文本会自我放大出新标签。
+        source_features = dict(case.features or {})
+        intelligence = dict(source_features.get("intelligence") or {})
+        intelligence.pop("experience_card", None)
+        if intelligence:
+            source_features["intelligence"] = intelligence
+        else:
+            source_features.pop("intelligence", None)
         values = [
             case.case_number,
             case.location,
@@ -1257,7 +1266,7 @@ class CaseIntelligenceService:
             case.vehicle_handling,
             case.oil_handling,
             _text(case.involved_items),
-            _text(case.features),
+            _text(source_features),
         ]
         return " ".join(_text(value) for value in values if value)
 

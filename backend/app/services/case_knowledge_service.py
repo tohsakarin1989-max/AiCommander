@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.case import CaseEvidence
 from app.models.conclusion import Conclusion
+from app.models.knowledge_asset import KnowledgeAsset
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_profile_service import CaseProfileService
@@ -133,12 +134,30 @@ class CaseKnowledgeService:
                     "route": f"/cases?caseId={case.id}",
                     "evidence_refs": CaseKnowledgeService._case_evidence_refs_from_case(db, case),
                 })
-            card = _as_dict(_as_dict(features.get("intelligence")).get("experience_card"))
-            if card.get("manual_review_status") == "confirmed":
-                card_text = _text(card)
-                card_score = _score(query, card_text)
+            asset = CaseKnowledgeService._latest_experience_asset(
+                db, case.id, status="confirmed"
+            )
+            if asset:
+                card_score = _score(query, _text(asset.content))
                 if card_score > 0 or not query.strip():
-                    candidates.append(CaseKnowledgeService._experience_result(case, card, card_score))
+                    candidates.append(
+                        CaseKnowledgeService._experience_asset_result(
+                            case, asset, card_score
+                        )
+                    )
+            elif not CaseKnowledgeService._has_experience_asset(db, case.id):
+                # 兼容 v2.6 之前存放在 Case.features 中的已确认经验卡。
+                card = _as_dict(
+                    _as_dict(features.get("intelligence")).get("experience_card")
+                )
+                if card.get("manual_review_status") == "confirmed":
+                    card_score = _score(query, _text(card))
+                    if card_score > 0 or not query.strip():
+                        candidates.append(
+                            CaseKnowledgeService._experience_result(
+                                case, card, card_score
+                            )
+                        )
 
         for conclusion in CaseKnowledgeService._conclusion_query(db, case_id):
             text = _text([conclusion.summary, conclusion.evidence])
@@ -382,7 +401,37 @@ class CaseKnowledgeService:
     @staticmethod
     def _experience_items(db: Session, query: str, *, status: str, limit: int, require_match: bool) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
+        dedicated_case_ids = {
+            source_case_id
+            for (source_case_id,) in db.query(KnowledgeAsset.source_case_id)
+            .filter(KnowledgeAsset.asset_type == "experience_card")
+            .distinct()
+            .all()
+        }
+        assets = (
+            db.query(KnowledgeAsset)
+            .filter(
+                KnowledgeAsset.asset_type == "experience_card",
+                KnowledgeAsset.status == status,
+            )
+            .order_by(KnowledgeAsset.created_at.desc(), KnowledgeAsset.id.desc())
+            .limit(500)
+            .all()
+        )
+        for asset in assets:
+            case = db.query(Case).filter(Case.id == asset.source_case_id).first()
+            if not case:
+                continue
+            score = _score(query, _text(asset.content))
+            if require_match and score <= 0:
+                continue
+            items.append(
+                CaseKnowledgeService._experience_asset_result(case, asset, score)
+            )
+
         for case in db.query(Case).order_by(Case.occurred_time.desc()).limit(500).all():
+            if case.id in dedicated_case_ids:
+                continue
             card = _as_dict(_as_dict(_as_dict(case.features).get("intelligence")).get("experience_card"))
             if card.get("manual_review_status") != status:
                 continue
@@ -392,6 +441,32 @@ class CaseKnowledgeService:
             items.append(CaseKnowledgeService._experience_result(case, card, score))
         items.sort(key=lambda item: item.get("score", 0), reverse=True)
         return items[:limit]
+
+    @staticmethod
+    def _experience_asset_result(
+        case: Case,
+        asset: KnowledgeAsset,
+        score: float,
+    ) -> Dict[str, Any]:
+        card = _as_dict(asset.content)
+        return {
+            "source_type": "experience_card",
+            "source_id": asset.id,
+            "asset_id": asset.id,
+            "asset_version": asset.version,
+            "case_id": case.id,
+            "case_number": case.case_number,
+            "title": asset.title,
+            "summary": card.get("summary") or case.description or "经验卡摘要待补齐",
+            "snippet": card.get("summary") or case.description or "经验卡摘要待补齐",
+            "score": score,
+            "manual_review_status": asset.status,
+            "applicability_reason": "命中已确认经验卡，可作为同类已发生案件复盘参考。",
+            "tags": _as_list(_as_dict(card.get("evidence_basis")).get("tags")),
+            "route": f"/case-intelligence?caseId={case.id}",
+            "evidence_refs": asset.evidence_refs or [],
+            "boundary": card.get("boundary") or "经验卡只作为复盘参考。",
+        }
 
     @staticmethod
     def _experience_result(case: Case, card: Dict[str, Any], score: float) -> Dict[str, Any]:
@@ -414,6 +489,36 @@ class CaseKnowledgeService:
             ],
             "boundary": card.get("boundary") or "经验卡只作为复盘参考。",
         }
+
+    @staticmethod
+    def _latest_experience_asset(
+        db: Session,
+        case_id: int,
+        *,
+        status: str,
+    ) -> Optional[KnowledgeAsset]:
+        return (
+            db.query(KnowledgeAsset)
+            .filter(
+                KnowledgeAsset.asset_type == "experience_card",
+                KnowledgeAsset.source_case_id == case_id,
+                KnowledgeAsset.status == status,
+            )
+            .order_by(KnowledgeAsset.version.desc())
+            .first()
+        )
+
+    @staticmethod
+    def _has_experience_asset(db: Session, case_id: int) -> bool:
+        return (
+            db.query(KnowledgeAsset.id)
+            .filter(
+                KnowledgeAsset.asset_type == "experience_card",
+                KnowledgeAsset.source_case_id == case_id,
+            )
+            .first()
+            is not None
+        )
 
     @staticmethod
     def _case_evidence_refs(profile: Dict[str, Any]) -> List[Dict[str, Any]]:

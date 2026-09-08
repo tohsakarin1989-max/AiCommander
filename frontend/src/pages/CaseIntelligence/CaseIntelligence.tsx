@@ -50,8 +50,11 @@ import {
 } from '../../services/caseIntelligence'
 import type { Case, KnowledgeSearchResult, TagCurationResult } from '../../types'
 import {
+  buildReuseAuditLine,
+  canSelectExperienceRecommendation,
   getCaseDiagramSummary,
   getExperienceStatusMeta,
+  getKnowledgeAssetStatusMeta,
   getKnowledgeRoute,
   getKnowledgeSourceLabel,
   getReportDraftMeta,
@@ -431,6 +434,7 @@ const CaseIntelligence: React.FC = () => {
   const [limit, setLimit] = useState(8)
   const [knowledgeQuery, setKnowledgeQuery] = useState('')
   const [tagCurationResult, setTagCurationResult] = useState<TagCurationResult | null>(null)
+  const [selectedExperienceAssetIds, setSelectedExperienceAssetIds] = useState<number[]>([])
 
   const casesQuery = useQuery({
     queryKey: ['cases-for-intelligence'],
@@ -447,6 +451,10 @@ const CaseIntelligence: React.FC = () => {
       setSelectedCaseId(casesQuery.data[0].id)
     }
   }, [casesQuery.data, searchParams, selectedCaseId])
+
+  useEffect(() => {
+    setSelectedExperienceAssetIds([])
+  }, [selectedCaseId])
 
   const workbenchQuery = useQuery({
     queryKey: ['case-intelligence-workbench', selectedCaseId, days, limit],
@@ -504,26 +512,87 @@ const CaseIntelligence: React.FC = () => {
   const cases = casesQuery.data || []
   const selectedCase = cases.find((item: Case) => item.id === selectedCaseId)
 
-  const experienceAssetsQuery = useQuery({
-    queryKey: ['experience-assets', selectedCaseId, selectedCase?.location, selectedCase?.case_type],
-    queryFn: () => knowledgeApi.searchExperienceCards({
-      q: selectedCase?.location || selectedCase?.case_type || selectedCase?.case_number || '涉油案件',
-      limit: 6,
-    }),
+  const knowledgeAssetsQuery = useQuery({
+    queryKey: ['knowledge-assets', selectedCaseId],
+    queryFn: () => knowledgeApi.listAssets({ case_id: selectedCaseId, limit: 50 }),
     enabled: !!selectedCaseId,
   })
 
-  const experienceStatusMutation = useMutation({
-    mutationFn: (status: 'confirmed' | 'archived') => knowledgeApi.updateExperienceCardStatus(selectedCaseId as number, {
-      status,
-      reviewer: '人工复核',
-      note: status === 'confirmed' ? '页面人工确认入库' : '页面人工归档',
-    }),
-    onSuccess: (_result, status) => {
-      message.success(status === 'confirmed' ? '经验卡已确认入库' : '经验卡已归档')
+  const reuseRecommendationsQuery = useQuery({
+    queryKey: ['experience-reuse-recommendations', selectedCaseId, days],
+    queryFn: () => knowledgeApi.getReuseRecommendations(selectedCaseId as number, { days: Math.max(days, 730), limit: 8 }),
+    enabled: !!selectedCaseId,
+  })
+
+  const reuseRecordsQuery = useQuery({
+    queryKey: ['knowledge-reuse-records', selectedCaseId],
+    queryFn: () => knowledgeApi.listReuseRecords(selectedCaseId as number, 50),
+    enabled: !!selectedCaseId,
+  })
+
+  const refreshKnowledgeAssets = () => {
+    queryClient.invalidateQueries({ queryKey: ['knowledge-assets'] })
+    queryClient.invalidateQueries({ queryKey: ['experience-reuse-recommendations'] })
+    queryClient.invalidateQueries({ queryKey: ['knowledge-reuse-records'] })
+    queryClient.invalidateQueries({ queryKey: ['case-knowledge-search'] })
+  }
+
+  const generateExperienceAssetMutation = useMutation({
+    mutationFn: () => knowledgeApi.generateExperienceAsset(selectedCaseId as number),
+    onSuccess: (asset) => {
+      message.success(`经验卡 v${asset.version} 已保存为待复核版本`)
+      refreshKnowledgeAssets()
       queryClient.invalidateQueries({ queryKey: ['case-intelligence-workbench'] })
-      queryClient.invalidateQueries({ queryKey: ['experience-assets'] })
-      queryClient.invalidateQueries({ queryKey: ['case-knowledge-search'] })
+    },
+  })
+
+  const reviewAssetMutation = useMutation({
+    mutationFn: ({ assetId, status }: { assetId: number; status: 'confirmed' | 'archived' }) => (
+      knowledgeApi.reviewAsset(assetId, {
+        status,
+        note: status === 'confirmed' ? '页面人工确认事实、证据和适用边界' : '页面人工归档',
+      })
+    ),
+    onSuccess: (asset) => {
+      message.success(asset.status === 'confirmed' ? `v${asset.version} 已确认` : `v${asset.version} 已归档`)
+      refreshKnowledgeAssets()
+    },
+  })
+
+  const reuseDecisionMutation = useMutation({
+    mutationFn: ({ assetId, decision }: { assetId: number; decision: 'accepted' | 'rejected' }) => (
+      knowledgeApi.recordReuseDecision({
+        source_asset_id: assetId,
+        target_case_id: selectedCaseId as number,
+        decision,
+        purpose: decision === 'accepted' ? '作为本案报告参考' : '当前案件不适用',
+        note: decision === 'accepted' ? '人工选择，生成报告时仍需核对差异' : '人工判断当前条件不适用',
+      })
+    ),
+    onSuccess: (_record, variables) => {
+      if (variables.decision === 'accepted') {
+        setSelectedExperienceAssetIds(ids => (
+          ids.includes(variables.assetId) ? ids : [...ids, variables.assetId]
+        ))
+        message.success('已采纳为报告参考，尚未写入正式结论')
+      } else {
+        setSelectedExperienceAssetIds(ids => ids.filter(id => id !== variables.assetId))
+        message.info('已记录为当前案件不适用')
+      }
+      refreshKnowledgeAssets()
+    },
+  })
+
+  const reportSnapshotMutation = useMutation({
+    mutationFn: () => knowledgeApi.generateReportSnapshot(selectedCaseId as number, {
+      experience_asset_ids: selectedExperienceAssetIds,
+      days,
+      limit,
+    }),
+    onSuccess: (asset) => {
+      message.success(`研判报告 v${asset.version} 已保存为待复核快照`)
+      setSelectedExperienceAssetIds([])
+      refreshKnowledgeAssets()
     },
   })
 
@@ -533,6 +602,9 @@ const CaseIntelligence: React.FC = () => {
   const reportMarkdown = getReportMarkdown(workbench?.report)
   const reportMeta = getReportDraftMeta(workbench?.report)
   const experienceStatus = getExperienceStatusMeta(workbench?.experience_card?.manual_review_status)
+  const knowledgeAssets = knowledgeAssetsQuery.data?.items || []
+  const experienceAssetVersions = knowledgeAssets.filter(item => item.asset_type === 'experience_card')
+  const reportSnapshots = knowledgeAssets.filter(item => item.asset_type === 'case_report')
 
   const copyReport = async () => {
     if (!reportMarkdown) return
@@ -984,21 +1056,18 @@ const CaseIntelligence: React.FC = () => {
                               <Button
                                 size="small"
                                 icon={<CheckCircleOutlined />}
-                                disabled={!selectedCaseId || experienceStatus.label === '已入库'}
-                                loading={experienceStatusMutation.isPending}
-                                onClick={() => experienceStatusMutation.mutate('confirmed')}
+                                disabled={!selectedCaseId}
+                                loading={generateExperienceAssetMutation.isPending}
+                                onClick={() => generateExperienceAssetMutation.mutate()}
                               >
-                                确认入库
-                              </Button>
-                              <Button
-                                size="small"
-                                disabled={!selectedCaseId || experienceStatus.label === '已归档'}
-                                loading={experienceStatusMutation.isPending}
-                                onClick={() => experienceStatusMutation.mutate('archived')}
-                              >
-                                归档经验卡
+                                保存经验卡版本
                               </Button>
                             </Space>
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="当前内容是即时预览；保存后形成独立版本，人工确认后才进入历史经验推荐。"
+                            />
                             <Paragraph>{workbench.experience_card.summary}</Paragraph>
                             <div className="intel-section-mini">为什么值得沉淀</div>
                             <List
@@ -1012,41 +1081,107 @@ const CaseIntelligence: React.FC = () => {
                               dataSource={workbench.experience_card.next_attention_points}
                               renderItem={item => <List.Item>{item}</List.Item>}
                             />
+                            <div className="intel-section-mini">版本记录</div>
+                            {knowledgeAssetsQuery.isLoading ? (
+                              <div className="intel-loading intel-loading--small"><Spin /> 正在读取版本…</div>
+                            ) : experienceAssetVersions.length ? (
+                              <List
+                                size="small"
+                                dataSource={experienceAssetVersions}
+                                renderItem={asset => {
+                                  const statusMeta = getKnowledgeAssetStatusMeta(asset.status)
+                                  return (
+                                    <List.Item
+                                      actions={[
+                                        asset.status === 'draft' ? (
+                                          <Button
+                                            key="confirm"
+                                            size="small"
+                                            loading={reviewAssetMutation.isPending && reviewAssetMutation.variables?.assetId === asset.id}
+                                            onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'confirmed' })}
+                                          >
+                                            人工确认
+                                          </Button>
+                                        ) : null,
+                                        asset.status !== 'archived' ? (
+                                          <Button
+                                            key="archive"
+                                            size="small"
+                                            onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'archived' })}
+                                          >
+                                            归档
+                                          </Button>
+                                        ) : null,
+                                      ].filter(Boolean)}
+                                    >
+                                      <List.Item.Meta
+                                        title={<Space><Text strong>v{asset.version}</Text><Tag color={statusMeta.color}>{statusMeta.label}</Tag></Space>}
+                                        description={`${asset.evidence_refs.length} 条证据引用 · ${asset.reviewer_label || '尚未复核'}`}
+                                      />
+                                    </List.Item>
+                                  )
+                                }}
+                              />
+                            ) : (
+                              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未保存独立经验卡版本" />
+                            )}
                           </Space>
                         ) : (
                           <Empty description="全局模式下不生成单案复盘卡，请选择案件" />
                         )}
                       </Card>
-                      <Card title="可借鉴经验资产" className="intel-panel-card">
-                        {experienceAssetsQuery.isLoading ? (
+                      <Card title="历史优秀案例复用" className="intel-panel-card">
+                        {reuseRecommendationsQuery.data?.boundary && (
+                          <Alert type="warning" showIcon message={reuseRecommendationsQuery.data.boundary} />
+                        )}
+                        {reuseRecommendationsQuery.isLoading ? (
                           <div className="intel-loading intel-loading--small"><Spin /> 正在召回经验资产…</div>
-                        ) : experienceAssetsQuery.data?.items.length ? (
+                        ) : reuseRecommendationsQuery.data?.items.length ? (
                           <List
                             size="small"
-                            dataSource={experienceAssetsQuery.data.items}
+                            dataSource={reuseRecommendationsQuery.data.items}
                             renderItem={item => (
                               <List.Item
                                 actions={[
                                   <Button
-                                    key="open"
+                                    key="accept"
                                     size="small"
-                                    onClick={() => navigate(item.route)}
+                                    type={selectedExperienceAssetIds.includes(item.asset_id) ? 'primary' : 'default'}
+                                    disabled={
+                                      !canSelectExperienceRecommendation(item)
+                                      || selectedExperienceAssetIds.includes(item.asset_id)
+                                    }
+                                    loading={reuseDecisionMutation.isPending && reuseDecisionMutation.variables?.assetId === item.asset_id}
+                                    onClick={() => reuseDecisionMutation.mutate({ assetId: item.asset_id, decision: 'accepted' })}
                                   >
-                                    来源
+                                    {selectedExperienceAssetIds.includes(item.asset_id)
+                                      ? '已选入报告'
+                                      : item.already_reused
+                                        ? '再次选入报告'
+                                        : '采纳并选入'}
                                   </Button>,
+                                  <Button
+                                    key="reject"
+                                    size="small"
+                                    disabled={item.already_reused}
+                                    onClick={() => reuseDecisionMutation.mutate({ assetId: item.asset_id, decision: 'rejected' })}
+                                  >不适用</Button>,
+                                  <Button key="source" size="small" onClick={() => navigate(`/case-intelligence?caseId=${item.source_case_id}`)}>来源</Button>,
                                 ]}
                               >
                                 <List.Item.Meta
                                   title={(
                                     <Space wrap>
                                       <Text strong>{item.title}</Text>
-                                      <Tag color="green">{item.manual_review_status}</Tag>
+                                      <Tag color="green">已确认 v{item.version}</Tag>
+                                      <Tag color="blue">相似度 {Math.round(item.similarity_score)}%</Tag>
                                     </Space>
                                   )}
                                   description={(
                                     <Space direction="vertical" size={4}>
-                                      <Text>{item.applicability_reason}</Text>
-                                      <Text type="secondary">{item.snippet}</Text>
+                                      <Text>{item.summary}</Text>
+                                      <Text type="secondary">适用依据：{item.applicability_reasons.slice(0, 2).join('；')}</Text>
+                                      <Text type="warning">差异提示：{item.mismatch_risks.slice(0, 2).join('；')}</Text>
                                     </Space>
                                   )}
                                 />
@@ -1054,7 +1189,7 @@ const CaseIntelligence: React.FC = () => {
                             )}
                           />
                         ) : (
-                          <Empty description="暂无已确认经验卡资产可召回" />
+                          <Empty description="暂无相似且已人工确认的历史经验资产" />
                         )}
                       </Card>
                     </Col>
@@ -1068,10 +1203,60 @@ const CaseIntelligence: React.FC = () => {
                             <Tag color="gold">{reportMeta.reviewStatus}</Tag>
                             <Tag color="blue">{reportMeta.modelStatus}</Tag>
                             <Button size="small" onClick={copyReport}>复制报告</Button>
+                            <Button
+                              size="small"
+                              type="primary"
+                              disabled={!selectedCaseId}
+                              loading={reportSnapshotMutation.isPending}
+                              onClick={() => reportSnapshotMutation.mutate()}
+                            >
+                              保存报告快照{selectedExperienceAssetIds.length ? `（引用 ${selectedExperienceAssetIds.length}）` : ''}
+                            </Button>
                           </Space>
                         )}
                       >
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={`当前选择 ${selectedExperienceAssetIds.length} 张历史经验卡；保存后仍为待人工复核草稿。`}
+                        />
                         <pre className="intel-report">{reportMarkdown}</pre>
+                        <div className="intel-section-mini">报告版本</div>
+                        <List
+                          size="small"
+                          dataSource={reportSnapshots}
+                          locale={{ emptyText: '尚未保存报告快照' }}
+                          renderItem={asset => {
+                            const statusMeta = getKnowledgeAssetStatusMeta(asset.status)
+                            return (
+                              <List.Item
+                                actions={asset.status === 'draft' ? [
+                                  <Button
+                                    key="confirm-report"
+                                    size="small"
+                                    onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'confirmed' })}
+                                  >人工确认</Button>,
+                                ] : []}
+                              >
+                                <List.Item.Meta
+                                  title={<Space><Text strong>报告 v{asset.version}</Text><Tag color={statusMeta.color}>{statusMeta.label}</Tag></Space>}
+                                  description={`${asset.evidence_refs.length} 条证据引用 · ${asset.content.reused_experience?.length || 0} 张历史经验卡`}
+                                />
+                              </List.Item>
+                            )
+                          }}
+                        />
+                        <div className="intel-section-mini">经验复用轨迹</div>
+                        <List
+                          size="small"
+                          dataSource={reuseRecordsQuery.data?.items || []}
+                          locale={{ emptyText: '尚无采纳、排除或报告引用记录' }}
+                          renderItem={item => (
+                            <List.Item>
+                              <Text>{buildReuseAuditLine(item)}</Text>
+                            </List.Item>
+                          )}
+                        />
                       </Card>
                     </Col>
                   </Row>

@@ -48,6 +48,18 @@ const EXPERIENCE_STATUS_LABELS: Record<string, { label: string; color: string }>
   archived: { label: '已归档', color: 'default' },
 }
 
+const KNOWLEDGE_ASSET_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  draft: { label: '待复核', color: 'gold' },
+  confirmed: { label: '已确认', color: 'green' },
+  archived: { label: '已归档', color: 'default' },
+}
+
+const REUSE_DECISION_LABELS: Record<string, string> = {
+  accepted: '已采纳',
+  rejected: '不适用',
+  referenced: '已引用',
+}
+
 export function getKnowledgeSourceLabel(sourceType?: string): string {
   if (!sourceType) return '知识来源'
   return KNOWLEDGE_SOURCE_LABELS[sourceType] || sourceType
@@ -56,6 +68,28 @@ export function getKnowledgeSourceLabel(sourceType?: string): string {
 export function getExperienceStatusMeta(status?: unknown): { label: string; color: string } {
   const key = typeof status === 'string' ? status : ''
   return EXPERIENCE_STATUS_LABELS[key] || { label: key || '待确认', color: 'gold' }
+}
+
+export function getKnowledgeAssetStatusMeta(status?: unknown): { label: string; color: string } {
+  const key = typeof status === 'string' ? status : ''
+  return KNOWLEDGE_ASSET_STATUS_LABELS[key] || { label: key || '未知状态', color: 'default' }
+}
+
+export function canSelectExperienceRecommendation(item: {
+  status?: string
+  already_reused?: boolean
+}): boolean {
+  return item.status === 'confirmed'
+}
+
+export function buildReuseAuditLine(item: {
+  source_case_number?: string | null
+  decision: string
+  purpose: string
+  created_at?: string | null
+}): string {
+  const decision = REUSE_DECISION_LABELS[item.decision] || item.decision
+  return `${item.source_case_number || '未知案件'} · ${decision} · ${item.purpose}`
 }
 
 export function getCaseDiagramSummary(diagram?: CaseDiagram | null): string {

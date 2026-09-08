@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { IntelligenceReport } from '../../services/caseIntelligence'
 import {
+  buildReuseAuditLine,
+  canSelectExperienceRecommendation,
   getCaseDiagramSummary,
   getExperienceStatusMeta,
+  getKnowledgeAssetStatusMeta,
   getKnowledgeRoute,
   getKnowledgeSourceLabel,
   getReportDraftMeta,
@@ -74,5 +77,19 @@ describe('caseIntelligencePresentation', () => {
       route: '/reports?reportId=3',
       evidence_refs: [],
     })).toBe('/reports?reportId=3')
+  })
+
+  it('keeps historical experience reuse explicit and reviewable', () => {
+    expect(getKnowledgeAssetStatusMeta('confirmed')).toEqual({ label: '已确认', color: 'green' })
+    expect(getKnowledgeAssetStatusMeta('draft')).toEqual({ label: '待复核', color: 'gold' })
+    expect(canSelectExperienceRecommendation({ status: 'confirmed', already_reused: false })).toBe(true)
+    expect(canSelectExperienceRecommendation({ status: 'draft', already_reused: false })).toBe(false)
+    expect(canSelectExperienceRecommendation({ status: 'confirmed', already_reused: true })).toBe(true)
+    expect(buildReuseAuditLine({
+      source_case_number: 'EXP-001',
+      decision: 'accepted',
+      purpose: '作为本案报告参考',
+      created_at: '2026-09-08T08:00:00Z',
+    })).toContain('EXP-001 · 已采纳 · 作为本案报告参考')
   })
 })
