@@ -158,6 +158,12 @@ const Workbench: React.FC = () => {
               >
                 {startMutation.isPending ? '正在建立任务…' : getTaskActionLabel(user!.role, selected)}
               </button>
+              <button
+                className="btn-ghost wb-evidence-link"
+                onClick={() => navigate(`/graphs/evidence?caseId=${selected.source_id}`)}
+              >
+                查看本案证据图谱
+              </button>
               <small className="wb-detail-boundary">进入任务不会自动修改案件、经验卡或报告；完成状态由操作人主动确认。</small>
             </div>
           ) : <div className="empty-state"><span className="icon">✓</span>暂无待处理任务</div>}

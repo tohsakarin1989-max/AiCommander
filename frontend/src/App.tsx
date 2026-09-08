@@ -26,6 +26,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'))
 const ConclusionFactory = lazy(() => import('./pages/Conclusions/ConclusionFactory'))
 const AgentCenter = lazy(() => import('./pages/Agents/AgentCenter'))
 const CaseGraph = lazy(() => import('./pages/Graphs/CaseGraph'))
+const EvidenceGraph = lazy(() => import('./pages/Graphs/EvidenceGraph'))
 const CaseReviewCockpit = lazy(() => import('./pages/CaseReviewCockpit/CaseReviewCockpit'))
 const AreaAnalysis = lazy(() => import('./pages/AreaAnalysis/AreaAnalysis'))
 const Patrols = lazy(() => import('./pages/Patrols/Patrols'))
@@ -85,6 +86,7 @@ function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
           <Route path="/events"          element={<EventCenter />} />
           <Route path="/jurisdiction"    element={<Jurisdiction />} />
           <Route path="/graphs/serial"   element={<CaseGraph />} />
+          <Route path="/graphs/evidence" element={<EvidenceGraph />} />
           <Route path="/gangs"           element={<GangAnalysis />} />
           <Route path="/patrols"         element={<Patrols />} />
           <Route path="/assistant"       element={<Assistant />} />
