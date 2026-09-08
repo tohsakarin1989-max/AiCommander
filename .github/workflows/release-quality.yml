@@ -89,3 +89,4 @@ jobs:
           sh -n scripts/verify-backup-restore.sh
           sh -n scripts/rehearse-release.sh
           sh -n scripts/verify-agent-lab.sh
+          sh -n scripts/verify-workbench.sh

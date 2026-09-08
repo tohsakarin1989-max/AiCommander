@@ -18,6 +18,7 @@ from app.models.automation_alert import AutomationAlert
 from app.models.chain_link import ChainLink
 from app.models.user import AuditLog, User, UserSession
 from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
+from app.models.workbench import WorkbenchTaskSession
 
 __all__ = [
     "AIModel",
@@ -67,4 +68,5 @@ __all__ = [
     "AuditLog",
     "KnowledgeAsset",
     "KnowledgeReuseRecord",
+    "WorkbenchTaskSession",
 ]

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ConfigProvider, theme as antdTheme } from 'antd'
+import { App as AntdApp, ConfigProvider, theme as antdTheme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Layout from './components/Layout'
 import TweaksPanel from './components/TweaksPanel/TweaksPanel'
@@ -11,6 +11,7 @@ import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from './co
 import { getThemeTokens, normalizeThemeMode, toggleThemeMode, type ThemeMode } from './theme/themeMode'
 
 const Home = lazy(() => import('./pages/Home/Home'))
+const Workbench = lazy(() => import('./pages/Workbench/Workbench'))
 const Cases = lazy(() => import('./pages/Cases/Cases'))
 const CasesMap = lazy(() => import('./pages/Cases/CasesMap'))
 const CaseFeatures = lazy(() => import('./pages/Cases/CaseFeatures'))
@@ -66,6 +67,7 @@ function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/"                element={<Home />} />
+          <Route path="/workbench"       element={<Workbench />} />
           <Route path="/dashboard"       element={<Dashboard />} />
           <Route path="/cases"           element={<Cases />} />
           <Route path="/cases/map"       element={<CasesMap />} />
@@ -140,11 +142,13 @@ function App() {
           },
         }}
       >
-        <BrowserRouter>
-          <AuthProvider>
-            <AuthenticatedApp themeMode={themeMode} onToggleTheme={toggleTheme} />
-          </AuthProvider>
-        </BrowserRouter>
+        <AntdApp>
+          <BrowserRouter>
+            <AuthProvider>
+              <AuthenticatedApp themeMode={themeMode} onToggleTheme={toggleTheme} />
+            </AuthProvider>
+          </BrowserRouter>
+        </AntdApp>
       </ConfigProvider>
     </QueryClientProvider>
   )

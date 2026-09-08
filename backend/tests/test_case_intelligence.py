@@ -180,6 +180,32 @@ def test_case_intelligence_workbench_builds_full_explainable_chain():
     assert {"facts", "patterns", "gaps", "prevention_reference"}.issubset(section_types)
 
 
+def test_prevention_suggestions_accept_legacy_string_quality_gaps():
+    db = _session()
+    case = _add_case(
+        db,
+        "INT-LEGACY-GAPS",
+        days_ago=1,
+        hour=2,
+        latitude=39.9,
+        longitude=116.4,
+        description="脱敏的旧版案件质量字段兼容样本。",
+    )
+    case.quality_issues = {
+        "missing_required": ["坐标信息", {"label": "报送单位"}],
+    }
+    db.commit()
+
+    payload = CaseIntelligenceService.build_prevention_suggestions(
+        db,
+        case_id=case.id,
+        days=30,
+    )
+    completion = next(item for item in payload["items"] if item["id"] == "data_completion")
+
+    assert completion["evidence"] == ["坐标信息", "报送单位"]
+
+
 def test_similarity_uses_conditions_not_same_vehicle_or_person_as_core_anchor():
     db = _session()
     base = _seed(db)

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.api import agent_runs, auth, case_steward, cases, dual_domain_pilot, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime
+from app.api import agent_runs, auth, case_steward, cases, dual_domain_pilot, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime, workbench
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -103,6 +103,7 @@ app.include_router(case_intelligence.router, prefix="/api/case-intelligence", ta
 app.include_router(automation_alerts.router, prefix="/api/automation-alerts", tags=["automation-alerts"])
 app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-links"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
+app.include_router(workbench.router, prefix="/api/workbench", tags=["workbench"])
 
 @app.get("/")
 async def root():

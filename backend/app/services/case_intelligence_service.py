@@ -625,7 +625,11 @@ class CaseIntelligenceService:
                     0.82,
                 ))
             if quality and quality.get("missing_required"):
-                missing = [item.get("label") for item in quality["missing_required"][:5] if item.get("label")]
+                missing = []
+                for item in quality["missing_required"][:5]:
+                    label = item.get("label") if isinstance(item, dict) else str(item).strip()
+                    if label:
+                        missing.append(label)
                 suggestions.append(CaseIntelligenceService._suggestion(
                     "data_completion",
                     "先补齐影响研判的案件字段",

@@ -144,6 +144,24 @@ def test_review_rejects_stale_asset_and_confirm_is_idempotent():
     assert repeated["id"] == confirmed["id"]
 
 
+def test_archived_experience_can_be_regenerated_as_a_new_draft_version():
+    db = _session()
+    client = _client(db)
+    case = _seed_case(db, number="KA-ARCHIVE-REGENERATE")
+    first = _generate_experience(client, case.id)
+    archived = client.post(
+        f"/api/knowledge/assets/{first['id']}/review",
+        json={"status": "archived", "note": "当前版本不再采用"},
+    )
+
+    regenerated = _generate_experience(client, case.id)
+
+    assert archived.status_code == 200
+    assert regenerated["id"] != first["id"]
+    assert regenerated["version"] == 2
+    assert regenerated["status"] == "draft"
+
+
 def test_review_rejects_asset_when_evidence_changed_after_generation():
     db = _session()
     client = _client(db)

@@ -36,7 +36,7 @@ AUTO_CREATE_TABLES=false \
 "$PYTHON" -m alembic upgrade head
 
 VERIFY_DB="$VERIFY_DB" "$PYTHON" -c \
-    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'knowledge_assets','knowledge_reuse_records'}; missing=required-t; v=c.execute('select version_num from alembic_version').fetchone()[0]; c.close(); assert not missing, sorted(missing); assert v == 'f6c8d2e4a913', v"
+    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'knowledge_assets','knowledge_reuse_records','workbench_task_sessions'}; missing=required-t; v=c.execute('select version_num from alembic_version').fetchone()[0]; c.close(); assert not missing, sorted(missing); assert v == 'a7d9e1f2b304', v"
 
 echo "[3/5] 前端知识资产呈现测试"
 cd "$FRONTEND_DIR"
@@ -54,4 +54,4 @@ cd "$BACKEND_DIR"
 cd "$ROOT_DIR"
 git diff --check
 
-echo "v2.6 知识资产代码级验收通过；真实业务案例采纳率与报告可用性仍需指定人员现场复核。"
+echo "v2.8 知识资产代码级验收通过；真实业务案例采纳率与报告可用性仍需指定人员现场复核。"
