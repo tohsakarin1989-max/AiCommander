@@ -20,7 +20,8 @@ def test_deployment_scripts_support_isolated_configuration():
     assert 'COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/' in deploy
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"' in init
     assert "$ENV_FILE，" not in init
-    assert 'APP_VERSION: "${APP_VERSION:-3.6.0-stable}"' in compose
+    version = _read("VERSION").strip()
+    assert f'APP_VERSION: "${{APP_VERSION:-{version}}}"' in compose
     assert '${IMAGE_PREFIX:-aicommander}-backend:' in compose
     assert '${IMAGE_PREFIX:-aicommander}-frontend:' in compose
     assert "      - edge" in compose

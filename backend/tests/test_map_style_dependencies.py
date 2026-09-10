@@ -150,7 +150,8 @@ def test_declared_sprite_binding_and_missing_retina(tmp_path):
 
 
 @pytest.mark.parametrize('content', [b'{"version":8,"version":8}', b'[]',
-    b'[' * 10000 + b'0' + b']' * 10000, b'', b'\xff'])
+    b'[' * 10000 + b'0' + b']' * 10000, b'', b'\xff'],
+    ids=['duplicate-key', 'array', 'deep-nesting', 'empty', 'invalid-utf8'])
 def test_bad_json_is_controlled_failure(tmp_path, content):
     _, manifest = inputs(tmp_path)
     with pytest.raises(ValueError):

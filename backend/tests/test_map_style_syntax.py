@@ -47,7 +47,8 @@ def test_invalid_child_response_cannot_authorize_import(monkeypatch, stdout):
         service.validate_style_syntax(b'{}')
 
 
-@pytest.mark.parametrize('content', [b'', b'X' * (1024 * 1024 + 1), '{}'])
+@pytest.mark.parametrize('content', [b'', b'X' * (1024 * 1024 + 1), '{}'],
+    ids=['empty', 'oversized', 'not-bytes'])
 def test_bounded_input(content):
     with pytest.raises(ValueError, match='invalid_style_size'):
         service.validate_style_syntax(content)
