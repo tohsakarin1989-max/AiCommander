@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import subprocess
 from threading import BoundedSemaphore
 
 from sqlalchemy.orm import Session
+from PIL import Image
 
 from app.services.case_result_document import CaseResultDocument, load_case_result_document
 
@@ -28,8 +31,25 @@ class CaseResultExportError(Exception):
         super().__init__(code)
 
 
-def render_docx(document: CaseResultDocument) -> bytes:
-    payload = json.dumps(asdict(document), ensure_ascii=False, allow_nan=False).encode()
+def render_docx(document: CaseResultDocument, *, map_image: bytes | None = None) -> bytes:
+    data = asdict(document)
+    if map_image is not None:
+        if len(map_image) > 8 * 1024 * 1024:
+            raise CaseResultExportError("invalid_map_image")
+        maps = [json.loads(block.text) for block in document.blocks if block.kind == "map"]
+        if len(maps) != 1 or not maps[0].get("map_snapshot_id"):
+            raise CaseResultExportError("invalid_map_image")
+        try:
+            with Image.open(io.BytesIO(map_image)) as image:
+                if image.format != "PNG" or image.width != 960 or not 500 <= image.height <= 1500:
+                    raise ValueError("invalid_image")
+                image.verify()
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise CaseResultExportError("invalid_map_image") from None
+        data["map_image"] = {"result_id": document.result_id, "content_sha256": document.content_sha256,
+                             "map_snapshot_id": maps[0]["map_snapshot_id"],
+                             "png_base64": base64.b64encode(map_image).decode("ascii")}
+    payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
     if len(payload) > MAX_INPUT_BYTES:
         raise CaseResultExportError("document_too_large")
     node = shutil.which("node")
@@ -64,7 +84,17 @@ def render_docx(document: CaseResultDocument) -> bytes:
 
 def export_case_result_docx(db: Session, result_id: str) -> tuple[CaseResultDocument, bytes]:
     document = load_case_result_document(db, result_id)
-    data = render_docx(document)
+    maps = [json.loads(block.text) for block in document.blocks if block.kind == "map"]
+    if any(item.get("map_snapshot_id") for item in maps):
+        from app.services.case_map_image import CaseMapImageError, render_case_map_image
+
+        try:
+            image = render_case_map_image(db, result_id)
+        except CaseMapImageError:
+            raise CaseResultExportError("map_rendering_not_ready") from None
+        data = render_docx(document, map_image=image)
+    else:
+        data = render_docx(document)
     # 返回前重新校验证据；渲染期间失效时不交付已生成文件。
     current = load_case_result_document(db, result_id)
     if current.content_sha256 != document.content_sha256:

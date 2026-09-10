@@ -2,6 +2,7 @@ import hashlib
 import io
 import math
 import os
+from zipfile import ZipFile
 
 import pytest
 from PIL import Image, ImageDraw
@@ -66,7 +67,18 @@ def test_real_browser_renders_registered_offline_raster(db_session, result_data,
         with pytest.raises(CaseMapImageError, match="^map_render_failed$"):
             render_case_map_image(db_session, saved["id"])
         return
-    image = render_case_map_image(db_session, saved["id"])
+    from app.services.case_result_export import export_case_result_docx
+
+    document, data = export_case_result_docx(db_session, saved["id"])
+    assert document.content_sha256 == saved["content_sha256"]
+    (tmp_path / "map-result.docx").write_bytes(data)
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("word/media/") and not name.endswith("/")]
+        assert len(media) == 1
+        image = archive.read(media[0])
+        xml = archive.read("word/document.xml").decode()
+        assert "map-1" in xml and "冻结版本地图" in xml
+        assert 'TargetMode="External"' not in archive.read("word/_rels/document.xml.rels").decode()
     (tmp_path / "rendered-map.png").write_bytes(image)
     decoded = Image.open(io.BytesIO(image)).convert("RGB")
     assert decoded.width == 960 and decoded.height >= 700

@@ -1,5 +1,6 @@
 """真实docx-js渲染；测试环境须提供Node及已安装的document-renderer依赖。"""
 import io
+import base64
 import json
 import os
 from pathlib import Path
@@ -15,14 +16,14 @@ import pytest
 RENDERER = Path(__file__).resolve().parents[1] / "document-renderer" / "render-docx.cjs"
 
 
-def render(blocks):
+def render(blocks, **envelope):
     node = os.environ.get("AIC_TEST_DOCX_NODE") or shutil.which("node")
     if not node:
         pytest.skip("Node未安装，不能验证真实Word渲染")
     if not (RENDERER.parent / "node_modules" / "docx").is_dir() and not os.environ.get("NODE_PATH"):
         pytest.skip("document-renderer依赖未安装；该跳过不代表Word导出验收通过")
     return subprocess.run([node, str(RENDERER)], input=json.dumps({
-        "schema": "case-result-document-4.1.0-1", "blocks": blocks,
+        "schema": "case-result-document-4.1.0-1", "blocks": blocks, **envelope,
     }, ensure_ascii=False).encode(), capture_output=True, timeout=30, check=False)
 
 
@@ -88,3 +89,18 @@ def test_real_docx_from_semantic_document_keeps_all_records_and_references(tmp_p
     target = tmp_path / "synthetic-long-result.docx"
     target.write_bytes(result.stdout)
     print(f"synthetic_docx_visual_sample={target}")
+
+
+@pytest.mark.parametrize("change", ["result_id", "content_sha256", "map_snapshot_id", "png_base64"])
+def test_docx_rejects_image_from_different_frozen_result(change):
+    from PIL import Image
+
+    data = io.BytesIO()
+    Image.new("RGB", (960, 700), "white").save(data, format="PNG")
+    image = {"result_id": "result-1", "content_sha256": "digest", "map_snapshot_id": "map-1",
+             "png_base64": base64.b64encode(data.getvalue()).decode()}
+    image[change] = "wrong"
+    result = render([{"kind": "map", "text": '{"map_snapshot_id":"map-1","candidates":[]}'}],
+                    result_id="result-1", content_sha256="digest", map_image=image)
+    assert result.returncode != 0 and result.stdout == b""
+    assert result.stderr.decode().splitlines()[-1] == "invalid_frozen_map_image"

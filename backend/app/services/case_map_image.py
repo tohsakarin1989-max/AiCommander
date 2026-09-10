@@ -17,7 +17,7 @@ STATIC_NAMES = frozenset({"maplibre-gl.mjs", "maplibre-gl-shared.mjs", "maplibre
 HTML = b'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <link rel="stylesheet" href="/static/maplibre-gl.css">
 <style>body{margin:0;background:white;font:16px sans-serif;color:#17212b}#map{height:500px}
-#legend{padding:12px;white-space:pre-wrap;line-height:1.5;overflow-wrap:anywhere}</style>
+#legend{font-size:22px;padding:12px;white-space:pre-wrap;line-height:1.5;overflow-wrap:anywhere}</style>
 <div id="map"></div><div id="legend"></div><script type="module" src="/render.mjs"></script></html>'''
 
 
