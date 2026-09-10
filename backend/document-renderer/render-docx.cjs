@@ -28,6 +28,7 @@ function table(rows) {
     margins: { top: 80, bottom: 80, left: 100, right: 100 },
     rows: [['项目', '内容'], ...rows].map((row, index) => new TableRow({
       tableHeader: index === 0,
+      cantSplit: true,
       children: row.map((text, column) => new TableCell({
         width: { size: widths[column], type: WidthType.DXA },
         shading: index === 0 ? { type: ShadingType.CLEAR, fill: 'E8EDF0' } : undefined,
@@ -49,7 +50,9 @@ async function render(input) {
         keepNext: true, spacing: { before: 220, after: 120 },
       }))
     } else if (block.kind === 'table') {
-      children.push(...paragraphs(block.text, { keepNext: true }), table(block.rows))
+      children.push(...paragraphs(block.text, { keepNext: true }))
+      if (Array.isArray(block.rows) && block.rows.length === 0) children.push(...paragraphs('未记录'))
+      else children.push(table(block.rows))
     } else if (block.kind === 'paragraph' || block.kind === 'source') {
       children.push(...paragraphs(block.text))
       if (block.rows?.length) children.push(table(block.rows))

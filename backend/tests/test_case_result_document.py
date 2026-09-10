@@ -31,14 +31,14 @@ def test_document_preserves_all_evidence_negation_versions_and_does_not_mutate_i
     assert original == result
     text = "\n".join(block.text for block in document.blocks)
     assert "原文否定：罐车" in text
-    assert "description · 字符 1 至 5：未发现罐车" in text
+    assert "案情描述（description） · 字符 1 至 5：未发现罐车" in text
     for index in range(12):
         assert f"支持证据{index}" in text
     assert "相反条件" in text and "尚未核实" in text
     assert "不是准确概率" in text
     version = next(block for block in document.blocks if block.text == "输入版本")
-    assert ("case_profile_id", "profile-1") in version.rows
-    assert ("map_snapshot_id", "map-1") in version.rows
+    assert ("画像编号", "profile-1") in version.rows
+    assert ("地图快照编号", "map-1") in version.rows
     assert document.content_sha256 == result["content_sha256"]
 
 
@@ -87,3 +87,41 @@ def test_document_load_rechecks_evidence_permission_each_time(db_session, result
     db_session.info["authorized_area_ids"] = (1,)
     with pytest.raises(CaseResultAccessError):
         load_case_result_document(db_session, result["id"])
+
+
+def test_real_semantics_export_has_readable_precision_paths_negation_and_gaps():
+    from app.services.case_semantic_service import build_semantic_profile
+
+    profile, _, _ = inputs()
+    source = "2026年9月10日22时至2026年9月11日2时30分。发现罐车。后来未见罐车。昨晚信息需核对。"
+    profile.payload["semantics"] = build_semantic_profile({"description": source}, structured={
+        "vehicle_info": [{"是否核实": False, "数量": 0, "说明": ""}],
+    })
+    document = build_case_result_document({"id": "real-semantics", **assemble_case_result(profile, None, [])})
+    rows = [row for block in document.blocks for row in block.rows]
+    text = "\n".join(block.text for block in document.blocks)
+    assert ("起始", "2026-09-10 22时（精度：小时）") in rows
+    assert ("结束", "2026-09-11 02:30（精度：分钟）") in rows
+    assert ("时区", "未注明，不自动转换") in rows
+    assert ("字段路径", "第1项 / 是否核实") in rows
+    assert ("记录值", "否") in rows and ("记录值", "0") in rows
+    assert "表述冲突待核：罐车" in text
+    assert "相对时间缺少日期依据" in text
+    assert "原文否定：罐车" in text and "原文陈述：罐车" in text
+    assert all(not value.startswith('{"') for _, value in rows)
+    # 全部时间/断言引用仍可回到冻结的原文片段。
+    semantics = profile.payload["semantics"]
+    for item in [*semantics["assertions"], *semantics["time_intervals"]]:
+        assert item["reference"]["quote"] in text
+
+
+def test_unknown_semantic_gap_remains_visible_and_duplicate_gap_is_not_repeated():
+    profile, _, _ = inputs()
+    gap = {"code": "future_gap", "field": "vehicle_info"}
+    profile.payload["semantics"] = {
+        "assertions": [], "information_gaps": [gap],
+        "structured_sources": {"entries": [], "information_gaps": [gap]},
+    }
+    document = build_case_result_document({"id": "unknown-gap", **assemble_case_result(profile, None, [])})
+    messages = [block.text for block in document.blocks if "future_gap" in block.text]
+    assert len(messages) == 1 and "本项信息待核对（车辆信息）" in messages[0]

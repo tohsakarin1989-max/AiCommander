@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from dataclasses import asdict
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
@@ -42,6 +43,7 @@ def test_real_docx_chinese_tables_lines_and_markup_are_preserved(tmp_path):
         assert '<script>不执行</script> & "原文"' in text
         assert "case_profile:synthetic-1" in text
         assert xml.findall(".//w:tblHeader", namespace)
+        assert len(xml.findall(".//w:cantSplit", namespace)) == len(xml.findall(".//w:tr", namespace))
         assert not xml.findall(".//w:hyperlink", namespace)
         assert b'Noto Sans CJK SC' in archive.read("word/styles.xml")
     (tmp_path / "synthetic-result.docx").write_bytes(result.stdout)
@@ -58,3 +60,31 @@ def test_docx_rejects_missing_map_invalid_xml_and_unknown_blocks(block, reason):
     assert result.stdout == b""
     # Node may emit its own startup warning; the renderer's final error must be exact.
     assert result.stderr.decode().splitlines()[-1] == reason
+
+
+def test_real_docx_from_semantic_document_keeps_all_records_and_references(tmp_path):
+    from app.services.case_result_document import build_case_result_document
+    from app.services.case_result_snapshot import assemble_case_result
+    from app.services.case_semantic_service import build_semantic_profile
+    from test_case_result_snapshot import inputs
+
+    profile, _, _ = inputs()
+    description = "2026年9月10日22时至2026年9月11日2时30分。发现罐车。后来未见罐车。昨晚情况待核实。"
+    records = [{"说明": f"合成记录{index}：" + "仅用于分页验证，未经核验，不作为正式事实。" * 3} for index in range(8)]
+    profile.payload["semantics"] = build_semantic_profile({"description": description}, structured={"vehicle_info": records})
+    source = {"id": "synthetic-long-result", "created_at": "2026-09-11T00:00:00Z", **assemble_case_result(profile, None, [])}
+    document = build_case_result_document(source)
+    result = render(asdict(document)["blocks"])
+    assert result.returncode == 0, result.stderr.decode()
+    with ZipFile(io.BytesIO(result.stdout)) as archive:
+        xml = ElementTree.fromstring(archive.read("word/document.xml"))
+        text = "\n".join(xml.itertext())
+        for index in range(8):
+            assert f"合成记录{index}：" in text
+        assert "2026-09-10 22时（精度：小时）" in text
+        assert "原文否定：罐车" in text and "表述冲突待核：罐车" in text
+        assert "第8项 / 说明" in text
+        assert source["content_sha256"] in text
+    target = tmp_path / "synthetic-long-result.docx"
+    target.write_bytes(result.stdout)
+    print(f"synthetic_docx_visual_sample={target}")

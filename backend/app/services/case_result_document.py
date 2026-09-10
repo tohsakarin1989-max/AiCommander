@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Literal
 
 from sqlalchemy.orm import Session
@@ -21,8 +22,19 @@ FIELD_LABELS = {
     "water_cut": "含水率（记录值）", "oil_volume": "涉油数量（记录值）",
     "oil_value": "涉油价值（记录值）", "evidence_count": "证据记录数",
     "vehicle_count": "车辆记录数", "person_count": "人员记录数",
+    "description": "案情描述", "vehicle_info": "车辆信息", "involved_items": "涉案物品",
+    "case_profile_id": "画像编号", "profile_version": "画像版本", "case_source_hash": "源案件摘要",
+    "profile_schema": "画像结构版本", "dictionary_version": "字典版本", "analysis_run_id": "分析运行编号",
+    "map_snapshot_id": "地图快照编号", "algorithm_version": "算法版本",
 }
 ASSERTION_LABELS = {"stated": "原文陈述", "negated": "原文否定", "uncertain": "待核表述", "inferred": "推断"}
+GAP_LABELS = {
+    "lineage_not_established": "来源或去向尚未明确", "invalid_time_interval": "起止时间需核对",
+    "relative_time_requires_anchor": "相对时间缺少日期依据", "time_expression_requires_context": "时刻缺少日期或上下文",
+    "extraction_limit": "文本提取未覆盖全部内容", "invalid_structured_source": "结构化资料格式需核对",
+    "structured_source_too_large": "资料过大，尚未完成结构化提取",
+    "structured_extraction_limit": "结构化资料仅提取了部分内容",
+}
 
 
 @dataclass(frozen=True)
@@ -53,6 +65,60 @@ def _fields(values: dict) -> tuple[tuple[str, str], ...]:
     return tuple((FIELD_LABELS.get(key, key), _text(value)) for key, value in sorted(values.items()))
 
 
+def _source(reference: dict) -> DocumentBlock:
+    field = reference["field"]
+    label = FIELD_LABELS.get(field, field)
+    return DocumentBlock("source", f'{label}（{field}） · 字符 {reference["start"] + 1} 至 {reference["end"]}：{reference["quote"]}')
+
+
+def _time_label(value: str, precision: str) -> str:
+    if precision == "hour" and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:00", value):
+        return value[:13].replace("T", " ") + "时（精度：小时）"
+    label = {"minute": "分钟", "second": "秒"}.get(precision, "待核对")
+    return f'{value.replace("T", " ")}（精度：{label}）'
+
+
+def _semantic_details(semantics: dict) -> list[DocumentBlock]:
+    blocks = []
+    for index, interval in enumerate(semantics.get("time_intervals", []), 1):
+        blocks.append(DocumentBlock("table", f"时间表达 {index}（不是正式案发时间）", (
+            ("起始", _time_label(interval["start"], interval["start_precision"])),
+            ("结束", _time_label(interval["end"], interval["end_precision"])),
+            ("时区", interval.get("timezone") or "未注明，不自动转换"),
+            ("状态", "原文表达待核验，不替代正式案发时间"),
+        )))
+        blocks.append(_source(interval["reference"]))
+    structured = semantics.get("structured_sources") or {}
+    entries = structured.get("entries", [])
+    if entries:
+        blocks.append(DocumentBlock("heading", "结构化资料与字段路径"))
+    for index, entry in enumerate(entries, 1):
+        ref = entry["reference"]
+        path = " / ".join(f"第{part + 1}项" if type(part) is int else str(part) for part in ref["path"]) or "字段值"
+        value = ("是" if ref["value"] else "否") if type(ref["value"]) is bool else _text(ref["value"])
+        blocks.append(DocumentBlock("table", f"结构化记录 {index}", (
+            ("来源字段", FIELD_LABELS.get(ref["field"], ref["field"])), ("字段路径", path),
+            ("记录值", value), ("源数据摘要", ref["source_sha256"]),
+        )))
+    for conflict in semantics.get("potential_conflicts", []):
+        blocks.append(DocumentBlock("paragraph", f'表述冲突待核：{conflict["value"]}。需结合时间和上下文核对，不自动选择结论。'))
+    # 合并结构化提取和语义层的缺口；完全相同的缺口只展示一次。
+    seen = set()
+    for gap in [*semantics.get("information_gaps", []), *structured.get("information_gaps", [])]:
+        identity = json.dumps(gap, sort_keys=True, ensure_ascii=False)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        label = GAP_LABELS.get(gap["code"], "本项信息待核对")
+        field = gap.get("field")
+        if field:
+            label += f'（{FIELD_LABELS.get(field, field)}）'
+        blocks.append(DocumentBlock("paragraph", f'提取限制：{label}；记录代码：{gap["code"]}'))
+        if gap.get("reference"):
+            blocks.append(_source(gap["reference"]))
+    return blocks
+
+
 def build_case_result_document(result: dict) -> CaseResultDocument:
     """纯转换；调用者须先授权。hash校验只证明内容一致，不证明可向用户交付。"""
     if not verify_snapshot(result) or result["content"].get("schema_version") != RESULT_SCHEMA_VERSION:
@@ -77,6 +143,8 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
     blocks.append(DocumentBlock("heading", "关键缺项"))
     for gap in content["information_gaps"]["profile"]:
         blocks.append(DocumentBlock("paragraph", f'{gap["label"]}：{gap.get("reason") or "待补充核对"}'))
+    if not content["information_gaps"]["profile"]:
+        blocks.append(DocumentBlock("paragraph", "当前成果未标记关键缺项，不等于全部信息已完整核实。"))
     blocks.append(DocumentBlock("heading", "待核验候选"))
     if not content["candidates"]:
         blocks.append(DocumentBlock("paragraph", "尚无可展示候选，不代表不存在相关线索。"))
@@ -101,14 +169,8 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
         for item in semantics.get("assertions", []):
             blocks.append(DocumentBlock("paragraph", f'{ASSERTION_LABELS.get(item["kind"], "类型待核")}：{item["value"]}'))
             if item.get("reference"):
-                ref = item["reference"]
-                blocks.append(DocumentBlock("source", f'{ref["field"]} · 字符 {ref["start"] + 1} 至 {ref["end"]}：{ref["quote"]}'))
-        # 精确时间精度、结构化路径、冲突及完整引用供渲染器排版，不丢弃折叠区内容。
-        for key, label in (("time_intervals", "时间表达（保留精度与时区）"),
-                           ("structured_sources", "结构化来源与字段路径"),
-                           ("potential_conflicts", "表述冲突"), ("information_gaps", "提取限制")):
-            if semantics.get(key):
-                blocks.append(DocumentBlock("source", label, ((key, _text(semantics[key])),)))
+                blocks.append(_source(item["reference"]))
+        blocks.extend(_semantic_details(semantics))
         blocks.append(DocumentBlock("paragraph", f'语义规则版本：{semantics.get("rule_version", "未记录")}'))
     else:
         blocks.append(DocumentBlock("paragraph", "当前成果未携带语义画像。"))
