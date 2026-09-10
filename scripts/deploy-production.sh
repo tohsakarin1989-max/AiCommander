@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
+VERSION_FILE="${VERSION_FILE:-$ROOT_DIR/VERSION}"
 
 compose() {
     if [ "$(sed -n 's/^ENABLE_AGENT_LAB=//p' "$ENV_FILE" | tail -1)" = "true" ]; then
@@ -15,13 +16,15 @@ compose() {
     fi
 }
 
-COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/preflight-production.sh
+COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" VERSION_FILE="$VERSION_FILE" \
+    sh ./scripts/preflight-production.sh
 compose build --pull
 compose run --rm --no-deps backend \
     python -c "from app.config import settings; print('生产应用配置校验通过')"
 compose up -d --wait --wait-timeout 120 postgres redis
 COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/backup-production.sh
-compose run --rm backend alembic upgrade head
+ALEMBIC_TARGET="$(sed -n 's/^ALEMBIC_TARGET=//p' "$ENV_FILE" | tail -1)"
+compose run --rm backend alembic upgrade "$ALEMBIC_TARGET"
 compose up -d --remove-orphans --wait --wait-timeout 180
 compose ps
 

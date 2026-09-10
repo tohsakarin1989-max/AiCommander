@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel
-from app.database import get_db
+from pydantic import BaseModel, ConfigDict, Field
+from app.database import AreaWriteAccessError, get_db
 from app.services.meeting_service import MeetingService
 from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Ranking
 from app.models.report import Report
@@ -10,9 +10,11 @@ from app.models.report import Report
 router = APIRouter()
 
 class MeetingCreate(BaseModel):
-    case_ids: List[int]
-    moderator_model_id: int
-    analyst_model_ids: List[int]
+    model_config = ConfigDict(extra="forbid")
+
+    case_ids: List[int] = Field(min_length=1, max_length=20)
+    moderator_model_id: int = Field(ge=1)
+    analyst_model_ids: List[int] = Field(min_length=1, max_length=8)
 
 class MeetingResponse(BaseModel):
     id: int
@@ -55,10 +57,12 @@ async def create_meeting(
         
         manager = MeetingManager(db)
         meeting_id = f"MEET-{uuid.uuid4().hex[:8].upper()}"
+        operational_area_id = MeetingService.resolve_meeting_area(db, meeting.case_ids)
         
         # 创建会议记录
         meeting_record = Meeting(
             meeting_id=meeting_id,
+            operational_area_id=operational_area_id,
             case_ids=meeting.case_ids,
             status="processing",  # 初始状态为处理中
             moderator_model_id=meeting.moderator_model_id,
@@ -95,6 +99,16 @@ async def create_meeting(
             "status": "processing",
             "message": "会议已创建，正在后台处理中，请稍后查看结果"
         }
+    except AreaWriteAccessError:
+        raise
+    except ValueError as e:
+        messages = {
+            "meeting_cases_required": "至少选择一个案件",
+            "meeting_case_not_found_or_out_of_scope": "案件不存在或不在当前授权范围",
+            "meeting_cross_area_not_allowed": "一次研判会议不能混用不同厂区案件",
+            "meeting_area_required": "案件尚未归属厂区",
+        }
+        raise HTTPException(status_code=400, detail=messages.get(str(e), str(e))) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -123,7 +137,7 @@ async def _run_meeting_sync(
             new_db.close()
     except Exception as e:
         from app.utils.logger import logger
-        logger.error(f"执行会议 {meeting_id} 失败: {str(e)}")
+        logger.exception("执行会议 %s 失败", meeting_id)
         # 更新会议状态为失败
         try:
             from app.database import SessionLocal
@@ -138,8 +152,8 @@ async def _run_meeting_sync(
                     error_db.commit()
             finally:
                 error_db.close()
-        except:
-            pass
+        except Exception:
+            logger.exception("会议 %s 失败状态写入失败", meeting_id)
 
 @router.get("/", response_model=List[MeetingResponse])
 def get_meetings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -226,4 +240,3 @@ def get_meeting_rankings(meeting_id: str, db: Session = Depends(get_db)):
         }
         for r in rankings
     ]
-

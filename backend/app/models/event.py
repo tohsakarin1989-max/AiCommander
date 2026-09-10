@@ -69,12 +69,18 @@ class Event(Base):
     __tablename__ = "events"
 
     __table_args__ = (
+        Index('ix_events_operational_area', 'operational_area_id'),
         Index('ix_events_geo', 'latitude', 'longitude'),
         Index('ix_events_village', 'village_name'),
         Index('ix_events_type_time', 'event_type', 'occurred_time'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     event_number = Column(String(50), unique=True, nullable=False, index=True)  # 事件编号
     event_type = Column(String(50), nullable=False, index=True)  # 事件类型
 
@@ -139,11 +145,17 @@ class AreaProfile(Base):
     __tablename__ = "area_profiles"
 
     __table_args__ = (
+        Index('ix_area_profiles_operational_area', 'operational_area_id'),
         Index('ix_area_geo', 'center_latitude', 'center_longitude'),
         Index('ix_area_risk', 'risk_level'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     area_name = Column(String(100), unique=True, nullable=False, index=True)  # 村屯/区域名称
     area_type = Column(String(50), default="village")  # 区域类型：village/township/custom
 

@@ -6,6 +6,12 @@ class Meeting(Base):
     __tablename__ = "meetings"
     
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     meeting_id = Column(String(64), unique=True, nullable=False, index=True)
     case_ids = Column(JSON)  # 关联的案件ID列表
     status = Column(String(20), default="pending")  # pending, first_opinions, reviewing, ranking, finalizing, completed
@@ -62,4 +68,3 @@ class Ranking(Base):
     ranking_data = Column(JSON, nullable=False)  # 完整的排名结果（包含rankings数组）
     aggregated_data = Column(JSON, nullable=True)  # 综合排名数据（仅final阶段有）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-

@@ -16,9 +16,15 @@ class Case(Base):
         Index('ix_cases_report_unit', 'report_unit'),
         Index('ix_cases_current_stage', 'current_stage'),
         Index('ix_cases_quality_level', 'quality_level'),
+        Index('ix_cases_operational_area', 'operational_area_id'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     case_number = Column(String(50), unique=True, nullable=False, index=True)
     occurred_time = Column(DateTime(timezone=True), nullable=False)
     location = Column(String(200))

@@ -26,7 +26,8 @@ class SemanticAnalysisService:
         time_window_days: int = 30,
         min_semantic_similarity: float = 0.6,
         use_semantic: bool = True,
-        use_geo: bool = True
+        use_geo: bool = True,
+        operational_area_id: int | None = None,
     ) -> List[Dict]:
         """
         混合分析串案：结合语义相似度和地理距离
@@ -44,12 +45,18 @@ class SemanticAnalysisService:
             串案组列表
         """
         if case_ids:
-            cases = db.query(Case).filter(Case.id.in_(case_ids)).all()
+            query = db.query(Case).filter(Case.id.in_(case_ids))
+            if operational_area_id is not None:
+                query = query.filter(Case.operational_area_id == operational_area_id)
+            cases = query.all()
         else:
-            cases = db.query(Case).filter(
+            query = db.query(Case).filter(
                 Case.description.isnot(None),
                 Case.description != ""
-            ).all()
+            )
+            if operational_area_id is not None:
+                query = query.filter(Case.operational_area_id == operational_area_id)
+            cases = query.all()
         
         if len(cases) < 2:
             return []
@@ -79,11 +86,16 @@ class SemanticAnalysisService:
                 semantic_matches = self.vector_db.find_semantic_serial_cases(
                     case1.id,
                     top_k=20,
-                    min_similarity=min_semantic_similarity
+                    min_similarity=min_semantic_similarity,
+                    operational_area_ids=[case1.operational_area_id]
+                    if case1.operational_area_id is not None
+                    else list(db.info.get("authorized_area_ids") or []),
                 )
             
             for case2 in cases_sorted[i+1:]:
                 if case2.id in processed:
+                    continue
+                if case2.operational_area_id != case1.operational_area_id:
                     continue
                 
                 # 检查是否应该加入串案组
@@ -150,7 +162,14 @@ class SemanticAnalysisService:
                 
                 # 判断串案可能性
                 has_semantic_match = use_semantic and any(
-                    self.vector_db.find_semantic_serial_cases(c.id, top_k=5, min_similarity=min_semantic_similarity)
+                    self.vector_db.find_semantic_serial_cases(
+                        c.id,
+                        top_k=5,
+                        min_similarity=min_semantic_similarity,
+                        operational_area_ids=[c.operational_area_id]
+                        if c.operational_area_id is not None
+                        else list(db.info.get("authorized_area_ids") or []),
+                    )
                     for c in group
                 )
                 has_geo_cluster = use_geo and avg_lat and avg_lng
@@ -308,7 +327,12 @@ class SemanticAnalysisService:
         similar_cases = self.vector_db.search_similar_cases(
             query_text,
             top_k=top_k,
-            min_similarity=min_similarity
+            min_similarity=min_similarity,
+            operational_area_ids=(
+                list(db.info["authorized_area_ids"])
+                if db.info.get("authorized_area_ids") is not None
+                else None
+            ),
         )
         
         # 从数据库获取完整案件信息

@@ -15,9 +15,9 @@ describe('feature flags', () => {
     expect(isAgentLabEnabled({ VITE_ENABLE_AGENT_LAB: 'true' })).toBe(true)
   })
 
-  it('allows only analysts and admins to enter an enabled Agent Lab', () => {
+  it('keeps the Agent runtime center admin-only', () => {
     expect(canAccessAgentLab('admin', true)).toBe(true)
-    expect(canAccessAgentLab('analyst', true)).toBe(true)
+    expect(canAccessAgentLab('analyst', true)).toBe(false)
     expect(canAccessAgentLab('viewer', true)).toBe(false)
     expect(canAccessAgentLab('admin', false)).toBe(false)
   })

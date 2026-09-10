@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import openpyxl
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.services.jurisdiction_service import JurisdictionService
 from app.services.well_attention_service import WellAttentionService
@@ -22,50 +23,57 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 class JurisdictionAssetCreate(BaseModel):
-    external_id: Optional[str] = None
-    name: str = Field(..., description="要素名称")
-    asset_type: str = Field(..., description="要素类型，如 well/camera/patrol_point；road/village 应优先来自地图参考数据")
-    geometry_type: str = Field("point", description="point/line/polygon")
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    operational_area_id: Optional[int] = Field(default=None, ge=1)
+    external_id: Optional[str] = Field(default=None, max_length=200)
+    name: str = Field(..., min_length=1, max_length=200, description="要素名称")
+    asset_type: str = Field(..., min_length=1, max_length=50, description="要素类型，如 well/camera/patrol_point；road/village 应优先来自地图参考数据")
+    geometry_type: str = Field("point", max_length=20, description="point/line/polygon")
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     geometry: Optional[Dict[str, Any]] = None
-    address: Optional[str] = None
-    description: Optional[str] = None
-    source: str = Field("manual", description="manual/map/import")
-    status: str = Field("active", description="active/inactive")
+    address: Optional[str] = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    source: str = Field("manual", max_length=50, description="manual/map/import")
+    status: str = Field("active", max_length=20, description="active/inactive")
     risk_level: int = Field(1, ge=1, le=5)
     confidence_score: float = Field(1.0, ge=0, le=1)
     verified: bool = False
-    tags: Optional[List[str]] = None
+    tags: Optional[List[str]] = Field(default=None, max_length=50)
     attributes: Optional[Dict[str, Any]] = None
 
 
 class JurisdictionAssetUpdate(BaseModel):
-    external_id: Optional[str] = None
-    name: Optional[str] = None
-    asset_type: Optional[str] = None
-    geometry_type: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    external_id: Optional[str] = Field(default=None, max_length=200)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    asset_type: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    geometry_type: Optional[str] = Field(default=None, max_length=20)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     geometry: Optional[Dict[str, Any]] = None
-    address: Optional[str] = None
-    description: Optional[str] = None
-    source: Optional[str] = None
-    status: Optional[str] = None
+    address: Optional[str] = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    source: Optional[str] = Field(default=None, max_length=50)
+    status: Optional[str] = Field(default=None, max_length=20)
     risk_level: Optional[int] = Field(None, ge=1, le=5)
     confidence_score: Optional[float] = Field(None, ge=0, le=1)
     verified: Optional[bool] = None
-    tags: Optional[List[str]] = None
+    tags: Optional[List[str]] = Field(default=None, max_length=50)
     attributes: Optional[Dict[str, Any]] = None
 
 
 class JurisdictionAssetBulkCreate(BaseModel):
-    items: List[JurisdictionAssetCreate]
+    model_config = ConfigDict(extra="forbid")
+    items: List[JurisdictionAssetCreate] = Field(min_length=1, max_length=1000)
 
 
 class GeoJsonImportRequest(BaseModel):
     geojson: Dict[str, Any]
     source: str = "map"
+    operational_area_id: Optional[int] = Field(default=None, ge=1)
 
 
 class PublicMapSyncRequest(BaseModel):
@@ -86,6 +94,7 @@ class WellAttentionRefreshRequest(BaseModel):
 
 class JurisdictionAssetResponse(BaseModel):
     id: int
+    operational_area_id: Optional[int]
     external_id: Optional[str]
     name: str
     asset_type: str
@@ -176,6 +185,11 @@ async def sync_public_map_assets(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """按已有案件/资产坐标自动拉取公共地图参考要素，并去重入库。"""
+    if not settings.ENABLE_LEGACY_PUBLIC_MAP_SYNC:
+        raise HTTPException(
+            status_code=410,
+            detail="内网已停用公网地图直连，请导入受控离线地图更新包",
+        )
     try:
         return JurisdictionService.sync_public_map_references(
             db,
@@ -200,7 +214,12 @@ async def import_geojson_assets(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """导入 GeoJSON FeatureCollection，并按 external_id/name 去重更新。"""
-    return JurisdictionService.import_geojson(db, payload.geojson, source=payload.source)
+    return JurisdictionService.import_geojson(
+        db,
+        payload.geojson,
+        source=payload.source,
+        operational_area_id=payload.operational_area_id,
+    )
 
 
 @router.post("/assets/import-table")
@@ -208,6 +227,7 @@ async def import_table_assets(
     file: UploadFile = File(...),
     dry_run: bool = False,
     source: str = "ledger",
+    operational_area_id: Optional[int] = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """导入 CSV/Excel 台账，支持预览和按 external_id/name 去重更新。"""
@@ -216,7 +236,7 @@ async def import_table_assets(
     if not any(lowered.endswith(ext) for ext in ALLOWED_TABLE_EXTENSIONS):
         raise HTTPException(status_code=400, detail="仅支持 CSV 或 Excel (.xlsx) 文件")
 
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -229,7 +249,13 @@ async def import_table_assets(
 
     if not rows:
         raise HTTPException(status_code=400, detail="文件中没有数据")
-    return JurisdictionService.import_tabular_assets(db, rows, source=source, dry_run=dry_run)
+    return JurisdictionService.import_tabular_assets(
+        db,
+        rows,
+        source=source,
+        dry_run=dry_run,
+        operational_area_id=operational_area_id,
+    )
 
 
 @router.get("/assets", response_model=List[JurisdictionAssetResponse])
@@ -237,6 +263,7 @@ async def list_assets(
     asset_type: Optional[str] = None,
     source: Optional[str] = None,
     status: Optional[str] = "active",
+    operational_area_id: Optional[int] = Query(default=None, ge=1),
     skip: int = 0,
     limit: int = Query(200, le=1000),
     db: Session = Depends(get_db),
@@ -247,6 +274,7 @@ async def list_assets(
         asset_type=asset_type,
         source=source,
         status=status,
+        operational_area_id=operational_area_id,
         skip=skip,
         limit=limit,
     )
@@ -282,21 +310,28 @@ async def deactivate_asset(
 
 
 @router.get("/assets/summary")
-async def get_assets_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def get_assets_summary(
+    operational_area_id: Optional[int] = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
     """获取辖区风险底座完整度概览。"""
-    return JurisdictionService.summarize_assets(db)
+    return JurisdictionService.summarize_assets(db, operational_area_id=operational_area_id)
 
 
 @router.get("/data-quality")
-async def get_data_quality(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def get_data_quality(
+    operational_area_id: Optional[int] = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
     """审计业务资产完整度、坐标缺失、重复点、校验状态和公共地图参考缺口。"""
-    return JurisdictionService.audit_data_quality(db)
+    return JurisdictionService.audit_data_quality(db, operational_area_id=operational_area_id)
 
 
 @router.get("/well-attention/overview")
 async def get_well_attention_overview(
     days_back: int = Query(30, ge=1, le=365),
     radius_km: float = Query(1.0, ge=0.1, le=5.0),
+    operational_area_id: Optional[int] = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """获取领导大屏使用的井点风险迹象热力与最新大模型研判快照。"""
@@ -304,6 +339,7 @@ async def get_well_attention_overview(
         db,
         days_back=days_back,
         radius_km=radius_km,
+        operational_area_id=operational_area_id,
     )
 
 
@@ -400,9 +436,19 @@ async def create_patrol_plan(
 @router.post("/patrol-plan/materialize")
 async def materialize_patrol_plan(
     payload: PatrolPlanMaterializeRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """把预防工作台的布防建议落成巡逻计划，进入巡逻执行模块。"""
+    if not settings.ENABLE_LEGACY_PATROL_MATERIALIZATION:
+        raise HTTPException(
+            status_code=410,
+            detail="当前系统只生成部署参考，不直接创建巡逻执行记录",
+        )
+    principal = getattr(request.state, "principal", None)
+    role = getattr(principal, "role", "admin" if not settings.AUTH_REQUIRED else None)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可使用旧巡逻落地兼容入口")
     try:
         return JurisdictionService.materialize_patrol_plan(
             db,
@@ -411,7 +457,7 @@ async def materialize_patrol_plan(
             limit=payload.limit,
             officer_count=payload.officer_count,
             officer_names=payload.officer_names,
-            created_by=payload.created_by,
+            created_by=str(getattr(principal, "username", None) or "system")[:100],
         )
     except ValueError as exc:
         if str(exc) == "case_not_found":
@@ -453,7 +499,19 @@ async def create_feedback(
     db: Session = Depends(get_db),
 ) -> JurisdictionFeedback:
     """记录布防/巡逻/会议任务反馈，支撑阶段 6 效果评估。"""
-    return JurisdictionService.record_feedback(db, payload.dict())
+    try:
+        return JurisdictionService.record_feedback(db, payload.dict())
+    except ValueError as exc:
+        if str(exc) in {
+            "case_not_found_or_out_of_scope",
+            "asset_not_found_or_out_of_scope",
+        }:
+            raise HTTPException(status_code=404, detail="案件或地图要素不存在") from exc
+        if str(exc) == "feedback_scope_mismatch":
+            raise HTTPException(status_code=409, detail="案件与地图要素不属于同一厂区") from exc
+        if str(exc) == "feedback_scope_required":
+            raise HTTPException(status_code=422, detail="反馈必须关联当前厂区内的案件或地图要素") from exc
+        raise
 
 
 @router.get("/effectiveness")
@@ -468,17 +526,36 @@ def _parse_asset_table(filename: str, content: bytes) -> List[Dict[str, Any]]:
         text = content.decode("utf-8-sig")
         return list(csv.DictReader(io.StringIO(text)))
 
-    workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
-    worksheet = workbook.active
-    rows = list(worksheet.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = [str(value).strip() if value is not None else "" for value in rows[0]]
-    return [
-        {
-            headers[index]: value
-            for index, value in enumerate(row)
-            if index < len(headers) and headers[index]
-        }
-        for row in rows[1:]
-    ]
+    from app.services.map_foundation_service import (
+        MAX_CELL_TEXT_LENGTH,
+        MAX_TABLE_COLUMNS,
+        MAX_TABLE_ROWS,
+        MapFoundationService,
+    )
+
+    MapFoundationService.validate_excel_archive(content)
+    workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        iterator = worksheet.iter_rows(values_only=True)
+        first_row = next(iterator, None)
+        if first_row is None:
+            return []
+        if len(first_row) > MAX_TABLE_COLUMNS:
+            raise ValueError("表格列数超过限制")
+        headers = [str(value).strip() if value is not None else "" for value in first_row]
+        rows = []
+        for row_number, row in enumerate(iterator, start=2):
+            if row_number > MAX_TABLE_ROWS + 1:
+                raise ValueError("表格行数超过限制")
+            record = {
+                headers[index]: value
+                for index, value in enumerate(row)
+                if index < len(headers) and headers[index]
+            }
+            if any(isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH for value in record.values()):
+                raise ValueError("单元格文本超过限制")
+            rows.append(record)
+        return rows
+    finally:
+        workbook.close()

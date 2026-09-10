@@ -24,17 +24,23 @@ class CaseRepository:
         )
         return [num for (num,) in rows if num]
 
-    def add(self, case: Case) -> Case:
+    def add(self, case: Case, *, commit: bool = True) -> Case:
         self.db.add(case)
-        self.db.commit()
-        self.db.refresh(case)
+        if commit:
+            self.db.commit()
+            self.db.refresh(case)
+        else:
+            self.db.flush()
         return case
 
-    def update(self, case: Case, **kwargs) -> Case:
+    def update(self, case: Case, *, commit: bool = True, **kwargs) -> Case:
         for key, value in kwargs.items():
             setattr(case, key, value)
-        self.db.commit()
-        self.db.refresh(case)
+        if commit:
+            self.db.commit()
+            self.db.refresh(case)
+        else:
+            self.db.flush()
         return case
 
     def delete(self, case: Case) -> None:

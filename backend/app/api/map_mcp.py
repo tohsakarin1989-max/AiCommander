@@ -6,8 +6,17 @@ from app.database import get_db
 from app.services.map_mcp_service import MapMCPService
 from app.models.case import Case
 from app.services.case_service import CaseService
+from app.config import settings
 
 router = APIRouter()
+
+
+def _require_external_geo_enabled() -> None:
+    if not settings.ENABLE_LEGACY_EXTERNAL_GEO:
+        raise HTTPException(
+            status_code=410,
+            detail="内网已停用精确坐标外发，请使用受控离线地图与快照分析",
+        )
 
 class LocationQuery(BaseModel):
     latitude: float
@@ -22,6 +31,7 @@ class POISearchQuery(BaseModel):
 @router.post("/location-info")
 async def get_location_info(query: LocationQuery):
     """获取位置信息（逆地理编码）"""
+    _require_external_geo_enabled()
     try:
         result = await MapMCPService.get_location_info(
             query.latitude,
@@ -34,6 +44,7 @@ async def get_location_info(query: LocationQuery):
 @router.post("/nearby-pois")
 async def search_nearby_pois(query: POISearchQuery):
     """搜索周边POI"""
+    _require_external_geo_enabled()
     try:
         result = await MapMCPService.search_nearby_pois(
             query.latitude,
@@ -48,6 +59,7 @@ async def search_nearby_pois(query: POISearchQuery):
 @router.get("/weather/{city}")
 async def get_weather(city: str):
     """获取天气信息"""
+    _require_external_geo_enabled()
     try:
         result = await MapMCPService.get_weather_info(city)
         return result
@@ -66,6 +78,7 @@ async def get_comprehensive_analysis(
     - 使用自适应半径搜索，根据实际找到的村屯数量动态调整范围
     - 偏远地区人烟稀少，自动扩大搜索范围（最大100-150公里）
     """
+    _require_external_geo_enabled()
     try:
         case = CaseService.get_case(db, case_id)
         if not case:
@@ -102,6 +115,7 @@ async def analyze_case_location(
     结合AI和地图MCP数据，智能分析案件位置
     需要配置AI模型
     """
+    _require_external_geo_enabled()
     try:
         case = CaseService.get_case(db, case_id)
         if not case:
@@ -155,4 +169,3 @@ async def analyze_case_location(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
-

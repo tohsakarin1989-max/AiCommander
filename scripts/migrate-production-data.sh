@@ -29,9 +29,15 @@ mkdir -p "$REPORT_DIR"
 chmod 0700 "$ROOT_DIR/backups" "$REPORT_DIR"
 cd "$ROOT_DIR"
 
+ALEMBIC_TARGET="$(sed -n 's/^ALEMBIC_TARGET=//p' .env.production | tail -1)"
+[ -n "$ALEMBIC_TARGET" ] || {
+    echo "缺少 ALEMBIC_TARGET，禁止在迁移时隐式升级到未发布结构" >&2
+    exit 1
+}
+
 docker compose --env-file .env.production -f docker-compose.production.yml build backend
 docker compose --env-file .env.production -f docker-compose.production.yml up -d postgres redis
-docker compose --env-file .env.production -f docker-compose.production.yml run --rm backend alembic upgrade head
+docker compose --env-file .env.production -f docker-compose.production.yml run --rm backend alembic upgrade "$ALEMBIC_TARGET"
 docker compose --env-file .env.production -f docker-compose.production.yml run --rm \
     -v "$SOURCE_DB:/migration/source.db:ro" \
     -v "$SOURCE_SECRET:/migration/source_secret_key:ro" \

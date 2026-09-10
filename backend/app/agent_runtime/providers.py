@@ -64,6 +64,10 @@ class OpenAIAgentsNarrator:
         self.output_cost_per_million_usd = settings.AGENT_MODEL_OUTPUT_COST_PER_MILLION_USD
 
     async def summarize(self, query: str, payload: dict[str, Any]) -> AgentNarrationOutcome:
+        if settings.MODEL_DATA_EGRESS_POLICY != "external_redacted_only":
+            raise RuntimeError("当前配置禁止 OpenAI Agents 外发")
+        if settings.AGENT_EXTERNAL_DATA_POLICY != "redacted_only":
+            raise RuntimeError("OpenAI Agents 只能处理脱敏特征")
         from agents import Agent, RunConfig, Runner
 
         agent = Agent(
@@ -121,7 +125,10 @@ class ModelRegistryNarrator:
     async def summarize(self, query: str, payload: dict[str, Any]) -> AgentNarrationOutcome:
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        llm = ModelFactory().create_llm(self._model)
+        llm = ModelFactory().create_llm(
+            self._model,
+            data_classification="redacted",
+        )
         response = await llm.ainvoke([
             SystemMessage(content=(
                 "你只整理系统提供的脱敏、确定性分析结果。必须返回JSON对象，"
@@ -215,6 +222,8 @@ def build_narrator(db: Session | None = None) -> Optional[AgentNarrator]:
     if not settings.AGENT_USE_EXTERNAL_MODEL:
         return None
     if settings.AGENT_EXTERNAL_DATA_POLICY != "redacted_only":
+        return None
+    if settings.MODEL_DATA_EGRESS_POLICY != "external_redacted_only":
         return None
     if settings.AGENT_PROVIDER == "openai_agents":
         return OpenAIAgentsNarrator(settings.AGENT_MODEL)

@@ -37,6 +37,14 @@ export interface UserUpdatePayload {
   is_active?: boolean
 }
 
+export interface UserAreaScope {
+  operational_area_id: number
+  area_code: string
+  area_name: string
+  access_level: 'read' | 'write' | 'manage'
+  is_default: boolean
+}
+
 export const authApi = {
   bootstrapStatus: async () => {
     const response = await api.get<BootstrapStatus>('/auth/bootstrap-status')
@@ -61,6 +69,10 @@ export const authApi = {
   },
   me: async () => {
     const response = await api.get<AuthUser>('/auth/me')
+    return response.data
+  },
+  myAreaScopes: async () => {
+    const response = await api.get<UserAreaScope[]>('/auth/me/area-scopes')
     return response.data
   },
   users: {

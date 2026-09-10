@@ -56,6 +56,7 @@ class ConclusionFactoryService:
                         case_dict.get("description", ""),
                         top_k=5,
                         min_similarity=0.6,
+                        operational_area_ids=[case_dict["operational_area_id"]],
                     )
                     evidence["similar_cases"] = results
             except Exception as e:
@@ -181,6 +182,7 @@ class ConclusionFactoryService:
             "loss_amount": case.loss_amount,
             "modus_operandi": case.modus_operandi,
             "features": case.features,
+            "operational_area_id": case.operational_area_id,
         }
         evidence = ConclusionFactoryService._build_evidence(db, case_dict)
 

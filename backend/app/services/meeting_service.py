@@ -6,6 +6,8 @@ from app.ai.meeting_manager import MeetingManager
 from app.services.case_service import CaseService
 from app.services.case_quality_service import CaseQualityService
 from app.services.system_config_service import SystemConfigService
+from app.database import require_area_write_access
+from app.config import settings
 from typing import List, Optional, Dict
 import asyncio
 import json
@@ -25,6 +27,45 @@ async def _default_progress_callback(meeting_id: str, stage: int, stage_name: st
 class MeetingService:
 
     @staticmethod
+    def bind_existing_meeting_scope(
+        db: Session,
+        meeting_id: str,
+        case_ids: List[int],
+    ) -> Meeting:
+        """后台任务先以已持久化会议为信任锚点，再收紧整个会话范围。"""
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        if not meeting:
+            raise ValueError(f"会议 {meeting_id} 不存在")
+        stored_ids = list(dict.fromkeys(int(item) for item in (meeting.case_ids or [])))
+        requested_ids = list(dict.fromkeys(int(item) for item in case_ids))
+        if stored_ids != requested_ids:
+            raise ValueError("meeting_case_scope_mismatch")
+        if meeting.operational_area_id is None:
+            raise ValueError("meeting_area_required")
+        area_id = meeting.operational_area_id
+        db.info["authorized_area_ids"] = (area_id,)
+        db.info["default_operational_area_id"] = area_id
+        db.info["area_access_levels"] = {area_id: "write"}
+        return meeting
+
+    @staticmethod
+    def resolve_meeting_area(db: Session, case_ids: List[int]) -> int:
+        normalized_ids = list(dict.fromkeys(int(item) for item in case_ids))
+        if not normalized_ids:
+            raise ValueError("meeting_cases_required")
+        cases = db.query(Case).filter(Case.id.in_(normalized_ids)).all()
+        if len(cases) != len(normalized_ids):
+            raise ValueError("meeting_case_not_found_or_out_of_scope")
+        area_ids = {item.operational_area_id for item in cases if item.operational_area_id is not None}
+        if len(area_ids) > 1:
+            raise ValueError("meeting_cross_area_not_allowed")
+        area_id = next(iter(area_ids), db.info.get("default_operational_area_id"))
+        checked = require_area_write_access(db, area_id)
+        if checked is None:
+            raise ValueError("meeting_area_required")
+        return checked
+
+    @staticmethod
     async def create_and_run_meeting(
         db: Session,
         case_ids: List[int],
@@ -33,6 +74,9 @@ class MeetingService:
         existing_meeting_id: Optional[str] = None
     ) -> Dict:
         """创建并运行会议"""
+        if existing_meeting_id:
+            MeetingService.bind_existing_meeting_scope(db, existing_meeting_id, case_ids)
+        operational_area_id = MeetingService.resolve_meeting_area(db, case_ids)
         # 检查圆桌会议配置
         meeting_provider = SystemConfigService.get_config_value(db, "meeting_api_provider", "direct")
         if meeting_provider == "openrouter":
@@ -52,6 +96,8 @@ class MeetingService:
             meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
             if not meeting:
                 raise ValueError(f"会议 {meeting_id} 不存在")
+            if meeting.operational_area_id != operational_area_id:
+                raise ValueError("meeting_scope_mismatch")
             # 更新状态
             meeting.status = "first_opinions"
             db.commit()
@@ -96,6 +142,7 @@ class MeetingService:
             # 创建会议记录
             meeting = Meeting(
                 meeting_id=meeting_id,
+                operational_area_id=operational_area_id,
                 case_ids=case_ids,
                 status="first_opinions",
                 moderator_model_id=moderator_model_id,
@@ -165,6 +212,8 @@ class MeetingService:
             map_mcp_data = {}
             try:
                 from app.services.map_mcp_service import MapMCPService
+                if not settings.ENABLE_LEGACY_EXTERNAL_GEO:
+                    raise RuntimeError("内网已关闭外部地图直连")
                 # 为每个案件获取MCP数据
                 for case in cases:
                     if case.latitude and case.longitude:

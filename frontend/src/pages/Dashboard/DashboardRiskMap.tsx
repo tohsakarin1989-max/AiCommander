@@ -9,6 +9,7 @@ import {
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { CachedTileLayer } from '../../components/Map/CachedTileLayer'
+import { resolveMapTileConfig } from '../../components/Map/mapTiles'
 import { escapeHtml } from '../../utils/html'
 import type {
   DashboardHotspot,
@@ -29,6 +30,7 @@ interface DashboardRiskMapProps {
   hotspots: DashboardHotspot[]
   isFullscreen: boolean
   onToggleFullscreen: () => void
+  operationalAreaId?: number
 }
 
 const DEFAULT_CENTER: L.LatLngExpression = [46.5977, 125.1034]
@@ -66,6 +68,7 @@ export default function DashboardRiskMap({
   hotspots,
   isFullscreen,
   onToggleFullscreen,
+  operationalAreaId,
 }: DashboardRiskMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -85,25 +88,31 @@ export default function DashboardRiskMap({
     })
     mapRef.current = map
 
-    const tileLayer = new CachedTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      subdomains: 'abc',
-      maxZoom: 19,
+    let disposed = false
+    let tileLayer: CachedTileLayer | null = null
+    void resolveMapTileConfig(operationalAreaId).then(config => {
+      if (disposed) return
+      tileLayer = new CachedTileLayer(config.url, config.options)
+      tileLayer.on('tileload', () => setTileUnavailable(false))
+      tileLayer.on('tileerror', () => setTileUnavailable(true))
+      tileLayer.addTo(map)
+      if (wells.length === 0 && signals.length === 0 && cases.length === 0 && config.bounds) {
+        map.fitBounds(config.bounds, { padding: [24, 24] })
+      }
     })
-    tileLayer.on('tileload', () => setTileUnavailable(false))
-    tileLayer.on('tileerror', () => setTileUnavailable(true))
-    tileLayer.addTo(map)
 
     const resizeObserver = new ResizeObserver(() => map.invalidateSize({ pan: false }))
     resizeObserver.observe(containerRef.current)
 
     return () => {
+      disposed = true
+      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
       resizeObserver.disconnect()
       layersRef.current = []
       map.remove()
       mapRef.current = null
     }
-  }, [])
+  }, [operationalAreaId])
 
   useEffect(() => {
     const map = mapRef.current
@@ -254,7 +263,7 @@ export default function DashboardRiskMap({
 
     boundsRef.current = bounds.isValid() ? bounds : null
     fitMap(map, boundsRef.current)
-  }, [cases, chainLines, hotspots, layer, signals, wells])
+  }, [cases, chainLines, hotspots, layer, operationalAreaId, signals, wells])
 
   const visibleCount = layer === 'cases'
     ? cases.length + hotspots.length + chainLines.length

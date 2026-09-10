@@ -2,21 +2,18 @@ import { useEffect, useMemo, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { CachedTileLayer } from '../../components/Map/CachedTileLayer'
+import { resolveMapTileConfig } from '../../components/Map/mapTiles'
 import type { JurisdictionAsset } from '../../services'
 import { escapeHtml } from '../../utils/html'
-
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-})
 
 interface JurisdictionAssetMapProps {
   assets: JurisdictionAsset[]
   selectedAssetId?: number | null
   height?: number | string
   onAssetClick?: (asset: JurisdictionAsset) => void
+  readOnly?: boolean
+  operationalAreaId?: number
+  snapshotId?: string
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -83,7 +80,7 @@ function pointCoordinate(asset: JurisdictionAsset): [number, number] | null {
   return [asset.latitude, asset.longitude]
 }
 
-function popupHtml(asset: JurisdictionAsset): string {
+function popupHtml(asset: JurisdictionAsset, readOnly: boolean): string {
   return `
     <div style="font-size:12px;line-height:1.7;min-width:180px">
       <div style="font-weight:700;margin-bottom:4px">${escapeHtml(asset.name)}</div>
@@ -91,7 +88,7 @@ function popupHtml(asset: JurisdictionAsset): string {
       <div>来源：${escapeHtml(asset.source || '未知')}</div>
       <div>风险：${asset.risk_level ?? 1} 级</div>
       <div>状态：${escapeHtml(asset.status || 'active')}</div>
-      <div style="color:#64748b;margin-top:4px">点击图层可编辑</div>
+      <div style="color:#64748b;margin-top:4px">${readOnly ? '已发布离线快照，仅供查看' : '点击图层可编辑'}</div>
     </div>
   `
 }
@@ -101,6 +98,9 @@ export default function JurisdictionAssetMap({
   selectedAssetId,
   height = 460,
   onAssetClick,
+  readOnly = false,
+  operationalAreaId,
+  snapshotId,
 }: JurisdictionAssetMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -123,18 +123,25 @@ export default function JurisdictionAssetMap({
       zoomControl: true,
     })
     mapRef.current = map
-    new CachedTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      subdomains: 'abc',
-      maxZoom: 19,
-    }).addTo(map)
+    let disposed = false
+    let tileLayer: CachedTileLayer | null = null
+    void resolveMapTileConfig(operationalAreaId, snapshotId ?? 'current').then(config => {
+      if (disposed) return
+      tileLayer = new CachedTileLayer(config.url, config.options)
+      tileLayer.addTo(map)
+      if (assets.length === 0 && config.bounds) {
+        map.fitBounds(config.bounds, { padding: [24, 24] })
+      }
+    })
 
     return () => {
+      disposed = true
+      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [operationalAreaId, snapshotId]) // defaultCenter is applied when this area-specific map mounts
 
   useEffect(() => {
     const map = mapRef.current
@@ -173,7 +180,7 @@ export default function JurisdictionAssetMap({
       }
 
       if (!layer) return
-      layer.addTo(map).bindPopup(popupHtml(asset), { maxWidth: 260 })
+      layer.addTo(map).bindPopup(popupHtml(asset, readOnly), { maxWidth: 260 })
       layer.on('click', () => onAssetClick?.(asset))
       layersRef.current.push(layer)
     })
@@ -181,7 +188,7 @@ export default function JurisdictionAssetMap({
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [36, 36], maxZoom: 15 })
     }
-  }, [assets, selectedAssetId, onAssetClick])
+  }, [assets, operationalAreaId, readOnly, selectedAssetId, snapshotId, onAssetClick])
 
   return (
     <div

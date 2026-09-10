@@ -2,15 +2,16 @@
 WebSocket实时通信API
 用于实时指挥大屏的数据推送和会议进度推送
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from typing import List, Dict, Optional
 import json
 import asyncio
 from datetime import datetime, timedelta
 from app.utils.logger import logger
 from app.security import authenticate_websocket
-from app.database import SessionLocal
+from app.database import SessionLocal, bind_principal_scope
 from app.models.case import Case
+from app.models.map_foundation import OperationalArea
 from sqlalchemy.orm import Session
 
 
@@ -123,6 +124,36 @@ manager = ConnectionManager()
 meeting_manager = MeetingConnectionManager()
 
 
+def _dashboard_area_id(websocket: WebSocket) -> int | None:
+    db = SessionLocal()
+    try:
+        bind_principal_scope(
+            db,
+            getattr(websocket.state, "principal", None),
+            method="GET",
+        )
+        raw = websocket.query_params.get("operational_area_id")
+        if raw is not None:
+            try:
+                area_id = int(raw)
+            except ValueError:
+                return None
+        else:
+            area_id = db.info.get("default_operational_area_id")
+        if area_id is None:
+            return None
+        allowed = db.info.get("authorized_area_ids")
+        if allowed is not None and area_id not in allowed:
+            return None
+        exists = db.query(OperationalArea.id).filter(
+            OperationalArea.id == area_id,
+            OperationalArea.status == "active",
+        ).first()
+        return area_id if exists else None
+    finally:
+        db.close()
+
+
 async def broadcast_meeting_progress(meeting_id: str, stage: int, stage_name: str,
                                      status: str, progress: int,
                                      details: Optional[Dict] = None):
@@ -151,6 +182,11 @@ async def websocket_dashboard(websocket: WebSocket):
     if not authenticate_websocket(websocket):
         await websocket.close(code=4401, reason="authentication required")
         return
+    area_id = _dashboard_area_id(websocket)
+    if area_id is None:
+        await websocket.close(code=4403, reason="operational area unavailable")
+        return
+    websocket.state.operational_area_id = area_id
     await manager.connect(websocket)
     
     try:
@@ -187,8 +223,15 @@ async def send_initial_data(websocket: WebSocket):
     """发送初始数据"""
     db = SessionLocal()
     try:
+        bind_principal_scope(
+            db,
+            getattr(websocket.state, "principal", None),
+            method="GET",
+        )
         # 获取最近的案件
+        area_id = getattr(websocket.state, "operational_area_id", None)
         recent_cases = db.query(Case).filter(
+            Case.operational_area_id == area_id,
             Case.latitude.isnot(None),
             Case.longitude.isnot(None)
         ).order_by(Case.occurred_time.desc()).limit(50).all()
@@ -196,6 +239,7 @@ async def send_initial_data(websocket: WebSocket):
         cases_data = [
             {
                 "id": c.id,
+                "operational_area_id": c.operational_area_id,
                 "case_number": c.case_number,
                 "occurred_time": c.occurred_time.isoformat() if c.occurred_time else None,
                 "latitude": c.latitude,
@@ -208,8 +252,9 @@ async def send_initial_data(websocket: WebSocket):
         ]
         
         # 统计信息
-        total_cases = db.query(Case).count()
+        total_cases = db.query(Case).filter(Case.operational_area_id == area_id).count()
         today_cases = db.query(Case).filter(
+            Case.operational_area_id == area_id,
             Case.occurred_time >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         ).count()
         
@@ -232,9 +277,16 @@ async def send_dashboard_update(websocket: WebSocket):
     """发送数据更新"""
     db = SessionLocal()
     try:
+        bind_principal_scope(
+            db,
+            getattr(websocket.state, "principal", None),
+            method="GET",
+        )
         # 获取最新案件（最近1小时）
         one_hour_ago = datetime.now() - timedelta(hours=1)
+        area_id = getattr(websocket.state, "operational_area_id", None)
         new_cases = db.query(Case).filter(
+            Case.operational_area_id == area_id,
             Case.latitude.isnot(None),
             Case.longitude.isnot(None),
             Case.occurred_time >= one_hour_ago
@@ -244,6 +296,7 @@ async def send_dashboard_update(websocket: WebSocket):
             cases_data = [
                 {
                     "id": c.id,
+                    "operational_area_id": c.operational_area_id,
                     "case_number": c.case_number,
                     "occurred_time": c.occurred_time.isoformat() if c.occurred_time else None,
                     "latitude": c.latitude,
@@ -274,6 +327,9 @@ async def websocket_meeting(websocket: WebSocket, meeting_id: str):
     """
     if not authenticate_websocket(websocket):
         await websocket.close(code=4401, reason="authentication required")
+        return
+    if not _can_access_meeting(websocket, meeting_id):
+        await websocket.close(code=4403, reason="meeting out of scope")
         return
     await meeting_manager.connect(websocket, meeting_id)
 
@@ -315,6 +371,11 @@ async def send_meeting_status(websocket: WebSocket, meeting_id: str):
     """发送会议当前状态"""
     db = SessionLocal()
     try:
+        bind_principal_scope(
+            db,
+            getattr(websocket.state, "principal", None),
+            method="GET",
+        )
         from app.models.meeting import Meeting
         meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
         if meeting:
@@ -337,14 +398,25 @@ async def send_meeting_status(websocket: WebSocket, meeting_id: str):
         db.close()
 
 
+def _can_access_meeting(websocket: WebSocket, meeting_id: str) -> bool:
+    db = SessionLocal()
+    try:
+        bind_principal_scope(
+            db,
+            getattr(websocket.state, "principal", None),
+            method="GET",
+        )
+        from app.models.meeting import Meeting
+
+        return db.query(Meeting.id).filter(Meeting.meeting_id == meeting_id).first() is not None
+    finally:
+        db.close()
+
+
 @router.post("/ws/broadcast")
 async def broadcast_message(message: Dict):
-    """
-    广播消息到所有连接的客户端
-    用于后端主动推送事件（如新案件、警力位置更新等）
-    """
-    await manager.broadcast(message)
-    return {"status": "broadcasted", "connections": len(manager.active_connections)}
+    """旧全局广播无法表达厂区边界，生产链路永久禁用。"""
+    raise HTTPException(status_code=410, detail="全局广播已停用，请使用辖区内按需刷新")
 
 
 @router.post("/ws/meeting/{meeting_id}/broadcast")
@@ -358,5 +430,3 @@ async def broadcast_meeting_message(meeting_id: str, message: Dict):
         "meeting_id": meeting_id,
         "connections": meeting_manager.get_connection_count(meeting_id)
     }
-
-

@@ -14,10 +14,17 @@ class JurisdictionAsset(Base):
         Index("ix_jurisdiction_assets_source", "source"),
         Index("ix_jurisdiction_assets_status", "status"),
         Index("ix_jurisdiction_assets_geo", "latitude", "longitude"),
+        Index("ix_jurisdiction_assets_area_type", "operational_area_id", "asset_type"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     external_id = Column(String(200), nullable=True, index=True)
+    canonical_key = Column(String(300), nullable=True, unique=True, index=True)
     name = Column(String(200), nullable=False)
     asset_type = Column(String(50), nullable=False)
     geometry_type = Column(String(20), default="point")
@@ -31,6 +38,12 @@ class JurisdictionAsset(Base):
     risk_level = Column(Integer, default=1)
     confidence_score = Column(Float, default=1.0)
     verified = Column(Boolean, default=False)
+    verification_state = Column(String(30), nullable=True)
+    coordinate_system = Column(String(50), nullable=True)
+    accuracy_m = Column(Float, nullable=True)
+    source_claim_refs = Column(JSON, nullable=True)
+    valid_from = Column(DateTime(timezone=True), nullable=True)
+    valid_to = Column(DateTime(timezone=True), nullable=True)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     tags = Column(JSON, nullable=True)
     attributes = Column(JSON, nullable=True)
@@ -49,6 +62,11 @@ class JurisdictionFeedback(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(
+        Integer,
+        ForeignKey("operational_areas.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id"), nullable=True)
     feedback_type = Column(String(50), nullable=False)

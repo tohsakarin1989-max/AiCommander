@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
 import redis
 
@@ -123,10 +125,12 @@ def test_production_readiness_accepts_current_schema(monkeypatch):
     assert payload["dependencies"]["schema"]["status"] == "ok"
 
 
-def test_production_readiness_requires_redis_without_leaking_connection_errors(monkeypatch):
+def test_production_readiness_degrades_when_redis_is_down_without_blocking_core(monkeypatch):
     from app.api import health
 
     monkeypatch.setattr(health.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(health, "_expected_schema_revisions", lambda: {"current-head"})
+    monkeypatch.setattr(health, "_current_schema_revisions", lambda: {"current-head"})
     monkeypatch.setattr(
         redis.Redis,
         "from_url",
@@ -135,11 +139,36 @@ def test_production_readiness_requires_redis_without_leaking_connection_errors(m
 
     response = TestClient(app).get("/health/ready")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "not_ready"
+    assert payload["status"] == "degraded"
     assert payload["dependencies"]["redis"]["status"] == "down"
     assert payload["dependencies"]["redis"]["detail"] == "Redis 连接失败"
+
+
+def test_case_pipeline_health_degrades_for_stale_pending_event(monkeypatch, db_session):
+    from app.api import health
+    from app.models.case_pipeline import OutboxEvent
+
+    stale_event = OutboxEvent(
+        id="stale-health-event",
+        event_type="case.analysis.requested",
+        aggregate_type="case",
+        aggregate_id="1",
+        payload={"case_id": 1},
+        idempotency_key="stale-health-event-key",
+        status="pending",
+        available_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.add(stale_event)
+    db_session.commit()
+    monkeypatch.setattr(health, "SessionLocal", lambda: db_session)
+
+    payload = health.health_case_pipeline()
+
+    assert payload["status"] == "degraded"
+    assert payload["stale_pending_events"] == 1
+    assert payload["affects_core_readiness"] is False
 
 
 def test_http_error_keeps_detail_and_adds_error_envelope():

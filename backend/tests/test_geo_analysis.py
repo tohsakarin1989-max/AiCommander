@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
+from app.models.map_foundation import OperationalArea
 from app.services.geo_analysis_service import GeoAnalysisService
 from app.utils.geo import (
     haversine_km,
@@ -245,6 +246,39 @@ class TestGeoAnalysisService:
             for hotspot in hotspots:
                 assert "GEO-20250101-099" not in [c["case_number"] for c in hotspot["cases"]]
 
+    def test_geographic_clues_only_use_explicitly_selected_cases(self, db_session: Session):
+        selected = []
+        for index in range(3):
+            case = Case(
+                case_number=f"SELECTED-{index}",
+                occurred_time=datetime(2025, 1, 1, 10, index, 0),
+                latitude=39.9 + index * 0.001,
+                longitude=116.4,
+                status="pending",
+            )
+            db_session.add(case)
+            selected.append(case)
+        for index in range(3):
+            db_session.add(
+                Case(
+                    case_number=f"OTHER-AREA-{index}",
+                    occurred_time=datetime(2025, 1, 1, 11, index, 0),
+                    latitude=40.9 + index * 0.001,
+                    longitude=117.4,
+                    status="pending",
+                )
+            )
+        db_session.commit()
+
+        result = GeoAnalysisService.generate_geographic_clues(
+            db_session,
+            [item.id for item in selected],
+        )
+
+        serialized = str(result)
+        assert "SELECTED-0" in serialized
+        assert "OTHER-AREA" not in serialized
+
     def test_analyze_serial_cases_empty(self, db_session: Session):
         """空数据库返回空串案列表"""
         serial = GeoAnalysisService.analyze_serial_cases(db_session)
@@ -259,6 +293,78 @@ class TestGeoAnalysisService:
         )
         # 应该检测到串案组
         assert len(serial) >= 1
+
+    def test_analyze_serial_cases_filters_one_operational_area(self, db_session: Session):
+        area_a = OperationalArea(code="serial-a", name="串案区域A", status="active")
+        area_b = OperationalArea(code="serial-b", name="串案区域B", status="active")
+        db_session.add_all([area_a, area_b])
+        db_session.flush()
+        for area, prefix, latitude in (
+            (area_a, "AREA-A", 46.0),
+            (area_b, "AREA-B", 47.0),
+        ):
+            for index in range(2):
+                db_session.add(
+                    Case(
+                        case_number=f"{prefix}-{index}",
+                        operational_area_id=area.id,
+                        occurred_time=datetime(2025, 1, 1, 10, index, 0),
+                        latitude=latitude + index * 0.001,
+                        longitude=125.0,
+                        status="pending",
+                    )
+                )
+        db_session.commit()
+
+        serial = GeoAnalysisService.analyze_serial_cases(
+            db_session,
+            max_distance_km=5.0,
+            time_window_days=30,
+            operational_area_id=area_a.id,
+        )
+
+        assert len(serial) == 1
+        serialized = str(serial)
+        assert "AREA-A" in serialized
+        assert "AREA-B" not in serialized
+
+    def test_analyze_serial_cases_never_groups_cases_from_different_areas(
+        self,
+        db_session: Session,
+    ):
+        area_a = OperationalArea(code="serial-cross-a", name="跨区A", status="active")
+        area_b = OperationalArea(code="serial-cross-b", name="跨区B", status="active")
+        db_session.add_all([area_a, area_b])
+        db_session.flush()
+        db_session.add_all(
+            [
+                Case(
+                    case_number="CROSS-A",
+                    operational_area_id=area_a.id,
+                    occurred_time=datetime(2025, 1, 1, 10, 0, 0),
+                    latitude=46.0,
+                    longitude=125.0,
+                    status="pending",
+                ),
+                Case(
+                    case_number="CROSS-B",
+                    operational_area_id=area_b.id,
+                    occurred_time=datetime(2025, 1, 1, 10, 1, 0),
+                    latitude=46.0001,
+                    longitude=125.0001,
+                    status="pending",
+                ),
+            ]
+        )
+        db_session.commit()
+
+        serial = GeoAnalysisService.analyze_serial_cases(
+            db_session,
+            max_distance_km=5.0,
+            time_window_days=30,
+        )
+
+        assert serial == []
 
     def test_analyze_geographic_patterns_insufficient(self, db_session: Session):
         """案件不足时返回提示信息"""

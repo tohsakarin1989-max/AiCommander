@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.utils.logger import logger
+from app.database import AreaWriteAccessError
 
 
 REQUEST_ID_HEADER = "X-Request-Id"
@@ -114,8 +115,24 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
+async def area_write_access_exception_handler(request: Request, exc: AreaWriteAccessError):
+    request_id = _get_request_id(request)
+    detail = "当前账号没有目标厂区的写权限"
+    return JSONResponse(
+        status_code=403,
+        headers={REQUEST_ID_HEADER: request_id},
+        content=_error_payload(
+            code="area_write_access_required",
+            message=detail,
+            request_id=request_id,
+            detail=detail,
+        ),
+    )
+
+
 def install_observability(app: FastAPI) -> None:
     app.add_middleware(RequestContextMiddleware)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(AreaWriteAccessError, area_write_access_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)

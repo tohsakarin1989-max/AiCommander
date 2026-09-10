@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
+VERSION_FILE="${VERSION_FILE:-$ROOT_DIR/VERSION}"
 
 fail() {
     echo "生产部署预检失败: $*" >&2
@@ -29,6 +30,7 @@ command -v curl >/dev/null 2>&1 || fail "未安装 curl"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose 不可用"
 
 [ -f "$ENV_FILE" ] || fail "缺少 ${ENV_FILE}，请先执行 ./scripts/init-production.sh"
+[ -f "$VERSION_FILE" ] || fail "缺少版本文件 $VERSION_FILE"
 case "$(file_mode "$ENV_FILE")" in
     400|600) ;;
     *) fail "$ENV_FILE 权限必须为 400 或 600" ;;
@@ -37,6 +39,8 @@ esac
 APP_DOMAIN="$(read_env APP_DOMAIN)"
 APP_PORT="$(read_env APP_PORT)"
 APP_VERSION="$(read_env APP_VERSION)"
+ALEMBIC_TARGET="$(read_env ALEMBIC_TARGET)"
+POSTGIS_IMAGE="$(read_env POSTGIS_IMAGE)"
 configured_secrets_dir="$(read_env SECRETS_DIR)"
 agent_enabled="$(read_env ENABLE_AGENT_LAB)"
 agent_mode="$(read_env AGENT_MODE)"
@@ -92,9 +96,23 @@ esac
 [ "$APP_PORT" -ge 1 ] && [ "$APP_PORT" -le 65535 ] \
     || fail "APP_PORT 必须是 1-65535 的整数"
 
-repository_version="$(tr -d '\r\n' < VERSION)"
+repository_version="$(tr -d '\r\n' < "$VERSION_FILE")"
 [ "$APP_VERSION" = "$repository_version" ] \
     || fail "APP_VERSION=$APP_VERSION 与 VERSION=$repository_version 不一致"
+case "$APP_VERSION" in
+    3.0.0-stable)
+        [ "$ALEMBIC_TARGET" = "a7d9e1f2b304" ] \
+            || fail "v3.0.0-stable 必须使用 ALEMBIC_TARGET=a7d9e1f2b304，禁止提前应用候选迁移"
+        ;;
+    *)
+        [ "$ALEMBIC_TARGET" = "head" ] \
+            || fail "v3.1 及以上候选部署必须使用 ALEMBIC_TARGET=head"
+        case "$POSTGIS_IMAGE" in
+            *postgis*@sha256:????????????????????????????????????????????????????????????????) ;;
+            *) fail "v3.1 及以上必须配置带 sha256 摘要的 PostGIS 镜像 POSTGIS_IMAGE" ;;
+        esac
+        ;;
+esac
 
 configured_secrets_dir="${configured_secrets_dir:-./secrets}"
 case "$configured_secrets_dir" in

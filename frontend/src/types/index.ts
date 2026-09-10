@@ -599,6 +599,7 @@ export interface CaseFeatures {
 
 export interface Case {
   id: number
+  operational_area_id?: number | null
   case_number: string
   occurred_time: string
   location?: string
@@ -647,6 +648,7 @@ export interface Case {
 }
 
 export interface CaseCreate {
+  operational_area_id?: number
   occurred_time: string
   location?: string
   latitude?: number
@@ -688,6 +690,7 @@ export interface CaseCreate {
 }
 
 export type CaseUpdatePayload = Partial<Omit<CaseCreate,
+  | 'operational_area_id'
   | 'occurred_time'
   | 'report_time'
   | 'oil_volume'

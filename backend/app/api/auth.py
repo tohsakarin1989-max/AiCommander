@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.map_foundation import OperationalArea, UserAreaScope
 from app.services.auth_service import (
     AccountLockedError,
     AuthenticationError,
@@ -68,6 +69,15 @@ class UserUpdateRequest(BaseModel):
     role: Optional[Literal["admin", "analyst", "viewer"]] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
+
+
+class AreaScopeItem(BaseModel):
+    operational_area_id: int
+    access_level: Literal["read", "write", "manage"]
+
+
+class AreaScopeReplaceRequest(BaseModel):
+    scopes: list[AreaScopeItem]
 
 
 def _principal(request: Request) -> AuthPrincipal:
@@ -229,6 +239,38 @@ def me(request: Request, db: Session = Depends(get_db)):
     return user
 
 
+@router.get("/me/area-scopes")
+def list_my_area_scopes(request: Request, db: Session = Depends(get_db)):
+    """返回当前用户可用厂区；单厂区用户无需额外选择。"""
+    principal = _principal(request)
+    areas_query = db.query(OperationalArea).filter(OperationalArea.status == "active")
+    if principal.role == "admin":
+        rows = [(None, area) for area in areas_query.order_by(
+            OperationalArea.is_default.desc(), OperationalArea.id
+        ).all()]
+    else:
+        rows = (
+            db.query(UserAreaScope, OperationalArea)
+            .join(OperationalArea, OperationalArea.id == UserAreaScope.operational_area_id)
+            .filter(
+                UserAreaScope.user_id == principal.user_id,
+                OperationalArea.status == "active",
+            )
+            .order_by(OperationalArea.is_default.desc(), OperationalArea.id)
+            .all()
+        )
+    return [
+        {
+            "operational_area_id": area.id,
+            "area_code": area.code,
+            "area_name": area.name,
+            "access_level": "manage" if scope is None else scope.access_level,
+            "is_default": bool(area.is_default),
+        }
+        for scope, area in rows
+    ]
+
+
 @router.get("/users", response_model=list[UserResponse])
 def list_users(_: AuthPrincipal = Depends(_principal), db: Session = Depends(get_db)):
     return db.query(User).order_by(User.created_at.asc()).all()
@@ -286,3 +328,71 @@ def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/users/{user_id}/area-scopes")
+def list_user_area_scopes(
+    user_id: int,
+    _: AuthPrincipal = Depends(_principal),
+    db: Session = Depends(get_db),
+):
+    if not db.query(User.id).filter(User.id == user_id).first():
+        raise HTTPException(status_code=404, detail="用户不存在")
+    rows = (
+        db.query(UserAreaScope, OperationalArea)
+        .join(OperationalArea, OperationalArea.id == UserAreaScope.operational_area_id)
+        .filter(UserAreaScope.user_id == user_id)
+        .order_by(OperationalArea.id)
+        .all()
+    )
+    return [
+        {
+            "operational_area_id": scope.operational_area_id,
+            "area_code": area.code,
+            "area_name": area.name,
+            "access_level": scope.access_level,
+        }
+        for scope, area in rows
+    ]
+
+
+@router.put("/users/{user_id}/area-scopes")
+def replace_user_area_scopes(
+    user_id: int,
+    payload: AreaScopeReplaceRequest,
+    _: AuthPrincipal = Depends(_principal),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    requested = {
+        item.operational_area_id: item.access_level
+        for item in payload.scopes
+    }
+    if len(requested) != len(payload.scopes):
+        raise HTTPException(status_code=422, detail="同一厂区不能重复授权")
+    valid_ids = {
+        item[0]
+        for item in db.query(OperationalArea.id)
+        .filter(
+            OperationalArea.id.in_(requested),
+            OperationalArea.status == "active",
+        )
+        .all()
+    }
+    if valid_ids != set(requested):
+        raise HTTPException(status_code=422, detail="授权中包含不存在或已停用的厂区")
+    db.query(UserAreaScope).filter(UserAreaScope.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    for area_id, access_level in requested.items():
+        db.add(
+            UserAreaScope(
+                user_id=user.id,
+                operational_area_id=area_id,
+                access_level=access_level,
+            )
+        )
+    db.commit()
+    return list_user_area_scopes(user.id, _, db)

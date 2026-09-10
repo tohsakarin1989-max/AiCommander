@@ -20,8 +20,8 @@ COPY . .
 RUN chmod 0755 /app/docker-entrypoint.sh \
     && groupadd --system --gid 10001 aicommander \
     && useradd --system --uid 10001 --gid aicommander --home-dir /app aicommander \
-    && mkdir -p /app/data/chroma_db \
-    && chown -R aicommander:aicommander /app
+    && mkdir -p /app/data/chroma_db /var/lib/aicommander/maps \
+    && chown -R aicommander:aicommander /app /var/lib/aicommander/maps
 
 USER aicommander
 

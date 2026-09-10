@@ -2,6 +2,7 @@ import api from './api'
 
 export interface JurisdictionAsset {
   id: number
+  operational_area_id?: number | null
   external_id?: string | null
   name: string
   asset_type: string
@@ -24,6 +25,7 @@ export interface JurisdictionAsset {
 }
 
 export interface JurisdictionAssetCreate {
+  operational_area_id?: number
   external_id?: string
   name: string
   asset_type: string
@@ -346,6 +348,7 @@ export const jurisdictionApi = {
     asset_type?: string
     source?: string
     status?: string
+    operational_area_id?: number
     skip?: number
     limit?: number
   }): Promise<JurisdictionAsset[]> => {
@@ -377,14 +380,22 @@ export const jurisdictionApi = {
     return response.data
   },
 
-  importGeoJson: async (geojson: Record<string, unknown>, source = 'map'): Promise<{
+  importGeoJson: async (
+    geojson: Record<string, unknown>,
+    source = 'map',
+    operationalAreaId?: number,
+  ): Promise<{
     total: number
     created: number
     updated: number
     errors: string[]
     items: JurisdictionAsset[]
   }> => {
-    const response = await api.post('/jurisdiction/assets/import-geojson', { geojson, source })
+    const response = await api.post('/jurisdiction/assets/import-geojson', {
+      geojson,
+      source,
+      operational_area_id: operationalAreaId,
+    })
     return response.data
   },
 
@@ -393,23 +404,32 @@ export const jurisdictionApi = {
     return response.data
   },
 
-  importAssetTable: async (file: File, dryRun = false, source = 'ledger'): Promise<AssetTableImportResult> => {
+  importAssetTable: async (
+    file: File,
+    dryRun = false,
+    source = 'ledger',
+    operationalAreaId?: number,
+  ): Promise<AssetTableImportResult> => {
     const formData = new FormData()
     formData.append('file', file)
     const response = await api.post<AssetTableImportResult>('/jurisdiction/assets/import-table', formData, {
-      params: { dry_run: dryRun, source },
+      params: { dry_run: dryRun, source, operational_area_id: operationalAreaId },
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return response.data
   },
 
-  getSummary: async (): Promise<JurisdictionAssetSummary> => {
-    const response = await api.get<JurisdictionAssetSummary>('/jurisdiction/assets/summary')
+  getSummary: async (operationalAreaId?: number): Promise<JurisdictionAssetSummary> => {
+    const response = await api.get<JurisdictionAssetSummary>('/jurisdiction/assets/summary', {
+      params: operationalAreaId ? { operational_area_id: operationalAreaId } : undefined,
+    })
     return response.data
   },
 
-  getDataQuality: async (): Promise<DataQualitySummary> => {
-    const response = await api.get<DataQualitySummary>('/jurisdiction/data-quality')
+  getDataQuality: async (operationalAreaId?: number): Promise<DataQualitySummary> => {
+    const response = await api.get<DataQualitySummary>('/jurisdiction/data-quality', {
+      params: operationalAreaId ? { operational_area_id: operationalAreaId } : undefined,
+    })
     return response.data
   },
 
@@ -488,9 +508,17 @@ export const jurisdictionApi = {
     return response.data
   },
 
-  getWellAttentionOverview: async (daysBack = 30, radiusKm = 1): Promise<WellAttentionOverview> => {
+  getWellAttentionOverview: async (
+    daysBack = 30,
+    radiusKm = 1,
+    operationalAreaId?: number,
+  ): Promise<WellAttentionOverview> => {
     const response = await api.get<WellAttentionOverview>('/jurisdiction/well-attention/overview', {
-      params: { days_back: daysBack, radius_km: radiusKm },
+      params: {
+        days_back: daysBack,
+        radius_km: radiusKm,
+        operational_area_id: operationalAreaId,
+      },
     })
     return response.data
   },

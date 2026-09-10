@@ -10,6 +10,7 @@ import app.models  # noqa: F401
 from app.api import auth
 from app.database import Base, get_db
 from app.models.user import AuditLog, User
+from app.models.map_foundation import OperationalArea, UserAreaScope
 from app.security import AuthMiddleware
 
 
@@ -45,6 +46,34 @@ def _build_client(
 
     @app.post("/api/protected")
     def protected_write():
+        return {"ok": True}
+
+    @app.post("/api/deployment-recommendations/demo/feedback")
+    def deployment_feedback():
+        return {"ok": True}
+
+    @app.post("/api/deployment/smart-analysis")
+    def legacy_deployment_write():
+        return {"ok": True}
+
+    @app.get("/api/jurisdiction/assets")
+    def map_assets_read():
+        return {"ok": True}
+
+    @app.post("/api/jurisdiction/assets")
+    def map_assets_write():
+        return {"ok": True}
+
+    @app.get("/api/patrols")
+    def legacy_patrols():
+        return {"ok": True}
+
+    @app.get("/api/events")
+    def legacy_events():
+        return {"ok": True}
+
+    @app.get("/api/key-locations")
+    def legacy_key_locations():
         return {"ok": True}
 
     app.add_middleware(
@@ -112,7 +141,23 @@ def test_bootstrap_requires_one_time_token_and_creates_admin_session():
         assert user.username == "administrator"
         assert user.password_hash != "StrongPassword!2026"
         assert user.role == "admin"
+        assert db.query(OperationalArea).filter(OperationalArea.is_default.is_(True)).count() == 1
+        scope = db.query(UserAreaScope).filter(UserAreaScope.user_id == user.id).one()
+        assert scope.access_level == "manage"
+        default_area_id = scope.operational_area_id
         assert db.query(AuditLog).filter(AuditLog.action == "auth.bootstrap").count() == 1
+
+    scopes = client.get("/api/auth/me/area-scopes")
+    assert scopes.status_code == 200
+    assert scopes.json() == [
+        {
+            "operational_area_id": default_area_id,
+            "area_code": "default-factory",
+            "area_name": "默认厂区",
+            "access_level": "manage",
+            "is_default": True,
+        }
+    ]
 
 
 def test_local_development_bootstrap_does_not_require_token():
@@ -208,6 +253,82 @@ def test_admin_can_create_viewer_and_viewer_is_read_only():
     assert client.get("/api/protected").status_code == 200
     assert client.post("/api/protected").status_code == 403
     assert client.get("/api/auth/users").status_code == 403
+
+
+def test_analyst_can_submit_recommendation_feedback_but_not_legacy_deployment():
+    client, _ = _build_client()
+    assert _bootstrap_admin(client).status_code == 201
+    created = client.post(
+        "/api/auth/users",
+        json={
+            "username": "analyst01",
+            "display_name": "分析员",
+            "password": "AnalystPassword!2026",
+            "role": "analyst",
+        },
+    )
+    assert created.status_code == 201
+    assert client.post("/api/auth/logout").status_code == 204
+    assert client.post(
+        "/api/auth/login",
+        json={"username": "analyst01", "password": "AnalystPassword!2026"},
+    ).status_code == 200
+
+    assert client.post("/api/deployment-recommendations/demo/feedback").status_code == 200
+    assert client.post("/api/deployment/smart-analysis").status_code == 403
+    assert client.get("/api/jurisdiction/assets").status_code == 200
+    assert client.post("/api/jurisdiction/assets").status_code == 403
+    assert client.get("/api/patrols").status_code == 403
+    assert client.get("/api/events").status_code == 200
+    assert client.get("/api/key-locations").status_code == 403
+
+
+def test_admin_can_replace_user_area_scopes():
+    client, session_factory = _build_client()
+    assert _bootstrap_admin(client).status_code == 201
+    created = client.post(
+        "/api/auth/users",
+        json={
+            "username": "scoped01",
+            "display_name": "辖区分析员",
+            "password": "ScopedPassword!2026",
+            "role": "analyst",
+        },
+    )
+    with session_factory() as db:
+        second = OperationalArea(code="second", name="第二厂区", status="active")
+        db.add(second)
+        db.commit()
+        db.refresh(second)
+
+    response = client.put(
+        f"/api/auth/users/{created.json()['id']}/area-scopes",
+        json={"scopes": [{"operational_area_id": second.id, "access_level": "read"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "operational_area_id": second.id,
+            "area_code": "second",
+            "area_name": "第二厂区",
+            "access_level": "read",
+        }
+    ]
+    assert client.post("/api/auth/logout").status_code == 204
+    assert client.post(
+        "/api/auth/login",
+        json={"username": "scoped01", "password": "ScopedPassword!2026"},
+    ).status_code == 200
+    assert client.get("/api/auth/me/area-scopes").json() == [
+        {
+            "operational_area_id": second.id,
+            "area_code": "second",
+            "area_name": "第二厂区",
+            "access_level": "read",
+            "is_default": False,
+        }
+    ]
 
 
 def test_cookie_authenticated_writes_reject_untrusted_origin():

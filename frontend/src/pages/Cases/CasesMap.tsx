@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Button, List, Spin, Switch } from 'antd'
+import { Button, List, Select, Spin, Switch } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -10,6 +10,7 @@ import {
   AppstoreOutlined,
 } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
+import { authApi } from '../../services/auth'
 import LeafletMap from '../../components/Map/LeafletMap'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import type { Case } from '../../types'
@@ -37,27 +38,58 @@ const CasesMap: React.FC = () => {
   const [showChainLinks, setShowChainLinks] = useState(true)
   const [visiblePositions, setVisiblePositions] = useState<ChainPosition[]>(['upstream', 'midstream', 'downstream', 'unknown'])
   const [selectedCase, setSelectedCase] = useState<Case | null>(null)
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
   const selectedCaseId = Number(searchParams.get('caseId') || 0) || undefined
 
-  const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases'],
-    queryFn: () => caseApi.getCases(),
+  const areaScopesQuery = useQuery({
+    queryKey: ['my-area-scopes'],
+    queryFn: authApi.myAreaScopes,
+    staleTime: 5 * 60_000,
   })
 
+  React.useEffect(() => {
+    const scopes = areaScopesQuery.data ?? []
+    if (scopes.length === 0) return
+    if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
+    const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
+    setActiveAreaId(preferred.operational_area_id)
+  }, [activeAreaId, areaScopesQuery.data])
+
+  const { data: cases, isLoading } = useQuery({
+    queryKey: ['cases', 'map', activeAreaId],
+    queryFn: () => caseApi.getCases({
+      limit: 2000,
+      operational_area_id: activeAreaId as number,
+    }),
+    enabled: activeAreaId != null,
+  })
+  const areaCaseIdSet = new Set((cases ?? []).map(item => item.id))
+
   const { data: hotspots } = useQuery({
-    queryKey: ['hotspots'],
-    queryFn: () => caseApi.getHotspots(),
+    queryKey: ['hotspots', 'map', activeAreaId],
+    queryFn: () => caseApi.getHotspots(0.5, 3, activeAreaId as number),
+    enabled: activeAreaId != null,
   })
 
   const { data: serialCases } = useQuery({
-    queryKey: ['serialCases'],
+    queryKey: ['serialCases', activeAreaId],
     // 仅用地理分析，关闭语义搜索（向量库未就绪时会超时 20s+）
-    queryFn: () => caseApi.getSerialCases(undefined, 2.0, 30, false, true),
+    queryFn: () => caseApi.getSerialCases(
+      undefined,
+      2.0,
+      30,
+      false,
+      true,
+      0.6,
+      activeAreaId as number,
+    ),
+    enabled: activeAreaId != null,
   })
 
   const { data: chainMapData } = useQuery({
-    queryKey: ['chain-map-data', selectedCaseId],
+    queryKey: ['chain-map-data', selectedCaseId, activeAreaId],
     queryFn: () => caseApi.getChainMapData({ case_id: selectedCaseId, min_confidence: 0.5 }),
+    enabled: activeAreaId != null,
   })
 
   // 有坐标的案件 → LeafletMap markers
@@ -82,6 +114,7 @@ const CasesMap: React.FC = () => {
 
   const chainLinks: ChainLinkLine[] = showChainLinks
     ? (chainMapData?.chain_links || [])
+        .filter(link => areaCaseIdSet.has(link.case_id_a) && areaCaseIdSet.has(link.case_id_b))
         .filter(link => link.from_case?.latitude != null && link.from_case.longitude != null && link.to_case?.latitude != null && link.to_case.longitude != null)
         .map((link): ChainLinkLine => ({
           id: link.id,
@@ -126,6 +159,10 @@ const CasesMap: React.FC = () => {
     if (found) setSelectedCase(found)
   }, [selectedCaseId, cases])
 
+  React.useEffect(() => {
+    setSelectedCase(null)
+  }, [activeAreaId])
+
   const toggleChainPosition = (position: ChainPosition) => {
     setVisiblePositions(prev => (
       prev.includes(position)
@@ -144,6 +181,18 @@ const CasesMap: React.FC = () => {
           <h1 className="ds-page-title">案件地图</h1>
         </div>
         <div className="ds-page-hdr__right">
+          {areaScopesQuery.data && areaScopesQuery.data.length > 1 && (
+            <Select
+              aria-label="当前厂区"
+              value={activeAreaId ?? undefined}
+              style={{ minWidth: 160 }}
+              options={areaScopesQuery.data.map(scope => ({
+                value: scope.operational_area_id,
+                label: scope.area_name,
+              }))}
+              onChange={setActiveAreaId}
+            />
+          )}
           <Button
             className="cases-map-filter__spacetime-btn"
             icon={<FieldTimeOutlined />}
@@ -254,10 +303,12 @@ const CasesMap: React.FC = () => {
             </div>
           ) : (
             <LeafletMap
+              key={activeAreaId ?? 'no-area'}
               markers={markers}
               serialGroups={serialGroups}
               chainLinks={chainLinks}
               height="100%"
+              operationalAreaId={activeAreaId ?? undefined}
               onMarkerClick={(m) => {
                 const found = (cases || []).find((c) => c.id === m.id)
                 if (found) setSelectedCase(found)

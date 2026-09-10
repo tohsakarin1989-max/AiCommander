@@ -16,9 +16,7 @@ def run_meeting_task(
     db = SessionLocal()
     try:
         # 运行异步函数，传入已存在的会议ID
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(
+        result = asyncio.run(
             MeetingService.create_and_run_meeting(
                 db=db,
                 case_ids=case_ids,
@@ -29,19 +27,20 @@ def run_meeting_task(
         )
         
         return result
-    except Exception as e:
-        logger.error(f"执行会议任务失败: {str(e)}")
+    except Exception:
+        logger.exception("执行会议任务失败: %s", meeting_id)
         # 更新会议状态为失败
         try:
+            db.rollback()
             meeting = db.query(Meeting).filter(
                 Meeting.meeting_id == meeting_id
             ).first()
             if meeting:
                 meeting.status = "failed"
                 db.commit()
-        except:
-            pass
+        except Exception:
+            db.rollback()
+            logger.exception("会议 %s 失败状态写入失败", meeting_id)
         raise
     finally:
         db.close()
-

@@ -14,6 +14,7 @@ from app.database import Base, get_db
 from app.models.agent_run import AgentApproval, AgentArtifact, AgentEvent, AgentRun
 from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
+from app.models.user import User
 from app.agent_runtime.redaction import AgentPayloadRedactor
 from app.agent_runtime.runtime import AgentRunExecutor
 from app.agent_runtime.service import AgentRunService
@@ -30,6 +31,19 @@ def agent_db() -> Session:
     Base.metadata.create_all(bind=engine)
     local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = local()
+    session.add_all(
+        [
+            User(
+                id=user_id,
+                username=f"agent-user-{user_id}",
+                display_name=f"Agent User {user_id}",
+                password_hash="test-only",
+                role="admin" if user_id == 1 else "analyst",
+            )
+            for user_id in (1, 7, 9)
+        ]
+    )
+    session.commit()
     try:
         yield session
     finally:
@@ -126,6 +140,50 @@ def test_external_payload_redactor_removes_identifiers_and_exact_locations():
     assert result.payload["distance_km"] == 0.83
     assert result.payload["risk_score"] == 62
     assert result.payload["evidence_refs"] == ["case:CASE-001", "asset:ASSET-001"]
+
+
+def test_external_payload_redactor_aliases_all_tool_output_identifier_shapes():
+    payload = {
+        "tool_outputs": [
+            {
+                "case_ids": [12, 13],
+                "asset_ids": [8, 9],
+                "candidate_actions": [
+                    {
+                        "target_type": "jurisdiction_asset",
+                        "target_id": 8,
+                        "evidence_refs": ["map_asset:8@snapshot:3"],
+                    }
+                ],
+                "facts": [
+                    {
+                        "case_id": 12,
+                        "nearest": {
+                            "production_target": {
+                                "asset": {"id": 9, "asset_type": "well"}
+                            }
+                        },
+                    }
+                ],
+                "inferences": [
+                    "案件 12 与 case:13 仅为条件相近，设施 9 和 asset:8 待核验。"
+                ],
+            }
+        ]
+    }
+
+    result = AgentPayloadRedactor().redact(payload)
+    serialized = str(result.payload)
+
+    assert "'case_ids': [12, 13]" not in serialized
+    assert "'asset_ids': [8, 9]" not in serialized
+    assert "'target_id': 8" not in serialized
+    assert "'id': 9" not in serialized
+    assert "案件 12" not in serialized
+    assert "case:13" not in serialized
+    assert "asset:8" not in serialized
+    assert result.payload["tool_outputs"][0]["case_ids"] == ["CASE-001", "CASE-002"]
+    assert result.payload["tool_outputs"][0]["asset_ids"] == ["ASSET-001", "ASSET-002"]
 
 
 def test_case_quality_tool_is_read_only_and_has_evidence(agent_db: Session):

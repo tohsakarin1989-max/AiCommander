@@ -81,32 +81,48 @@ class WellAttentionService:
         days_back: int = 30,
         radius_km: float = 1.0,
         include_cached_ai: bool = True,
+        operational_area_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=days_back)
         history_cutoff = now - timedelta(days=365)
 
-        wells = db.query(JurisdictionAsset).filter(
+        wells_query = db.query(JurisdictionAsset).filter(
             JurisdictionAsset.asset_type == "well",
             JurisdictionAsset.status == "active",
             JurisdictionAsset.latitude.isnot(None),
             JurisdictionAsset.longitude.isnot(None),
-        ).all()
-        observations = db.query(Event).filter(
+        )
+        observations_query = db.query(Event).filter(
             Event.event_type.in_(OBSERVATION_EVENT_TYPES),
             Event.occurred_time >= cutoff,
-        ).all()
-        cases = db.query(Case).filter(
+        )
+        cases_query = db.query(Case).filter(
             Case.occurred_time >= history_cutoff,
             Case.latitude.isnot(None),
             Case.longitude.isnot(None),
-        ).all()
-        tech_assets = db.query(JurisdictionAsset).filter(
+        )
+        tech_assets_query = db.query(JurisdictionAsset).filter(
             JurisdictionAsset.asset_type.in_(TECH_TYPES),
             JurisdictionAsset.status == "active",
             JurisdictionAsset.latitude.isnot(None),
             JurisdictionAsset.longitude.isnot(None),
-        ).all()
+        )
+        if operational_area_id is not None:
+            wells_query = wells_query.filter(
+                JurisdictionAsset.operational_area_id == operational_area_id
+            )
+            observations_query = observations_query.filter(
+                Event.operational_area_id == operational_area_id
+            )
+            cases_query = cases_query.filter(Case.operational_area_id == operational_area_id)
+            tech_assets_query = tech_assets_query.filter(
+                JurisdictionAsset.operational_area_id == operational_area_id
+            )
+        wells = wells_query.all()
+        observations = observations_query.all()
+        cases = cases_query.all()
+        tech_assets = tech_assets_query.all()
 
         outputs = [
             value
@@ -142,6 +158,7 @@ class WellAttentionService:
 
         overview = {
             "generated_at": now.isoformat(),
+            "operational_area_id": operational_area_id,
             "days_back": days_back,
             "radius_km": radius_km,
             "summary": {
@@ -168,7 +185,11 @@ class WellAttentionService:
                 "系统不自动派发任务，不把未复核痕迹表达为已发生案件。",
             ],
         }
-        cached_ai = WellAttentionService._load_cached_ai(db) if include_cached_ai else None
+        cached_ai = (
+            WellAttentionService._load_cached_ai(db)
+            if include_cached_ai and operational_area_id is None
+            else None
+        )
         overview["ai_analysis"] = (
             cached_ai
             if cached_ai

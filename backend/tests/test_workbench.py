@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import Base, get_db
 from app.models.case import Case
 from app.models.knowledge_asset import KnowledgeAsset
+from app.models.user import User
 from app.models.workbench import WorkbenchTaskSession
 
 
@@ -26,7 +27,23 @@ def _session() -> Session:
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
 
 
+def _ensure_user(db: Session, *, role: str, user_id: int) -> None:
+    if db.get(User, user_id) is not None:
+        return
+    db.add(
+        User(
+            id=user_id,
+            username=f"{role}-{user_id}",
+            display_name=f"{role}-{user_id}",
+            password_hash="test-only",
+            role=role,
+        )
+    )
+    db.commit()
+
+
 def _client(db: Session, *, role: str = "analyst", user_id: int = 9) -> TestClient:
+    _ensure_user(db, role=role, user_id=user_id)
     api = FastAPI()
 
     @api.middleware("http")
@@ -323,6 +340,8 @@ def test_viewer_can_read_workbench_but_cannot_track_sessions_or_metrics(monkeypa
 def test_metrics_are_role_scoped_and_mark_small_samples_as_unverified():
     db = _session()
     now = datetime.utcnow()
+    _ensure_user(db, role="analyst", user_id=31)
+    _ensure_user(db, role="analyst", user_id=32)
     db.add_all(
         [
             WorkbenchTaskSession(

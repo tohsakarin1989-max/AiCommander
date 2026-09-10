@@ -15,6 +15,7 @@ from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.patrol import PatrolRecord
 from app.services.patrol_service import PatrolService
 from app.utils.geo import haversine_km
+from app.database import require_area_write_access
 
 
 ROAD_TYPES = {
@@ -86,6 +87,8 @@ class JurisdictionService:
 
     @staticmethod
     def create_asset(db: Session, data: Dict[str, Any]) -> JurisdictionAsset:
+        data = JurisdictionService._payload_with_default_area(db, data)
+        JurisdictionService._lock_operational_area(db, data.get("operational_area_id"))
         asset = JurisdictionAsset(**data)
         db.add(asset)
         db.commit()
@@ -104,6 +107,7 @@ class JurisdictionService:
         asset = db.query(JurisdictionAsset).filter(JurisdictionAsset.id == asset_id).first()
         if not asset:
             raise ValueError("asset_not_found")
+        JurisdictionService._lock_operational_area(db, asset.operational_area_id)
         geometry_type = str(data.get("geometry_type") or asset.geometry_type or "point").lower()
         latitude = data.get("latitude", asset.latitude)
         longitude = data.get("longitude", asset.longitude)
@@ -132,13 +136,14 @@ class JurisdictionService:
     def bulk_create_assets(db: Session, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         created = []
         for item in items:
-            payload = {
+            payload = JurisdictionService._payload_with_default_area(db, {
                 "geometry_type": "point",
                 "source": "import",
                 "status": "active",
                 "risk_level": 1,
                 **item,
-            }
+            })
+            JurisdictionService._lock_operational_area(db, payload.get("operational_area_id"))
             asset = JurisdictionAsset(**payload)
             db.add(asset)
             created.append(asset)
@@ -152,7 +157,20 @@ class JurisdictionService:
         }
 
     @staticmethod
-    def import_geojson(db: Session, geojson: Dict[str, Any], source: str = "map") -> Dict[str, Any]:
+    def _lock_operational_area(db: Session, area_id: int | None) -> None:
+        if area_id is None or db.bind is None or db.bind.dialect.name != "postgresql":
+            return
+        from app.models.map_foundation import OperationalArea
+
+        db.query(OperationalArea.id).filter(OperationalArea.id == area_id).with_for_update().first()
+
+    @staticmethod
+    def import_geojson(
+        db: Session,
+        geojson: Dict[str, Any],
+        source: str = "map",
+        operational_area_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         features = geojson.get("features") if geojson.get("type") == "FeatureCollection" else None
         if not isinstance(features, list):
             return {"total": 0, "created": 0, "updated": 0, "errors": ["仅支持 FeatureCollection"], "items": []}
@@ -164,6 +182,8 @@ class JurisdictionService:
         for index, feature in enumerate(features):
             try:
                 payload = JurisdictionService._payload_from_geojson_feature(feature, source=source)
+                if operational_area_id is not None:
+                    payload["operational_area_id"] = operational_area_id
                 asset, was_created = JurisdictionService._upsert_asset(db, payload)
                 created += 1 if was_created else 0
                 updated += 0 if was_created else 1
@@ -228,6 +248,7 @@ class JurisdictionService:
         rows: List[Dict[str, Any]],
         source: str = "ledger",
         dry_run: bool = False,
+        operational_area_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         created = 0
         updated = 0
@@ -238,6 +259,8 @@ class JurisdictionService:
         for index, row in enumerate(rows, start=2):
             try:
                 payload = JurisdictionService._payload_from_tabular_row(row, source=source)
+                if operational_area_id is not None:
+                    payload["operational_area_id"] = operational_area_id
                 valid += 1
                 if dry_run:
                     items.append(payload)
@@ -277,6 +300,7 @@ class JurisdictionService:
         asset_type: Optional[str] = None,
         source: Optional[str] = None,
         status: Optional[str] = "active",
+        operational_area_id: Optional[int] = None,
         limit: int = 200,
         skip: int = 0,
     ) -> List[JurisdictionAsset]:
@@ -287,11 +311,19 @@ class JurisdictionService:
             query = query.filter(JurisdictionAsset.source == source)
         if status:
             query = query.filter(JurisdictionAsset.status == status)
+        if operational_area_id is not None:
+            query = query.filter(JurisdictionAsset.operational_area_id == operational_area_id)
         return query.order_by(JurisdictionAsset.id.desc()).offset(skip).limit(limit).all()
 
     @staticmethod
-    def summarize_assets(db: Session) -> Dict[str, Any]:
-        assets = db.query(JurisdictionAsset).all()
+    def summarize_assets(
+        db: Session,
+        operational_area_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        query = db.query(JurisdictionAsset)
+        if operational_area_id is not None:
+            query = query.filter(JurisdictionAsset.operational_area_id == operational_area_id)
+        assets = query.all()
         by_type: Dict[str, int] = {}
         by_source: Dict[str, int] = {}
         by_status: Dict[str, int] = {}
@@ -316,8 +348,11 @@ class JurisdictionService:
     def audit_data_quality(
         db: Session,
         asset_ids: Optional[Iterable[int]] = None,
+        operational_area_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         query = db.query(JurisdictionAsset)
+        if operational_area_id is not None:
+            query = query.filter(JurisdictionAsset.operational_area_id == operational_area_id)
         if asset_ids is not None:
             selected_ids = list(dict.fromkeys(int(item) for item in asset_ids))
             if not selected_ids:
@@ -752,7 +787,36 @@ class JurisdictionService:
 
     @staticmethod
     def record_feedback(db: Session, data: Dict[str, Any]) -> JurisdictionFeedback:
-        feedback = JurisdictionFeedback(**data)
+        case = None
+        asset = None
+        if data.get("case_id") is not None:
+            case = db.query(Case).filter(Case.id == data["case_id"]).first()
+            if not case:
+                raise ValueError("case_not_found_or_out_of_scope")
+        if data.get("asset_id") is not None:
+            asset = db.query(JurisdictionAsset).filter(
+                JurisdictionAsset.id == data["asset_id"]
+            ).first()
+            if not asset:
+                raise ValueError("asset_not_found_or_out_of_scope")
+        referenced_area_ids = {
+            item.operational_area_id
+            for item in (case, asset)
+            if item is not None and item.operational_area_id is not None
+        }
+        if len(referenced_area_ids) > 1:
+            raise ValueError("feedback_scope_mismatch")
+        operational_area_id = next(
+            iter(referenced_area_ids),
+            db.info.get("default_operational_area_id"),
+        )
+        if operational_area_id is None:
+            raise ValueError("feedback_scope_required")
+        require_area_write_access(db, operational_area_id)
+        feedback = JurisdictionFeedback(
+            **data,
+            operational_area_id=operational_area_id,
+        )
         db.add(feedback)
         db.commit()
         db.refresh(feedback)
@@ -1227,20 +1291,38 @@ out body geom qt;
         return [item.strip() for item in text.split("|") if item.strip()]
 
     @staticmethod
+    def _payload_with_default_area(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(payload)
+        area_id = normalized.get("operational_area_id") or db.info.get(
+            "default_operational_area_id"
+        )
+        normalized["operational_area_id"] = require_area_write_access(db, area_id)
+        return normalized
+
+    @staticmethod
     def _upsert_asset(db: Session, payload: Dict[str, Any]) -> tuple[JurisdictionAsset, bool]:
+        payload = JurisdictionService._payload_with_default_area(db, payload)
         existing = None
         external_id = payload.get("external_id")
+        area_id = payload.get("operational_area_id")
+        JurisdictionService._lock_operational_area(db, area_id)
         if external_id:
-            existing = db.query(JurisdictionAsset).filter(
+            query = db.query(JurisdictionAsset).filter(
                 JurisdictionAsset.external_id == external_id,
                 JurisdictionAsset.source == payload.get("source"),
-            ).first()
+            )
+            if area_id is not None:
+                query = query.filter(JurisdictionAsset.operational_area_id == area_id)
+            existing = query.first()
         if existing is None:
-            existing = db.query(JurisdictionAsset).filter(
+            query = db.query(JurisdictionAsset).filter(
                 JurisdictionAsset.name == payload["name"],
                 JurisdictionAsset.asset_type == payload["asset_type"],
                 JurisdictionAsset.source == payload.get("source"),
-            ).first()
+            )
+            if area_id is not None:
+                query = query.filter(JurisdictionAsset.operational_area_id == area_id)
+            existing = query.first()
 
         if existing is None:
             asset = JurisdictionAsset(**payload)

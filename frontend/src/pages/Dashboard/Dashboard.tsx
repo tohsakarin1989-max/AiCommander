@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { aiApi, automationAlertApi, caseApi, patrolApi, reportApi, suggestionsApi } from '../../services'
+import { authApi } from '../../services/auth'
 import { jurisdictionApi, type WellAttentionOverview } from '../../services/jurisdiction'
 import type { AreaRisk, Case, ChainLink } from '../../types'
 import AutoScrollList from './AutoScrollList'
@@ -127,13 +128,30 @@ const Dashboard = () => {
   })
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [mapLayer, setMapLayer] = useState<DashboardMapLayer>('attention')
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
 
   const dashRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
+  const areaScopesQuery = useQuery({
+    queryKey: ['my-area-scopes'],
+    queryFn: authApi.myAreaScopes,
+    staleTime: 5 * 60_000,
+  })
+
   useEffect(() => {
+    const scopes = areaScopesQuery.data ?? []
+    if (scopes.length === 0) return
+    if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
+    const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
+    setActiveAreaId(preferred.operational_area_id)
+  }, [activeAreaId, areaScopesQuery.data])
+
+  useEffect(() => {
+    if (activeAreaId == null) return undefined
+    setCases([])
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/api/ws/dashboard`
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/dashboard?operational_area_id=${encodeURIComponent(String(activeAreaId))}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
     ws.onopen = () => setWsConnected(true)
@@ -160,11 +178,15 @@ const Dashboard = () => {
       }
     }
     return () => ws.close()
-  }, [])
+  }, [activeAreaId])
 
   const { data: queriedCases } = useQuery<Case[]>({
-    queryKey: ['dashboard-cases'],
-    queryFn: () => caseApi.getCases({ limit: 100 }),
+    queryKey: ['dashboard-cases', activeAreaId],
+    queryFn: () => caseApi.getCases({
+      limit: 100,
+      operational_area_id: activeAreaId as number,
+    }),
+    enabled: activeAreaId != null,
     refetchInterval: 60_000,
   })
   const { data: areaRisks } = useQuery<AreaRisk[]>({
@@ -173,8 +195,9 @@ const Dashboard = () => {
     refetchInterval: 120_000,
   })
   const { data: rawHotspots } = useQuery<DashboardHotspot[]>({
-    queryKey: ['dashboard-map-hotspots'],
-    queryFn: () => caseApi.getHotspots(1.0, 3),
+    queryKey: ['dashboard-map-hotspots', activeAreaId],
+    queryFn: () => caseApi.getHotspots(1.0, 3, activeAreaId as number),
+    enabled: activeAreaId != null,
     refetchInterval: 120_000,
   })
   const { data: chainMapData } = useQuery({
@@ -207,17 +230,31 @@ const Dashboard = () => {
     retry: false,
   })
   const { data: wellAttention } = useQuery<WellAttentionOverview>({
-    queryKey: ['dashboard-well-attention'],
-    queryFn: () => jurisdictionApi.getWellAttentionOverview(30, 1),
+    queryKey: ['dashboard-well-attention', activeAreaId],
+    queryFn: () => jurisdictionApi.getWellAttentionOverview(30, 1, activeAreaId as number),
+    enabled: activeAreaId != null,
     refetchInterval: 120_000,
     retry: false,
   })
 
   const dashboardCases = cases.length > 0 ? cases : (queriedCases ?? EMPTY_CASES)
+  const dashboardCaseIds = useMemo(
+    () => new Set(dashboardCases.map(item => item.id)),
+    [dashboardCases],
+  )
+  const dashboardChainLinks = useMemo(
+    () => (chainMapData?.chain_links ?? EMPTY_CHAIN_LINKS).filter(
+      (link: ChainLink) => dashboardCaseIds.has(link.case_id_a) && dashboardCaseIds.has(link.case_id_b),
+    ),
+    [chainMapData, dashboardCaseIds],
+  )
+  const activeAreaName = areaScopesQuery.data?.find(
+    scope => scope.operational_area_id === activeAreaId,
+  )?.area_name
 
   const model = useMemo(() => buildDashboardModel({
     cases: dashboardCases,
-    chainLinks: chainMapData?.chain_links ?? EMPTY_CHAIN_LINKS,
+    chainLinks: dashboardChainLinks,
     areaRisks: areaRisks ?? EMPTY_AREA_RISKS,
     hotspots: rawHotspots ?? EMPTY_HOTSPOTS,
     automationAlerts: automationAlerts ?? EMPTY_ALERTS,
@@ -225,7 +262,7 @@ const Dashboard = () => {
     conclusions: conclusions ?? EMPTY_CONCLUSIONS,
     suggestions: suggestionsData?.suggestions ?? EMPTY_SUGGESTIONS,
     statistics,
-  }), [dashboardCases, chainMapData, areaRisks, rawHotspots, automationAlerts, reports, conclusions, suggestionsData, statistics])
+  }), [dashboardCases, dashboardChainLinks, areaRisks, rawHotspots, automationAlerts, reports, conclusions, suggestionsData, statistics])
   const wellView = useMemo(
     () => buildWellAttentionDashboardView(wellAttention),
     [wellAttention],
@@ -285,7 +322,26 @@ const Dashboard = () => {
           />
         </Panel>
 
-        <Panel className="db-panel-map" title="井点风险迹象与案件态势" meta="井点资产 / 现场痕迹 / 案件坐标">
+        <Panel
+          className="db-panel-map"
+          title="井点风险迹象与案件态势"
+          meta={areaScopesQuery.data && areaScopesQuery.data.length > 1 ? (
+            <label>
+              <span className="sr-only">当前厂区</span>
+              <select
+                aria-label="当前厂区"
+                value={activeAreaId ?? ''}
+                onChange={event => setActiveAreaId(Number(event.target.value))}
+              >
+                {areaScopesQuery.data.map(scope => (
+                  <option key={scope.operational_area_id} value={scope.operational_area_id}>
+                    {scope.area_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (activeAreaName || '当前厂区')}
+        >
           <div className="db-command-map">
             <div className="db-map-layer-tabs" role="group" aria-label="地图图层">
               {([
@@ -304,6 +360,7 @@ const Dashboard = () => {
               ))}
             </div>
             <DashboardRiskMap
+              key={activeAreaId ?? 'no-area'}
               layer={mapLayer}
               wells={wellView.wellPoints}
               signals={wellView.signalPoints}
@@ -312,6 +369,7 @@ const Dashboard = () => {
               hotspots={rawHotspots ?? EMPTY_HOTSPOTS}
               isFullscreen={isFullscreen}
               onToggleFullscreen={toggleFullscreen}
+              operationalAreaId={activeAreaId ?? undefined}
             />
             <div className="db-map-legend">
               {mapLayer === 'cases' ? (

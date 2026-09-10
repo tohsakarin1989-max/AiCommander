@@ -3,9 +3,7 @@
 支持多种embedding模型：OpenAI、本地sentence-transformers等
 """
 from typing import List, Optional, Dict
-import os
 from app.utils.logger import logger
-from app.ai.llm_providers import LLMProvider
 
 
 class EmbeddingService:
@@ -18,20 +16,7 @@ class EmbeddingService:
     
     def _init_provider(self):
         """初始化embedding提供者"""
-        # 优先使用OpenAI（如果配置了）
-        # 否则使用本地sentence-transformers模型
-        try:
-            # 尝试使用OpenAI embedding
-            api_key = os.getenv("OPENAI_API_KEY")
-            if api_key:
-                self.provider = "openai"
-                self.model_name = "text-embedding-3-small"  # 或 text-embedding-ada-002
-                logger.info("使用OpenAI embedding模型")
-                return
-        except Exception as e:
-            logger.warning(f"无法使用OpenAI embedding: {e}")
-        
-        # 使用本地模型
+        # 案件原文不得发送外部嵌入服务，统一使用内网本地模型。
         try:
             from sentence_transformers import SentenceTransformer
             self.provider = "local"
@@ -57,14 +42,7 @@ class EmbeddingService:
             return None
         
         try:
-            if self.provider == "openai":
-                import openai
-                response = openai.embeddings.create(
-                    model=self.model_name,
-                    input=text
-                )
-                return response.data[0].embedding
-            elif self.provider == "local":
+            if self.provider == "local":
                 embedding = self._local_model.encode(text, convert_to_numpy=False)
                 return embedding.tolist()
             else:
@@ -88,15 +66,7 @@ class EmbeddingService:
             return []
         
         try:
-            if self.provider == "openai":
-                import openai
-                # OpenAI支持批量
-                response = openai.embeddings.create(
-                    model=self.model_name,
-                    input=texts
-                )
-                return [item.embedding for item in response.data]
-            elif self.provider == "local":
+            if self.provider == "local":
                 # sentence-transformers也支持批量
                 embeddings = self._local_model.encode(
                     texts,
@@ -148,4 +118,3 @@ class EmbeddingService:
             parts.append(f"案发地点：{case['location']}")
         
         return "\n".join(parts) if parts else ""
-

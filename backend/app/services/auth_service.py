@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.user import AuditLog, User, UserSession
+from app.models.map_foundation import OperationalArea, UserAreaScope
 
 
 class AuthenticationError(Exception):
@@ -124,6 +125,28 @@ class AuthService:
             password_changed_at=AuthService.now(),
         )
         db.add(user)
+        db.flush()
+        default_area = (
+            db.query(OperationalArea)
+            .filter(OperationalArea.is_default.is_(True))
+            .first()
+        )
+        if default_area is None:
+            default_area = OperationalArea(
+                code="default-factory",
+                name="默认厂区",
+                is_default=True,
+                status="active",
+            )
+            db.add(default_area)
+            db.flush()
+        db.add(
+            UserAreaScope(
+                user_id=user.id,
+                operational_area_id=default_area.id,
+                access_level="manage" if role == "admin" else "write" if role == "analyst" else "read",
+            )
+        )
         db.commit()
         db.refresh(user)
         return user

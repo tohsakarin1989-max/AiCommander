@@ -22,6 +22,7 @@ from app.database import Base, get_db
 from app.models.agent_run import AgentUsageRecord
 from app.models.ai_model import AIModel
 from app.models.case import Case
+from app.models.user import User
 from app.services.agent_observability_service import AgentObservabilityService
 
 
@@ -35,6 +36,25 @@ def observability_db() -> Session:
     Base.metadata.create_all(bind=engine)
     local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = local()
+    session.add_all(
+        [
+            User(
+                id=7,
+                username="observer-7",
+                display_name="Observer 7",
+                password_hash="test-only",
+                role="analyst",
+            ),
+            User(
+                id=9,
+                username="observer-9",
+                display_name="Observer 9",
+                password_hash="test-only",
+                role="analyst",
+            ),
+        ]
+    )
+    session.commit()
     try:
         yield session
     finally:
@@ -176,6 +196,10 @@ def test_model_registry_selects_an_active_configured_provider_without_exposing_s
     observability_db.commit()
     monkeypatch.setattr("app.agent_runtime.providers.settings.AGENT_USE_EXTERNAL_MODEL", True)
     monkeypatch.setattr("app.agent_runtime.providers.settings.AGENT_EXTERNAL_DATA_POLICY", "redacted_only")
+    monkeypatch.setattr(
+        "app.agent_runtime.providers.settings.MODEL_DATA_EGRESS_POLICY",
+        "external_redacted_only",
+    )
     monkeypatch.setattr("app.agent_runtime.providers.settings.AGENT_PROVIDER", "model_registry")
     monkeypatch.setattr("app.agent_runtime.providers.settings.AGENT_MODEL_ID", model.id)
 
@@ -221,7 +245,7 @@ async def test_model_registry_normalizes_json_and_provider_usage(
 
     monkeypatch.setattr(
         "app.agent_runtime.providers.ModelFactory.create_llm",
-        lambda _factory, _model: _FakeLlm(),
+        lambda _factory, _model, **_kwargs: _FakeLlm(),
     )
 
     outcome = await ModelRegistryNarrator(model).summarize(
@@ -265,6 +289,10 @@ async def test_executor_resolves_registry_model_and_marks_model_assisted_mode(
         created_by=7,
     )
     monkeypatch.setattr("app.agent_runtime.runtime.settings.AGENT_USE_EXTERNAL_MODEL", True)
+    monkeypatch.setattr(
+        "app.agent_runtime.providers.settings.MODEL_DATA_EGRESS_POLICY",
+        "external_redacted_only",
+    )
     monkeypatch.setattr("app.agent_runtime.runtime.settings.AGENT_PROVIDER", "model_registry")
     monkeypatch.setattr("app.agent_runtime.runtime.settings.AGENT_MODEL_ID", model.id)
 
