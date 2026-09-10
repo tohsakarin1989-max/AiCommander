@@ -7,6 +7,7 @@ from app.database import AreaWriteAccessError, get_db, require_area_write_access
 from app.models.case import Case
 from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
+from app.services.case_result_export import CaseResultExportError, export_case_result_docx
 
 router = APIRouter()
 
@@ -92,3 +93,25 @@ def read_result(result_id: str, request: Request, response: Response, db: Sessio
         return CaseResultService.read(db, result_id)
     except CaseResultAccessError:
         raise _unavailable() from None
+
+
+@router.get("/case-results/{result_id}/document.docx")
+def download_result_docx(result_id: str, request: Request, db: Session = Depends(get_db)):
+    _principal(request)
+    try:
+        document, data = export_case_result_docx(db, result_id)
+    except CaseResultAccessError:
+        raise _unavailable() from None
+    except CaseResultExportError as error:
+        if error.code == "document_too_large":
+            raise HTTPException(413, "成果过大，暂不能交互式导出", headers={"Cache-Control": "no-store"}) from None
+        message = "本地文件渲染暂不可用，请稍后重试或联系管理员"
+        if error.code == "map_rendering_not_ready":
+            message = "该成果包含地图，地图文件渲染尚未就绪，未生成省略地图的报告"
+        raise HTTPException(503, message, headers={"Cache-Control": "no-store", "Retry-After": "30"}) from None
+    except ValueError:
+        raise HTTPException(409, "成果格式不完整或版本暂不支持导出", headers={"Cache-Control": "no-store"}) from None
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                             "Content-Disposition": f'attachment; filename="case-result-{document.content_sha256[:16]}.docx"',
+                             "X-Result-Content-SHA256": document.content_sha256})
