@@ -13,6 +13,8 @@ celery_app = Celery(
         "app.tasks.case_pipeline_tasks",
         "app.tasks.case_insight_tasks",
         "app.tasks.deployment_advisor_tasks",
+        "app.tasks.map_package_tasks",
+        "app.tasks.intelligent_query_tasks",
     ],
 )
 
@@ -23,6 +25,16 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        "process-intelligent-query": {
+            "task": "aicommander.queries.process_next",
+            "schedule": 5.0,
+            "options": {"queue": settings.AGENT_REDIS_QUEUE, "expires": 5},
+        },
+        "process-map-package-import": {
+            "task": "aicommander.maps.process_import",
+            "schedule": 30.0,
+            "options": {"queue": "map_build", "expires": 30},
+        },
         "expire-agent-approvals": {
             "task": "aicommander.agent.expire_approvals",
             "schedule": 900.0,

@@ -42,6 +42,27 @@ export interface CaseImportError {
   error: string
 }
 
+export interface CasePageParams {
+  page?: number
+  page_size?: number
+  keyword?: string
+  statuses?: string[]
+  case_types?: string[]
+  oil_types?: string[]
+  start_date?: string
+  end_date?: string
+  has_geo?: boolean
+  operational_area_id?: number
+}
+
+export interface CasePage {
+  items: Case[]
+  total: number
+  page: number
+  page_size: number
+  facets: { statuses: Record<string, number>; case_types: Record<string, number>; oil_types: Record<string, number> }
+}
+
 export interface CaseImportResult {
   total: number
   created: number
@@ -50,9 +71,33 @@ export interface CaseImportResult {
   dry_run?: boolean
   preview?: Array<Record<string, unknown>>
   errors: CaseImportError[]
+  batch_id?: string | null
+  replayed?: boolean
+  original_created?: number
+  table?: {
+    worksheets: string[]
+    worksheet: string | null
+    header_row: number
+    field_mapping: Record<string, string>
+    ignored_headers: string[]
+    time_zone?: 'UTC' | 'Asia/Shanghai'
+  }
+}
+
+export interface CaseImportOptions {
+  time_zone?: 'UTC' | 'Asia/Shanghai'
+  worksheet?: string
+  header_row?: number
+  field_mapping?: Record<string, string | null>
 }
 
 export const caseApi = {
+  getCasePage: async (params: CasePageParams = {}, signal?: AbortSignal): Promise<CasePage> => {
+    const response = await api.get<CasePage>('/cases/page', {
+      params, signal, paramsSerializer: { indexes: null },
+    })
+    return response.data
+  },
   /** 保存前服务端质量预检；只返回提示，不创建或修改案件。 */
   previewCaseQuality: async (data: CaseCreate): Promise<CaseQualityPreview> => {
     const response = await api.post<CaseQualityPreview>('/cases/quality-preview', data)
@@ -118,8 +163,8 @@ export const caseApi = {
   /**
    * 获取单个案件详情
    */
-  getCase: async (id: number): Promise<Case> => {
-    const response = await api.get<Case>(`/cases/${id}`)
+  getCase: async (id: number, signal?: AbortSignal): Promise<Case> => {
+    const response = await api.get<Case>(`/cases/${id}`, { signal })
     return response.data
   },
 
@@ -556,11 +601,17 @@ export const caseApi = {
     file: File,
     dryRun = false,
     operationalAreaId?: number,
+    options: CaseImportOptions = {},
   ): Promise<CaseImportResult> => {
     const formData = new FormData()
     formData.append('file', file)
     const response = await api.post<CaseImportResult>('/cases/import', formData, {
-      params: { dry_run: dryRun, operational_area_id: operationalAreaId },
+      params: {
+        dry_run: dryRun, operational_area_id: operationalAreaId,
+        worksheet: options.worksheet || undefined, header_row: options.header_row,
+        time_zone: options.time_zone,
+        field_mapping: options.field_mapping ? JSON.stringify(options.field_mapping) : undefined,
+      },
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -571,7 +622,7 @@ export const caseApi = {
   /**
    * 导入前预览，校验文件但不写入数据库
    */
-  previewImportCases: async (file: File, operationalAreaId?: number): Promise<CaseImportResult> => {
-    return caseApi.importCases(file, true, operationalAreaId)
+  previewImportCases: async (file: File, operationalAreaId?: number, options: CaseImportOptions = {}): Promise<CaseImportResult> => {
+    return caseApi.importCases(file, true, operationalAreaId, options)
   },
 }

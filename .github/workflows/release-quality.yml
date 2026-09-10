@@ -30,6 +30,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install map style validator for backend integration tests
+        working-directory: frontend
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Run backend tests
         working-directory: backend
         run: python -m pytest

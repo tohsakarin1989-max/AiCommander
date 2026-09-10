@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { CachedTileLayer } from '../../components/Map/CachedTileLayer'
-import { resolveMapTileConfig } from '../../components/Map/mapTiles'
+import { mountOfflineBasemap, type BasemapStatus } from '../../components/Map/offlineBasemap'
+import { BasemapNotice } from '../../components/Map/BasemapNotice'
 import type { JurisdictionAsset } from '../../services'
 import { escapeHtml } from '../../utils/html'
 
@@ -105,6 +105,8 @@ export default function JurisdictionAssetMap({
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
   const layersRef = useRef<L.Layer[]>([])
+  const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
+  const retryBasemapRef = useRef<() => void>(() => {})
 
   const defaultCenter = useMemo<[number, number]>(() => {
     const points = assets.map(pointCoordinate).filter((item): item is [number, number] => Boolean(item))
@@ -121,22 +123,22 @@ export default function JurisdictionAssetMap({
       center: defaultCenter,
       zoom: 12,
       zoomControl: true,
+      zoomAnimation: false,
     })
     mapRef.current = map
-    let disposed = false
-    let tileLayer: CachedTileLayer | null = null
-    void resolveMapTileConfig(operationalAreaId, snapshotId ?? 'current').then(config => {
-      if (disposed) return
-      tileLayer = new CachedTileLayer(config.url, config.options)
-      tileLayer.addTo(map)
-      if (assets.length === 0 && config.bounds) {
-        map.fitBounds(config.bounds, { padding: [24, 24] })
-      }
+    const stopBasemap = mountOfflineBasemap(map, {
+      operationalAreaId, snapshotRef: snapshotId, onStatus: setBasemapStatus,
+      onConfig: config => {
+        if (assets.length === 0 && config.bounds) {
+          map.fitBounds(config.bounds, { padding: [24, 24] })
+        }
+      },
     })
 
+    retryBasemapRef.current = stopBasemap.retry
     return () => {
-      disposed = true
-      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
+      stopBasemap()
+      retryBasemapRef.current = () => {}
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
@@ -191,10 +193,13 @@ export default function JurisdictionAssetMap({
   }, [assets, operationalAreaId, readOnly, selectedAssetId, snapshotId, onAssetClick])
 
   return (
+    <div style={{ position: 'relative', height }}>
     <div
       ref={containerRef}
       className="jurisdiction-map"
       style={{ height }}
     />
+    <BasemapNotice status={basemapStatus} onRetry={() => retryBasemapRef.current()} />
+    </div>
   )
 }

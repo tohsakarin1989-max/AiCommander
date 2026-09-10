@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timedelta
 from uuid import uuid4
 from app.database import get_db, require_area_write_access
 from app.config import settings
 from app.services.case_service import CaseService
+from app.services.case_search_service import CaseSearchService
+from app.services.case_import_table import parse_case_table
+from app.services.case_import_batch_service import acquire_import_batch, create_import_case
+from app.services.case_import_values import TIME_ZONES, normalize_case_row, case_row_preview, allocation_order
+from app.utils.datetimes import utc_datetime
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_knowledge_service import CaseKnowledgeService
@@ -16,19 +21,21 @@ from app.services.case_profile_service import CaseProfileService
 from app.services.preprocess_service import CasePreprocessService
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_pipeline_service import CasePipelineService
-from app.services.map_foundation_service import (
-    MAX_CELL_TEXT_LENGTH,
-    MAX_TABLE_COLUMNS,
-    MapFoundationService,
-)
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
+from app.models.case_import import CaseImportRow
 from app.models.preprocess_job import PreprocessJob
 from app.tasks.preprocess_tasks import preprocess_case_task
 import csv
-import io
+import json
 import logging
 import math
 import openpyxl
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
+try:
+    from lxml.etree import XMLSyntaxError
+except ImportError:
+    XMLSyntaxError = ParseError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -288,6 +295,12 @@ class CaseResponse(BaseModel):
     # 结构化预处理结果（如有）
     features: Optional[dict] = None
     status: str
+
+    @field_validator("occurred_time", "report_time")
+    @classmethod
+    def normalize_response_time(cls, value):
+        # SQLite 返回无时区时间；显式 UTC 避免浏览器再次按本地时间解释。
+        return utc_datetime(value)
     
     class Config:
         from_attributes = True
@@ -303,6 +316,27 @@ class CaseQualityResponse(BaseModel):
     facts: Dict[str, Any]
     human_confirmation_required: bool = True
     boundary: str = "质量结果仅用于人工复核，不自动修改案件。"
+
+
+class CasePageResponse(BaseModel):
+    items: List[CaseResponse]
+    total: int
+    page: int
+    page_size: int
+    facets: Dict[str, Dict[str, int]]
+
+
+@router.get("/dashboard-summary")
+def dashboard_summary(
+    days: int = Query(7, ge=1, le=90),
+    operational_area_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    from app.services.dashboard_summary_service import DashboardSummaryService
+    allowed = db.info.get("authorized_area_ids")
+    if operational_area_id is not None and allowed is not None and operational_area_id not in allowed:
+        raise HTTPException(status_code=403, detail="当前账号无权查看该辖区态势")
+    return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days)
 
 
 class CaseStructureRequest(BaseModel):
@@ -827,6 +861,32 @@ def create_case(case: CaseCreate, db: Session = Depends(get_db)):
         operational_area_id=case.operational_area_id,
     )
 
+@router.get("/page", response_model=CasePageResponse)
+def get_case_page(
+    page: int = Query(1, ge=1, le=1_000_000),
+    page_size: int = Query(50, ge=1, le=200),
+    keyword: Optional[str] = Query(None, max_length=200),
+    statuses: Optional[List[str]] = Query(None, max_length=20),
+    case_types: Optional[List[str]] = Query(None, max_length=50),
+    oil_types: Optional[List[str]] = Query(None, max_length=50),
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    has_geo: Optional[bool] = None,
+    operational_area_id: Optional[int] = Query(None, ge=1),
+    db: Session = Depends(get_db),
+):
+    """全授权库检索；日期为 [start_date, end_date)，保留旧列表契约。"""
+    if start_date is not None and end_date is not None and utc_datetime(start_date) >= utc_datetime(end_date):
+        raise HTTPException(status_code=422, detail="开始时间必须早于结束时间")
+    if any(len(value) > 100 for values in (statuses, case_types, oil_types) for value in (values or [])):
+        raise HTTPException(status_code=422, detail="筛选项过长")
+    return CaseSearchService.page(
+        db, page=page, page_size=page_size, keyword=keyword, statuses=statuses,
+        case_types=case_types, oil_types=oil_types, start_date=start_date,
+        end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id,
+    )
+
+
 @router.get("/", response_model=List[CaseResponse])
 def get_cases(
     skip: int = 0,
@@ -911,9 +971,9 @@ def get_cases(
 
     # 日期范围筛选
     if start_date:
-        query = query.filter(Case.occurred_time >= start_date)
+        query = query.filter(Case.occurred_time >= utc_datetime(start_date))
     if end_date:
-        query = query.filter(Case.occurred_time <= end_date)
+        query = query.filter(Case.occurred_time <= utc_datetime(end_date))
 
     # 地理坐标筛选
     if missing_location is True:
@@ -1505,6 +1565,10 @@ def import_cases(
     dry_run: bool = False,
     operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    worksheet: Optional[str] = None,
+    header_row: int = 1,
+    field_mapping: Optional[str] = None,
+    time_zone: str = "UTC",
 ):
     """
     导入历史案件（CSV/Excel）：
@@ -1514,6 +1578,8 @@ def import_cases(
     occurred_time 建议为 ISO 时间或 "YYYY-MM-DD HH:MM" 格式。
     """
     target_area_id = require_area_write_access(db, operational_area_id)
+    if time_zone not in TIME_ZONES:
+        raise HTTPException(status_code=400, detail="时区仅支持 UTC 或 Asia/Shanghai，请明确选择")
     filename = file.filename or ""
     lowered = filename.lower()
     if not any(lowered.endswith(ext) for ext in ALLOWED_EXTENSIONS):
@@ -1531,228 +1597,93 @@ def import_cases(
     preview_rows: List[dict] = []
     errors: List[dict] = []
 
-    def parse_time(value: str) -> datetime:
-        value = value.strip()
-        # 尝试多种常见时间格式
-        fmts = [
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M",
-            "%Y/%m/%d %H:%M:%S",
-            "%Y/%m/%d %H:%M",
-            "%Y-%m-%d",
-            "%Y/%m/%d",
-        ]
-        for fmt in fmts:
-            try:
-                return datetime.strptime(value, fmt)
-            except ValueError:
-                continue
-        # 如果都失败，直接抛错
-        raise ValueError(f"无法解析时间格式: {value}")
-
-    def parse_optional_time(value) -> Optional[datetime]:
-        if value in (None, "", "None"):
-            return None
-        return parse_time(str(value))
-
-    def parse_optional_float(value) -> Optional[float]:
-        if value in (None, "", "None"):
-            return None
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(parsed):
-            raise ValueError("数值必须为有限数")
-        return parsed
-
-    def parse_optional_coordinate(
-        value,
-        *,
-        label: str,
-        minimum: float,
-        maximum: float,
-    ) -> Optional[float]:
-        try:
-            parsed = parse_optional_float(value)
-        except ValueError as exc:
-            raise ValueError(f"{label}坐标必须为有限数") from exc
-        if parsed is not None and not minimum <= parsed <= maximum:
-            raise ValueError(f"{label}坐标超出有效范围")
-        return parsed
-
-    def parse_optional_bool(value) -> Optional[bool]:
-        if value in (None, "", "None"):
-            return None
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "y", "是", "已", "已报", "已立案"}:
-            return True
-        if text in {"0", "false", "no", "n", "否", "未", "未报", "未立案"}:
-            return False
-        return None
-
-    rows: List[dict] = []
-
     try:
-        if lowered.endswith(".csv"):
-            text = content.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
-            if len(reader.fieldnames or []) > MAX_TABLE_COLUMNS:
-                raise ValueError("列数超过 200 列限制")
-            for row_number, row in enumerate(reader, start=2):
-                if row_number > MAX_CASE_IMPORT_ROWS + 1:
-                    raise ValueError("单次导入数据行数超过 1000 行限制，请拆分批次")
-                if any(
-                    isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH
-                    for value in row.values()
-                ):
-                    raise ValueError(f"第 {row_number} 行包含超长单元格")
-                rows.append(row)
-        elif lowered.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
-            MapFoundationService.validate_excel_archive(content)
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            try:
-                ws = wb.active
-                header_values = next(
-                    ws.iter_rows(max_row=1, max_col=MAX_TABLE_COLUMNS + 1, values_only=True)
-                )
-                if header_values[MAX_TABLE_COLUMNS] is not None:
-                    raise ValueError("列数超过 200 列限制")
-                headers = [
-                    str(value).strip() if value is not None else ""
-                    for value in header_values[:MAX_TABLE_COLUMNS]
-                ]
-                while headers and not headers[-1]:
-                    headers.pop()
-                if ws.max_row > 100_001:
-                    raise ValueError("Excel 有效范围超过 100000 行，请先清理空白或格式化尾行")
-                for row_number, values in enumerate(
-                    ws.iter_rows(
-                        min_row=2,
-                        max_row=ws.max_row,
-                        max_col=MAX_TABLE_COLUMNS + 1,
-                        values_only=True,
-                    ),
-                    start=2,
-                ):
-                    if values[MAX_TABLE_COLUMNS] not in (None, ""):
-                        raise ValueError("列数超过 200 列限制")
-                    if not any(value not in (None, "") for value in values[:MAX_TABLE_COLUMNS]):
-                        continue
-                    if len(rows) >= MAX_CASE_IMPORT_ROWS:
-                        raise ValueError("单次导入数据行数超过 1000 行限制，请拆分批次")
-                    if any(
-                        isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH
-                        for value in values[: len(headers)]
-                    ):
-                        raise ValueError(f"第 {row_number} 行包含超长单元格")
-                    rows.append(
-                        {
-                            header: values[index] if index < len(values) else None
-                            for index, header in enumerate(headers)
-                        }
-                    )
-            finally:
-                wb.close()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"解析文件失败: {e}")
-
-    required_cols = {"occurred_time", "description"}
-    if not rows:
-        raise HTTPException(status_code=400, detail="文件中没有数据")
-
-    missing = required_cols - set(rows[0].keys())
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"缺少必需列: {', '.join(missing)}。至少需要: occurred_time, description",
+        if field_mapping is not None and len(field_mapping) > 20_000:
+            raise ValueError("字段映射过长")
+        table = parse_case_table(
+            filename, content, worksheet=worksheet, header_row=header_row,
+            field_mapping=json.loads(field_mapping) if field_mapping is not None else None,
         )
-
-    for idx, row in enumerate(rows, start=2):  # 行号从2开始（跳过表头）
+    except (ValueError, TypeError, csv.Error, openpyxl.utils.exceptions.InvalidFileException) as e:
+        raise HTTPException(status_code=400, detail=f"解析文件失败: {e}")
+    except (KeyError, OSError, ParseError, XMLSyntaxError, BadZipFile) as e:
+        raise HTTPException(status_code=400, detail="Excel 文件结构损坏或不完整，请重新保存为 xlsx") from e
+    batch = None
+    created_cases = []
+    if not dry_run:
+        batch, is_new = acquire_import_batch(db, content=content, area_id=target_area_id, table=table)
+        if not is_new:
+            if batch.result is None:
+                raise HTTPException(status_code=409, detail="该导入批次尚未完成，请稍后查询")
+            return {**batch.result, "created": 0, "original_created": batch.result["created"], "replayed": True}
+    ordered_rows = table.rows if dry_run else sorted(table.rows, key=lambda item: allocation_order(item.values, time_zone, item.number))
+    for source_row in ordered_rows:
+        idx, row = source_row.number, source_row.values
+        imported_case = None
+        error = None
         try:
-            ot_raw = row.get("occurred_time")
-            desc = row.get("description")
-            if not ot_raw or not desc:
-                errors.append({"row": idx, "error": "缺少发生时间或描述"})
-                continue
-            occurred_time = parse_time(str(ot_raw))
-            location = row.get("location") or None
-            latitude = parse_optional_coordinate(
-                row.get("latitude"),
-                label="纬度",
-                minimum=-90,
-                maximum=90,
-            )
-            longitude = parse_optional_coordinate(
-                row.get("longitude"),
-                label="经度",
-                minimum=-180,
-                maximum=180,
-            )
-            report_time = parse_optional_time(row.get("report_time"))
-            report_unit = row.get("report_unit") or row.get("security_team") or None
-            source_type = row.get("source_type") or None
-            oil_nature = row.get("oil_nature") or None
-            water_cut = parse_optional_float(row.get("water_cut"))
-
+            values = normalize_case_row(row, time_zone=time_zone)
             valid_count += 1
-            preview_rows.append({
-                "row": idx,
-                "occurred_time": occurred_time.isoformat(),
-                "location": location,
-                "latitude": latitude,
-                "longitude": longitude,
-                "report_time": report_time.isoformat() if report_time else None,
-                "report_unit": report_unit,
-                "source_type": source_type,
-                "description": str(desc)[:120],
-            })
+            preview_rows.append(case_row_preview(idx, values))
 
             if not dry_run:
-                CaseService.create_case(
+                imported_case = create_import_case(
                     db=db,
                     case_number=None,
-                    occurred_time=occurred_time,
-                    location=location,
-                    latitude=latitude,
-                    longitude=longitude,
-                    case_type=row.get("case_type") or None,
-                    description=str(desc),
-                    report_time=report_time,
-                    report_unit=report_unit,
-                    source_type=source_type,
-                    source_detail=row.get("source_detail") or None,
-                    police_reported=parse_optional_bool(row.get("police_reported")),
-                    case_filed=parse_optional_bool(row.get("case_filed")),
-                    police_officer=row.get("police_officer") or None,
-                    police_phone=row.get("police_phone") or None,
-                    oil_type=row.get("oil_type") or None,
-                    oil_volume=parse_optional_float(row.get("oil_volume")),
-                    oil_nature=oil_nature,
-                    water_cut=water_cut,
-                    facility_type=row.get("facility_type") or None,
-                    facility_owner=row.get("facility_owner") or None,
-                    modus_operandi=row.get("modus_operandi") or None,
-                    vehicle_handling=row.get("vehicle_handling") or None,
-                    person_handling=row.get("person_handling") or None,
-                    oil_handling=row.get("oil_handling") or None,
-                    operation_role=row.get("operation_role") or None,
-                    current_stage=row.get("current_stage") or None,
                     operational_area_id=target_area_id,
+                    **values,
                 )
+                created_cases.append(imported_case)
                 created_count += 1
         except Exception as e:
-            errors.append({"row": idx, "error": str(e)})
+            error = str(e) if isinstance(e, ValueError) else "该行写入失败，请核验字段或联系管理员"
+            errors.append({"row": idx, "error": error})
+        if batch is not None:
+            snapshot = {key: None if value is None else str(value) for key, value in row.items()}
+            db.add(CaseImportRow(
+                batch_id=batch.id, operational_area_id=target_area_id, row_number=idx,
+                source_values=snapshot, current_values=dict(snapshot), time_zone=time_zone,
+                status="created" if imported_case is not None else "failed",
+                case_id=imported_case.id if imported_case is not None else None,
+                error=error, revision=0, corrections=[],
+            ))
 
-    return {
+    result = {
         "created": created_count,
         "updated": 0,
         "valid": valid_count,
-        "errors": errors,
-        "total": len(rows),
+        "errors": sorted(errors, key=lambda item: item["row"]),
+        "total": len(table.rows),
         "dry_run": dry_run,
-        "preview": preview_rows[:20],
+        "preview": sorted(preview_rows, key=lambda item: item["row"])[:20],
+        "batch_id": batch.id if batch is not None else None,
+        "replayed": False,
+        "parser_version": "case-table-4.0.0-1",
+        "table": {
+            "worksheets": table.worksheets,
+            "worksheet": table.worksheet,
+            "header_row": table.header_row,
+            "field_mapping": table.field_mapping,
+            "ignored_headers": table.ignored_headers,
+            "time_zone": time_zone,
+        },
     }
+    if batch is not None:
+        batch.result = result
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        # These derived best-effort hooks cannot turn an already committed import
+        # into an apparent failure. Durable profile events committed with the cases.
+        for case in created_cases:
+            try:
+                CaseService.finish_created_case(db, case)
+            except Exception:
+                db.rollback()
+                logger.warning("导入后派生索引更新失败；已保留案件和批次回执")
+    return result
 
 
 @router.get("/hotspot-evolution")

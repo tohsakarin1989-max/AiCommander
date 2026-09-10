@@ -1,0 +1,67 @@
+.daily-dashboard { padding: 24px; color: var(--ink-0); background: var(--bg-0); font-size: 18px; min-height: 100%; }
+.daily-dashboard:fullscreen { overflow-y: auto; }
+.daily-heading, .daily-controls, .daily-status, .daily-panel-heading, .daily-layer-buttons { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.daily-heading h1 { font-size: 30px; margin: 4px 0 16px; font-weight: 650; }
+.daily-eyebrow { color: var(--accent); letter-spacing: .08em; margin: 0; }
+.daily-controls { flex-wrap: wrap; }
+.daily-controls label { display: flex; align-items: center; gap: 10px; }
+.daily-dashboard button, .daily-dashboard select { font: inherit; color: var(--ink-0); background: var(--bg-2); border: 1px solid var(--line); padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+.daily-dashboard button:disabled { opacity: .55; cursor: wait; }
+.daily-dashboard button:focus-visible, .daily-dashboard select:focus-visible, .daily-dashboard a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.daily-status { color: var(--ink-2); font-size: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.daily-warning { color: var(--warn); }
+.daily-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.daily-metrics article, .daily-map-panel, .daily-attention, .daily-trend { background: var(--bg-1); border: 1px solid var(--line); border-radius: 6px; }
+.daily-metrics article { padding: 20px; }
+.daily-dashboard h2 { font-size: 20px; margin: 0; font-weight: 600; }
+.daily-value { font: 500 44px var(--mono); margin: 12px 0; font-variant-numeric: tabular-nums; }
+.daily-value small { font: 18px var(--sans); color: var(--ink-2); margin-left: 10px; }
+.daily-metrics p { color: var(--ink-2); font-size: 16px; line-height: 1.5; margin: 0; }
+.daily-main-grid { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(330px, 1fr); gap: 20px; }
+.daily-panel-heading { padding: 18px 20px; flex-wrap: wrap; }
+.daily-map-frame { height: 410px; position: relative; }
+.daily-map-caption { padding: 0 20px; line-height: 1.5; color: var(--ink-2); font-size: 16px; }
+.daily-layer-buttons button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.daily-attention { padding: 20px; max-height: 580px; overflow-y: auto; }
+.daily-attention > p { color: var(--ink-2); font-size: 16px; }
+.daily-attention article { padding: 14px 0; border-top: 1px solid var(--line-soft); }
+.daily-order { color: var(--accent); font-family: var(--mono); }
+.daily-attention summary { cursor: pointer; }
+.daily-attention summary h3 { display: inline; margin-left: 8px; }
+.daily-attention h3 { font-size: 19px; line-height: 1.5; margin: 8px 0; }
+.daily-attention p { margin: 8px 0; }
+.daily-attention p, .daily-attention dd { overflow-wrap: anywhere; }
+.daily-attention dt { color: var(--ink-2); margin-top: 10px; }
+.daily-attention dd { margin: 4px 0 12px; }
+.daily-attention ul { padding: 0; list-style: none; margin: 10px 0; }
+.daily-attention li { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.daily-attention a { color: var(--info); overflow-wrap: anywhere; }
+.daily-attention li button { font-size: 16px; flex-shrink: 0; }
+.daily-boundary { font-size: 15px; color: var(--ink-2); line-height: 1.5; }
+.daily-trend { margin-top: 20px; }
+.daily-trend .daily-panel-heading p { color: var(--ink-2); font-size: 16px; margin: 0; }
+.daily-trend-columns { display: flex; gap: 12px; padding: 4px 20px 18px; overflow-x: auto; }
+.daily-trend-column { flex: 1 0 44px; text-align: center; font: 16px var(--mono); color: var(--ink-2); }
+.daily-trend-track { height: 76px; display: flex; align-items: flex-end; justify-content: center; border-bottom: 1px solid var(--line); margin: 6px 0; }
+.daily-trend-track > div { background: var(--accent); width: 45%; max-width: 44px; }
+.daily-message { padding: 20px; line-height: 1.7; color: var(--ink-2); }
+.daily-message button { margin-left: 12px; }
+.daily-dashboard .db-dashboard-leaflet .leaflet-control-attribution { font-size: 12px; margin-bottom: 8px !important; }
+.daily-dashboard .db-map-tile-warning { font-size: 16px; max-width: min(520px, calc(100% - 100px)); }
+.daily-dashboard .db-map-native-controls button { width: 40px; height: 40px; padding: 0; }
+@media (min-width: 2400px) { .daily-dashboard { padding: 36px; } .daily-map-frame { height: 55vh; } .daily-attention { max-height: 65vh; } .daily-trend-track { height: 110px; } }
+@media (min-width: 1251px) and (max-width: 2399px) {
+  .daily-dashboard { padding: 16px 24px; }
+  .daily-heading h1 { font-size: 26px; margin: 4px 0 8px; }
+  .daily-status { margin-bottom: 12px; }
+  .daily-metrics { margin-bottom: 16px; }
+  .daily-metrics article { padding: 16px; }
+  .daily-value { font-size: 40px; margin: 8px 0; }
+  .daily-map-frame { height: 290px; }
+  .daily-attention { max-height: 410px; }
+  .daily-trend { margin-top: 16px; }
+  .daily-trend-track { height: 54px; }
+  .daily-panel-heading { padding: 12px 20px; }
+}
+@media (max-width: 1250px) { .daily-heading { align-items: flex-start; flex-direction: column; } .daily-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .daily-main-grid { grid-template-columns: 1fr; } .daily-attention { max-height: none; } }
+@media (max-width: 600px) { .daily-dashboard { padding: 12px; } .daily-metrics { grid-template-columns: 1fr; } .daily-heading h1 { font-size: 25px; } .daily-controls { gap: 10px; } .daily-map-frame { height: 360px; } }

@@ -4,13 +4,13 @@
  * - 预测热点圈：编号1-N，颜色按风险等级
  */
 
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
-import { CachedTileLayer } from './CachedTileLayer'
-import { disposeLeafletHeatMap } from './leafletLifecycle'
-import { resolveMapTileConfig } from './mapTiles'
+import { mountOfflineBasemap, type BasemapStatus } from './offlineBasemap'
+import { BasemapNotice } from './BasemapNotice'
+import { disposeLeafletHeatMap, guardLeafletHeatLayer } from './leafletLifecycle'
 import { escapeHtml } from '../../utils/html'
 
 export interface HeatPoint {
@@ -53,6 +53,8 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
   const mapRef = useRef<L.Map | null>(null)
   const heatRef = useRef<L.HeatLayer | null>(null)
   const hotspotLayersRef = useRef<L.Layer[]>([])
+  const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
+  const retryBasemapRef = useRef<() => void>(() => {})
 
   // 初始化地图（只运行一次）
   useEffect(() => {
@@ -62,32 +64,32 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
       center: center ?? [46.5977, 125.1034],
       zoom: 11,
       zoomControl: true,
+      zoomAnimation: false,
     })
     mapRef.current = map
 
-    let disposed = false
-    let tileLayer: CachedTileLayer | null = null
-    void resolveMapTileConfig(operationalAreaId).then(config => {
-      if (disposed) return
-      tileLayer = new CachedTileLayer(config.url, config.options)
-      tileLayer.addTo(map)
-      if (!center && heatPoints.length === 0 && config.bounds) {
-        map.fitBounds(config.bounds, { padding: [24, 24] })
-      }
+    const stopBasemap = mountOfflineBasemap(map, {
+      operationalAreaId, onStatus: setBasemapStatus,
+      onConfig: config => {
+        if (!center && heatPoints.length === 0 && config.bounds) {
+          map.fitBounds(config.bounds, { padding: [24, 24] })
+        }
+      },
     })
 
     // 初始化空热力图层
-    heatRef.current = L.heatLayer([], {
+    retryBasemapRef.current = stopBasemap.retry
+    heatRef.current = guardLeafletHeatLayer(L.heatLayer([], {
       radius: 28,
       blur: 20,
       maxZoom: 17,
       max: 1.0,
       gradient: { 0.3: '#22c55e', 0.6: '#f59e0b', 1.0: '#ef4444' },
-    }).addTo(map)
+    })).addTo(map)
 
     return () => {
-      disposed = true
-      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
+      stopBasemap()
+      retryBasemapRef.current = () => {}
       const heatLayer = heatRef.current
       heatRef.current = null
       disposeLeafletHeatMap(map, heatLayer)
@@ -149,6 +151,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
   }, [predictionHotspots, operationalAreaId])
 
   return (
+    <div style={{ position: 'relative', height }}>
     <div
       ref={containerRef}
       style={{
@@ -159,6 +162,8 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
         border: '1px solid #1e293b',
       }}
     />
+    <BasemapNotice status={basemapStatus} onRetry={() => retryBasemapRef.current()} />
+    </div>
   )
 }
 

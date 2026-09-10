@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly public map version check
+
+[Timer]
+OnCalendar=*-*-01 00:00:00 UTC
+Persistent=true
+RandomizedDelaySec=1h
+Unit=aicommander-public-map-check.service
+
+[Install]
+WantedBy=timers.target

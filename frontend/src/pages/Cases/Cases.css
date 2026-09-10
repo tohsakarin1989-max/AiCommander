@@ -12,6 +12,15 @@
 }
 
 /* 预处理状态提醒 */
+.cases-pagination {
+  position: sticky;
+  bottom: 0;
+  padding: 14px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  z-index: 1;
+}
+
 .cases-preprocess-alert {
   flex-shrink: 0;
   margin: var(--gap) var(--pad) 0;

@@ -1,0 +1,28 @@
+.showcase { max-width: 1440px; margin: 0 auto; padding: 32px 24px; line-height: 1.7; }
+.showcase-intro { max-width: 880px; margin-bottom: 28px; }
+.showcase-kicker { color: var(--accent); font-size: 12px; letter-spacing: .12em; }
+.showcase h1 { font-size: clamp(26px, 3vw, 38px); margin: 10px 0; }
+.showcase h2 { font-size: 22px; }
+.showcase h3 { font-size: 19px; }
+.showcase h4 { font-size: 18px; margin: 0; }
+.showcase h5 { font-size: 15px; margin: 14px 0 4px; }
+.showcase-scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.showcase button { color: inherit; font: inherit; cursor: pointer; border: 1px solid var(--line-soft); background: var(--bg-2); text-align: left; padding: 16px; border-radius: 6px; }
+.showcase button:hover:not(:disabled), .showcase button:focus-visible { border-color: var(--accent); }
+.showcase button:disabled { opacity: .5; cursor: not-allowed; }
+.showcase-scenarios strong, .showcase-scenarios span, .showcase-history small { display: block; }
+.showcase-scenarios span { font-size: 13px; margin-top: 6px; }
+.showcase-content { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 32px; margin-top: 28px; }
+.showcase-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.showcase-section { border-top: 1px solid var(--line-soft); padding: 20px 0; }
+.showcase-candidate { padding: 20px; background: var(--bg-2); border-left: 3px solid var(--accent); margin: 16px 0; }
+.showcase-notice { padding: 18px; border: 1px solid var(--line-soft); margin: 18px 0; }
+.showcase-empty { padding: 64px 0; }
+.showcase-history { width: 100%; margin-bottom: 10px; }
+.showcase pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; }
+.showcase code, .showcase li { overflow-wrap: anywhere; }
+.showcase summary { cursor: pointer; }
+.showcase-map-host { position: relative; }
+.showcase-map { height: 440px; width: 100%; }
+.showcase-map-watermark { position: absolute; z-index: 500; bottom: 28px; left: 14px; padding: 4px 10px; color: #fff; background: #172129e6; pointer-events: none; }
+@media (max-width: 900px) { .showcase-content { grid-template-columns: 1fr; } .showcase-scenarios { grid-template-columns: 1fr; } .showcase { padding: 20px 16px; } }

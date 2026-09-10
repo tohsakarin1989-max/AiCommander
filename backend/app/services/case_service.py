@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.models.case import Case, CasePerson, CaseVehicle
 from typing import List, Optional
 from datetime import datetime, date, time
@@ -8,6 +9,8 @@ from app.config import settings
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_pipeline_service import CasePipelineService
 from app.database import require_area_write_access
+from app.utils.datetimes import utc_datetime
+from app.services.case_number_service import occupied_numbers, is_number_collision, ensure_number_transaction
 
 class CaseService:
     @staticmethod
@@ -31,8 +34,7 @@ class CaseService:
         date_str = occurred_time.strftime("%Y%m%d")
         prefix = f"{date_str}-"
         # 查找当日已有编号
-        repo = CaseRepository(db)
-        existing = repo.get_case_numbers_by_prefix(prefix)
+        existing = occupied_numbers(db, prefix)
         used = set()
         for num in existing:
             parts = str(num).split("-")
@@ -91,20 +93,22 @@ class CaseService:
         initial_vehicles: list = None,
         initial_persons: list = None,
         operational_area_id: int = None,
+        commit: bool = True,
     ) -> Case:
         """创建案件：
         - 如果未提供案件编号，则按日期+当天排序自动生成（YYYYMMDD-001）
         """
-        if not case_number or not str(case_number).strip():
-            case_number = CaseService._generate_case_number(db, occurred_time)
-
         operational_area_id = require_area_write_access(db, operational_area_id)
+        automatic_number = not case_number or not str(case_number).strip()
+        if automatic_number:
+            ensure_number_transaction(db)
+            case_number = CaseService._generate_case_number(db, occurred_time)
 
         repo = CaseRepository(db)
         case = Case(
             operational_area_id=operational_area_id,
             case_number=case_number,
-            occurred_time=occurred_time,
+            occurred_time=utc_datetime(occurred_time),
             location=location,
             latitude=latitude,
             longitude=longitude,
@@ -124,7 +128,7 @@ class CaseService:
             vehicle_info=vehicle_info,
             upstream_source=upstream_source,
             downstream_destination=downstream_destination,
-            report_time=report_time,
+            report_time=utc_datetime(report_time),
             report_unit=report_unit,
             source_type=source_type,
             source_detail=source_detail,
@@ -141,7 +145,21 @@ class CaseService:
             operation_role=operation_role,
             current_stage=current_stage or "reported",
         )
-        repo.add(case, commit=False)
+        if not automatic_number:
+            repo.add(case, commit=False)
+        else:
+            for attempt in range(8):
+                # Establish the savepoint before handling insert errors: failures
+                # flushing unrelated pending objects must not trigger allocation.
+                savepoint = db.begin_nested()
+                try:
+                    with savepoint:
+                        repo.add(case, commit=False)
+                    break
+                except IntegrityError as exc:
+                    if not is_number_collision(exc) or attempt == 7:
+                        raise
+                    case.case_number = CaseService._generate_case_number(db, occurred_time)
         CaseService._sync_initial_bonus_records(
             db,
             case.id,
@@ -151,9 +169,16 @@ class CaseService:
         )
         CaseQualityService.refresh_case_quality(db, case, commit=False)
         CasePipelineService.enqueue_case_change(db, case)
+        if not commit:
+            return case
         db.commit()
         db.refresh(case)
-        
+        CaseService.finish_created_case(db, case)
+        return case
+
+    @staticmethod
+    def finish_created_case(db: Session, case: Case) -> None:
+        """Best-effort derived indexes after the business transaction commits."""
         # 自动索引到向量数据库（异步，不阻塞）
         if settings.ENABLE_VECTOR_DB:
             try:
@@ -183,7 +208,6 @@ class CaseService:
         
         # 预处理改为由用户手动触发，不再自动执行
         CaseService._refresh_chain_links(db, case.id)
-        return case
 
     @staticmethod
     def _sync_initial_bonus_records(
@@ -332,6 +356,9 @@ class CaseService:
             return None
         require_area_write_access(db, case.operational_area_id)
         try:
+            for field in ("occurred_time", "report_time"):
+                if field in kwargs:
+                    kwargs[field] = utc_datetime(kwargs[field])
             repo.update(case, commit=False, **kwargs)
             CaseService._sync_initial_bonus_records(
                 db,

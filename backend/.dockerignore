@@ -14,7 +14,8 @@ tests
 *.db
 *.sqlite
 *.sqlite3
-data/chroma_db
+# Runtime maps, vector indexes and business artifacts are volume data, not code.
+data
 logs
 *.log
 .DS_Store

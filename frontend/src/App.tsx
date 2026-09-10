@@ -11,6 +11,7 @@ import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from './co
 import { getThemeTokens, normalizeThemeMode, toggleThemeMode, type ThemeMode } from './theme/themeMode'
 
 const Home = lazy(() => import('./pages/Home/Home'))
+const Showcase = lazy(() => import('./pages/Showcase/Showcase'))
 const Workbench = lazy(() => import('./pages/Workbench/Workbench'))
 const Cases = lazy(() => import('./pages/Cases/Cases'))
 const CasesMap = lazy(() => import('./pages/Cases/CasesMap'))
@@ -54,7 +55,7 @@ interface AuthenticatedAppProps {
 }
 
 function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
-  const { phase, user } = useAuth()
+  const { phase, user, sessionEpoch } = useAuth()
 
   if (phase !== 'authenticated' || !user) {
     return <Login />
@@ -65,12 +66,13 @@ function AuthenticatedApp({ themeMode, onToggleTheme }: AuthenticatedAppProps) {
   )
 
   return (
-    <Layout themeMode={themeMode} onToggleTheme={onToggleTheme}>
+    <Layout key={`${user.id}:${sessionEpoch}`} themeMode={themeMode} onToggleTheme={onToggleTheme}>
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/"                element={<Home />} />
           <Route path="/workbench"       element={<Workbench />} />
           <Route path="/dashboard"       element={<Dashboard />} />
+          <Route path="/showcase" element={user.role !== 'viewer' ? <Showcase /> : <Navigate to="/dashboard" replace />} />
           <Route path="/cases"           element={<Cases />} />
           <Route path="/cases/map"       element={<CasesMap />} />
           <Route path="/cases/bonus"     element={bonusAccountingEnabled ? <CaseBonusAccounting /> : <Navigate to="/cases" replace />} />

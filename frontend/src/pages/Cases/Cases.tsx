@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import {
   Button,
   Modal,
@@ -14,6 +14,7 @@ import {
   Row,
   Col,
   Switch,
+  Pagination,
 } from 'antd'
 import type { FormInstance } from 'antd'
 import {
@@ -30,7 +31,10 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
-import { caseApi, type CaseImportResult } from '../../services/cases'
+import { caseApi, type CaseImportOptions, type CaseImportResult, type CasePageParams } from '../../services/cases'
+import CaseImportCorrections from './CaseImportCorrections'
+import CaseImportConfiguration from './CaseImportConfiguration'
+import type { ImportCorrectionResult } from '../../services/caseImports'
 import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
 import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
@@ -47,6 +51,7 @@ import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadin
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import { summarizeBatchReview } from './batchReviewPresentation'
 import { summarizeCaseQualityPreview } from './caseQualityPreview'
+import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail } from './caseSearch'
 import {
   buildCaseAiIntakeApplication,
   buildCaseAiIntakeEntryFlags,
@@ -56,17 +61,6 @@ import './Cases.css'
 
 const { TextArea } = Input
 const { Option } = Select
-
-// 搜索筛选参数接口
-interface SearchFilters {
-  keyword?: string
-  status?: string
-  case_type?: string
-  oil_type?: string
-  start_date?: string
-  end_date?: string
-  has_geo?: boolean
-}
 
 // 状态映射
 const statusTagClass: Record<string, string> = {
@@ -163,7 +157,7 @@ interface FilterState {
 }
 
 const defaultFilterState: FilterState = {
-  statuses: ['pending', 'processing', 'completed', 'resolved'],
+  statuses: ['pending', 'processing', 'completed', 'resolved', 'failed'],
   caseTypes: [],
   oilTypes: [],
   startDate: '',
@@ -465,11 +459,27 @@ const Cases: React.FC = () => {
   const [message, messageContextHolder] = messageFactory.useMessage()
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
-  const [selectedCase, setSelectedCase] = useState<Case | null>(null)
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
   const [importOperationalAreaId, setImportOperationalAreaId] = useState<number | undefined>()
+  const [importWorksheet, setImportWorksheet] = useState('')
+  const [importHeaderRow, setImportHeaderRow] = useState(1)
+  const [importTimeZone, setImportTimeZone] = useState<'UTC' | 'Asia/Shanghai'>('UTC')
+  const [importFieldMapping, setImportFieldMapping] = useState<Record<string, string | null>>({})
+  const [importCorrectionBusy, setImportCorrectionBusy] = useState(false)
+  const applyImportConfiguration = useCallback((settings: CaseImportOptions) => {
+    setImportWorksheet(settings.worksheet ?? '')
+    setImportHeaderRow(settings.header_row ?? 1)
+    setImportTimeZone(settings.time_zone ?? 'UTC')
+    setImportFieldMapping(settings.field_mapping ?? {})
+    setImportPreview(null)
+  }, [])
+  const applyImportReceipt = useCallback((result: ImportCorrectionResult) => {
+    setImportPreview(previous => previous?.batch_id === result.batch_id
+      ? { ...previous, created: result.batch_created_total, valid: Math.max(previous.valid ?? 0, result.batch_created_total), errors: result.errors, replayed: false }
+      : previous)
+  }, [])
   const [bonusDraftLoadState, setBonusDraftLoadState] = useState({ vehicles: true, persons: true })
   const [bonusDraftTouched, setBonusDraftTouched] = useState({ vehicles: false, persons: false })
   const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
@@ -480,13 +490,15 @@ const Cases: React.FC = () => {
   const [showMapPicker, setShowMapPicker] = useState(false)
   const [aiIntakeText, setAiIntakeText] = useState('')
   const [aiIntakeSourceText, setAiIntakeSourceText] = useState('')
-  const [filters, setFilters] = useState<SearchFilters>({})
+  const [filters, setFilters] = useState<CasePageParams>({})
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
   const [keyword, setKeyword] = useState('')
   const [sidebarFilter, setSidebarFilter] = useState<FilterState>(defaultFilterState)
   const queryClient = useQueryClient()
-  const { user } = useAuth()
+  const { user, sessionEpoch } = useAuth()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const editRequestRef = useRef(0)
   const [batchReviewResult, setBatchReviewResult] = useState<BatchReviewResult | null>(null)
   const areaScopesQuery = useQuery({
@@ -526,23 +538,19 @@ const Cases: React.FC = () => {
     }
   }, [defaultWritableOperationalAreaId, importOperationalAreaId])
 
-  // 构建查询参数
-  const queryParams = useMemo(() => {
-    const params: Record<string, string | boolean> = {}
-    if (filters.keyword) params.keyword = filters.keyword
-    if (filters.status) params.status = filters.status
-    if (filters.case_type) params.case_type = filters.case_type
-    if (filters.oil_type) params.oil_type = filters.oil_type
-    if (filters.start_date) params.start_date = filters.start_date
-    if (filters.end_date) params.end_date = filters.end_date
-    if (filters.has_geo !== undefined) params.has_geo = filters.has_geo
-    return params
-  }, [filters])
-
-  const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases', queryParams],
-    queryFn: () => caseApi.getCases(queryParams),
+  const casesQuery = useQuery({
+    queryKey: ['cases', 'page', user?.id, sessionEpoch, filters, page, pageSize],
+    queryFn: ({ signal }) => caseApi.getCasePage({ ...filters, page, page_size: pageSize }, signal),
   })
+  const { data: casePage, isLoading, isError: caseSearchError } = casesQuery
+  const filteredCases = caseSearchError ? [] : casePage?.items ?? []
+  const totalCases = casePage?.total ?? 0
+
+  useEffect(() => {
+    if (casePage && page > 1 && casePage.items.length === 0) {
+      setPage(Math.max(1, Math.ceil(casePage.total / pageSize)))
+    }
+  }, [casePage, page, pageSize])
 
   const { data: caseStewardStatus } = useQuery({
     queryKey: ['agent-case-steward-status'],
@@ -567,53 +575,23 @@ const Cases: React.FC = () => {
     )
   }
 
-  // 案件类型和油品类型（用于侧边栏过滤选项）
-  const caseTypes = useMemo(() => {
-    const types = new Set<string>()
-    cases?.forEach(c => c.case_type && types.add(c.case_type))
-    return Array.from(types)
-  }, [cases])
-
-  const oilTypes = useMemo(() => {
-    const types = new Set<string>()
-    cases?.forEach(c => c.oil_type && types.add(c.oil_type))
-    return Array.from(types)
-  }, [cases])
-
-  // 侧边栏过滤后的案件列表
-  const filteredCases = useMemo(() => {
-    if (!cases) return []
-    return cases.filter(c => {
-      // 状态过滤
-      if (sidebarFilter.statuses.length > 0 && !sidebarFilter.statuses.includes(c.status)) return false
-      // 案件类型过滤
-      if (sidebarFilter.caseTypes.length > 0 && c.case_type && !sidebarFilter.caseTypes.includes(c.case_type)) return false
-      // 油品类型过滤
-      if (sidebarFilter.oilTypes.length > 0 && c.oil_type && !sidebarFilter.oilTypes.includes(c.oil_type)) return false
-      // 关键词过滤
-      if (keyword) {
-        const kw = keyword.toLowerCase()
-        const matchField = (val?: string | null) => val?.toLowerCase().includes(kw)
-        if (!matchField(c.case_number) && !matchField(c.location) && !matchField(c.description) && !matchField(c.case_type)) return false
-      }
-      return true
-    })
-  }, [cases, sidebarFilter, keyword])
+  const caseTypes = Object.keys(casePage?.facets.case_types ?? {})
+  const oilTypes = Object.keys(casePage?.facets.oil_types ?? {})
 
   const batchReviewSummary = useMemo(
     () => batchReviewResult ? summarizeBatchReview(batchReviewResult) : null,
     [batchReviewResult],
   )
 
-  useEffect(() => {
-    const caseIdFromUrl = searchParams.get('caseId')
-    if (!caseIdFromUrl || !cases) return
-    const targetId = parseInt(caseIdFromUrl, 10)
-    if (!Number.isNaN(targetId)) {
-      const found = cases.find(c => c.id === targetId)
-      if (found) setSelectedCase(found)
-    }
-  }, [searchParams, cases])
+  const linkedCaseId = parseCaseDeepLinkId(searchParams.get('caseId'))
+  const linkedCaseQuery = useQuery({
+    queryKey: caseDetailKey(user?.id, sessionEpoch, linkedCaseId),
+    queryFn: ({ signal }) => caseApi.getCase(linkedCaseId!, signal),
+    enabled: linkedCaseId != null,
+    retry: false,
+    refetchOnWindowFocus: false,
+  })
+  const selectedCase = linkedCaseId == null ? null : visibleCaseDetail(linkedCaseQuery)
 
   const { data: preprocessStatus } = useQuery({
     queryKey: ['preprocess-status'],
@@ -750,9 +728,12 @@ const Cases: React.FC = () => {
 
   const deleteMutation = useMutation({
     mutationFn: caseApi.deleteCase,
-    onSuccess: () => {
+    onSuccess: (_data, deletedId) => {
       message.success('删除成功')
-      setSelectedCase(null)
+      if (linkedCaseId === deletedId) {
+        setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('caseId'); return next }, { replace: true })
+      }
+      queryClient.removeQueries({ queryKey: caseDetailKey(user?.id, sessionEpoch, deletedId), exact: true })
       queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
   })
@@ -909,7 +890,7 @@ const Cases: React.FC = () => {
 
   const previewImportMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.previewImportCases(file, operationalAreaId)
+      caseApi.previewImportCases(file, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping })
     ),
     onSuccess: (data) => {
       setImportPreview(data)
@@ -927,18 +908,18 @@ const Cases: React.FC = () => {
 
   const importMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.importCases(file, false, operationalAreaId)
+      caseApi.importCases(file, false, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping })
     ),
     onSuccess: async (data) => {
-      message.success(`导入成功：共 ${data.total} 条，成功 ${data.created} 条`)
-      if (data.errors && data.errors.length) {
-        message.warning('部分记录导入失败，详情请查看控制台')
-        // eslint-disable-next-line no-console
-        console.warn('导入错误详情：', data.errors)
+      if (data.replayed) {
+        message.info('这份文件已处理，已恢复原批次回执，没有重复建案')
+      } else if (data.errors && data.errors.length) {
+        message.warning(`导入结束：成功 ${data.created} 条，失败 ${data.errors.length} 条，请查看下方行级原因`)
+      } else {
+        message.success(`导入成功：共 ${data.created} 条`)
       }
-      setImportModalVisible(false)
       setSelectedImportFile(null)
-      setImportPreview(null)
+      setImportPreview(data)
       await queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
     onError: (error: Error) => {
@@ -947,9 +928,14 @@ const Cases: React.FC = () => {
   })
 
   const resetImportState = () => {
+    if (importCorrectionBusy) return
     setImportModalVisible(false)
     setSelectedImportFile(null)
     setImportPreview(null)
+    setImportWorksheet('')
+    setImportHeaderRow(1)
+    setImportTimeZone('UTC')
+    setImportFieldMapping({})
     setImportOperationalAreaId(defaultWritableOperationalAreaId)
     previewImportMutation.reset()
     importMutation.reset()
@@ -1123,43 +1109,24 @@ const Cases: React.FC = () => {
 
   // 应用侧边栏日期筛选
   const applyFilters = () => {
-    const newFilters: SearchFilters = {}
-    if (keyword) newFilters.keyword = keyword
-    if (sidebarFilter.startDate) newFilters.start_date = sidebarFilter.startDate
-    if (sidebarFilter.endDate) newFilters.end_date = sidebarFilter.endDate
-    setFilters(newFilters)
+    if (sidebarFilter.startDate && sidebarFilter.endDate && sidebarFilter.startDate > sidebarFilter.endDate) {
+      message.warning('开始日期不能晚于结束日期')
+      return
+    }
+    setFilters(buildCaseSearchParams({ ...sidebarFilter, keyword }))
+    setPage(1)
   }
 
   const resetFilters = () => {
     setSidebarFilter(defaultFilterState)
     setKeyword('')
     setFilters({})
+    setPage(1)
   }
 
-  // 统计各状态数量
-  const statusCount = useMemo(() => {
-    const count: Record<string, number> = {}
-    cases?.forEach(c => {
-      count[c.status] = (count[c.status] || 0) + 1
-    })
-    return count
-  }, [cases])
-
-  const caseTypeCount = useMemo(() => {
-    const count: Record<string, number> = {}
-    cases?.forEach(c => {
-      if (c.case_type) count[c.case_type] = (count[c.case_type] || 0) + 1
-    })
-    return count
-  }, [cases])
-
-  const oilTypeCount = useMemo(() => {
-    const count: Record<string, number> = {}
-    cases?.forEach(c => {
-      if (c.oil_type) count[c.oil_type] = (count[c.oil_type] || 0) + 1
-    })
-    return count
-  }, [cases])
+  const statusCount = casePage?.facets.statuses ?? {}
+  const caseTypeCount = casePage?.facets.case_types ?? {}
+  const oilTypeCount = casePage?.facets.oil_types ?? {}
 
   // 发起圆桌分析
   const handleStartRoundtable = () => {
@@ -1184,7 +1151,7 @@ const Cases: React.FC = () => {
 
   const handleBatchReview = () => {
     if (!filteredCases.length) {
-      message.warning('当前筛选范围内没有可复核案件')
+      message.warning('当前页没有可复核案件')
       return
     }
     batchReviewMutation.mutate({
@@ -1200,7 +1167,7 @@ const Cases: React.FC = () => {
       return
     }
     if (!filteredCases.length) {
-      message.warning('当前筛选范围内没有可质检案件')
+      message.warning('当前页没有可质检案件')
       return
     }
     const maxCases = caseStewardStatus.max_cases_per_run
@@ -1578,9 +1545,10 @@ const Cases: React.FC = () => {
           </div>
 
           <button className="btn-primary" onClick={applyFilters}>
-            应用筛选 ({filteredCases.length})
+            应用筛选
           </button>
           <button className="btn-ghost" onClick={resetFilters}>重置</button>
+          <small>分类计数为授权范围内符合关键词和日期的全部案件，不受分页影响。</small>
         </aside>
 
         {/* ── 右侧主内容区 ── */}
@@ -1605,7 +1573,7 @@ const Cases: React.FC = () => {
                   onClick={handleCaseStewardReview}
                   title="只生成质量问题和证据索引，不修改案件字段"
                 >
-                  <SafetyCertificateOutlined /> {caseStewardMutation.isPending ? '提交中' : '管家质检'}
+                  <SafetyCertificateOutlined /> {caseStewardMutation.isPending ? '提交中' : '本页质检'}
                 </button>
               )}
               <button
@@ -1613,7 +1581,7 @@ const Cases: React.FC = () => {
                 disabled={batchReviewMutation.isPending || filteredCases.length === 0}
                 onClick={handleBatchReview}
               >
-                <ApiOutlined /> {batchReviewMutation.isPending ? '复核中' : '批量复核'}
+                <ApiOutlined /> {batchReviewMutation.isPending ? '复核中' : '本页批量复核'}
               </button>
               <button className="btn-ghost" onClick={() => setLocationModalVisible(true)}>
                 <EnvironmentOutlined /> 坐标补录
@@ -1634,12 +1602,15 @@ const Cases: React.FC = () => {
           </div>
 
           {renderAutomationPanel(automationWorkbench)}
+          {linkedCaseQuery.isError && <Alert type="warning" showIcon message="链接中的案件不存在或当前无权访问。" />}
 
           {/* 案件列表 + 详情分栏 */}
           <div className="cases-split">
             {/* 案件表格 */}
             <div className="card cases-table-card">
-              {isLoading ? (
+              {caseSearchError ? (
+                <Alert type="error" showIcon message="案件查询失败，不能将其视为没有案件。" action={<Button onClick={() => casesQuery.refetch()}>重试</Button>} />
+              ) : isLoading ? (
                 <div className="empty-state">
                   <div className="icon">⌛</div>
                   <span>加载中...</span>
@@ -1670,7 +1641,11 @@ const Cases: React.FC = () => {
                         <tr
                           key={caseItem.id}
                           className={selectedCase?.id === caseItem.id ? 'selected' : ''}
-                          onClick={() => setSelectedCase(caseItem)}
+                          onClick={() => setSearchParams(previous => {
+                            const next = new URLSearchParams(previous)
+                            next.set('caseId', String(caseItem.id))
+                            return next
+                          }, { replace: true })}
                         >
                           <td>
                             <span className="cno">{caseItem.case_number || `#${caseItem.id}`}</span>
@@ -1755,6 +1730,19 @@ const Cases: React.FC = () => {
                     )}
                   </tbody>
                 </table>
+              )}
+              {!caseSearchError && !isLoading && (
+                <div className="cases-pagination">
+                  <Pagination
+                    current={page}
+                    pageSize={pageSize}
+                    total={totalCases}
+                    showSizeChanger
+                    pageSizeOptions={[20, 50, 100, 200]}
+                    showTotal={total => `共 ${total} 起 · 当前页 ${filteredCases.length} 起`}
+                    onChange={(nextPage, size) => { setPage(size !== pageSize ? 1 : nextPage); setPageSize(size) }}
+                  />
+                </div>
               )}
             </div>
 
@@ -2670,16 +2658,23 @@ const Cases: React.FC = () => {
         }
         open={importModalVisible}
         onCancel={resetImportState}
+        closable={!previewImportMutation.isPending && !importMutation.isPending && !importCorrectionBusy}
+        maskClosable={!previewImportMutation.isPending && !importMutation.isPending && !importCorrectionBusy}
+        keyboard={!previewImportMutation.isPending && !importMutation.isPending && !importCorrectionBusy}
         footer={[
-          <Button key="cancel" onClick={resetImportState}>
-            取消
+          <Button key="cancel" disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy} onClick={resetImportState}>
+            关闭
+          </Button>,
+          <Button key="preview" disabled={!selectedImportFile || previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+            onClick={() => selectedImportFile && previewImportMutation.mutate({ file: selectedImportFile, operationalAreaId: importOperationalAreaId })}>
+            重新预览
           </Button>,
           <Button
             key="confirm"
             type="primary"
             loading={importMutation.isPending}
             disabled={
-              !selectedImportFile ||
+              importCorrectionBusy || !selectedImportFile ||
               importOperationalAreaId == null ||
               !importPreview ||
               (importPreview.valid ?? importPreview.total) === 0 ||
@@ -2696,20 +2691,43 @@ const Cases: React.FC = () => {
         styles={{
           content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
           header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
+          body: { maxHeight: '65vh', overflowY: 'auto' },
         }}
       >
         <p className="cases-import-hint">
-          请选择包含以下列的文件：<strong>occurred_time</strong>（发生时间）、<strong>description</strong>（案件描述）。
+          支持中文表头：<strong>案发时间</strong>、<strong>案情描述</strong>；也兼容 occurred_time、description。
         </p>
         <p className="cases-import-hint">
-          可选列：<strong>location</strong>、<strong>latitude</strong>、<strong>longitude</strong>；单次最多导入 1000 条，更多数据请拆分批次。
+          可选：案发地点、经度、纬度、案件类型等。单次最多 1000 条；无法识别的列会列出提示。
         </p>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <label style={{ flex: 1 }}>工作表名称
+            <Input aria-label="导入工作表名称" value={importWorksheet} maxLength={31}
+              placeholder="留空使用文件当前工作表（CSV 留空）"
+              disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+              onChange={event => { setImportWorksheet(event.target.value); setImportPreview(null) }} />
+          </label>
+          <label>表头行
+            <InputNumber aria-label="导入表头行" min={1} max={100} precision={0} value={importHeaderRow}
+              disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+              onChange={value => { setImportHeaderRow(value ?? 1); setImportPreview(null) }} />
+          </label>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label htmlFor="case-import-time-zone">文件中未标时区的时间</label>
+          <Select id="case-import-time-zone" aria-label="导入时间解释" style={{ width: '100%' }}
+            value={importTimeZone} disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+            options={[{ value: 'UTC', label: 'UTC（兼容旧版）' }, { value: 'Asia/Shanghai', label: '北京时间（UTC+8）' }]}
+            onChange={value => { setImportTimeZone(value); setImportPreview(null) }} />
+          <p className="cases-import-hint">已有 Z 或时区偏移的时间保持原义。更改后须重新预览；已入库批次不会因更改时区被重复导入。</p>
+        </div>
         {writableAreaScopes.length > 1 ? (
           <div style={{ marginBottom: 14 }}>
             <div className="cases-import-hint">本批案件所属厂区</div>
             <Select
               style={{ width: '100%' }}
               value={importOperationalAreaId}
+              disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
               onChange={(value: number) => {
                 setImportOperationalAreaId(value)
                 setImportPreview(null)
@@ -2725,11 +2743,16 @@ const Cases: React.FC = () => {
             />
           </div>
         ) : null}
+        {importModalVisible && importPreview?.dry_run !== false && <CaseImportConfiguration
+          file={selectedImportFile} areaId={importOperationalAreaId}
+          settings={{ worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping }}
+          disabled={previewImportMutation.isPending || importMutation.isPending}
+          onChange={applyImportConfiguration} onBusyChange={setImportCorrectionBusy} />}
         <Upload.Dragger
           name="file"
           multiple={false}
           showUploadList={false}
-          disabled={previewImportMutation.isPending || importMutation.isPending}
+          disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
           beforeUpload={(file) => {
             setSelectedImportFile(file)
             setImportPreview(null)
@@ -2757,23 +2780,32 @@ const Cases: React.FC = () => {
         )}
         {importPreview && (
           <div className="cases-import-preview">
+            {importPreview.dry_run === false && (
+              <Alert type={importPreview.errors.length ? 'warning' : 'success'} showIcon
+                message={importPreview.replayed ? `已恢复原批次回执，本次新增 0 条` : `本批已写入 ${importPreview.created} 条案件`}
+                description={`批次 ${importPreview.batch_id ?? '—'}。相同文件和设置重传不会重复建案；可直接修正下面的失败行。`} />
+            )}
+            {!!importPreview.table?.ignored_headers.length && (
+              <Alert type="warning" showIcon message="以下列未导入"
+                description={importPreview.table.ignored_headers.join('、')} />
+            )}
             <div className="cases-import-summary">
               <span>总行数 <b>{importPreview.total}</b></span>
               <span>有效 <b>{importPreview.valid ?? importPreview.total}</b></span>
               <span>错误 <b>{importPreview.errors?.length ?? 0}</b></span>
             </div>
             {importPreview.errors?.length > 0 && (
-              <div className="cases-import-errors">
-                {importPreview.errors.slice(0, 5).map((err) => (
+              <div className="cases-import-errors" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                {importPreview.errors.map((err) => (
                   <div key={`${err.row}-${err.error}`}>
                     第 {err.row} 行：{err.error}
                   </div>
                 ))}
-                {importPreview.errors.length > 5 && (
-                  <div>还有 {importPreview.errors.length - 5} 条错误未显示</div>
-                )}
               </div>
             )}
+            {importPreview.dry_run === false && importPreview.batch_id && <CaseImportCorrections
+              key={importPreview.batch_id} batchId={importPreview.batch_id} onBusyChange={setImportCorrectionBusy}
+              onCorrected={applyImportReceipt} />}
             {(importPreview.preview?.length ?? 0) > 0 && (
               <div className="cases-import-rows">
                 {importPreview.preview!.slice(0, 5).map((row, idx) => (

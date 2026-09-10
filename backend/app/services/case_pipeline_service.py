@@ -618,7 +618,10 @@ class CasePipelineService:
     @staticmethod
     def _json_value(value: Any) -> Any:
         if isinstance(value, datetime):
-            return value.isoformat()
+            # 同一时刻入库前可能带时区，SQLite 读回后无时区；哈希保持一致。
+            # 保留既有 SQLite UTC-naive 序列化形态，避免无意义全量重算。
+            normalized = value if value.tzinfo is None else value.astimezone(timezone.utc).replace(tzinfo=None)
+            return normalized.isoformat()
         if value is None or isinstance(value, (str, int, float, bool, list, dict)):
             return value
         return str(value)

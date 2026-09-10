@@ -1,4 +1,4 @@
-# AiCommander v3.6.0-stable
+# AiCommander v4.0.0-stable
 
 涉油案件数智研判与防控辅助系统。围绕案件资料治理、模式识别、时空规律、链条线索、
 热点区域、研判报告和部署建议提供辅助能力，所有 AI 结论均保留人工复核边界。
@@ -8,6 +8,12 @@
 > [v3.1—v3.6 实施状态](./docs/superpowers/specs/2026-09-08-v3.1-v3.6-implementation-status.md)。
 > v3.6 已完成受控公共离线底图的导入、发布和回滚验证；地图包及地域化运行证据
 > 只保存在内网验收材料中，不进入公开 Git 仓库。
+
+v4.0交付日常大屏、两市离线矢量地图、可靠导入搜索、基础智能查询及隔离展示入口。
+保留v3.6为4.x升级回滚基线；完整道路研判及后续智能能力按v4.1—v4.5逐版交付。
+见 [4.x升级路线图](./docs/superpowers/specs/2026-09-10-v4x-upgrade-roadmap.md)、
+[v4.0实施清单](./docs/superpowers/plans/2026-09-10-v4.0-implementation.md)及
+[v4.0发布说明](./docs/releases/v4.0.0-stable.md)。版本文件已准备，远端发布状态以GitHub Release为准。
 
 ## 主要能力
 

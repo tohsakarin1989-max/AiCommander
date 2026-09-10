@@ -1,4 +1,6 @@
 from app.models.ai_model import AIModel
+from app.models.map_package_import import MapPackageImport, MapPackageImportChunk
+from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Evaluation, Ranking
 from app.models.report import Report
@@ -49,6 +51,11 @@ from app.models.governance import (
 )
 
 __all__ = [
+    "MapPackageImport",
+    "MapPackageImportChunk",
+    "CaseImportBatch",
+    "CaseImportRow",
+    "CaseImportTemplate",
     "AIModel",
     "Case",
     "CaseEvidence",
