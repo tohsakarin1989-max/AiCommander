@@ -62,3 +62,6 @@ def test_backend_ci_installs_real_map_style_validator_before_tests():
     assert any(step.get('working-directory') == 'frontend'
                and 'npm ci --omit=dev --ignore-scripts' in step.get('run', '')
                for step in prerequisites)
+    assert any(step.get('working-directory') == 'backend/document-renderer'
+               and 'npm ci --omit=dev --ignore-scripts' in step.get('run', '')
+               for step in prerequisites)

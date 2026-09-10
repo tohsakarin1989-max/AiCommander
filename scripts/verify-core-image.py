@@ -42,7 +42,7 @@ def main():
         from fastapi.testclient import TestClient
         with SessionLocal() as db:
             revision = db.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
-            assert revision == 'f830b2152595'
+            assert revision == '4ef1b75a80e5'
             area_id = db.query(OperationalArea.id).order_by(OperationalArea.id).first()[0]
             db.add(User(username='core-image-probe', display_name='合成管理员', role='admin',
                         password_hash=AuthService.hash_password('Synthetic-core-123!')))
