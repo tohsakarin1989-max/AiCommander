@@ -174,8 +174,13 @@ def test_real_login_and_persisted_scope_revocation(db_session, result_data):
         assert created.status_code == 201, created.text
         url = created.headers["location"]
         assert client.get(url).status_code == 200
+        latest = client.get("/api/cases/1/results/latest")
+        assert latest.status_code == 200
+        assert latest.json()["id"] == created.json()["id"]
+        assert latest.headers["cache-control"] == "no-store"
         with factory() as db:
             db.execute(UserAreaScope.__table__.delete().where(UserAreaScope.user_id == user_id))
             db.commit()
         assert client.get(url).status_code == 404
+        assert client.get("/api/cases/1/results/latest").status_code == 404
         assert client.get("/api/cases/1/results/history").status_code == 404

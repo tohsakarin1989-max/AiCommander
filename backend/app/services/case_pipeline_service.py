@@ -306,6 +306,9 @@ class CasePipelineService:
             db.flush()
             from app.services.case_insight_service import CaseInsightService
             from app.services.offline_map_service import OfflineMapService
+            from app.services.case_result_service import CaseResultService
+
+            CaseResultService.freeze_completed_inputs(db, existing)
 
             snapshot = OfflineMapService.current_snapshot(
                 db,

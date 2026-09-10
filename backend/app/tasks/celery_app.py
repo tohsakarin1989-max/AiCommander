@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.tasks.agent_tasks",
         "app.tasks.case_pipeline_tasks",
         "app.tasks.case_insight_tasks",
+        "app.tasks.case_result_tasks",
         "app.tasks.deployment_advisor_tasks",
         "app.tasks.map_package_tasks",
         "app.tasks.intelligent_query_tasks",
@@ -51,6 +52,11 @@ celery_app.conf.update(
         "reconcile-current-case-insights": {
             "task": "aicommander.case_insights.reconcile_current_pairs",
             "schedule": 60.0,
+        },
+        "reconcile-case-results": {
+            "task": "aicommander.case_results.reconcile",
+            "schedule": 60.0,
+            "options": {"expires": 60},
         },
         "generate-daily-situation-briefs": {
             "task": "aicommander.deployment_advisor.generate_daily",

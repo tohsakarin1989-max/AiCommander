@@ -62,6 +62,16 @@ def result_history(case_id: int, request: Request, response: Response,
         raise _unavailable() from None
 
 
+@router.get("/cases/{case_id}/results/latest")
+def latest_result(case_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
+    _principal(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return CaseResultService.latest(db, case_id)
+    except CaseResultAccessError:
+        raise _unavailable() from None
+
+
 @router.get("/case-results/{result_id}")
 def read_result(result_id: str, request: Request, response: Response, db: Session = Depends(get_db)):
     _principal(request)
