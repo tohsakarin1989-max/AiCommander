@@ -56,3 +56,24 @@ fontconfig指向本机字体后复验通过；这不是生产Linux字体包验�
 错误地址也计入请求预算；畸形编码、控制字符、公网、其他版本和文件地址统一拒绝。
 真实MBTiles专项覆盖历史版本、XYZ/TMS转换、缺瓦片和坏库，相关45项测试通过。
 尚未连接浏览器，也未生成地图图片；字节限制属于读取后检查，不宣称操作系统资源隔离。
+
+### 离屏地图图片增量（后续状态）
+
+`case_map_image.py`与`map-render.mjs`现可通过无头浏览器生成PNG，地图资源请求全部交由
+固定本地入口分派，脚本/CSS仅开放固定依赖文件。禁用Service Worker、拦截WebSocket，
+浏览器不继承数据库、模型密钥或代理环境变量。返回前重新检查成果及其证据当前权限。
+每进程仅一个渲染，启动超时15秒、各页面等待20秒；这是阶段超时，不是全流程硬截止或OS网络/内存沙箱。
+案件点、引用设施、圆形候选范围与图例使用冻结输入；非法坐标/未知区域类型不猜测，缺瓦片拒绝出图。
+
+联网构建区需额外安装`backend/requirements-renderer.txt`（Playwright 1.60.0）、执行
+`python -m playwright install chromium --only-shell`并运行本目录`npm ci --ignore-scripts`。
+MapLibre固定6.9.0。内网交付必须预装浏览器、Node依赖及允许分发的中文字体，禁止运行时下载。
+实际验证macOS Chromium Headless Shell 148.0.7778.96；尚未完成Linux镜像及正式字体包集成。
+
+显式真实浏览器测试：后端目录运行
+`AIC_TEST_MAP_BROWSER=1 venv/bin/python -m pytest tests/test_case_map_image.py -q`。
+四项通过（5.11秒）：合成栅格MBTiles出图、缺瓦片失败、空值坐标不强转、截图后撤权拒绝交付。
+截图人工检查底图线形、红色案件点、蓝色设施点、橙色候选范围和中文图例；合成线形不是现实道路。
+45项既有报告回归、4项链条回归及前端构建通过，npm依赖审计0漏洞；前端仍有既有大分块提示。
+矢量底图代码路径已接入但尚未真实样本验证；暂未接Word/PDF嵌入及下载，不宣称完整导出能力。
+浏览器请求拦截方式参考[Playwright官方文档](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-route)。

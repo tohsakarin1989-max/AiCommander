@@ -1,0 +1,2 @@
+# Optional document/map worker dependencies; core case APIs do not import these eagerly.
+playwright==1.60.0
