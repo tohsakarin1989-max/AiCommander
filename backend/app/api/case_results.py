@@ -8,6 +8,7 @@ from app.models.case import Case
 from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
 from app.services.case_result_export import CaseResultExportError, export_case_result_docx
+from app.services.case_result_pdf import export_case_result_pdf
 
 router = APIRouter()
 
@@ -97,13 +98,23 @@ def read_result(result_id: str, request: Request, response: Response, db: Sessio
 
 @router.get("/case-results/{result_id}/document.docx")
 def download_result_docx(result_id: str, request: Request, db: Session = Depends(get_db)):
+    return _download_result(result_id, request, db, "docx")
+
+
+@router.get("/case-results/{result_id}/document.pdf")
+def download_result_pdf(result_id: str, request: Request, db: Session = Depends(get_db)):
+    return _download_result(result_id, request, db, "pdf")
+
+
+def _download_result(result_id: str, request: Request, db: Session, format: str):
     _principal(request)
     try:
-        document, data = export_case_result_docx(db, result_id)
+        exporter = export_case_result_pdf if format == "pdf" else export_case_result_docx
+        document, data = exporter(db, result_id)
     except CaseResultAccessError:
         raise _unavailable() from None
     except CaseResultExportError as error:
-        if error.code == "document_too_large":
+        if error.code in {"document_too_large", "pdf_output_too_large"}:
             raise HTTPException(413, "成果过大，暂不能交互式导出", headers={"Cache-Control": "no-store"}) from None
         message = "本地文件渲染暂不可用，请稍后重试或联系管理员"
         if error.code == "map_rendering_not_ready":
@@ -111,7 +122,8 @@ def download_result_docx(result_id: str, request: Request, db: Session = Depends
         raise HTTPException(503, message, headers={"Cache-Control": "no-store", "Retry-After": "30"}) from None
     except ValueError:
         raise HTTPException(409, "成果格式不完整或版本暂不支持导出", headers={"Cache-Control": "no-store"}) from None
-    return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    media_type = "application/pdf" if format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return Response(data, media_type=media_type,
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-                             "Content-Disposition": f'attachment; filename="case-result-{document.content_sha256[:16]}.docx"',
+                             "Content-Disposition": f'attachment; filename="case-result-{document.content_sha256[:16]}.{format}"',
                              "X-Result-Content-SHA256": document.content_sha256})

@@ -84,6 +84,13 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
     assert len(pixels.getcolors(pixels.width * pixels.height)) > 1000
     (tmp_path / "real-vector-result.docx").write_bytes(data)
     (tmp_path / "real-vector-map.png").write_bytes(image)
+    if os.environ.get("AIC_TEST_PDF_OFFICE") == "1":
+        from app.services.case_result_pdf import export_case_result_pdf
+
+        pdf_document, pdf = export_case_result_pdf(db_session, saved["id"])
+        assert pdf_document.content_sha256 == document.content_sha256
+        assert pdf.startswith(b"%PDF-") and b"%%EOF" in pdf[-1024:]
+        (tmp_path / "real-vector-result.pdf").write_bytes(pdf)
     (tmp_path / "resource-counts.json").write_text(json.dumps({
         "tiles": sum("/tiles/" in url for url in requests),
         "glyphs": sum("/glyphs/" in url for url in requests),
