@@ -97,9 +97,33 @@ async function main() {
     await page.unroute('**/api/cases/1/results/latest')
     await page.reload()
     await page.getByRole('region', { name: '案情语义画像' }).getByText('原文否定', { exact: true }).first().waitFor()
+    await page.getByRole('link', { name: '在报告中心查看此版本', exact: true }).click()
+    await page.waitForURL('**/reports?resultId=' + result.id)
+    await page.waitForLoadState('networkidle')
+    const catalog = page.getByRole('region', { name: '案件成果版本', exact: true })
+    await catalog.getByText('正在查看固定历史版本。原始案件后续更新不会覆盖此内容。', { exact: true }).waitFor()
+    await catalog.getByText('原文否定', { exact: true }).first().waitFor()
+    const storedResponse = await context.request.get(base + '/api/case-results/' + result.id)
+    assert.equal(storedResponse.status(), 200)
+    assert.deepEqual((await storedResponse.json()).content, result.content)
+    const search = catalog.getByLabel('案件编号或地点', { exact: true })
+    await search.fill('没有匹配的合成编号')
+    await catalog.getByRole('button', { name: '查询', exact: true }).click()
+    await catalog.getByText('当前检索范围暂无成果。后台生成后会自动出现，不需要启动智能体。', { exact: true }).waitFor()
+    await search.fill('SYNTHETIC-SEMANTIC-001')
+    await catalog.getByRole('button', { name: '查询', exact: true }).click()
+    await catalog.getByRole('button', { name: `查看案件 SYNTHETIC-SEMANTIC-001 的成果 ${result.id}`, exact: true }).waitFor()
+    for (const width of [1440, 420]) {
+      await page.setViewportSize({ width, height: 1000 })
+      await catalog.getByRole('heading', { name: '案件成果', exact: true }).evaluate(el => el.scrollIntoView({ block: 'center' }))
+      await page.screenshot({ path: `${output}/report-center-${width}.png` })
+      assert.equal(await catalog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+    }
+    assert.deepEqual(errors, [])
     writeFileSync(`${output}/report.json`, JSON.stringify({ passed: true, apiMocking: false,
       syntheticData: true, profileId: profile.id, ruleVersion: profile.payload.semantics.rule_version,
       resultId: result.id, unifiedResult: true, businessReads, transportFailureHidesCachedContent: true,
+      reportCenterSameSnapshot: true, catalogSearch: true,
       checks, errors, external, targetServerVerified: false }, null, 2))
     console.log('semantic_profile_ui_passed')
   } catch (error) {

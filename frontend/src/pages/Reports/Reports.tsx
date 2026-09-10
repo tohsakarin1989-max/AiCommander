@@ -33,6 +33,7 @@ import {
 } from './reportPresentationModel'
 import type { ReportReviewResult } from '../../types'
 import './Reports.css'
+import CaseResultsBrowser from './CaseResultsBrowser'
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
@@ -83,7 +84,7 @@ const Reports: React.FC = () => {
       {/* ── 页面标题 ── */}
       <div className="page-title">
         <h1>分析报告</h1>
-        <span className="sub">AI 圆桌会议 · 综合研判结果</span>
+        <span className="sub">案件成果 · 会议报告</span>
         <div style={{ marginLeft: 'auto' }}>
           <button className="btn-ghost" onClick={() => navigate('/meetings')}>
             <TeamOutlined style={{ marginRight: 6 }} />
@@ -93,6 +94,8 @@ const Reports: React.FC = () => {
       </div>
 
       {/* ── 统计条 ── */}
+      <CaseResultsBrowser />
+      <h2>会议报告</h2>
       <div className="rp-stats-row">
         <div className="kpill">
           <div className="lbl">已完成报告</div>

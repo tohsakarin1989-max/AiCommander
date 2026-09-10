@@ -26,3 +26,11 @@ export type CaseResult = {
     analysis_status: string; boundary: string[]
   }
 }
+
+export type CaseResultCatalog = {
+  items: Array<{
+    id: string; case_id: number; case_number: string; availability: 'available' | 'unavailable'
+    created_at?: string; versions?: CaseResult['content']['versions']; analysis_status?: string
+  }>
+  has_more: boolean; offset: number; limit: number
+}

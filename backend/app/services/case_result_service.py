@@ -20,6 +20,34 @@ from app.services.case_result_snapshot import assemble_case_result
 
 class CaseResultService:
     @staticmethod
+    def catalog(db: Session, *, query: str = "", limit: int = 20, offset: int = 0) -> dict:
+        """报告中心的版本目录；搜索仅限已授权案件，成果内容仍逐项授权。"""
+        if "authorized_area_ids" not in db.info:
+            raise CaseResultAccessError()
+        statement = select(CaseResultSnapshot.id, Case.id.label("case_id"), Case.case_number).join(
+            Case, Case.id == CaseResultSnapshot.case_id,
+        )
+        if query.strip():
+            statement = statement.where(or_(
+                Case.case_number.contains(query.strip(), autoescape=True),
+                Case.location.contains(query.strip(), autoescape=True),
+            ))
+        rows = db.execute(statement.order_by(CaseResultSnapshot.created_at.desc(), CaseResultSnapshot.id.desc())
+                          .offset(offset).limit(limit + 1)).all()
+        items = []
+        for row in rows[:limit]:
+            identity = {"id": row.id, "case_id": row.case_id, "case_number": row.case_number}
+            try:
+                result = CaseResultService.read(db, row.id)
+            except CaseResultAccessError:
+                items.append({**identity, "availability": "unavailable"})
+            else:
+                items.append({**identity, "availability": "available", "created_at": result["created_at"],
+                              "versions": result["content"]["versions"],
+                              "analysis_status": result["content"]["analysis_status"]})
+        return {"items": items, "has_more": len(rows) > limit, "offset": offset, "limit": limit}
+
+    @staticmethod
     def create_current(db: Session, case_id: int) -> tuple[dict, bool]:
         """显式请求生成兼容入口；调用方负责写权限及事务提交。"""
         if "authorized_area_ids" not in db.info:
@@ -132,7 +160,9 @@ class CaseResultService:
         require_result_access(db, snapshot)
         if row.case_id != row.content["case_id"] or row.case_profile_id != row.content["versions"]["case_profile_id"]:
             raise CaseResultAccessError()
-        return {"id": row.id, "created_at": row.created_at, **snapshot}
+        # 本表生成时间由UTC时钟写入；SQLite往返会丢失tzinfo，恢复元数据的已知UTC语义。
+        created_at = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)
+        return {"id": row.id, "created_at": created_at, **snapshot}
 
     @staticmethod
     def history(db: Session, case_id: int, limit: int = 20, offset: int = 0) -> dict:

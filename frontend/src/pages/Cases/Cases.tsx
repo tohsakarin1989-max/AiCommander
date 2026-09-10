@@ -42,7 +42,7 @@ import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
 import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
 import { authApi } from '../../services/auth'
@@ -1863,6 +1863,7 @@ const Cases: React.FC = () => {
                     error={!!resultError}
                     errorStatus={(resultError as { status?: number } | null)?.status}
                     map={unifiedResult && <CaseResultMap result={unifiedResult} operationalAreaId={selectedCase.operational_area_id ?? undefined} />}
+                    footer={unifiedResult && <Link to={`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`}>在报告中心查看此版本</Link>}
                   />
 
                   {bonusAccountingEnabled && (

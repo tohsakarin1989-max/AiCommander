@@ -21,8 +21,8 @@ function Facts({ values }: { values: Record<string, unknown> }) {
   )}</dl>
 }
 
-export default function CaseResultPanel({ result, caseId, loading, error, errorStatus, map }: {
-  result?: CaseResult; caseId: number; loading?: boolean; error?: boolean; errorStatus?: number; map?: ReactNode
+export default function CaseResultPanel({ result, caseId, loading, error, errorStatus, map, footer }: {
+  result?: CaseResult; caseId: number; loading?: boolean; error?: boolean; errorStatus?: number; map?: ReactNode; footer?: ReactNode
 }) {
   // A failed refresh must hide cached content, including its map and source text.
   const usable = !error && result?.content.case_id === caseId
@@ -71,5 +71,6 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
         <div><dt>内容摘要</dt><dd><code>{result.content_sha256}</code></dd></div>
       </dl><ul>{content.boundary.map(text => <li key={text}>{text}</li>)}</ul>
     </details>
+    {footer}
   </section>
 }

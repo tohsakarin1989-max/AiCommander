@@ -22,6 +22,18 @@ def _unavailable():
     return HTTPException(404, "成果尚未生成、不可访问或引用已失效", headers={"Cache-Control": "no-store"})
 
 
+@router.get("/case-results")
+def result_catalog(request: Request, response: Response, q: str = Query("", max_length=100),
+                   limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0, le=10000),
+                   db: Session = Depends(get_db)):
+    _principal(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return CaseResultService.catalog(db, query=q, limit=limit, offset=offset)
+    except CaseResultAccessError:
+        raise _unavailable() from None
+
+
 @router.post("/cases/{case_id}/results")
 def create_result(case_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
     principal = _principal(request)
