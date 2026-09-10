@@ -10,6 +10,7 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.services.case_result_service import CaseResultService
+from app.services.case_result_map import frozen_result_map_input
 from app.services.case_result_snapshot import RESULT_SCHEMA_VERSION, verify_snapshot
 
 
@@ -175,12 +176,7 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
     else:
         blocks.append(DocumentBlock("paragraph", "当前成果未携带语义画像。"))
     # 地图渲染器只接受冻结坐标/区域及版本，不允许下载时混入最新案件位置。
-    blocks.append(DocumentBlock("map", _text({
-        "map_snapshot_id": content["versions"]["map_snapshot_id"],
-        "recorded_fields": content["facts_summary"]["recorded_fields"],
-        "candidates": [{"id": item["id"], "region": item["region"], "evidence_refs": item["evidence_refs"]}
-                       for item in content["candidates"]],
-    })))
+    blocks.append(DocumentBlock("map", _text(frozen_result_map_input(content))))
     blocks.extend([
         DocumentBlock("heading", "版本与适用边界"),
         DocumentBlock("table", "输入版本", _fields(content["versions"])),

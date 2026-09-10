@@ -59,7 +59,7 @@ async function render(input) {
     } else if (block.kind === 'map') {
       const map = JSON.parse(block.text)
       // Until the frozen map renderer is connected, never silently omit a required map.
-      if (map.map_snapshot_id || map.candidates?.length) throw new Error('frozen_map_renderer_required')
+      if (map.map_snapshot_id || map.candidates?.length || map.case_marker) throw new Error('frozen_map_renderer_required')
       children.push(...paragraphs('地图：本成果尚未结合地图，不生成或推测地图位置。'))
     } else throw new Error('unsupported_document_block')
   }

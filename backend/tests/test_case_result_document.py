@@ -53,6 +53,18 @@ def test_empty_analysis_remains_empty_and_no_fabricated_map():
     assert map_input["candidates"] == []
 
 
+def test_map_input_uses_frozen_analysis_coordinates_and_candidate_legend():
+    profile, run, candidate = inputs()
+    profile.payload["analysis_facts"] = {"latitude": 46.6, "longitude": 125.1}
+    profile.payload["standard"]["latitude"] = 0  # 错误来源不能覆盖分析层冻结坐标。
+    result = {"id": "mapped-result", **assemble_case_result(profile, run, [candidate])}
+    document = build_case_result_document(result)
+    map_input = json.loads(next(block.text for block in document.blocks if block.kind == "map"))
+    assert map_input["case_marker"] == {"case_id": 1, "latitude": 46.6, "longitude": 125.1, "title": "合成地点"}
+    assert map_input["candidates"][0]["title"] == candidate.title
+    assert map_input["candidates"][0]["category"] == candidate.hypothesis_type
+
+
 def test_document_is_deeply_immutable_and_tampered_input_is_rejected():
     result = document_input()
     document = build_case_result_document(result)
