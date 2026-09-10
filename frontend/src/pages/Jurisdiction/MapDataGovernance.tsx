@@ -27,6 +27,7 @@ import {
   type MapPreview,
 } from '../../services'
 import OfflineMapManager from './OfflineMapManager'
+import InternalRoadManager from './InternalRoadManager'
 
 
 const COORDINATE_OPTIONS = [
@@ -210,6 +211,7 @@ export default function MapDataGovernance() {
   return (
     <>
     <OfflineMapManager />
+    <InternalRoadManager sources={sources} />
     <Card className="jurisdiction-card map-governance-card" title="生产地图数据治理" extra={<Tag color="green">管理员</Tag>}>
       <Alert
         showIcon
