@@ -62,8 +62,22 @@ def _apply_operational_area_scope(execute_state) -> None:
         return
     area_ids = execute_state.session.info.get("authorized_area_ids")
     if area_ids is None:
+        execute_state.session.info.pop("_area_scope_options", None)
         return
+    # Reuse expressions, never query results or ORM objects. The scope is read on
+    # every SELECT, so shrinking/replacing even a mutable input invalidates it.
+    scope_key = tuple(area_ids)
+    cached = execute_state.session.info.get("_area_scope_options")
+    if cached is None or cached[0] != scope_key:
+        cached = (scope_key, _build_area_scope_options(scope_key))
+        execute_state.session.info["_area_scope_options"] = cached
+    execute_state.statement = execute_state.statement.options(*cached[1])
+
+
+def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
+    """Build the same mandatory filters once per session and scope version."""
     from app.models.case import Case
+    from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
     from app.models.deployment_advisor import SituationBrief, TechDefenseEventAggregate, TechDefenseSource
     from app.models.event import AreaProfile, Event
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
@@ -72,6 +86,9 @@ def _apply_operational_area_scope(execute_state) -> None:
 
     scoped_models = (
         Case,
+        CaseImportBatch,
+        CaseImportRow,
+        CaseImportTemplate,
         JurisdictionAsset,
         JurisdictionFeedback,
         MapSource,
@@ -84,9 +101,9 @@ def _apply_operational_area_scope(execute_state) -> None:
         Event,
         AreaProfile,
     )
-    statement = execute_state.statement
+    options = []
     for model in scoped_models:
-        statement = statement.options(
+        options.append(
             with_loader_criteria(
                 model,
                 model.operational_area_id.in_(area_ids),
@@ -120,14 +137,14 @@ def _apply_operational_area_scope(execute_state) -> None:
         CaseHypothesis,
         Conclusion,
     ):
-        statement = statement.options(
+        options.append(
             with_loader_criteria(
                 model,
                 model.case_id.in_(allowed_case_ids),
                 include_aliases=True,
             )
         )
-    statement = statement.options(
+    options.extend((
         with_loader_criteria(
             KnowledgeAsset,
             KnowledgeAsset.source_case_id.in_(allowed_case_ids),
@@ -144,7 +161,7 @@ def _apply_operational_area_scope(execute_state) -> None:
             & ChainLink.case_id_b.in_(allowed_case_ids),
             include_aliases=True,
         ),
-    )
+    ))
     allowed_conclusion_ids = select(Conclusion.id).where(
         Conclusion.case_id.in_(allowed_case_ids)
     )
@@ -155,7 +172,7 @@ def _apply_operational_area_scope(execute_state) -> None:
     allowed_meeting_ids = select(Meeting.meeting_id).where(
         Meeting.operational_area_id.in_(area_ids)
     )
-    statement = statement.options(
+    options.extend((
         with_loader_criteria(
             ConclusionReview,
             ConclusionReview.conclusion_id.in_(allowed_conclusion_ids),
@@ -176,21 +193,22 @@ def _apply_operational_area_scope(execute_state) -> None:
             & EventRelation.event_b_id.in_(allowed_event_ids),
             include_aliases=True,
         ),
-    )
+    ))
     for model in (MeetingConversation, AnalysisResult, Evaluation, Ranking, Report):
-        statement = statement.options(
+        options.append(
             with_loader_criteria(
                 model,
                 model.meeting_id.in_(allowed_meeting_ids),
                 include_aliases=True,
             )
         )
-    execute_state.statement = statement
+    return tuple(options)
 
 
 def bind_principal_scope(db: Session, principal, *, method: str = "GET") -> None:
     if principal is None:
         return
+    db.info["principal_user_id"] = principal.user_id
     from app.models.map_foundation import OperationalArea, UserAreaScope
 
     default_area_id = db.execute(

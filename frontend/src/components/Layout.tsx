@@ -22,7 +22,8 @@ const NAV_ITEMS = [
   { label: '研判', num: '03', paths: ['/situation', '/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
   { label: '数智', num: '04', paths: ['/intelli-inspect'] },
   { label: '助手', num: '05', paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'] },
-  { label: '设置', num: '06', paths: ['/settings', '/settings/users'], adminOnly: true },
+  { label: '展示', num: '06', paths: ['/showcase'], analystOnly: true },
+  { label: '设置', num: '07', paths: ['/settings', '/settings/users'], adminOnly: true },
 ]
 
 type SubNavItem = { label: string; path: string }
@@ -134,7 +135,8 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
     : null
   const isDashboard = location.pathname === '/dashboard'
 
-  const visibleNavItems = NAV_ITEMS.filter(item => !item.adminOnly || user?.role === 'admin')
+  const visibleNavItems = NAV_ITEMS.filter(item => (!item.adminOnly || user?.role === 'admin') &&
+    (!item.analystOnly || user?.role === 'admin' || user?.role === 'analyst'))
 
   const isActive = (item: typeof NAV_ITEMS[number]) =>
     item.paths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'))
@@ -186,7 +188,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
           </span>
           <span className="chip accent">
             <span className="dot" style={{ background: 'var(--accent)' }} />
-            AI 推理中
+            {runtime ? runtime.active_model_count > 0 ? '模型已配置' : '未配置模型' : '模型状态待确认'}
           </span>
         </div>
 
@@ -264,7 +266,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '3.6.0-stable'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '4.0.0-stable'}</span></span>
         </div>
       </footer>
     </div>

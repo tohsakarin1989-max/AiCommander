@@ -840,7 +840,7 @@ class EvidenceGraphService:
         add_edge,
         add_issue,
     ) -> None:
-        runs = db.query(AgentRun).order_by(AgentRun.created_at.desc()).limit(100).all()
+        runs = db.query(AgentRun).filter(AgentRun.task_type.notin_(['intelligent_query', 'showcase'])).order_by(AgentRun.created_at.desc()).limit(100).all()
         matched = [
             run
             for run in runs

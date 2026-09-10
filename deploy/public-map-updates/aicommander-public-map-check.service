@@ -1,0 +1,19 @@
+[Unit]
+Description=AiCommander public map source metadata check (public zone only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aic-map-collector
+Group=aic-map-collector
+ExecStart=/usr/bin/python3 /opt/aicommander-public-source/check-public-map-updates.py --output-dir /var/lib/aicommander-public-map-updates
+StateDirectory=aicommander-public-map-updates
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=90

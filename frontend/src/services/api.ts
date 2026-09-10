@@ -77,6 +77,7 @@ api.interceptors.response.use(
     if (needsReLogin(apiError)) {
       const isPublicAuthRequest = error.config?.url?.includes('/auth/login')
         || error.config?.url?.includes('/auth/bootstrap')
+        || error.config?.url === '/auth/me'
       if (!isPublicAuthRequest) {
         window.dispatchEvent(new CustomEvent('aic:auth-expired'))
       }

@@ -48,3 +48,17 @@ def test_github_quality_gate_covers_release_checks():
 
     # 功能分支由 pull_request 触发，避免同一次更新重复跑 push 和 PR 两套任务。
     assert "      - codex/v2.0-production" not in workflow
+
+
+def test_backend_ci_installs_real_map_style_validator_before_tests():
+    import yaml
+
+    workflow = yaml.safe_load((REPOSITORY_ROOT / '.github/workflows/release-quality.yml').read_text())
+    steps = workflow['jobs']['backend']['steps']
+    test_index = next(i for i, step in enumerate(steps) if step.get('run') == 'python -m pytest')
+    prerequisites = steps[:test_index]
+    assert any(step.get('uses', '').startswith('actions/setup-node@')
+               and step.get('with', {}).get('node-version') == '24' for step in prerequisites)
+    assert any(step.get('working-directory') == 'frontend'
+               and 'npm ci --omit=dev --ignore-scripts' in step.get('run', '')
+               for step in prerequisites)

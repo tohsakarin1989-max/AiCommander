@@ -1,320 +1,92 @@
-import { useState, useRef, useEffect } from 'react'
-import {
-  RobotOutlined,
-  UserOutlined,
-  FileTextOutlined,
-  DatabaseOutlined,
-  SendOutlined,
-  MessageOutlined,
-} from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { aiApi } from '../../services/ai'
-import type { ChatMessage, ChatResponse, EvidenceQaResponse, SourceItem } from '../../types'
-import { useNavigate } from 'react-router-dom'
-import dayjs from 'dayjs'
-import { Input } from 'antd'
-import './Assistant.css'
+import { useSearchParams } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
+import { intelligentQueriesApi } from '../../services/intelligentQueries'
+import { activeQuery, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
+import { QueryResult } from './QueryResult'
+import './IntelligentQuery.css'
 
-const { TextArea } = Input
+const examples = ['查找包含“管线”的案件', '统计当前授权范围的案件数量', '查找“大庆”相关地点和设施', '汇总已有研判成果']
 
-const HINT_QUESTIONS = [
-  '最近有哪些案件？',
-  '案件统计信息',
-  '最新的分析报告是什么？',
-  '案件的地理分布情况',
-  '高风险案件有哪些？',
-]
-
-const Assistant: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [inputValue, setInputValue] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const navigate = useNavigate()
-
-  const { data: stats, error: statsError } = useQuery({
-    queryKey: ['assistant-stats'],
-    queryFn: () => aiApi.assistant.getStats(),
-    retry: 1,
+export default function Assistant() {
+  const { user, sessionEpoch } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const runId = params.get('query') || ''
+  const [question, setQuestion] = useState('')
+  const live = useRef(true)
+  const selection = useRef(runId)
+  selection.current = runId
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
+  const key = ['intelligent-query', user?.id, sessionEpoch, runId]
+  const task = useQuery({
+    queryKey: key, queryFn: ({ signal }) => intelligentQueriesApi.read(runId, signal),
+    enabled: queryIdValid(runId), retry: false,
+    refetchInterval: query => !query.state.error && activeQuery(query.state.data?.status) ? 1500 : false,
   })
-
-  const chatMutation = useMutation({
-    mutationFn: aiApi.assistant.chat,
-    onSuccess: (response: ChatResponse) => {
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: response.answer || response.response,
-        timestamp: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-      setIsLoading(false)
-    },
-    onError: (error: any) => {
-      const errorMessage: ChatMessage = {
-        role: 'assistant',
-        content: `抱歉，处理您的问题时出现错误：${error.response?.data?.detail || error.message || '未知错误'}`,
-        timestamp: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, errorMessage])
-      setIsLoading(false)
+  const create = useMutation({
+    mutationFn: ({ text }: { text: string; sourceId: string }) => intelligentQueriesApi.create(text),
+    onSuccess: (data, variables) => {
+      if (!live.current || selection.current !== variables.sourceId) return
+      setQuestion('')
+      setParams({ query: data.id })
     },
   })
-
-  const evidenceQaMutation = useMutation({
-    mutationFn: aiApi.assistant.evidenceQa,
-    onSuccess: (response: EvidenceQaResponse) => {
-      const citationCount = response.citations?.length || 0
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: `${response.answer}\n\n引用来源：${citationCount} 条${response.insufficient_evidence ? '\n资料状态：不足' : ''}`,
-        timestamp: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-      setIsLoading(false)
-    },
-    onError: (error: any) => {
-      const errorMessage: ChatMessage = {
-        role: 'assistant',
-        content: `证据问答失败：${error.response?.data?.detail || error.message || '未知错误'}`,
-        timestamp: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, errorMessage])
-      setIsLoading(false)
+  const cancel = useMutation({
+    mutationFn: intelligentQueriesApi.cancel,
+    onSuccess: (_result, id) => {
+      if (!live.current || selection.current !== id) return
+      // Cancellation is allowed after scope revocation; it grants no read access.
+      void task.refetch()
     },
   })
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const current = !task.error && task.data?.id === runId ? task.data : undefined
+  const busy = create.isPending || activeQuery(current?.status)
+  const canQuery = user?.role === 'admin' || user?.role === 'analyst'
+  function submit() {
+    if (!canQuery || busy || !question.trim()) return
+    cancel.reset()
+    create.mutate({ text: question.trim(), sourceId: runId })
   }
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
-
-  const handleSend = (text?: string) => {
-    const content = (text ?? inputValue).trim()
-    if (!content || isLoading) return
-
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-    }
-
-    setMessages((prev) => [...prev, userMessage])
-    setInputValue('')
-    setIsLoading(true)
-
-    chatMutation.mutate({
-      query: content,
-      conversation_history: messages,
-    })
-  }
-
-  const handleEvidenceQa = () => {
-    const content = inputValue.trim()
-    if (!content || isLoading) return
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: `[证据问答] ${content}`,
-      timestamp: new Date().toISOString(),
-    }
-    setMessages((prev) => [...prev, userMessage])
-    setInputValue('')
-    setIsLoading(true)
-    evidenceQaMutation.mutate({ query: content })
-  }
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
-  const handleSourceClick = (source: SourceItem) => {
-    if (source.type === 'case' && source.id) {
-      navigate(`/cases?caseId=${source.id}`)
-    } else if (source.type === 'report' && source.meeting_id) {
-      navigate(`/meetings?meetingId=${source.meeting_id}`)
-    }
-  }
-
-  const getWelcomeText = () => {
-    if (stats) {
-      return `您好！我是 AI 案件分析助手。当前系统中有 ${stats.total_cases} 起案件，已完成 ${stats.recent_meetings} 个分析报告。请告诉我您想了解什么？`
-    }
-    return '您好！我是 AI 案件分析助手。我可以帮您查询案件信息、分析报告等。请告诉我您想了解什么？'
-  }
-
-  return (
-    <div className="page-scrollable">
-      {/* 页面标题 */}
-      <div className="page-title">
-        <h1>智能助手</h1>
-        <span className="sub">AI ASSISTANT</span>
-        {stats && !statsError && (
-          <span className="chip" style={{ marginLeft: 'auto' }}>
-            案件 <span style={{ color: 'var(--accent)', marginLeft: 4 }}>{stats.total_cases}</span>
-            <span style={{ color: 'var(--ink-3)', margin: '0 4px' }}>·</span>
-            报告 <span style={{ color: 'var(--accent)', marginLeft: 4 }}>{stats.recent_meetings}</span>
-          </span>
-        )}
+  return <main className="page-scrollable intelligent-query">
+    <header className="page-title"><h1>智能助手</h1><span className="sub">案件与地图查询</span></header>
+    <p className="query-intro">输入要查的问题。系统在当前授权范围内调用只读工具，结果不自动变成案件结论或执行任务。</p>
+    <form onSubmit={event => { event.preventDefault(); submit() }} className="query-form">
+      <label htmlFor="query-question">查询问题</label>
+      <textarea id="query-question" value={question} onChange={event => setQuestion(event.target.value)}
+        maxLength={2000} rows={3} placeholder="例如：比较 2026年8月 与上一个等长周期的盗油案件数量。"
+        disabled={!canQuery || create.isPending} />
+      <div className="query-actions"><button className="btn-primary" type="submit" disabled={!canQuery || busy || !question.trim()}>
+        {create.isPending ? '正在提交' : '提交查询'}</button>
+        {activeQuery(current?.status) && <button className="btn-ghost" type="button" disabled={cancel.isPending}
+          onClick={() => cancel.mutate(runId)}>{cancel.isPending ? '正在取消' : '取消本次查询'}</button>}
+        {runId && <button className="btn-ghost" type="button" disabled={busy} onClick={() => {
+          setParams({}); create.reset(); cancel.reset()
+        }}>新查询</button>}
       </div>
-
-      {/* 主体双栏布局 */}
-      <div className="assistant-layout">
-
-        {/* 左侧：会话历史 */}
-        <div className="assistant-sidebar">
-          <div className="card">
-            <div className="card-head">
-              <MessageOutlined className="ico" />
-              <span className="ti">会话历史</span>
-            </div>
-            <div className="card-body scroll">
-              {messages.length === 0 ? (
-                <div className="empty-state" style={{ padding: '20px 14px' }}>
-                  <div className="icon"><MessageOutlined /></div>
-                  <span>暂无会话</span>
-                </div>
-              ) : (
-                messages
-                  .filter((m) => m.role === 'user')
-                  .map((m, i) => (
-                    <div key={i} className={`conv-item${i === 0 ? ' active' : ''}`}>
-                      <div className="conv-item__id">MSG-{String(i + 1).padStart(3, '0')}</div>
-                      <div className="conv-item__preview">{m.content}</div>
-                    </div>
-                  ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 右侧：聊天主区 */}
-        <div className="assistant-chat">
-          {/* 消息列表 */}
-          <div className="assistant-messages">
-            {messages.length === 0 ? (
-              <div className="assistant-welcome">
-                <div className="assistant-welcome__icon"><RobotOutlined /></div>
-                <div className="assistant-welcome__title">{getWelcomeText()}</div>
-                <div className="assistant-welcome__hints">
-                  {HINT_QUESTIONS.map((q) => (
-                    <div
-                      key={q}
-                      className="assistant-welcome__hint"
-                      onClick={() => handleSend(q)}
-                    >
-                      {q}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              messages.map((msg, index) => {
-                const isUser = msg.role === 'user'
-                let sources: ChatResponse['sources'] = []
-                if (!isUser && index === messages.length - 1) {
-                  const lastResponse = chatMutation.data as ChatResponse | undefined
-                  if (lastResponse?.sources) {
-                    sources = lastResponse.sources
-                  }
-                }
-                return (
-                  <div key={index} className={`msg-row${isUser ? ' msg-row--user' : ''}`}>
-                    <div className={`msg-avatar${isUser ? ' msg-avatar--user' : ' msg-avatar--ai'}`}>
-                      {isUser ? <UserOutlined /> : <RobotOutlined />}
-                    </div>
-                    <div className="msg-body">
-                      <div className={`msg-bubble${isUser ? ' msg-bubble--user' : ' msg-bubble--ai'}`}>
-                        <pre>{msg.content}</pre>
-                        {msg.timestamp && (
-                          <div className="msg-time" style={{ marginTop: 6 }}>
-                            {dayjs(msg.timestamp).format('HH:mm:ss')}
-                          </div>
-                        )}
-                      </div>
-                      {sources && sources.length > 0 && (
-                        <div className="msg-sources">
-                          <span className="msg-sources__label">来源</span>
-                          {sources.map((source, idx) => (
-                            <div
-                              key={idx}
-                              className="msg-source-tag"
-                              onClick={() => handleSourceClick(source)}
-                            >
-                              {source.type === 'case' ? <DatabaseOutlined /> : <FileTextOutlined />}
-                              {source.type === 'case'
-                                ? source.case_number || `案件 #${source.id}`
-                                : `报告 ${source.meeting_id}`}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })
-            )}
-
-            {isLoading && (
-              <div className="msg-loading-row">
-                <div className="msg-avatar msg-avatar--ai"><RobotOutlined /></div>
-                <div className="msg-loading-bubble">
-                  <div className="pulse-dots">
-                    <div className="pulse-dot" />
-                    <div className="pulse-dot" />
-                    <div className="pulse-dot" />
-                  </div>
-                  <span className="msg-loading-label">正在思考...</span>
-                </div>
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* 输入区 */}
-          <div className="assistant-input-area">
-            <div className="assistant-input-row">
-              <TextArea
-                className="assistant-textarea"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="输入您的问题，按 Enter 发送，Shift+Enter 换行..."
-                autoSize={{ minRows: 1, maxRows: 5 }}
-                disabled={isLoading}
-              />
-              <button
-                className="btn-primary"
-                onClick={() => handleSend()}
-                disabled={isLoading || !inputValue.trim()}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <SendOutlined />
-                发送
-              </button>
-              <button
-                className="btn-ghost"
-                onClick={handleEvidenceQa}
-                disabled={isLoading || !inputValue.trim()}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <DatabaseOutlined />
-                证据问答
-              </button>
-            </div>
-            <div className="assistant-input-hint">
-              ENTER 发送 · SHIFT+ENTER 换行 · 点击来源标签可跳转详情
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+      {!canQuery && <p role="status">当前账号不能发起智能查询，可继续使用案件和地图浏览。</p>}
+    </form>
+    {!runId && <div className="query-examples" aria-label="问题示例">{examples.map(example =>
+      <button type="button" className="btn-ghost" key={example} disabled={!canQuery || create.isPending}
+        onClick={() => setQuestion(example)}>{example}</button>)}</div>}
+    {create.error && <p role="alert">{requestFailure(create.error, true)}</p>}
+    {cancel.error && <p role="alert">取消未得到确认，请刷新任务状态后再试。</p>}
+    {runId && !queryIdValid(runId) && <p role="alert">任务编号无效，请发起新查询。</p>}
+    {task.isFetching && !current && !task.error && runId && <p role="status">正在读取任务状态…</p>}
+    {task.error && <section role="alert"><p>{requestFailure(task.error)}</p>
+      <button className="btn-ghost" onClick={() => void task.refetch()}>重新读取</button></section>}
+    {current && <section className="query-output">
+      <div className="query-status" role="status"><strong>{statusNames[current.status] || '状态未知'}</strong>
+        <button className="btn-ghost" disabled={task.isFetching} onClick={() => void task.refetch()}>刷新状态</button></div>
+      <p className="query-original">{current.query}</p>
+      {current.status === 'queued' && <p>任务已保存，等待后台领取。长时间未开始时请联系管理员检查队列。</p>}
+      {current.status === 'running' && <p>正在执行只读查询，可取消；后台故障不会影响案件录入。</p>}
+      {current.result.error_code && <p role="status">{failureText(current.result.error_code)}</p>}
+      {!!current.result.cards?.length && <p className="query-history-note">以下是该次查询的历史结果，数据更新后请重新查询。</p>}
+      {current.result.cards?.map((card, index) => <QueryResult key={index} card={card} />)}
+      {!!current.result.trace?.length && <details><summary>查看工具轨迹（{current.result.trace.length} 步）</summary>
+        <ol>{current.result.trace.map(step => <li key={step.step}>{toolNames[step.tool] || '只读查询'}{step.duration_ms != null ? ` · ${step.duration_ms} 毫秒` : ''}</li>)}</ol>
+      </details>}
+    </section>}
+  </main>
 }
-
-export default Assistant

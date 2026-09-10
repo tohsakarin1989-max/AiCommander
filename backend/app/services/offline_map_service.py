@@ -6,6 +6,7 @@ import html
 import io
 import json
 import os
+import re
 import sqlite3
 import uuid
 import zipfile
@@ -13,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -158,8 +159,7 @@ class OfflineMapService:
         )
         if not bundle:
             raise ValueError("bundle_not_found")
-        artifact = OfflineMapService._bundle_artifact(db, bundle.id)
-        if not artifact or not OfflineMapService._artifact_is_usable(artifact):
+        if not OfflineMapService._bundle_storage_is_usable(db, bundle, verify_hash=True):
             raise ValueError("bundle_artifact_missing")
 
         open_conflicts = (
@@ -236,6 +236,10 @@ class OfflineMapService:
             "attribution": OfflineMapService._bundle_attribution(bundle),
             "network_required": False,
         }
+        if bundle.manifest.get('schema_version') == '2.0':
+            manifest.update(schema_version='2.0', renderer='maplibre',
+                            style_url=f'/api/maps/{snapshot_id}/style.json',
+                            display_max_zoom=bundle.manifest['display_max_zoom'])
         snapshot = MapSnapshot(
             id=snapshot_id,
             version=version,
@@ -292,7 +296,23 @@ class OfflineMapService:
         return snapshot, False
 
     @staticmethod
-    def publish_snapshot(db: Session, snapshot_id: str) -> MapSnapshot:
+    def publish_snapshot(db: Session, snapshot_id: str, *, automatic: bool = False,
+                         authorized_user_id: int | None = None,
+                         publication_lease: tuple[str, str] | None = None) -> MapSnapshot:
+        if automatic:
+            from app.models.map_package_import import MapPackageImport
+            if publication_lease is None:
+                raise ValueError('map_publication_lease_lost')
+            run_id, token = publication_lease
+            now = datetime.now(timezone.utc)
+            # Real UPDATE locks on SQLite and PostgreSQL. Keep the lease fence
+            # in the same transaction as the current pointer switch.
+            fence = db.execute(update(MapPackageImport).execution_options(synchronize_session=False)
+                .where(MapPackageImport.id == run_id,
+                MapPackageImport.status == 'render_validated', MapPackageImport.lease_token == token,
+                MapPackageImport.lease_expires_at > now).values(updated_at=now))
+            if fence.rowcount != 1:
+                raise ValueError('map_publication_lease_lost')
         snapshot_area_id = db.query(MapSnapshot.operational_area_id).filter(
             MapSnapshot.id == snapshot_id
         ).scalar()
@@ -304,6 +324,17 @@ class OfflineMapService:
         area = area_query.first()
         if area is None or area.status != "active":
             raise ValueError("operational_area_not_found")
+        if automatic:
+            from app.models.user import User
+            from app.models.map_foundation import UserAreaScope
+            user_query = db.query(User).filter_by(id=authorized_user_id, is_active=True, role='admin')
+            scope_query = db.query(UserAreaScope).filter_by(user_id=authorized_user_id,
+                operational_area_id=area.id, access_level='manage')
+            if db.bind is not None and db.bind.dialect.name == 'postgresql':
+                user_query = user_query.with_for_update()
+                scope_query = scope_query.with_for_update()
+            if user_query.first() is None or scope_query.first() is None:
+                raise ValueError('map_publish_permission_revoked')
         snapshot = db.query(MapSnapshot).filter(MapSnapshot.id == snapshot_id).first()
         if not snapshot:
             raise ValueError("snapshot_not_found")
@@ -341,6 +372,16 @@ class OfflineMapService:
             .all()
         )
         previous = current_items[0] if current_items else None
+        if automatic and previous is not None:
+            previous_bundle = db.get(PublicMapBundle, previous.public_bundle_id)
+            try:
+                old_time = datetime.fromisoformat(previous_bundle.source_version.replace('Z', '+00:00'))
+                new_time = datetime.fromisoformat(bundle.source_version.replace('Z', '+00:00'))
+                if (old_time.tzinfo is None or new_time.tzinfo is None
+                        or previous_bundle.provider != bundle.provider or new_time <= old_time):
+                    raise ValueError('map_source_not_newer')
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError('map_source_not_newer') from None
         for current in current_items:
             current.status = "superseded"
             current.superseded_at = now
@@ -397,6 +438,21 @@ class OfflineMapService:
             PublicMapBundle.id == snapshot.public_bundle_id
         ).first()
         bundle_manifest = dict(bundle.manifest or {}) if bundle else {}
+        if bundle_manifest.get('schema_version') == '2.0':
+            from app.services.map_bundle_inventory import registered_manifest
+
+            try:
+                checked = registered_manifest(bundle)
+            except (ValueError, TypeError, RecursionError) as exc:
+                raise ValueError('bundle_artifact_missing') from exc
+            manifest.update(schema_version='2.0', renderer='maplibre',
+                            style_url=f'/api/maps/{snapshot.id}/style.json',
+                            display_max_zoom=checked['display_max_zoom'], bounds=checked['bounds'])
+            # Rendering approval never implies a usable motor-vehicle graph.
+            manifest['capabilities'] = {'offline_display': True, 'place_search': True,
+                                        'motor_vehicle_routing': False}
+            manifest['limitations'] = ['道路拓扑尚未通过通行验收，不提供机动车路径计算',
+                                      '公共来源缺失不代表现实中不存在，复杂文字排版仍待核验']
         manifest.update(
             {
                 "snapshot_id": snapshot.id,
@@ -456,9 +512,16 @@ class OfflineMapService:
         *,
         area_id: int | None = None,
     ) -> tuple[bytes, str]:
-        if z < 0 or z > 22 or x < 0 or y < 0 or x >= 2**z or y >= 2**z:
-            raise ValueError("tile_not_found")
         snapshot = OfflineMapService.resolve_snapshot(db, snapshot_ref, area_id=area_id)
+        bundle = db.query(PublicMapBundle).filter(PublicMapBundle.id == snapshot.public_bundle_id).first()
+        vector = (bundle is not None and isinstance(bundle.manifest, dict)
+                  and bundle.manifest.get('schema_version') == '2.0')
+        if z < 0 or z > 22 or x < 0 or y < 0 or x >= 2**z or y >= 2**z:
+            raise ValueError('vector_tile_not_found' if vector else 'tile_not_found')
+        if vector:
+            from app.services.map_vector_tile_service import read_vector_tile
+
+            return read_vector_tile(db, bundle, z, x, y)
         artifact = OfflineMapService._bundle_artifact(db, snapshot.public_bundle_id)
         if not artifact:
             raise ValueError("tile_not_found")
@@ -790,6 +853,7 @@ class OfflineMapService:
             .filter(
                 MapPackageArtifact.public_bundle_id == bundle_id,
                 MapPackageArtifact.artifact_kind == "mbtiles",
+                MapPackageArtifact.snapshot_id.is_(None),
             )
             .first()
         )
@@ -801,14 +865,56 @@ class OfflineMapService:
         *,
         verify_hash: bool = False,
     ) -> bool:
-        artifact = OfflineMapService._bundle_artifact(db, snapshot.public_bundle_id)
-        return bool(
-            artifact
-            and OfflineMapService._artifact_is_usable(
-                artifact,
-                verify_hash=verify_hash,
-            )
-        )
+        bundle = db.query(PublicMapBundle).filter(
+            PublicMapBundle.id == snapshot.public_bundle_id
+        ).first()
+        return bool(bundle and OfflineMapService._bundle_storage_is_usable(
+            db, bundle, verify_hash=verify_hash))
+
+    @staticmethod
+    def _bundle_storage_is_usable(db: Session, bundle: PublicMapBundle,
+                                  *, verify_hash: bool) -> bool:
+        manifest = bundle.manifest
+        if not isinstance(manifest, dict) or bundle.status != 'accepted':
+            return False
+        if manifest.get('schema_version') == '2.0':
+            return OfflineMapService._bundle_inventory_exists(db, bundle, verify_hash=verify_hash)
+        # A changed/unknown schema must not select weaker legacy validation.
+        if (manifest.get('schema_version') != '1.0' or 'assets' in manifest
+                or manifest.get('contains_internal_data') is not False
+                or not isinstance(bundle.package_hash, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', bundle.package_hash)):
+            return False
+        for field, value in (('bundle_id', bundle.bundle_id), ('provider', bundle.provider),
+                             ('source_version', bundle.source_version),
+                             ('license', bundle.license_record), ('bounds', bundle.bounds)):
+            if manifest.get(field) != value:
+                return False
+        files = manifest.get('files')
+        if (not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict)
+                or files[0].get('name') != 'basemap.mbtiles'):
+            return False
+        artifacts = db.query(MapPackageArtifact).filter(
+            MapPackageArtifact.public_bundle_id == bundle.id,
+            MapPackageArtifact.artifact_kind == 'mbtiles',
+            MapPackageArtifact.snapshot_id.is_(None),
+        ).limit(2).all()
+        if len(artifacts) != 1:
+            return False
+        artifact = artifacts[0]
+        if (artifact.storage_key != f'bundles/{bundle.package_hash}.mbtiles'
+                or artifact.sha256 != files[0].get('sha256')
+                or artifact.size_bytes != files[0].get('size')):
+            return False
+        return OfflineMapService._artifact_is_usable(artifact, verify_hash=verify_hash)
+
+    @staticmethod
+    def _bundle_inventory_exists(db: Session, bundle: PublicMapBundle,
+                                 *, verify_hash: bool) -> bool:
+        from app.services.map_bundle_inventory import verify_bundle_inventory
+
+        root = Path(_runtime_settings().MAP_PACKAGE_ROOT).expanduser()
+        return verify_bundle_inventory(db, bundle, root, verify_hash=verify_hash)
 
     @staticmethod
     def _artifact_is_usable(

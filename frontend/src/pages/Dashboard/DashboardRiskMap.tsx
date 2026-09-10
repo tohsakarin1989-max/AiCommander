@@ -8,9 +8,10 @@ import {
 } from '@ant-design/icons'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { CachedTileLayer } from '../../components/Map/CachedTileLayer'
-import { resolveMapTileConfig } from '../../components/Map/mapTiles'
+import { mountOfflineBasemap, type BasemapStatus } from '../../components/Map/offlineBasemap'
+import { BasemapNotice } from '../../components/Map/BasemapNotice'
 import { escapeHtml } from '../../utils/html'
+import { shouldFitInitialMap } from './dailyDashboardModel'
 import type {
   DashboardHotspot,
   DashboardMapPoint,
@@ -31,6 +32,8 @@ interface DashboardRiskMapProps {
   isFullscreen: boolean
   onToggleFullscreen: () => void
   operationalAreaId?: number
+  neutralWells?: boolean
+  focus?: [number, number] | null
 }
 
 const DEFAULT_CENTER: L.LatLngExpression = [46.5977, 125.1034]
@@ -69,12 +72,17 @@ export default function DashboardRiskMap({
   isFullscreen,
   onToggleFullscreen,
   operationalAreaId,
+  neutralWells = false,
+  focus,
 }: DashboardRiskMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
   const layersRef = useRef<L.Layer[]>([])
   const boundsRef = useRef<L.LatLngBounds | null>(null)
-  const [tileUnavailable, setTileUnavailable] = useState(false)
+  const fittedRef = useRef(false)
+  const userInteractedRef = useRef(false)
+  const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
+  const retryBasemapRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -83,36 +91,58 @@ export default function DashboardRiskMap({
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       zoomControl: false,
+      zoomAnimation: false,
       attributionControl: true,
-      preferCanvas: true,
+      // 点位显示已限额；使用 SVG，避免 Canvas 异步重绘在快速卸载时访问失效上下文。
+      preferCanvas: false,
     })
     mapRef.current = map
+    fittedRef.current = false
+    userInteractedRef.current = false
+    const container = containerRef.current
+    const markInteraction = () => { userInteractedRef.current = true }
+    container.addEventListener('pointerdown', markInteraction)
+    container.addEventListener('wheel', markInteraction, { passive: true })
 
-    let disposed = false
-    let tileLayer: CachedTileLayer | null = null
-    void resolveMapTileConfig(operationalAreaId).then(config => {
-      if (disposed) return
-      tileLayer = new CachedTileLayer(config.url, config.options)
-      tileLayer.on('tileload', () => setTileUnavailable(false))
-      tileLayer.on('tileerror', () => setTileUnavailable(true))
-      tileLayer.addTo(map)
-      if (wells.length === 0 && signals.length === 0 && cases.length === 0 && config.bounds) {
-        map.fitBounds(config.bounds, { padding: [24, 24] })
-      }
+    const stopBasemap = mountOfflineBasemap(map, {
+      operationalAreaId, onStatus: setBasemapStatus,
+      onConfig: config => {
+        if (!fittedRef.current && !userInteractedRef.current && !boundsRef.current?.isValid() && config.bounds) {
+          map.fitBounds(config.bounds, { padding: [24, 24] })
+        }
+      },
     })
+    retryBasemapRef.current = stopBasemap.retry
 
     const resizeObserver = new ResizeObserver(() => map.invalidateSize({ pan: false }))
     resizeObserver.observe(containerRef.current)
 
     return () => {
-      disposed = true
-      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
+      stopBasemap()
+      retryBasemapRef.current = () => {}
       resizeObserver.disconnect()
+      container.removeEventListener('pointerdown', markInteraction)
+      container.removeEventListener('wheel', markInteraction)
+      // 先移除矢量层，再销毁 Canvas renderer，避免卸载后的重绘访问已清空上下文。
+      map.eachLayer(item => { if (item instanceof L.Path) map.removeLayer(item) })
       layersRef.current = []
       map.remove()
       mapRef.current = null
     }
   }, [operationalAreaId])
+
+  useEffect(() => {
+    if (focus && mapRef.current) {
+      const map = mapRef.current
+      userInteractedRef.current = true
+      map.setView(focus, Math.max(12, map.getZoom()))
+      // 独立选择高亮：即使该授权样例不在地图500条展示集内，仍能定位看到。
+      const highlight = L.circleMarker(focus, { radius: 13, color: '#f9df71', weight: 3,
+        fill: false, interactive: false }).addTo(map)
+      highlight.bindTooltip('所选样例案件位置', { permanent: true, direction: 'top' })
+      return () => { if (map.hasLayer(highlight)) map.removeLayer(highlight) }
+    }
+  }, [focus])
 
   useEffect(() => {
     const map = mapRef.current
@@ -153,7 +183,10 @@ export default function DashboardRiskMap({
           fillColor: color,
           fillOpacity: layer === 'signals' ? 0.5 : 0.96,
         }))
-        marker.bindPopup(`
+        marker.bindPopup(neutralWells ? `
+          <div class="db-map-popup"><strong>${escapeHtml(well.name)}</strong>
+          <span>登记井点，未在此计算风险或产量等级。</span></div>
+        ` : `
           <div class="db-map-popup">
             <strong>${escapeHtml(well.name)}</strong>
             <span>作业区：${escapeHtml(well.region || '待补录')}</span>
@@ -163,7 +196,7 @@ export default function DashboardRiskMap({
           </div>
         `)
         marker.bindTooltip(
-          `${escapeHtml(well.name)} · 关注 ${well.attentionScore}`,
+          neutralWells ? escapeHtml(well.name) : `${escapeHtml(well.name)} · 关注 ${well.attentionScore}`,
           {
             className: 'db-map-leaflet-tooltip',
             direction: 'top',
@@ -253,7 +286,7 @@ export default function DashboardRiskMap({
         marker.bindPopup(`
           <div class="db-map-popup">
             <strong>${escapeHtml(casePoint.caseNumber)}</strong>
-            <span>链条位置：${escapeHtml(casePoint.label)}</span>
+            <span>案件标注：${escapeHtml(casePoint.label)}</span>
             <span>坐标：${casePoint.latitude.toFixed(5)}, ${casePoint.longitude.toFixed(5)}</span>
             <span>数据来源：案件经纬度</span>
           </div>
@@ -262,8 +295,11 @@ export default function DashboardRiskMap({
     }
 
     boundsRef.current = bounds.isValid() ? bounds : null
-    fitMap(map, boundsRef.current)
-  }, [cases, chainLines, hotspots, layer, operationalAreaId, signals, wells])
+    if (shouldFitInitialMap(fittedRef.current, userInteractedRef.current, bounds.isValid())) {
+      fittedRef.current = true
+      fitMap(map, boundsRef.current)
+    }
+  }, [cases, chainLines, hotspots, layer, operationalAreaId, signals, wells, neutralWells])
 
   const visibleCount = layer === 'cases'
     ? cases.length + hotspots.length + chainLines.length
@@ -287,9 +323,7 @@ export default function DashboardRiskMap({
           {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
         </button>
       </div>
-      {tileUnavailable && (
-        <div className="db-map-tile-warning">公共底图部分瓦片不可用；已缓存区域仍可显示，业务点位不受影响。</div>
-      )}
+      <BasemapNotice status={basemapStatus} onRetry={() => retryBasemapRef.current()} />
       {visibleCount === 0 && (
         <div className="db-map-real-empty" role="status">
           <strong>{emptyCopy[0]}</strong>

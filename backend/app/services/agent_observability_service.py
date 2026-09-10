@@ -42,7 +42,7 @@ class AgentObservabilityService:
         since = now - timedelta(days=days)
         runs = (
             db.query(AgentRun)
-            .filter(AgentRun.created_at >= since)
+            .filter(AgentRun.created_at >= since, AgentRun.task_type.notin_(['intelligent_query', 'showcase']))
             .order_by(AgentRun.created_at.asc())
             .all()
         )

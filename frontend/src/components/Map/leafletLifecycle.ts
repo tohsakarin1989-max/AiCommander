@@ -22,3 +22,15 @@ export function disposeLeafletHeatMap<TLayer>(
     }
   }
 }
+/** leaflet.heat can clear its RAF id during a synchronous reset while an older
+ * callback is still queued. Guard the callback before the layer is mounted. */
+export function guardLeafletHeatLayer<TLayer>(layer: TLayer): TLayer {
+  const guarded = layer as TLayer & { _redraw?: () => unknown; _map?: unknown }
+  const redraw = guarded._redraw
+  if (typeof redraw === 'function') {
+    guarded._redraw = function () {
+      if (guarded._map) return redraw.call(layer)
+    }
+  }
+  return layer
+}

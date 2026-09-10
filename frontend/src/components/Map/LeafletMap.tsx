@@ -3,11 +3,11 @@ import L from 'leaflet'
 import type { Feature, FeatureCollection, Geometry } from 'geojson'
 import 'leaflet/dist/leaflet.css'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup } from '../../types'
-import { CachedTileLayer } from './CachedTileLayer'
+import { mountOfflineBasemap, type BasemapStatus } from './offlineBasemap'
+import { BasemapNotice } from './BasemapNotice'
 import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
 import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
-import { resolveMapTileConfig } from './mapTiles'
 import { escapeHtml } from '../../utils/html'
 import { hypothesisRegionColor, parseCircleHypothesisRegion } from './caseHypothesisMap'
 
@@ -143,6 +143,8 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   const layersRef = useRef<L.Layer[]>([])
   const highlightLayersRef = useRef<L.Layer[]>([])
   const [productionLayerStatus, setProductionLayerStatus] = useState<string | null>(null)
+  const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
+  const retryBasemapRef = useRef<() => void>(() => {})
   const productionAssetKey = productionAssetIds
     .filter(id => Number.isSafeInteger(id) && id > 0)
     .slice(0, 50)
@@ -165,18 +167,17 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       center: defaultCenter,
       zoom,
       zoomControl: true,
+      zoomAnimation: false,
     })
     mapRef.current = map
 
     let disposed = false
-    let tileLayer: CachedTileLayer | null = null
     let productionLayer: L.GeoJSON | null = null
     const controller = new AbortController()
     setProductionLayerStatus(productionAssetKey ? '正在加载研判版本生产图层…' : null)
-    void resolveMapTileConfig(operationalAreaId, snapshotRef).then(async config => {
-      if (disposed) return
-      tileLayer = new CachedTileLayer(config.url, config.options)
-      tileLayer.addTo(map)
+    const stopBasemap = mountOfflineBasemap(map, {
+      operationalAreaId, snapshotRef, onStatus: setBasemapStatus,
+      onConfig: config => { void (async () => {
       if (!center && markers.length === 0 && config.bounds) {
         map.fitBounds(config.bounds, { padding: [24, 24] })
       }
@@ -217,18 +218,21 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
           ? `已加载 ${payload.features.length} 个研判证据设施`
           : '当前候选未关联可展示的生产设施',
       )
-    }).catch(error => {
+    })().catch(error => {
       if (!disposed && !(error instanceof DOMException && error.name === 'AbortError')) {
         console.warn('冻结生产图层加载失败', error)
         setProductionLayerStatus('冻结生产图层暂不可用，候选范围仍可查看')
       }
+    }) },
     })
+    retryBasemapRef.current = stopBasemap.retry
 
     return () => {
       disposed = true
       controller.abort()
+      stopBasemap()
+      retryBasemapRef.current = () => {}
       if (productionLayer && map.hasLayer(productionLayer)) map.removeLayer(productionLayer)
-      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
       // 先停止所有动画，再销毁，避免 Leaflet zoom 动画竞态报错
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
@@ -416,6 +420,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       }}
     >
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      <BasemapNotice status={basemapStatus} onRetry={() => retryBasemapRef.current()} />
       {productionLayerStatus && (
         <div style={{
           position: 'absolute',

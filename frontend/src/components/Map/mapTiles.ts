@@ -11,6 +11,8 @@ export const MAP_TILE_OPTIONS = {
 
 export interface ResolvedMapTileConfig {
   url: string
+  renderer?: 'raster' | 'maplibre'
+  styleUrl?: string
   snapshotId?: string
   productionLayerUrl?: string
   bounds?: [[number, number], [number, number]]
@@ -19,6 +21,10 @@ export interface ResolvedMapTileConfig {
 }
 
 interface MapManifest {
+  schema_version?: unknown
+  renderer?: unknown
+  style_url?: unknown
+  display_max_zoom?: unknown
   snapshot_id?: unknown
   tile_url?: unknown
   production_layer_url?: unknown
@@ -57,6 +63,7 @@ function mapBounds(value: unknown): [[number, number], [number, number]] | undef
   const [west, south, east, north] = value.map(Number)
   if (![west, south, east, north].every(Number.isFinite)) return undefined
   if (!(west < east && south < north)) return undefined
+  if (west < -180 || east > 180 || south < -85.051129 || north > 85.051129) return undefined
   return [[south, west], [north, east]]
 }
 
@@ -79,6 +86,29 @@ export async function resolveMapTileConfig(
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const manifest = await response.json() as MapManifest
+    if (manifest.schema_version === '2.0' || manifest.renderer === 'maplibre') {
+      const id = manifest.snapshot_id
+      const bounds = mapBounds(manifest.bounds)
+      if (manifest.schema_version !== '2.0' || manifest.renderer !== 'maplibre'
+        || typeof id !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id)
+        || (snapshotRef !== 'current' && snapshotRef !== id)
+        || manifest.tile_url !== `/api/maps/tiles/${id}/{z}/{x}/{y}`
+        || manifest.style_url !== `/api/maps/${id}/style.json`
+        || (manifest.production_layer_url !== undefined && manifest.production_layer_url !== `/api/maps/${id}/layers`)
+        || manifest.min_zoom !== 6 || manifest.max_zoom !== 16 || manifest.display_max_zoom !== 19
+        || !bounds || !Array.isArray(manifest.bounds) || !manifest.bounds.every(v => typeof v === 'number')) {
+        throw new Error('invalid_vector_manifest')
+      }
+      return {
+        renderer: 'maplibre', snapshotId: id,
+        url: withAreaQuery(manifest.tile_url, operationalAreaId),
+        styleUrl: withAreaQuery(manifest.style_url, operationalAreaId),
+        productionLayerUrl: typeof manifest.production_layer_url === 'string'
+          ? withAreaQuery(manifest.production_layer_url, operationalAreaId) : undefined,
+        bounds, manifestResolved: true,
+        options: { ...MAP_TILE_OPTIONS, minNativeZoom: 6, maxNativeZoom: 16, maxZoom: 19 },
+      }
+    }
     if (typeof manifest.tile_url !== 'string' || !manifest.tile_url.trim()) {
       throw new Error('missing_tile_url')
     }
@@ -107,7 +137,9 @@ export async function resolveMapTileConfig(
         maxZoom: Math.max(MAP_TILE_OPTIONS.maxZoom, maxNativeZoom),
       },
     }
-  } catch {
+  } catch (error) {
+    // A malformed vector contract must not become a raster request or switch versions.
+    if (error instanceof Error && error.message === 'invalid_vector_manifest') throw error
     const fallbackUrl = snapshotRef === 'current'
       ? MAP_TILE_URL
       : `/api/maps/tiles/${encodeURIComponent(snapshotRef)}/{z}/{x}/{y}`

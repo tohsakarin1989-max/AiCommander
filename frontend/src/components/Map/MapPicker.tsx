@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { CachedTileLayer } from './CachedTileLayer'
-import { resolveMapTileConfig } from './mapTiles'
+import { mountOfflineBasemap } from './offlineBasemap'
 
 interface MapPickerProps {
   lat?: number | null
@@ -23,6 +22,7 @@ const MapPicker: React.FC<MapPickerProps> = ({
   const mapRef = useRef<L.Map | null>(null)
   const markerRef = useRef<L.Marker | null>(null)
   const selectionEnabledRef = useRef(false)
+  const retryBasemapRef = useRef<() => void>(() => {})
   const onChangeRef = useRef(onChange)
   const [mapStatus, setMapStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading')
 
@@ -43,28 +43,25 @@ const MapPicker: React.FC<MapPickerProps> = ({
       center: initialCenter,
       zoom: 12,
       zoomControl: true,
+      zoomAnimation: false,
     })
     mapRef.current = map
 
-    let disposed = false
-    let tileLayer: CachedTileLayer | null = null
-    void resolveMapTileConfig(operationalAreaId).then(config => {
-      if (disposed) return
-      tileLayer = new CachedTileLayer(config.url, config.options)
-      tileLayer.addTo(map)
-      if (!config.manifestResolved) {
-        selectionEnabledRef.current = false
-        markerRef.current?.dragging?.disable()
-        setMapStatus('unavailable')
-        return
-      }
-      selectionEnabledRef.current = true
-      markerRef.current?.dragging?.enable()
-      setMapStatus('ready')
-      if (lat == null && lng == null && config.bounds) {
-        map.fitBounds(config.bounds, { padding: [12, 12] })
-      }
+    const stopBasemap = mountOfflineBasemap(map, {
+      operationalAreaId,
+      onStatus: status => {
+        selectionEnabledRef.current = status === 'ready'
+        if (status === 'ready') markerRef.current?.dragging?.enable()
+        else markerRef.current?.dragging?.disable()
+        setMapStatus(status)
+      },
+      onConfig: config => {
+        if (lat == null && lng == null && config.bounds) {
+          map.fitBounds(config.bounds, { padding: [12, 12] })
+        }
+      },
     })
+    retryBasemapRef.current = stopBasemap.retry
 
     // 若初始值存在，放置标记
     if (lat != null && lng != null) {
@@ -102,9 +99,9 @@ const MapPicker: React.FC<MapPickerProps> = ({
     })
 
     return () => {
-      disposed = true
+      stopBasemap()
+      retryBasemapRef.current = () => {}
       selectionEnabledRef.current = false
-      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
@@ -148,6 +145,8 @@ const MapPicker: React.FC<MapPickerProps> = ({
           : mapStatus === 'loading'
             ? '正在加载当前厂区离线地图…'
             : '当前厂区离线地图未配置或不可用，暂不能地图选点；可手工录入经纬度。'}
+        {mapStatus === 'unavailable' && <button type="button" onClick={() => retryBasemapRef.current()}
+          style={{ marginLeft: 8 }}>重试当前地图</button>}
       </div>
       <div
         ref={containerRef}

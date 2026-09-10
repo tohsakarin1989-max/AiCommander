@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import Response as BinaryResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -14,11 +14,108 @@ from app.config import settings
 from app.database import get_db
 from app.models.map_foundation import MapSnapshot, PublicMapBundle
 from app.services.offline_map_service import MAX_BUNDLE_BYTES, OfflineMapService
+from app.services.map_place_service import search_places
+from app.services.map_glyph_service import read_glyph
+from app.services.map_render_service import read_style, read_sprite
 
 
 router = APIRouter()
 
 TRANSPARENT_GIF = base64.b64decode("R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=")
+RENDER_HEADERS = {'Cache-Control': 'private, no-store', 'Vary': 'Cookie, Authorization',
+                  'X-Content-Type-Options': 'nosniff'}
+
+
+def _render_error(exc: ValueError) -> HTTPException:
+    errors = {'map_render_not_configured': (404, '该版本未配置所请求的矢量地图资源'),
+              'map_render_unavailable': (503, '矢量地图资源暂不可用，请联系管理员')}
+    if str(exc) in errors:
+        status, message = errors[str(exc)]
+        return HTTPException(status_code=status, detail={'code': str(exc), 'message': message},
+                             headers=RENDER_HEADERS)
+    return _error(exc)
+
+
+@router.get('/maps/{snapshot_ref}/style.json')
+def map_style(snapshot_ref: str, request: Request, response: Response,
+              operational_area_id: int | None = Query(None, gt=0),
+              db: Session = Depends(get_db)) -> dict[str, Any]:
+    _principal(request)
+    response.headers.update(RENDER_HEADERS)
+    try:
+        return read_style(db, snapshot_ref, area_id=operational_area_id)
+    except ValueError as exc:
+        raise _render_error(exc) from exc
+
+
+@router.get('/maps/{snapshot_ref}/sprite{suffix}')
+def map_sprite(snapshot_ref: str, suffix: str, request: Request,
+               operational_area_id: int | None = Query(None, gt=0),
+               db: Session = Depends(get_db)) -> BinaryResponse:
+    _principal(request)
+    try:
+        content, media_type = read_sprite(db, snapshot_ref, suffix, area_id=operational_area_id)
+    except ValueError as exc:
+        raise _render_error(exc) from exc
+    return BinaryResponse(content, media_type=media_type, headers=RENDER_HEADERS)
+
+
+@router.get('/maps/{snapshot_ref}/glyphs/{fontstack}/{range_name}.pbf')
+def map_glyphs(
+    snapshot_ref: str, fontstack: str, range_name: str, request: Request,
+    operational_area_id: int | None = Query(None, gt=0),
+    db: Session = Depends(get_db),
+) -> BinaryResponse:
+    """离线字形跟随授权地图版本，不允许外部字体地址或任意文件路径。"""
+    _principal(request)
+    headers = {'Cache-Control': 'private, no-store',
+               'Vary': 'Cookie, Authorization', 'X-Content-Type-Options': 'nosniff'}
+    try:
+        content = read_glyph(db, snapshot_ref, fontstack, range_name,
+                             area_id=operational_area_id)
+    except ValueError as exc:
+        errors = {
+            'glyph_not_found': (404, '该地图版本未配置所请求字形'),
+            'invalid_glyph_range': (422, '字形范围无效'),
+            'glyph_unavailable': (503, '离线字形暂不可用，请联系管理员'),
+        }
+        if str(exc) not in errors:
+            raise _error(exc) from exc
+        status, message = errors[str(exc)]
+        raise HTTPException(status_code=status,
+                            detail={'code': str(exc), 'message': message},
+                            headers=headers) from exc
+    return BinaryResponse(content, media_type='application/x-protobuf', headers=headers)
+
+
+@router.get("/maps/{snapshot_ref}/places")
+def map_places(
+    snapshot_ref: str,
+    request: Request,
+    response: Response,
+    q: str = Query(..., min_length=2, max_length=120),
+    limit: int = Query(20, ge=1, le=50),
+    operational_area_id: int | None = Query(None, gt=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """查询授权地图版本中的公共地名；不会自动认定业务地点。"""
+    _principal(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Cookie, Authorization"
+    try:
+        return search_places(db, snapshot_ref, q, limit=limit, area_id=operational_area_id)
+    except ValueError as exc:
+        code = str(exc)
+        errors = {
+            "place_index_not_configured": (409, "该地图版本尚未配置离线地名索引"),
+            "place_index_unavailable": (503, "离线地名索引暂不可用，请联系管理员"),
+            "invalid_place_query": (422, "请输入 2 至 120 个字符的地名"),
+        }
+        if code in errors:
+            status, message = errors[code]
+            raise HTTPException(status_code=status, detail={"code": code, "message": message},
+                                headers={"Cache-Control": "private, no-store"}) from exc
+        raise _error(exc) from exc
 
 
 class MapSnapshotBuildRequest(BaseModel):
@@ -85,9 +182,10 @@ def _error(exc: ValueError) -> HTTPException:
         "snapshot_not_found": "地图版本不存在",
         "snapshot_not_publishable": "当前地图版本不能发布",
         "tile_not_found": "所请求瓦片不在离线地图包内",
+        "vector_tile_not_found": "所请求矢量瓦片不在已登记地图包内",
         "tile_store_unavailable": "离线瓦片库暂不可用",
     }
-    if code in {"bundle_not_found", "operational_area_not_found", "snapshot_not_found", "tile_not_found"}:
+    if code in {"bundle_not_found", "operational_area_not_found", "snapshot_not_found", "tile_not_found", "vector_tile_not_found"}:
         status = 404
     elif code in {"bundle_id_exists", "map_conflicts_pending", "snapshot_not_publishable"}:
         status = 409
@@ -288,6 +386,8 @@ def map_tile(
                 },
             )
         raise _error(exc) from exc
+    if media_type == 'application/vnd.mapbox-vector-tile':
+        return BinaryResponse(content=content, media_type=media_type, headers=RENDER_HEADERS)
     cache_control = (
         "private, no-cache"
         if snapshot_ref == "current"

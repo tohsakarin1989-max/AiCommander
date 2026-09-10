@@ -5,7 +5,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "3.6.0-stable"
+    APP_VERSION: str = "4.0.0-stable"
     ALEMBIC_TARGET: str = "head"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
     ENABLE_AGENT_LAB: bool = False
+    ENABLE_SHOWCASE: bool = False
     AGENT_MODE: Literal["off", "shadow", "assist"] = "off"
     AGENT_MUTATIONS_ENABLED: bool = False
     AGENT_EXTERNAL_DATA_POLICY: Literal["redacted_only", "local_only"] = "redacted_only"
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: int = 10
     AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS: int = 100
     MAP_PACKAGE_ROOT: str = "./data/map-packages"
+    MAP_AUTO_PUBLISH_AREA_IDS: str = ""
     ENABLE_LEGACY_PUBLIC_MAP_SYNC: bool = False
     ENABLE_LEGACY_EXTERNAL_GEO: bool = False
     ENABLE_LEGACY_PATROL_MATERIALIZATION: bool = False
@@ -69,6 +71,17 @@ class Settings(BaseSettings):
     @classmethod
     def empty_agent_model_id_is_unset(cls, value):
         return None if value == "" else value
+
+    @field_validator('MAP_AUTO_PUBLISH_AREA_IDS')
+    @classmethod
+    def validate_map_publish_areas(cls, value):
+        if not value.strip():
+            return ''
+        parts = value.split(',')
+        if (len(parts) > 16 or any(not p.strip().isdigit() or not 0 < int(p) < 2**31 for p in parts)
+                or len({int(p) for p in parts}) != len(parts)):
+            raise ValueError('地图自动发布厂区必须为最多16个不重复的正整数ID')
+        return ','.join(str(int(p)) for p in parts)
 
     @model_validator(mode="after")
     def validate_production_security(self):

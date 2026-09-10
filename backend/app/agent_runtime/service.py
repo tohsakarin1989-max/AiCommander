@@ -87,7 +87,7 @@ class AgentRunService:
                 selectinload(AgentRun.approvals),
                 selectinload(AgentRun.usage_records),
             )
-            .filter(AgentRun.id == run_id)
+            .filter(AgentRun.id == run_id, AgentRun.task_type.notin_(['intelligent_query', 'showcase']))
             .first()
         )
         if run is None:
@@ -98,6 +98,7 @@ class AgentRunService:
     def list_runs(db: Session, *, limit: int = 50, skip: int = 0) -> list[AgentRun]:
         return (
             db.query(AgentRun)
+            .filter(AgentRun.task_type.notin_(['intelligent_query', 'showcase']))
             .options(
                 selectinload(AgentRun.events),
                 selectinload(AgentRun.artifacts),

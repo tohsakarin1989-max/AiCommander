@@ -7,7 +7,7 @@ x-logging: &default-logging
     max-file: "5"
 
 x-backend-environment: &backend-environment
-  APP_VERSION: "${APP_VERSION:-3.6.0-stable}"
+  APP_VERSION: "${APP_VERSION:-4.0.0-stable}"
   ALEMBIC_TARGET: "${ALEMBIC_TARGET:-head}"
   ENVIRONMENT: production
   AUTH_REQUIRED: "true"
@@ -20,6 +20,7 @@ x-backend-environment: &backend-environment
   ENABLE_VECTOR_DB: "false"
   ENABLE_BONUS_ACCOUNTING: "${ENABLE_BONUS_ACCOUNTING:-false}"
   ENABLE_AGENT_LAB: "${ENABLE_AGENT_LAB:-false}"
+  ENABLE_SHOWCASE: "${ENABLE_SHOWCASE:-false}"
   AGENT_MODE: "${AGENT_MODE:-off}"
   AGENT_MUTATIONS_ENABLED: "${AGENT_MUTATIONS_ENABLED:-false}"
   AGENT_EXTERNAL_DATA_POLICY: "${AGENT_EXTERNAL_DATA_POLICY:-redacted_only}"
@@ -39,6 +40,7 @@ x-backend-environment: &backend-environment
   AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: "${AGENT_DUAL_DOMAIN_PILOT_MAX_CASES:-10}"
   AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS: "${AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS:-100}"
   MAP_PACKAGE_ROOT: "/var/lib/aicommander/maps"
+  MAP_AUTO_PUBLISH_AREA_IDS: "${MAP_AUTO_PUBLISH_AREA_IDS:-}"
   ENABLE_LEGACY_PUBLIC_MAP_SYNC: "false"
   ENABLE_LEGACY_EXTERNAL_GEO: "false"
   ENABLE_LEGACY_PATROL_MATERIALIZATION: "false"
@@ -108,7 +110,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-3.6.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.0.0-stable}
     build:
       context: ./backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
@@ -143,7 +145,7 @@ services:
     logging: *default-logging
 
   celery:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-3.6.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.0.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -170,7 +172,7 @@ services:
     logging: *default-logging
 
   celery-beat:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-3.6.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.0.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -198,7 +200,7 @@ services:
 
   agent-worker:
     profiles: ["agent-lab"]
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-3.6.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.0.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=${AGENT_REDIS_QUEUE:-agent_lab}", "--hostname=agent@%h"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -224,8 +226,42 @@ services:
     stop_grace_period: 60s
     logging: *default-logging
 
+  map-worker:
+    profiles: ["map-build"]
+    image: ${IMAGE_PREFIX:-aicommander}-map-worker:${APP_VERSION:-4.0.0-stable}
+    build:
+      context: .
+      dockerfile: deploy/map-worker/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=map_build", "--hostname=maps@%h", "--prefetch-multiplier=1", "--max-tasks-per-child=1"]
+    environment: *backend-environment
+    secrets: *backend-secrets
+    volumes:
+      - map_packages:/var/lib/aicommander/maps
+      - map_build_scratch:/tmp
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 128
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *default-logging
+
   frontend:
-    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-3.6.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-4.0.0-stable}
     build:
       context: ./frontend
       args:
@@ -262,6 +298,7 @@ volumes:
   postgres_data:
   redis_data:
   map_packages:
+  map_build_scratch:
 
 secrets:
   secret_key:

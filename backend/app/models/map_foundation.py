@@ -1,5 +1,6 @@
 """生产地图治理的来源、模板、批次与追溯模型。"""
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -193,9 +194,9 @@ class PublicMapBundle(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     bundle_id = Column(String(200), nullable=False, unique=True, index=True)
-    provider = Column(String(100), nullable=False)
-    source_version = Column(String(100), nullable=False)
-    license_record = Column(String(200), nullable=False)
+    provider = Column(String(512), nullable=False)
+    source_version = Column(String(512), nullable=False)
+    license_record = Column(String(512), nullable=False)
     bounds = Column(JSON, nullable=False)
     manifest = Column(JSON, nullable=False)
     package_hash = Column(String(64), nullable=False, unique=True)
@@ -213,7 +214,7 @@ class MapSnapshot(Base):
     )
 
     id = Column(String(36), primary_key=True)
-    version = Column(String(200), nullable=False, unique=True, index=True)
+    version = Column(String(1024), nullable=False, unique=True, index=True)
     operational_area_id = Column(
         Integer,
         ForeignKey("operational_areas.id", ondelete="RESTRICT"),
@@ -294,5 +295,5 @@ class MapPackageArtifact(Base):
     artifact_kind = Column(String(30), nullable=False)
     storage_key = Column(String(500), nullable=False, unique=True)
     sha256 = Column(String(64), nullable=False)
-    size_bytes = Column(Integer, nullable=False)
+    size_bytes = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
