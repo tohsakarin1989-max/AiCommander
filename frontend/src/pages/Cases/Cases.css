@@ -1522,3 +1522,19 @@
     grid-template-columns: 1fr;
   }
 }
+
+.case-auto-analysis { border-color: color-mix(in oklab, var(--accent) 35%, var(--line)); }
+.case-auto-analysis__version { color: var(--ink-3); font: 9px var(--mono); }
+.case-auto-analysis__gaps { display: grid; gap: 4px; margin-bottom: 9px; padding: 8px 10px; border-left: 2px solid var(--warn); background: color-mix(in oklab, var(--warn) 7%, transparent); }
+.case-auto-analysis__gaps b { color: var(--warn); font: 9px var(--mono); letter-spacing: .08em; }
+.case-auto-analysis__gaps span { color: var(--ink-1); font-size: 11px; }
+.case-auto-analysis__list { display: grid; gap: 7px; }
+.case-auto-analysis__list article { padding: 9px 10px; border: 1px solid var(--line-soft); background: var(--bg-0); }
+.case-auto-analysis__list header { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 7px; }
+.case-auto-analysis__list header b { color: var(--accent); font: 10px var(--mono); }
+.case-auto-analysis__list header strong { color: var(--ink-1); font-size: 11px; font-weight: 600; }
+.case-auto-analysis__list header em { color: var(--accent); font: normal 10px var(--mono); }
+.case-auto-analysis__list p { margin: 7px 0; color: var(--ink-2); font-size: 11px; line-height: 1.55; }
+.case-auto-analysis__list small { display: block; margin-top: 3px; color: var(--ink-3); font-size: 10px; line-height: 1.45; }
+.case-auto-analysis__list small.counter { color: var(--warn); }
+.case-auto-analysis__boundary { display: block; margin-top: 9px; color: var(--ink-3); font-size: 9px; line-height: 1.5; }

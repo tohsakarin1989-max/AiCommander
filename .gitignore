@@ -41,6 +41,10 @@ frontend/build/
 *.sqlite
 *.sqlite3
 backend/data/chroma_db/
+backend/data/map-packages/
+output/
+outputs/
+.playwright-cli/
 
 # Logs
 *.log
@@ -60,6 +64,7 @@ Thumbs.db
 
 # Private local materials
 docs/submission-materials/
+docs/map-foundation/*-offline-map.md
 design-prototype.html
 
 # Superpowers brainstorm sessions

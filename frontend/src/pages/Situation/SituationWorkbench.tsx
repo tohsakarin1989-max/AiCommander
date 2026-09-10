@@ -7,7 +7,7 @@ import {
   RadarChartOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 
 import {
@@ -15,6 +15,7 @@ import {
   type SituationPriority,
   type SituationQuery,
 } from '../../services/situation'
+import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import {
   buildBriefMarkdown,
   buildSituationMapOption,
@@ -90,6 +91,19 @@ const SituationWorkbench: React.FC = () => {
     staleTime: 60_000,
   })
   const overview = overviewQuery.data
+  const automaticBriefQuery = useQuery({
+    queryKey: ['automatic-situation-brief'],
+    queryFn: intelligenceFlowApi.getLatestSituationBrief,
+    retry: false,
+    refetchInterval: 60_000,
+  })
+  const feedbackMutation = useMutation({
+    mutationFn: ({ id, decision, score }: { id: string; decision: 'adopt_reference' | 'not_adopted' | 'insufficient_information'; score?: number }) => (
+      intelligenceFlowApi.submitRecommendationFeedback(id, decision, score)
+    ),
+    onSuccess: result => message.success(result.execution_task_created ? '反馈已记录' : '反馈已记录，未生成执行任务'),
+    onError: () => message.error('反馈记录失败，请稍后重试'),
+  })
 
   useEffect(() => {
     setSelectedPriorityId(overview?.priorities[0]?.id ?? null)
@@ -128,47 +142,61 @@ const SituationWorkbench: React.FC = () => {
     <div className="page-scrollable situation-workbench" data-testid="situation-workbench">
       <section className="sw-hero">
         <div className="sw-hero-copy">
-          <span className="sw-kicker">v3.0 · DUAL-DOMAIN SITUATION</span>
-          <h1>双域态势研判工作台</h1>
-          <p>比较相邻时间窗口，发现新增案件变化、历史聚集热点和重点井周边关注顺序，直接形成今日核查重点。</p>
+          <span className="sw-kicker">v3.6 · AUTOMATIC SITUATION ADVISOR</span>
+          <h1>自动态势与部署参谋</h1>
+          <p>系统自动汇总案件画像、地图版本和技防摘要，每期只给出最多三项有证据的部署参考。</p>
           <div className="sw-hero-boundary">
             <span>只读分析</span><span>内网计算</span><span>不做犯罪预测</span><span>不自动调度</span>
           </div>
         </div>
-        <div className="sw-scope" aria-label="态势研判范围">
+        <div className="sw-auto-status">
+          <span>当前自动简报</span>
+          <strong>{automaticBriefQuery.data?.recommendations.length ?? 0}</strong>
+          <small>{automaticBriefQuery.data?.summary || '后台按厂区范围自动生成，无需选择案件或井点。'}</small>
+          <code>{automaticBriefQuery.data?.algorithm_version || '等待首期简报'}</code>
+        </div>
+      </section>
+
+      {automaticBriefQuery.data && (
+        <section className="sw-auto-recommendations" aria-label="自动部署建议">
+          {automaticBriefQuery.data.recommendations.map(item => (
+            <article key={item.id}>
+              <header><b>{String(item.rank).padStart(2, '0')}</b><strong>{item.title}</strong><em>{Math.round(item.confidence * 100)}%</em></header>
+              <p>{item.suggested_action}</p>
+              <small>依据：{item.supporting_evidence[0] || item.evidence_refs[0]}</small>
+              <small className="gap">缺口：{item.information_gaps[0] || '仍需人工结合现场条件判断'}</small>
+              <footer>
+                <button onClick={() => feedbackMutation.mutate({ id: item.id, decision: 'adopt_reference', score: 5 })}>可作为参考</button>
+                <button onClick={() => feedbackMutation.mutate({ id: item.id, decision: 'insufficient_information' })}>信息不足</button>
+              </footer>
+            </article>
+          ))}
+          {!automaticBriefQuery.data.recommendations.length && (
+            <div className="empty-state"><span className="icon">◇</span>本期没有明显变化，系统未生成泛化建议</div>
+          )}
+        </section>
+      )}
+
+      <details className="sw-history-controls">
+        <summary>查看历史窗口对比参数（非日常必需）</summary>
+        <div className="sw-scope" aria-label="历史态势研判范围">
           <label>
             <span>时间窗口</span>
-            <Select
-              value={draft.windowDays}
-              options={WINDOW_OPTIONS}
-              onChange={value => setDraft(current => ({ ...current, windowDays: value }))}
-            />
+            <Select value={draft.windowDays} options={WINDOW_OPTIONS} onChange={value => setDraft(current => ({ ...current, windowDays: value }))} />
           </label>
           <label>
             <span>井点参考半径</span>
-            <Select
-              value={draft.wellRadiusKm}
-              options={RADIUS_OPTIONS}
-              onChange={value => setDraft(current => ({ ...current, wellRadiusKm: value }))}
-            />
+            <Select value={draft.wellRadiusKm} options={RADIUS_OPTIONS} onChange={value => setDraft(current => ({ ...current, wellRadiusKm: value }))} />
           </label>
           <label className="sw-scope-area">
             <span>区域关键词（可选）</span>
-            <Input
-              value={draft.areaKeyword}
-              maxLength={50}
-              allowClear
-              placeholder="如：北区、采油三厂"
-              onChange={event => setDraft(current => ({ ...current, areaKeyword: event.target.value }))}
-              onPressEnter={runAnalysis}
-            />
+            <Input value={draft.areaKeyword} maxLength={50} allowClear placeholder="如：北区、采油三厂" onChange={event => setDraft(current => ({ ...current, areaKeyword: event.target.value }))} onPressEnter={runAnalysis} />
           </label>
           <button className="btn-primary sw-run" onClick={runAnalysis} disabled={overviewQuery.isFetching}>
-            <ThunderboltOutlined />
-            {overviewQuery.isFetching ? '正在研判…' : '生成态势研判'}
+            <ThunderboltOutlined />{overviewQuery.isFetching ? '正在研判…' : '重新对比'}
           </button>
         </div>
-      </section>
+      </details>
 
       {overviewQuery.isError ? (
         <section className="empty-state sw-state-panel">

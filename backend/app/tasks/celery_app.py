@@ -10,6 +10,9 @@ celery_app = Celery(
         "app.tasks.preprocess_tasks",
         "app.tasks.chain_tasks",
         "app.tasks.agent_tasks",
+        "app.tasks.case_pipeline_tasks",
+        "app.tasks.case_insight_tasks",
+        "app.tasks.deployment_advisor_tasks",
     ],
 )
 
@@ -24,6 +27,26 @@ celery_app.conf.update(
             "task": "aicommander.agent.expire_approvals",
             "schedule": 900.0,
             "options": {"queue": settings.AGENT_REDIS_QUEUE},
+        },
+        "process-case-pipeline": {
+            "task": "aicommander.case_pipeline.process_pending",
+            "schedule": 5.0,
+        },
+        "process-case-insights": {
+            "task": "aicommander.case_insights.process_pending",
+            "schedule": 5.0,
+        },
+        "reconcile-current-case-insights": {
+            "task": "aicommander.case_insights.reconcile_current_pairs",
+            "schedule": 60.0,
+        },
+        "generate-daily-situation-briefs": {
+            "task": "aicommander.deployment_advisor.generate_daily",
+            "schedule": 3600.0,
+        },
+        "generate-weekly-situation-briefs": {
+            "task": "aicommander.deployment_advisor.generate_weekly",
+            "schedule": 21600.0,
         },
     },
 )

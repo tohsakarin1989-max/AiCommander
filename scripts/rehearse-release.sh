@@ -4,7 +4,8 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-APP_VERSION="$(tr -d '\r\n' < VERSION)"
+REPOSITORY_VERSION="$(tr -d '\r\n' < VERSION)"
+APP_VERSION="${REHEARSAL_APP_VERSION:-$REPOSITORY_VERSION}"
 [ -n "$APP_VERSION" ] || {
     echo "VERSION 不能为空" >&2
     exit 1
@@ -21,6 +22,7 @@ WORK_DIR="$(mktemp -d "$TMP_ROOT/aicommander-release.XXXXXX")"
 timestamp="$(date '+%Y%m%d-%H%M%S')"
 EVIDENCE_DIR="${EVIDENCE_DIR:-$TMP_ROOT/aicommander-release-evidence-${timestamp}-$$}"
 ENV_FILE="$WORK_DIR/.env.production"
+VERSION_FILE="$WORK_DIR/VERSION"
 SECRETS_DIR="$WORK_DIR/secrets"
 BACKUP_DIR="$WORK_DIR/backups"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT_DIR/docker-compose.production.yml}"
@@ -28,6 +30,29 @@ COMPOSE_PROJECT_NAME="aicommander_release_rehearsal_$$"
 REHEARSAL_IMAGE_PREFIX="aicommander-release-rehearsal-$$"
 REHEARSAL_PORT="${REHEARSAL_PORT:-33080}"
 export COMPOSE_PROJECT_NAME
+
+case "$APP_VERSION" in
+    3.0.0-stable)
+        ALEMBIC_TARGET="a7d9e1f2b304"
+        POSTGIS_IMAGE=""
+        REQUIRE_V36_MAP_BUNDLE="false"
+        ;;
+    *)
+        ALEMBIC_TARGET="head"
+        POSTGIS_IMAGE="${REHEARSAL_POSTGIS_IMAGE:-}"
+        REQUIRE_V36_MAP_BUNDLE="true"
+        [ -n "$POSTGIS_IMAGE" ] || {
+            echo "候选版本隔离演练必须通过 REHEARSAL_POSTGIS_IMAGE 指定带摘要的 PostGIS 镜像" >&2
+            exit 1
+        }
+        [ -n "${MAP_BUNDLE_FILE:-}" ] || {
+            echo "候选版本隔离演练必须通过 MAP_BUNDLE_FILE 指定真实离线地图包" >&2
+            exit 1
+        }
+        ;;
+esac
+database_timestamp="$(date '+%Y%m%d_%H%M%S')"
+DB_NAME="aicommander_v36_verify_${database_timestamp}_$$"
 
 case "$COMPOSE_PROJECT_NAME" in
     aicommander_release_rehearsal_[0-9]*) ;;
@@ -40,6 +65,7 @@ esac
 
 umask 077
 mkdir -p "$EVIDENCE_DIR" "$BACKUP_DIR"
+printf '%s\n' "$APP_VERSION" > "$VERSION_FILE"
 
 compose() {
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
@@ -96,6 +122,9 @@ printf '%s\n' \
     'APP_DOMAIN=aicommander-rehearsal.local' \
     "APP_PORT=$REHEARSAL_PORT" \
     "APP_VERSION=$APP_VERSION" \
+    "ALEMBIC_TARGET=$ALEMBIC_TARGET" \
+    "POSTGIS_IMAGE=$POSTGIS_IMAGE" \
+    "DB_NAME=$DB_NAME" \
     "SECRETS_DIR=$SECRETS_DIR" \
     "BACKUP_DIR=$BACKUP_DIR" \
     "IMAGE_PREFIX=$REHEARSAL_IMAGE_PREFIX" \
@@ -125,7 +154,8 @@ printf '%s\n' \
 chmod 0600 "$ENV_FILE"
 
 ENV_FILE="$ENV_FILE" sh ./scripts/init-production.sh
-COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/deploy-production.sh
+COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" VERSION_FILE="$VERSION_FILE" \
+    sh ./scripts/deploy-production.sh
 
 require_unpublished backend
 require_unpublished postgres
@@ -147,10 +177,63 @@ printf '%s\n' \
     'agent_worker=absent' \
     > "$EVIDENCE_DIR/network-exposure.manifest"
 
+if [ "$ALEMBIC_TARGET" = "head" ]; then
+    COMPOSE_FILE="$COMPOSE_FILE" \
+        ENV_FILE="$ENV_FILE" \
+        EVIDENCE_FILE="$EVIDENCE_DIR/postgis-v36.json" \
+        sh ./scripts/verify-v36-postgis.sh
+fi
+
+if [ "$REQUIRE_V36_MAP_BUNDLE" = "true" ]; then
+    COMPOSE_FILE="$COMPOSE_FILE" \
+        ENV_FILE="$ENV_FILE" \
+        MAP_BUNDLE_FILE="$MAP_BUNDLE_FILE" \
+        EVIDENCE_FILE="$EVIDENCE_DIR/offline-map-v36.json" \
+        sh ./scripts/verify-v36-offline-map.sh
+fi
+
 BASE_URL="http://127.0.0.1:$REHEARSAL_PORT" \
     ENV_FILE="$ENV_FILE" \
     EVIDENCE_DIR="$EVIDENCE_DIR/smoke" \
+    REQUIRE_OFFLINE_MAP_READY="$REQUIRE_V36_MAP_BUNDLE" \
     sh ./scripts/verify-test-deployment.sh
+
+# 在隔离编排中真实停止 Redis，确认核心存活/就绪接口保持可用且只报告降级；
+# 随后恢复 Redis，避免把“独立 Worker 会话恢复”误写成 Redis 故障演练。
+redis_fault_body="$EVIDENCE_DIR/redis-outage-ready.body"
+compose stop redis >/dev/null
+redis_fault_status="$(curl -sS --connect-timeout 5 --max-time 30 \
+    -o "$redis_fault_body" -w '%{http_code}' \
+    "http://127.0.0.1:$REHEARSAL_PORT/health/ready")" \
+    || fail "Redis 停止后核心就绪接口无法访问"
+[ "$redis_fault_status" = "200" ] \
+    || fail "Redis 停止后核心就绪接口返回 $redis_fault_status"
+grep -F '"status":"degraded"' "$redis_fault_body" >/dev/null \
+    || fail "Redis 停止后未报告 degraded"
+grep -F '"redis":{"status":"down"' "$redis_fault_body" >/dev/null \
+    || fail "Redis 停止后未报告 Redis down"
+compose start redis >/dev/null
+redis_recovered=false
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+    attempt=$((attempt + 1))
+    if curl -fsS --connect-timeout 2 --max-time 5 \
+        "http://127.0.0.1:$REHEARSAL_PORT/health/ready" \
+        > "$EVIDENCE_DIR/redis-recovered-ready.body" 2>/dev/null \
+        && grep -F '"status":"ready"' "$EVIDENCE_DIR/redis-recovered-ready.body" >/dev/null \
+        && grep -F '"redis":{"status":"ok"' "$EVIDENCE_DIR/redis-recovered-ready.body" >/dev/null; then
+        redis_recovered=true
+        break
+    fi
+    sleep 1
+done
+[ "$redis_recovered" = "true" ] || fail "Redis 恢复后核心健康状态未恢复"
+printf '%s\n' \
+    'redis_outage_core_http_status=200' \
+    'redis_outage_core_status=degraded' \
+    'redis_recovery_status=ready' \
+    'overall=passed' \
+    > "$EVIDENCE_DIR/redis-fault-injection.manifest"
 
 COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/backup-production.sh
 BACKUP_FILE="$(ls -1t "$BACKUP_DIR"/aicommander-*.dump | head -1)"

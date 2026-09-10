@@ -5,6 +5,7 @@
 
 import L from 'leaflet'
 import { getTile, putTile } from './tileCache'
+import { isImmutableOfflineTileUrl } from './mapTiles'
 
 export class CachedTileLayer extends L.TileLayer {
   createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
@@ -13,8 +14,10 @@ export class CachedTileLayer extends L.TileLayer {
     img.setAttribute('role', 'presentation')
 
     const url = this.getTileUrl(coords)
+    const persistentCacheAllowed = isImmutableOfflineTileUrl(url)
 
-    getTile(url)
+    const cachedTile = persistentCacheAllowed ? getTile(url) : Promise.resolve(null)
+    cachedTile
       .then((cached) => {
         if (cached) {
           // 从缓存加载
@@ -24,13 +27,14 @@ export class CachedTileLayer extends L.TileLayer {
           done(undefined, img)
         } else {
           // 从网络加载并缓存
-          fetch(url)
+          fetch(url, persistentCacheAllowed ? undefined : { cache: 'no-store' })
             .then((res) => {
               if (!res.ok) throw new Error(`HTTP ${res.status}`)
               return res.blob()
             })
             .then((blob) => {
-              putTile(url, blob).catch(() => {})
+              if (!blob) return
+              if (persistentCacheAllowed) putTile(url, blob).catch(() => {})
               const objUrl = URL.createObjectURL(blob)
               img.onload = () => URL.revokeObjectURL(objUrl)
               img.src = objUrl

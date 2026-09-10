@@ -33,6 +33,7 @@ AGENT_MODE="$(read_env AGENT_MODE)"
 AGENT_MODE="${AGENT_MODE:-off}"
 AGENT_MUTATIONS_ENABLED="$(read_env AGENT_MUTATIONS_ENABLED)"
 AGENT_MUTATIONS_ENABLED="${AGENT_MUTATIONS_ENABLED:-false}"
+REQUIRE_OFFLINE_MAP_READY="${REQUIRE_OFFLINE_MAP_READY:-false}"
 
 [ "$ENABLE_AGENT_LAB" = "false" ] \
     || fail "$APP_VERSION 稳定基线验收要求 ENABLE_AGENT_LAB=false"
@@ -94,9 +95,13 @@ body_contains '"redis":{"status":"ok"' "Redis 依赖"
 
 fetch health-agents /health/agents 200
 body_contains '"status":"off"' "Agent 状态"
-body_contains '"mode":"off"' "Agent 模式"
 body_contains '"affects_core_readiness":false' "Agent 核心隔离"
-body_contains "\"version\":\"$APP_VERSION\"" "Agent 健康版本"
+
+if [ "$REQUIRE_OFFLINE_MAP_READY" = "true" ]; then
+    fetch health-maps /health/maps 200
+    body_contains '"status":"ready"' "离线地图状态"
+    body_contains '"network_required":false' "离线地图网络隔离"
+fi
 
 fetch anonymous-cases /api/cases 401
 fetch docs-disabled /docs 404

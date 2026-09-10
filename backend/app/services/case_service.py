@@ -6,6 +6,8 @@ from app.utils.geo import haversine_km, bounding_box
 from app.repositories.case_repository import CaseRepository
 from app.config import settings
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_pipeline_service import CasePipelineService
+from app.database import require_area_write_access
 
 class CaseService:
     @staticmethod
@@ -88,6 +90,7 @@ class CaseService:
         current_stage: str = None,
         initial_vehicles: list = None,
         initial_persons: list = None,
+        operational_area_id: int = None,
     ) -> Case:
         """创建案件：
         - 如果未提供案件编号，则按日期+当天排序自动生成（YYYYMMDD-001）
@@ -95,8 +98,11 @@ class CaseService:
         if not case_number or not str(case_number).strip():
             case_number = CaseService._generate_case_number(db, occurred_time)
 
+        operational_area_id = require_area_write_access(db, operational_area_id)
+
         repo = CaseRepository(db)
         case = Case(
+            operational_area_id=operational_area_id,
             case_number=case_number,
             occurred_time=occurred_time,
             location=location,
@@ -135,14 +141,18 @@ class CaseService:
             operation_role=operation_role,
             current_stage=current_stage or "reported",
         )
-        repo.add(case)
+        repo.add(case, commit=False)
         CaseService._sync_initial_bonus_records(
             db,
             case.id,
             initial_vehicles=initial_vehicles or [],
             initial_persons=initial_persons or [],
+            commit=False,
         )
-        CaseQualityService.refresh_case_quality(db, case)
+        CaseQualityService.refresh_case_quality(db, case, commit=False)
+        CasePipelineService.enqueue_case_change(db, case)
+        db.commit()
+        db.refresh(case)
         
         # 自动索引到向量数据库（异步，不阻塞）
         if settings.ENABLE_VECTOR_DB:
@@ -164,6 +174,7 @@ class CaseService:
                         "oil_nature": case.oil_nature,
                         "report_unit": case.report_unit,
                         "quality_score": case.quality_score,
+                        "operational_area_id": case.operational_area_id,
                     }
                     vector_db.add_case(case.id, case_dict)
             except Exception as e:
@@ -183,6 +194,7 @@ class CaseService:
         *,
         replace_vehicles: bool = False,
         replace_persons: bool = False,
+        commit: bool = True,
     ) -> None:
         vehicle_fields = {
             "vehicle_type",
@@ -277,7 +289,7 @@ class CaseService:
             for person in query.all():
                 db.delete(person)
 
-        if initial_vehicles or initial_persons or replace_vehicles or replace_persons:
+        if commit and (initial_vehicles or initial_persons or replace_vehicles or replace_persons):
             db.commit()
     
     @staticmethod
@@ -306,15 +318,42 @@ class CaseService:
     def update_case(
         db: Session,
         case_id: int,
+        *,
+        initial_vehicles: list | None = None,
+        initial_persons: list | None = None,
+        replace_vehicles: bool = False,
+        replace_persons: bool = False,
         **kwargs
     ) -> Optional[Case]:
-        """更新案件"""
+        """在一个事务中更新案件标量、人员车辆、质量和派生任务。"""
         repo = CaseRepository(db)
         case = repo.get(case_id)
         if not case:
             return None
-        repo.update(case, **kwargs)
-        CaseQualityService.refresh_case_quality(db, case)
+        require_area_write_access(db, case.operational_area_id)
+        try:
+            repo.update(case, commit=False, **kwargs)
+            CaseService._sync_initial_bonus_records(
+                db,
+                case.id,
+                initial_vehicles=initial_vehicles or [],
+                initial_persons=initial_persons or [],
+                replace_vehicles=replace_vehicles,
+                replace_persons=replace_persons,
+                commit=False,
+            )
+            CaseQualityService.refresh_case_quality(db, case, commit=False)
+            changed_fields = set(kwargs)
+            if replace_vehicles:
+                changed_fields.add("vehicles")
+            if replace_persons:
+                changed_fields.add("persons")
+            CasePipelineService.enqueue_case_change(db, case, changed_fields=changed_fields)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(case)
         
         # 更新向量数据库索引
         if settings.ENABLE_VECTOR_DB:
@@ -336,6 +375,7 @@ class CaseService:
                         "oil_nature": case.oil_nature,
                         "report_unit": case.report_unit,
                         "quality_score": case.quality_score,
+                        "operational_area_id": case.operational_area_id,
                     }
                     vector_db.update_case(case.id, case_dict)
             except Exception as e:
@@ -351,6 +391,7 @@ class CaseService:
         case = repo.get(case_id)
         if not case:
             return False
+        require_area_write_access(db, case.operational_area_id)
         
         # 从向量数据库删除
         if settings.ENABLE_VECTOR_DB:
@@ -395,6 +436,7 @@ class CaseService:
                 Case.latitude <= max_lat,
                 Case.longitude >= min_lon,
                 Case.longitude <= max_lon,
+                Case.operational_area_id == center.operational_area_id,
             )
             .all()
         )

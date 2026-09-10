@@ -22,9 +22,38 @@ ADMIN_PATH_PREFIXES = (
     "/api/auth/users",
     "/api/system-config",
     "/api/models",
-    "/api/deployment",
+    "/api/deployment/",
+    "/api/operational-areas",
+    "/api/map-sources",
+    "/api/map-import-templates",
+    "/api/map-ingest-runs",
+    "/api/map-conflicts",
+    "/api/map-bundles",
+    "/api/map-snapshots",
+    "/api/admin/case-profiles",
+    "/api/admin/situation",
+    "/api/admin/evaluations",
+    "/api/admin/intelligence-runtime",
+    "/api/tech-defense/import-summary",
+    "/api/agent-runs",
+    "/api/agent-map-steward",
+    "/api/agent-case-steward",
+    "/api/agent-dual-domain",
+    "/api/agents",
+    "/api/jurisdiction/assets/import",
+    "/api/jurisdiction/assets/sync-public-map",
+    # 旧巡逻、人员和重点部位表不属于 v3.x 生产树干；生产环境不挂载，
+    # 开发兼容模式下仍只允许管理员访问。
+    "/api/patrols",
+    "/api/key-locations",
+    "/api/personnel",
 )
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+ADMIN_MUTATION_PATH_PREFIXES = (
+    "/api/jurisdiction/assets",
+    "/api/ws/broadcast",
+    "/api/ws/meeting",
+)
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -86,6 +115,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if path.startswith(ADMIN_PATH_PREFIXES) and principal.role != "admin":
             return JSONResponse(status_code=403, content={"detail": "当前账号无权访问该功能"})
+        if (
+            request.method not in SAFE_METHODS
+            and path.startswith(ADMIN_MUTATION_PATH_PREFIXES)
+            and principal.role != "admin"
+        ):
+            return JSONResponse(status_code=403, content={"detail": "当前账号无权修改地图或广播数据"})
         if principal.role == "viewer" and request.method not in SAFE_METHODS:
             return JSONResponse(status_code=403, content={"detail": "只读账号不能执行写操作"})
 

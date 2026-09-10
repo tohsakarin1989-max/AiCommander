@@ -40,7 +40,7 @@ const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
     paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'],
     items: [
       { label: '研判助手', path: '/assistant' },
-      ...(agentLabEnabled ? [{ label: 'Agent Lab', path: '/agents' }] : []),
+      ...(agentLabEnabled ? [{ label: '智能运行运维', path: '/agents' }] : []),
     ],
   },
   {
@@ -264,7 +264,7 @@ const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) =
         </span>
         <div className="statusbar-right">
           <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '3.0.0-stable'}</span></span>
+          <span><span className="k">版本</span><span className="v">v{runtime?.version || '3.6.0-stable'}</span></span>
         </div>
       </footer>
     </div>

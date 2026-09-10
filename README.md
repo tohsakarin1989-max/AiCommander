@@ -1,7 +1,13 @@
-# AiCommander v3.0.0-stable
+# AiCommander v3.6.0-stable
 
 涉油案件数智研判与防控辅助系统。围绕案件资料治理、模式识别、时空规律、链条线索、
 热点区域、研判报告和部署建议提供辅助能力，所有 AI 结论均保留人工复核边界。
+
+> v3.1—v3.6 的能力统一收口为 `v3.6.0-stable`，保留 `v3.0.0-stable` 作为回滚基线。
+> 已实现范围、迁移顺序和发布后现场确认事项见
+> [v3.1—v3.6 实施状态](./docs/superpowers/specs/2026-09-08-v3.1-v3.6-implementation-status.md)。
+> v3.6 已完成受控公共离线底图的导入、发布和回滚验证；地图包及地域化运行证据
+> 只保存在内网验收材料中，不进入公开 Git 仓库。
 
 ## 主要能力
 
@@ -57,7 +63,7 @@ sudo sh ./scripts/deploy-production.sh
 
 生产版本包含：
 
-- PostgreSQL 16、Redis 7、后端、Celery、前端五服务编排
+- PostgreSQL 16/PostGIS、Redis 7、后端、Celery、独立 Beat 和前端编排
 - 所有业务 API 和 WebSocket 登录保护
 - 管理员、分析员、只读账号三级权限
 - HttpOnly 安全会话、登录锁定、来源检查和写操作审计
@@ -131,10 +137,11 @@ npm run test
 npm run build
 ```
 
-当前 `v3.0.0-stable` 已通过后端 315 项、前端 25 个测试文件共 109 项测试、类型检查、生产构建、
-生产依赖审计、SQLite/PostgreSQL 全量迁移、真实浏览器态势研判主链路，以及隔离生产部署和备份恢复演练。
-最终迁移版本仍为 `a7d9e1f2b304`；目标服务器部署、真实案件态势适用性、节时效果和业务人员签字仍属于
-现场验收项，完整边界见 [v3.0.0-stable 发布说明](./docs/releases/v3.0.0-stable.md)。
+`v3.6.0-stable` 已完成后端 452 项、前端 29 个测试文件共 121 项测试、类型检查、生产构建、
+SQLite/PostGIS 迁移、断网地图验证、Redis 故障恢复、隔离部署与备份恢复，以及连续五轮业务链路彩排。
+最终迁移版本为 `a3e6b7c8d940`；生产部署需要固定摘要的 PostgreSQL 16/PostGIS 镜像。
+目标服务器、单位网络、HTTPS、业务适用性和实际节时效果仍须现场确认，不代表已经正式投产。
+详见 [v3.6.0-stable 发布说明](./docs/releases/v3.6.0-stable.md)。
 
 ## 项目结构
 

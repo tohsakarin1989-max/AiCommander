@@ -12,6 +12,7 @@ from app.database import Base, get_db
 from app.models.automation_alert import AutomationAlert
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.conclusion import Conclusion
+from app.models.meeting import Meeting
 from app.models.report import Report
 
 
@@ -93,6 +94,15 @@ def _seed_case(db: Session, *, case_number: str = "AI-BASE-001", card_status: st
     db.commit()
     db.refresh(case)
     case.features["intelligence"]["experience_card"]["source_case_id"] = case.id
+    db.add(
+        Meeting(
+            meeting_id=f"MEET-{case_number}",
+            case_ids=[case.id],
+            status="completed",
+            analyst_model_ids=[],
+        )
+    )
+    db.flush()
     db.add_all(
         [
             CaseVehicle(case_id=case.id, vehicle_type="皮卡", plate_number="黑A12345", handling_status="扣押"),

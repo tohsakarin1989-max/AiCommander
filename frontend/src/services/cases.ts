@@ -103,6 +103,7 @@ export const caseApi = {
     end_date?: string
     has_geo?: boolean
     missing_location?: boolean
+    operational_area_id?: number
   }): Promise<Case[]> => {
     const response = await api.get<Case[]>('/cases', {
       params: {
@@ -374,9 +375,17 @@ export const caseApi = {
   /**
    * 获取热点分析
    */
-  getHotspots: async (radiusKm = 0.5, minCases = 3): Promise<Hotspot[]> => {
+  getHotspots: async (
+    radiusKm = 0.5,
+    minCases = 3,
+    operationalAreaId?: number,
+  ): Promise<Hotspot[]> => {
     const response = await api.get<{ hotspots: unknown[] }>('/cases/geo/hotspots', {
-      params: { radius_km: radiusKm, min_cases: minCases },
+      params: {
+        radius_km: radiusKm,
+        min_cases: minCases,
+        operational_area_id: operationalAreaId,
+      },
     })
     // 后端返回 center_latitude/center_longitude 扁平字段，统一转换为 center: GeoPoint
     return (response.data.hotspots ?? []).map((h: unknown) => {
@@ -404,7 +413,8 @@ export const caseApi = {
     timeWindowDays = 30,
     useSemantic = false,
     useGeo = true,
-    minSemanticSimilarity = 0.6
+    minSemanticSimilarity = 0.6,
+    operationalAreaId?: number,
   ): Promise<SerialCaseGroup[]> => {
     const params: Record<string, unknown> = {
       max_distance_km: maxDistanceKm,
@@ -412,6 +422,7 @@ export const caseApi = {
       use_semantic: useSemantic,
       use_geo: useGeo,
       min_semantic_similarity: minSemanticSimilarity,
+      operational_area_id: operationalAreaId,
     }
     if (caseIds) {
       params.case_ids = caseIds
@@ -511,6 +522,7 @@ export const caseApi = {
     months?: number
     radius_km?: number
     min_cases?: number
+    operational_area_id?: number
   }): Promise<{
     periods: Array<{
       period: string          // "2024-11"
@@ -540,11 +552,15 @@ export const caseApi = {
   /**
    * 导入案件（Excel/CSV文件）
    */
-  importCases: async (file: File, dryRun = false): Promise<CaseImportResult> => {
+  importCases: async (
+    file: File,
+    dryRun = false,
+    operationalAreaId?: number,
+  ): Promise<CaseImportResult> => {
     const formData = new FormData()
     formData.append('file', file)
     const response = await api.post<CaseImportResult>('/cases/import', formData, {
-      params: { dry_run: dryRun },
+      params: { dry_run: dryRun, operational_area_id: operationalAreaId },
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -555,7 +571,7 @@ export const caseApi = {
   /**
    * 导入前预览，校验文件但不写入数据库
    */
-  previewImportCases: async (file: File): Promise<CaseImportResult> => {
-    return caseApi.importCases(file, true)
+  previewImportCases: async (file: File, operationalAreaId?: number): Promise<CaseImportResult> => {
+    return caseApi.importCases(file, true, operationalAreaId)
   },
 }

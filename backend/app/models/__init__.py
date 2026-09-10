@@ -14,11 +14,39 @@ from app.models.meeting_template import MeetingTemplate
 from app.models.personnel import SecurityPersonnel
 from app.models.key_location import KeyLocation
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
+from app.models.map_foundation import (
+    JurisdictionAssetVersion,
+    MapPackageArtifact,
+    MapSnapshot,
+    MapSnapshotFeature,
+    MapFeatureClaim,
+    MapImportTemplate,
+    MapIngestRun,
+    MapSource,
+    OperationalArea,
+    PublicMapBundle,
+    UserAreaScope,
+)
 from app.models.automation_alert import AutomationAlert
 from app.models.chain_link import ChainLink
 from app.models.user import AuditLog, User, UserSession
 from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
 from app.models.workbench import WorkbenchTaskSession
+from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
+from app.models.case_insight import CaseAnalysisRun, CaseHypothesis, HypothesisFeedback
+from app.models.deployment_advisor import (
+    DeploymentRecommendation,
+    RecommendationFeedback,
+    SituationBrief,
+    TechDefenseEventAggregate,
+    TechDefenseSource,
+)
+from app.models.governance import (
+    AlgorithmVersion,
+    EvaluationDataset,
+    EvaluationRun,
+    ScopePolicyVersion,
+)
 
 __all__ = [
     "AIModel",
@@ -61,6 +89,17 @@ __all__ = [
     "KeyLocation",
     "JurisdictionAsset",
     "JurisdictionFeedback",
+    "OperationalArea",
+    "UserAreaScope",
+    "MapSource",
+    "MapImportTemplate",
+    "MapIngestRun",
+    "MapFeatureClaim",
+    "JurisdictionAssetVersion",
+    "PublicMapBundle",
+    "MapSnapshot",
+    "MapSnapshotFeature",
+    "MapPackageArtifact",
     "AutomationAlert",
     "ChainLink",
     "User",
@@ -69,4 +108,19 @@ __all__ = [
     "KnowledgeAsset",
     "KnowledgeReuseRecord",
     "WorkbenchTaskSession",
+    "OutboxEvent",
+    "CasePipelineState",
+    "CaseAnalysisProfile",
+    "CaseAnalysisRun",
+    "CaseHypothesis",
+    "HypothesisFeedback",
+    "TechDefenseSource",
+    "TechDefenseEventAggregate",
+    "SituationBrief",
+    "DeploymentRecommendation",
+    "RecommendationFeedback",
+    "AlgorithmVersion",
+    "ScopePolicyVersion",
+    "EvaluationDataset",
+    "EvaluationRun",
 ]

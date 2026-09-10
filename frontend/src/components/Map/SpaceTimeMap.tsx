@@ -9,6 +9,8 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import 'leaflet.heat'
 import { CachedTileLayer } from './CachedTileLayer'
+import { disposeLeafletHeatMap } from './leafletLifecycle'
+import { resolveMapTileConfig } from './mapTiles'
 import { escapeHtml } from '../../utils/html'
 
 export interface HeatPoint {
@@ -31,6 +33,7 @@ interface SpaceTimeMapProps {
   predictionHotspots?: PredictionHotspot[]
   height?: string | number
   center?: [number, number]
+  operationalAreaId?: number
 }
 
 const RISK_COLORS = {
@@ -44,6 +47,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
   predictionHotspots = [],
   height = 500,
   center,
+  operationalAreaId,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -61,10 +65,16 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
     })
     mapRef.current = map
 
-    new CachedTileLayer(
-      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { subdomains: 'abc', maxZoom: 19, attribution: '© OpenStreetMap contributors' }
-    ).addTo(map)
+    let disposed = false
+    let tileLayer: CachedTileLayer | null = null
+    void resolveMapTileConfig(operationalAreaId).then(config => {
+      if (disposed) return
+      tileLayer = new CachedTileLayer(config.url, config.options)
+      tileLayer.addTo(map)
+      if (!center && heatPoints.length === 0 && config.bounds) {
+        map.fitBounds(config.bounds, { padding: [24, 24] })
+      }
+    })
 
     // 初始化空热力图层
     heatRef.current = L.heatLayer([], {
@@ -76,18 +86,14 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
     }).addTo(map)
 
     return () => {
-      try {
-        // 先清空热力图再停止，避免 _redraw 回调在 map 销毁后触发
-        if (heatRef.current) {
-          heatRef.current.setLatLngs([])
-          heatRef.current = null
-        }
-        map.stop()
-      } catch (_) { /* ignore */ }
-      map.remove()
+      disposed = true
+      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
+      const heatLayer = heatRef.current
+      heatRef.current = null
+      disposeLeafletHeatMap(map, heatLayer)
       mapRef.current = null
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [operationalAreaId]) // center is applied when this area-specific map mounts
 
   // 热力图点位更新
   useEffect(() => {
@@ -101,7 +107,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
       const bounds = L.latLngBounds(heatPoints.map((p) => [p.lat, p.lng]))
       mapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 })
     }
-  }, [heatPoints])
+  }, [heatPoints, operationalAreaId])
 
   // 预测热点圈更新
   useEffect(() => {
@@ -140,7 +146,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
 
       hotspotLayersRef.current.push(circle, marker)
     })
-  }, [predictionHotspots])
+  }, [predictionHotspots, operationalAreaId])
 
   return (
     <div

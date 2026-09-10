@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
@@ -19,21 +19,20 @@ import {
   Statistic,
   Table,
   Tag,
-  Upload,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   AimOutlined,
   ClusterOutlined,
-  CloudDownloadOutlined,
   EnvironmentOutlined,
   RadarChartOutlined,
-  UploadOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   jurisdictionApi,
+  mapFoundationApi,
+  snapshotLayersToAssets,
   type CaseRiskContext,
   type JurisdictionAsset,
   type JurisdictionAssetCreate,
@@ -41,6 +40,8 @@ import {
   type PatrolPlan,
 } from '../../services'
 import JurisdictionAssetMap from './JurisdictionAssetMap'
+import MapDataGovernance from './MapDataGovernance'
+import { authApi } from '../../services/auth'
 import './Jurisdiction.css'
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
@@ -266,14 +267,7 @@ export default function Jurisdiction() {
   const [editingAsset, setEditingAsset] = useState<JurisdictionAsset | null>(null)
   const [geoJsonInput, setGeoJsonInput] = useState('')
   const [hiddenAssetTypes, setHiddenAssetTypes] = useState<string[]>([])
-  const [selectedTableFile, setSelectedTableFile] = useState<File | null>(null)
-  const [tableImportPreview, setTableImportPreview] = useState<{
-    total: number
-    valid: number
-    created: number
-    updated: number
-    errors: Array<{ row: number; error: string }>
-  } | null>(null)
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
   const [feedbackForm] = Form.useForm<{
     adopted: boolean
     result?: string
@@ -281,14 +275,46 @@ export default function Jurisdiction() {
     notes?: string
   }>()
 
+  const areaScopesQuery = useQuery({
+    queryKey: ['my-area-scopes'],
+    queryFn: authApi.myAreaScopes,
+    staleTime: 5 * 60_000,
+  })
+
+  useEffect(() => {
+    const scopes = areaScopesQuery.data ?? []
+    if (scopes.length === 0) return
+    if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
+    const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
+    setActiveAreaId(preferred.operational_area_id)
+  }, [activeAreaId, areaScopesQuery.data])
+
+  useEffect(() => {
+    setSelectedAssetId(null)
+    setHiddenAssetTypes([])
+  }, [activeAreaId])
+
   const summaryQuery = useQuery({
-    queryKey: ['jurisdiction-summary'],
-    queryFn: jurisdictionApi.getSummary,
+    queryKey: ['jurisdiction-summary', activeAreaId],
+    queryFn: () => jurisdictionApi.getSummary(activeAreaId as number),
+    enabled: activeAreaId != null,
   })
 
   const assetsQuery = useQuery({
-    queryKey: ['jurisdiction-assets'],
-    queryFn: () => jurisdictionApi.listAssets({ limit: 200 }),
+    queryKey: ['jurisdiction-assets', activeAreaId],
+    queryFn: () => jurisdictionApi.listAssets({
+      limit: 200,
+      operational_area_id: activeAreaId as number,
+    }),
+    enabled: activeAreaId != null,
+  })
+
+  const snapshotLayersQuery = useQuery({
+    queryKey: ['current-map-snapshot-layers', activeAreaId],
+    queryFn: () => mapFoundationApi.getCurrentLayers(activeAreaId as number),
+    enabled: activeAreaId != null,
+    retry: false,
+    staleTime: 60_000,
   })
 
   const contextQuery = useQuery({
@@ -333,8 +359,9 @@ export default function Jurisdiction() {
   })
 
   const dataQualityQuery = useQuery({
-    queryKey: ['jurisdiction-data-quality'],
-    queryFn: jurisdictionApi.getDataQuality,
+    queryKey: ['jurisdiction-data-quality', activeAreaId],
+    queryFn: () => jurisdictionApi.getDataQuality(activeAreaId as number),
+    enabled: activeAreaId != null,
   })
 
   const workbenchQuery = useQuery({
@@ -345,6 +372,7 @@ export default function Jurisdiction() {
   const invalidateJurisdiction = () => {
     queryClient.invalidateQueries({ queryKey: ['jurisdiction-summary'] })
     queryClient.invalidateQueries({ queryKey: ['jurisdiction-assets'] })
+    queryClient.invalidateQueries({ queryKey: ['current-map-snapshot-layers'] })
     queryClient.invalidateQueries({ queryKey: ['jurisdiction-data-quality'] })
     queryClient.invalidateQueries({ queryKey: ['jurisdiction-prevention-workbench'] })
     queryClient.invalidateQueries({ queryKey: ['jurisdiction-patrol-plan'] })
@@ -355,6 +383,7 @@ export default function Jurisdiction() {
   const createAssetMutation = useMutation({
     mutationFn: (values: AssetFormValues) => jurisdictionApi.createAsset({
       ...values,
+      operational_area_id: activeAreaId ?? undefined,
       geometry_type: values.geometry_type ?? 'point',
       source: values.source ?? 'manual',
       status: values.status ?? 'active',
@@ -411,7 +440,7 @@ export default function Jurisdiction() {
   const geoJsonImportMutation = useMutation({
     mutationFn: () => {
       const parsed = JSON.parse(geoJsonInput) as Record<string, unknown>
-      return jurisdictionApi.importGeoJson(parsed, 'map')
+      return jurisdictionApi.importGeoJson(parsed, 'map', activeAreaId ?? undefined)
     },
     onSuccess: result => {
       message.success(`GeoJSON 导入完成：新增 ${result.created}，更新 ${result.updated}`)
@@ -422,45 +451,16 @@ export default function Jurisdiction() {
     },
   })
 
-  const publicMapSyncMutation = useMutation({
-    mutationFn: () => jurisdictionApi.syncPublicMapReferences(),
-    onSuccess: result => {
-      if (result.errors?.length) {
-        message.warning(`公共地图拉取完成，部分要素未入库：${result.errors.length} 条错误`)
-      } else {
-        message.success(`公共地图补全完成：拉取 ${result.pulled} 条，可用 ${result.usable} 条，新增 ${result.created}，更新 ${result.updated}`)
-      }
-      invalidateJurisdiction()
-    },
-    onError: () => {
-      message.error('公共地图服务暂不可用，稍后重试或使用离线 GeoJSON 导入')
-    },
-  })
-
-  const tablePreviewMutation = useMutation({
-    mutationFn: (file: File) => jurisdictionApi.importAssetTable(file, true),
-    onSuccess: result => {
-      setTableImportPreview(result)
-      message.success(`台账预览完成：有效 ${result.valid} / ${result.total}`)
-    },
-    onError: () => {
-      setTableImportPreview(null)
-      message.error('台账文件解析失败，请检查表头和文件格式')
-    },
-  })
-
-  const tableImportMutation = useMutation({
-    mutationFn: (file: File) => jurisdictionApi.importAssetTable(file, false),
-    onSuccess: result => {
-      message.success(`台账导入完成：新增 ${result.created}，更新 ${result.updated}`)
-      setSelectedTableFile(null)
-      setTableImportPreview(null)
-      invalidateJurisdiction()
-    },
-  })
-
   const context = contextQuery.data
   const assets = assetsQuery.data ?? []
+  const snapshotAssets = useMemo(
+    () => snapshotLayersQuery.data
+      ? snapshotLayersToAssets(snapshotLayersQuery.data)
+      : [],
+    [snapshotLayersQuery.data],
+  )
+  const publishedMapAvailable = Boolean(snapshotLayersQuery.data)
+  const displayedAssets = publishedMapAvailable ? snapshotAssets : assets
   const summary = summaryQuery.data
   const layerCounts = summary?.by_layer ?? {}
   const publicReferenceCount = layerCounts.public_map_reference ?? assets.filter(asset => assetLayer(asset) === 'public').length
@@ -469,11 +469,11 @@ export default function Jurisdiction() {
   const dataQuality = dataQualityQuery.data
   const workbench = workbenchQuery.data
   const availableAssetTypes = useMemo(
-    () => Array.from(new Set(assets.map(asset => asset.asset_type))).sort(),
-    [assets]
+    () => Array.from(new Set(displayedAssets.map(asset => asset.asset_type))).sort(),
+    [displayedAssets]
   )
   const visibleAssetTypes = availableAssetTypes.filter(type => !hiddenAssetTypes.includes(type))
-  const mapAssets = assets.filter(asset => visibleAssetTypes.includes(asset.asset_type))
+  const mapAssets = displayedAssets.filter(asset => visibleAssetTypes.includes(asset.asset_type))
 
   const openEditAsset = (asset: JurisdictionAsset) => {
     setSelectedAssetId(asset.id)
@@ -522,6 +522,8 @@ export default function Jurisdiction() {
         </div>
       </section>
 
+      <MapDataGovernance />
+
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
           <Card className="jurisdiction-card">
@@ -548,8 +550,38 @@ export default function Jurisdiction() {
       <Card
         title="地图参考与业务资产图层"
         className="jurisdiction-card jurisdiction-map-card"
-        extra={<Tag>{mapAssets.length} / {assets.length} 个可见</Tag>}
+        extra={(
+          <Space>
+            {(areaScopesQuery.data?.length ?? 0) > 1 && (
+              <Select
+                aria-label="当前厂区"
+                value={activeAreaId ?? undefined}
+                style={{ minWidth: 160 }}
+                options={areaScopesQuery.data?.map(scope => ({
+                  value: scope.operational_area_id,
+                  label: scope.area_name,
+                }))}
+                onChange={setActiveAreaId}
+              />
+            )}
+            <Tag color={publishedMapAvailable ? 'green' : 'orange'}>
+              {publishedMapAvailable
+                ? `离线地图 ${snapshotLayersQuery.data?.snapshot_version}`
+                : '尚未发布离线地图，临时显示实时数据'}
+            </Tag>
+            <Tag>{mapAssets.length} / {displayedAssets.length} 个可见</Tag>
+          </Space>
+        )}
       >
+        {snapshotLayersQuery.data?.truncated && (
+          <Alert
+            type="warning"
+            showIcon
+            message="当前快照要素较多，页面仅展示前 5000 个"
+            description="已发布地图快照本身保持完整；请按图层类型查看或由地图管理员拆分数据范围，避免浏览器一次加载过多要素。"
+            style={{ marginBottom: 12 }}
+          />
+        )}
         <div className="jurisdiction-layer-toolbar">
           <span className="jurisdiction-subtitle">图层</span>
           <Checkbox.Group
@@ -562,40 +594,30 @@ export default function Jurisdiction() {
           />
         </div>
         <JurisdictionAssetMap
+          key={activeAreaId ?? 'default-area'}
           assets={mapAssets}
           selectedAssetId={selectedAssetId}
-          onAssetClick={openEditAsset}
+          onAssetClick={asset => setSelectedAssetId(asset.id)}
+          readOnly={publishedMapAvailable}
+          operationalAreaId={activeAreaId ?? undefined}
+          snapshotId={snapshotLayersQuery.data?.snapshot_id}
         />
         <div className="jurisdiction-muted jurisdiction-map-hint">
-          道路、村屯为地图参考；井点、管线节点、技防设施、盲区和内部路线为业务资产。
+          已发布后，地图固定读取同一离线快照；资产编辑仍在下方台账进行，并在下一次地图发布后生效。
         </div>
       </Card>
 
       <Row gutter={[16, 16]} className="jurisdiction-section">
         <Col xs={24} lg={10}>
-          <Card title="公共地图参考导入 · GeoJSON / 离线地图" className="jurisdiction-card">
+          <Card title="批准的内部 GIS 参考导入" className="jurisdiction-card">
             <Alert
               type="info"
               showIcon
-              message="道路、村屯不作为人工必填"
-              description="系统可按已有案件和业务资产坐标自动拉取公共地图参考；也支持导入离线道路、村屯、河流、路口等 GeoJSON。"
+              message="内网不直接访问公网地图"
+              description="公共道路、村屯和水系通过上方受控地图包更新；此处只导入已经批准的内部 GeoJSON 补充数据。"
               style={{ marginBottom: 12 }}
             />
-            <div className="jurisdiction-auto-sync">
-              <Button
-                type="primary"
-                icon={<CloudDownloadOutlined />}
-                loading={publicMapSyncMutation.isPending}
-                onClick={() => publicMapSyncMutation.mutate()}
-              >
-                自动拉取公共地图参考
-              </Button>
-              <span>
-                来源 OpenStreetMap / Overpass，默认按案件和资产坐标推断约 6 公里范围，自动去重更新。
-              </span>
-            </div>
-            <div className="jurisdiction-import-divider" />
-            <div className="jurisdiction-subtitle">离线 GeoJSON 导入</div>
+            <div className="jurisdiction-subtitle">内部 GeoJSON 导入</div>
             <Input.TextArea
               rows={7}
               value={geoJsonInput}
@@ -606,53 +628,12 @@ export default function Jurisdiction() {
               type="primary"
               style={{ marginTop: 12 }}
               loading={geoJsonImportMutation.isPending}
-              disabled={!geoJsonInput.trim()}
+              disabled={!geoJsonInput.trim() || activeAreaId == null}
               onClick={() => geoJsonImportMutation.mutate()}
             >
               导入并去重更新
             </Button>
 
-            <div className="jurisdiction-import-divider" />
-            <div className="jurisdiction-subtitle">油区业务资产台账导入</div>
-            <Upload.Dragger
-              multiple={false}
-              showUploadList={false}
-              disabled={tablePreviewMutation.isPending || tableImportMutation.isPending}
-              beforeUpload={file => {
-                setSelectedTableFile(file)
-                setTableImportPreview(null)
-                tablePreviewMutation.mutate(file)
-                return false
-              }}
-            >
-              <p className="ant-upload-drag-icon"><UploadOutlined /></p>
-              <p className="ant-upload-text">
-                {selectedTableFile ? selectedTableFile.name : '支持 CSV / Excel，表头可用 name、asset_type、latitude、longitude；适合井点、管线节点、监控、卡口'}
-              </p>
-            </Upload.Dragger>
-            {tableImportPreview && (
-              <div className="jurisdiction-import-preview">
-                <span>总行数 <b>{tableImportPreview.total}</b></span>
-                <span>有效 <b>{tableImportPreview.valid}</b></span>
-                <span>错误 <b>{tableImportPreview.errors.length}</b></span>
-                <Button
-                  size="small"
-                  type="primary"
-                  disabled={!selectedTableFile || tableImportPreview.valid === 0}
-                  loading={tableImportMutation.isPending}
-                  onClick={() => selectedTableFile && tableImportMutation.mutate(selectedTableFile)}
-                >
-                  确认写入
-                </Button>
-              </div>
-            )}
-            {tableImportPreview?.errors.length ? (
-              <List
-                size="small"
-                dataSource={tableImportPreview.errors.slice(0, 3)}
-                renderItem={item => <List.Item>第 {item.row} 行：{item.error}</List.Item>}
-              />
-            ) : null}
           </Card>
         </Col>
 
@@ -745,7 +726,12 @@ export default function Jurisdiction() {
                   </Form.Item>
                 </Col>
               </Row>
-              <Button type="primary" htmlType="submit" loading={createAssetMutation.isPending}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={createAssetMutation.isPending}
+                disabled={activeAreaId == null}
+              >
                 录入业务资产
               </Button>
             </Form>

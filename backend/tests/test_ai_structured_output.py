@@ -11,6 +11,7 @@ from app.api import automation_alerts, case_intelligence, conclusions, reports
 from app.database import Base, get_db
 from app.models.case import Case
 from app.models.conclusion import Conclusion
+from app.models.ai_model import AIModel
 from app.models.meeting import Meeting
 from app.models.report import Report
 
@@ -128,6 +129,20 @@ def test_alert_triage_pack_uses_same_ai_output_contract_without_dispatch_languag
 def test_report_api_exposes_normalized_review_draft_markdown():
     db = _session()
     client = _client(db)
+    db.add_all(
+        [
+            AIModel(
+                id=model_id,
+                name=f"report-model-{model_id}",
+                provider="local",
+                model_name="fixture",
+                api_key="test-only",
+                role="moderator" if model_id == 1 else "analyst",
+            )
+            for model_id in (1, 2, 3)
+        ]
+    )
+    db.flush()
     meeting = Meeting(
         meeting_id="MEET-B-001",
         case_ids=[],

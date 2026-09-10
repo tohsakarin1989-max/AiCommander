@@ -5,7 +5,8 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "3.0.0-stable"
+    APP_VERSION: str = "3.6.0-stable"
+    ALEMBIC_TARGET: str = "head"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
     DATABASE_URL: str = "sqlite:///./aicommander.db"
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
     LOGIN_LOCK_MINUTES: int = 15
     ALLOWED_HOSTS: str = "localhost,127.0.0.1,testserver"
     ENABLE_API_DOCS: bool = False
-    ENABLE_VECTOR_DB: bool = True
+    ENABLE_VECTOR_DB: bool = False
     ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
     ENABLE_AGENT_LAB: bool = False
@@ -52,6 +53,13 @@ class Settings(BaseSettings):
     AGENT_CASE_PILOT_MAX_CASES: int = 30
     AGENT_DUAL_DOMAIN_PILOT_MAX_CASES: int = 10
     AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS: int = 100
+    MAP_PACKAGE_ROOT: str = "./data/map-packages"
+    ENABLE_LEGACY_PUBLIC_MAP_SYNC: bool = False
+    ENABLE_LEGACY_EXTERNAL_GEO: bool = False
+    ENABLE_LEGACY_PATROL_MATERIALIZATION: bool = False
+    ENABLE_LEGACY_OPERATIONS_MODULES: bool = True
+    MODEL_DATA_EGRESS_POLICY: Literal["local_only", "external_redacted_only"] = "local_only"
+    TRUSTED_LOCAL_MODEL_HOSTS: str = "localhost,127.0.0.1,::1"
     
     class Config:
         env_file = ".env"
@@ -121,6 +129,18 @@ class Settings(BaseSettings):
             raise ValueError("生产环境必须启用安全会话 Cookie")
         if self.AUTO_CREATE_TABLES:
             raise ValueError("生产环境必须关闭 AUTO_CREATE_TABLES 并使用 Alembic")
+        if self.ENABLE_LEGACY_OPERATIONS_MODULES:
+            raise ValueError("生产环境必须关闭未纳入厂区隔离的旧巡逻、人员和重点部位模块")
+        if (
+            self.ENABLE_LEGACY_PUBLIC_MAP_SYNC
+            or self.ENABLE_LEGACY_EXTERNAL_GEO
+            or self.ENABLE_LEGACY_PATROL_MATERIALIZATION
+        ):
+            raise ValueError("生产环境必须关闭旧公网地图、外部地理和巡逻物化能力")
+        if self.APP_VERSION == "3.0.0-stable" and self.ALEMBIC_TARGET != "a7d9e1f2b304":
+            raise ValueError("v3.0.0-stable 必须绑定已发布的数据库迁移目标")
+        if self.APP_VERSION != "3.0.0-stable" and self.ALEMBIC_TARGET != "head":
+            raise ValueError("v3.1 及以上候选版本必须完成全部候选迁移")
         database_url = urlparse(self.DATABASE_URL)
         if (
             database_url.scheme

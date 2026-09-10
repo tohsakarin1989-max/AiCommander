@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 from uuid import uuid4
-from app.database import get_db
+from app.database import get_db, require_area_write_access
 from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_automation_service import CaseAutomationService
@@ -15,17 +15,25 @@ from app.services.case_processing_card_service import CaseProcessingCardService
 from app.services.case_profile_service import CaseProfileService
 from app.services.preprocess_service import CasePreprocessService
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_pipeline_service import CasePipelineService
+from app.services.map_foundation_service import (
+    MAX_CELL_TEXT_LENGTH,
+    MAX_TABLE_COLUMNS,
+    MapFoundationService,
+)
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.preprocess_job import PreprocessJob
 from app.tasks.preprocess_tasks import preprocess_case_task
 import csv
 import io
 import logging
+import math
 import openpyxl
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_CASE_IMPORT_ROWS = 1000
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
 BATCH_REVIEW_DEFAULT_LIMIT = 200
 BATCH_REVIEW_MAX_LIMIT = 200
@@ -95,6 +103,18 @@ AI_INTAKE_WRITABLE_FIELDS = {
 }
 
 
+def _commit_analysis_relevant_change(
+    db: Session,
+    case: Case,
+    *,
+    changed_fields: set[str],
+) -> None:
+    """把业务变更、质量刷新与派生分析事件作为同一事务提交。"""
+    CaseQualityService.refresh_case_quality(db, case, commit=False)
+    CasePipelineService.enqueue_case_change(db, case, changed_fields=changed_fields)
+    db.commit()
+
+
 def _require_bonus_accounting_enabled() -> None:
     if not settings.ENABLE_BONUS_ACCOUNTING:
         raise HTTPException(
@@ -134,11 +154,12 @@ class CasePersonDraft(BaseModel):
 
 
 class CaseCreate(BaseModel):
+    operational_area_id: Optional[int] = None
     case_number: Optional[str] = None
     occurred_time: datetime
     location: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     case_type: Optional[str] = None
     description: Optional[str] = None
     # 涉油案件特征
@@ -182,8 +203,8 @@ class CaseUpdate(BaseModel):
     location: Optional[str] = None
     case_type: Optional[str] = None
     description: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
     involved_persons: Optional[Any] = None
     involved_items: Optional[Any] = None
     loss_amount: Optional[int] = None
@@ -221,6 +242,7 @@ class CaseUpdate(BaseModel):
 
 class CaseResponse(BaseModel):
     id: int
+    operational_area_id: Optional[int] = None
     case_number: str
     occurred_time: datetime
     location: Optional[str]
@@ -802,6 +824,7 @@ def create_case(case: CaseCreate, db: Session = Depends(get_db)):
         current_stage=case.current_stage,
         initial_vehicles=[item.model_dump(exclude_unset=True) for item in case.initial_vehicles or []],
         initial_persons=[item.model_dump(exclude_unset=True) for item in case.initial_persons or []],
+        operational_area_id=case.operational_area_id,
     )
 
 @router.get("/", response_model=List[CaseResponse])
@@ -822,6 +845,7 @@ def get_cases(
     end_date: Optional[datetime] = None,
     has_geo: Optional[bool] = None,
     missing_location: Optional[bool] = None,
+    operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -843,6 +867,9 @@ def get_cases(
         missing_location: 是否缺少地理坐标（用于坐标补录）
     """
     query = db.query(Case)
+
+    if operational_area_id is not None:
+        query = query.filter(Case.operational_area_id == operational_area_id)
 
     # 关键词搜索
     if keyword:
@@ -1077,7 +1104,11 @@ def update_case_location(
     case.latitude = payload.latitude
     case.longitude = payload.longitude
     case.updated_at = datetime.utcnow()
-    db.commit()
+    _commit_analysis_relevant_change(
+        db,
+        case,
+        changed_fields={"latitude", "longitude"},
+    )
     db.refresh(case)
 
     try:
@@ -1155,7 +1186,7 @@ def apply_ai_intake_preview(
         applied.append(field)
     if applied:
         case.updated_at = datetime.utcnow()
-        db.commit()
+        _commit_analysis_relevant_change(db, case, changed_fields=set(applied))
         db.refresh(case)
     return {
         "case_id": case.id,
@@ -1180,20 +1211,17 @@ def update_case(
     for field, value in update_data.items():
         if value is None and field not in NULLABLE_CASE_UPDATE_FIELDS:
             raise HTTPException(status_code=422, detail=f"{field} 不能为空")
-    case = CaseService.update_case(db, case_id, **update_data)
+    case = CaseService.update_case(
+        db,
+        case_id,
+        initial_vehicles=initial_vehicles,
+        initial_persons=initial_persons,
+        replace_vehicles=has_initial_vehicles,
+        replace_persons=has_initial_persons,
+        **update_data,
+    )
     if not case:
         raise HTTPException(status_code=404, detail="案件不存在")
-    if has_initial_vehicles or has_initial_persons:
-        CaseService._sync_initial_bonus_records(
-            db,
-            case.id,
-            initial_vehicles=initial_vehicles,
-            initial_persons=initial_persons,
-            replace_vehicles=has_initial_vehicles,
-            replace_persons=has_initial_persons,
-        )
-        CaseQualityService.refresh_case_quality(db, case)
-        db.refresh(case)
     return case
 
 @router.delete("/{case_id:int}")
@@ -1315,9 +1343,9 @@ def create_case_vehicle(case_id: int, payload: CaseVehicleCreate, db: Session = 
     case = _get_case_or_404(db, case_id)
     vehicle = CaseVehicle(case_id=case_id, **payload.model_dump(exclude_unset=True))
     db.add(vehicle)
-    db.commit()
+    db.flush()
+    _commit_analysis_relevant_change(db, case, changed_fields={"vehicles"})
     db.refresh(vehicle)
-    CaseQualityService.refresh_case_quality(db, case)
     return vehicle
 
 
@@ -1339,9 +1367,9 @@ def create_case_person(case_id: int, payload: CasePersonCreate, db: Session = De
     case = _get_case_or_404(db, case_id)
     person = CasePerson(case_id=case_id, **payload.model_dump(exclude_unset=True))
     db.add(person)
-    db.commit()
+    db.flush()
+    _commit_analysis_relevant_change(db, case, changed_fields={"persons"})
     db.refresh(person)
-    CaseQualityService.refresh_case_quality(db, case)
     return person
 
 
@@ -1372,9 +1400,9 @@ def create_case_evidence(case_id: int, payload: CaseEvidenceCreate, db: Session 
     evidence_data["meta"] = meta
     evidence = CaseEvidence(case_id=case_id, **evidence_data)
     db.add(evidence)
-    db.commit()
+    db.flush()
+    _commit_analysis_relevant_change(db, case, changed_fields={"evidence"})
     db.refresh(evidence)
-    CaseQualityService.refresh_case_quality(db, case)
     return evidence
 
 
@@ -1396,9 +1424,9 @@ def create_oil_recovery(case_id: int, payload: OilRecoveryCreate, db: Session = 
     case = _get_case_or_404(db, case_id)
     record = OilRecoveryRecord(case_id=case_id, **payload.model_dump(exclude_unset=True))
     db.add(record)
-    db.commit()
+    db.flush()
+    _commit_analysis_relevant_change(db, case, changed_fields={"oil_recovery"})
     db.refresh(record)
-    CaseQualityService.refresh_case_quality(db, case)
     return record
 
 
@@ -1472,9 +1500,10 @@ def create_case_tip(payload: CaseTipCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/import")
-async def import_cases(
+def import_cases(
     file: UploadFile = File(...),
     dry_run: bool = False,
+    operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -1484,12 +1513,14 @@ async def import_cases(
 
     occurred_time 建议为 ISO 时间或 "YYYY-MM-DD HH:MM" 格式。
     """
+    target_area_id = require_area_write_access(db, operational_area_id)
     filename = file.filename or ""
     lowered = filename.lower()
     if not any(lowered.endswith(ext) for ext in ALLOWED_EXTENSIONS):
         raise HTTPException(status_code=400, detail="仅支持 CSV 或 Excel (xlsx) 文件")
 
-    content = await file.read()
+    # 同步路由由 FastAPI 在线程池中执行，避免解析 Excel 和逐案入库阻塞事件循环。
+    content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -1528,9 +1559,27 @@ async def import_cases(
         if value in (None, "", "None"):
             return None
         try:
-            return float(value)
+            parsed = float(value)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(parsed):
+            raise ValueError("数值必须为有限数")
+        return parsed
+
+    def parse_optional_coordinate(
+        value,
+        *,
+        label: str,
+        minimum: float,
+        maximum: float,
+    ) -> Optional[float]:
+        try:
+            parsed = parse_optional_float(value)
+        except ValueError as exc:
+            raise ValueError(f"{label}坐标必须为有限数") from exc
+        if parsed is not None and not minimum <= parsed <= maximum:
+            raise ValueError(f"{label}坐标超出有效范围")
+        return parsed
 
     def parse_optional_bool(value) -> Optional[bool]:
         if value in (None, "", "None"):
@@ -1548,14 +1597,63 @@ async def import_cases(
         if lowered.endswith(".csv"):
             text = content.decode("utf-8-sig")
             reader = csv.DictReader(io.StringIO(text))
-            rows = list(reader)
-        elif lowered.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
-            ws = wb.active
-            headers = [str(c.value).strip() if c.value is not None else "" for c in next(ws.rows)]
-            for r in ws.iter_rows(min_row=2, values_only=True):
-                row = {headers[i]: (r[i] if i < len(r) else None) for i in range(len(headers))}
+            if len(reader.fieldnames or []) > MAX_TABLE_COLUMNS:
+                raise ValueError("列数超过 200 列限制")
+            for row_number, row in enumerate(reader, start=2):
+                if row_number > MAX_CASE_IMPORT_ROWS + 1:
+                    raise ValueError("单次导入数据行数超过 1000 行限制，请拆分批次")
+                if any(
+                    isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH
+                    for value in row.values()
+                ):
+                    raise ValueError(f"第 {row_number} 行包含超长单元格")
                 rows.append(row)
+        elif lowered.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
+            MapFoundationService.validate_excel_archive(content)
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            try:
+                ws = wb.active
+                header_values = next(
+                    ws.iter_rows(max_row=1, max_col=MAX_TABLE_COLUMNS + 1, values_only=True)
+                )
+                if header_values[MAX_TABLE_COLUMNS] is not None:
+                    raise ValueError("列数超过 200 列限制")
+                headers = [
+                    str(value).strip() if value is not None else ""
+                    for value in header_values[:MAX_TABLE_COLUMNS]
+                ]
+                while headers and not headers[-1]:
+                    headers.pop()
+                if ws.max_row > 100_001:
+                    raise ValueError("Excel 有效范围超过 100000 行，请先清理空白或格式化尾行")
+                for row_number, values in enumerate(
+                    ws.iter_rows(
+                        min_row=2,
+                        max_row=ws.max_row,
+                        max_col=MAX_TABLE_COLUMNS + 1,
+                        values_only=True,
+                    ),
+                    start=2,
+                ):
+                    if values[MAX_TABLE_COLUMNS] not in (None, ""):
+                        raise ValueError("列数超过 200 列限制")
+                    if not any(value not in (None, "") for value in values[:MAX_TABLE_COLUMNS]):
+                        continue
+                    if len(rows) >= MAX_CASE_IMPORT_ROWS:
+                        raise ValueError("单次导入数据行数超过 1000 行限制，请拆分批次")
+                    if any(
+                        isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH
+                        for value in values[: len(headers)]
+                    ):
+                        raise ValueError(f"第 {row_number} 行包含超长单元格")
+                    rows.append(
+                        {
+                            header: values[index] if index < len(values) else None
+                            for index, header in enumerate(headers)
+                        }
+                    )
+            finally:
+                wb.close()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"解析文件失败: {e}")
 
@@ -1579,8 +1677,18 @@ async def import_cases(
                 continue
             occurred_time = parse_time(str(ot_raw))
             location = row.get("location") or None
-            latitude = parse_optional_float(row.get("latitude"))
-            longitude = parse_optional_float(row.get("longitude"))
+            latitude = parse_optional_coordinate(
+                row.get("latitude"),
+                label="纬度",
+                minimum=-90,
+                maximum=90,
+            )
+            longitude = parse_optional_coordinate(
+                row.get("longitude"),
+                label="经度",
+                minimum=-180,
+                maximum=180,
+            )
             report_time = parse_optional_time(row.get("report_time"))
             report_unit = row.get("report_unit") or row.get("security_team") or None
             source_type = row.get("source_type") or None
@@ -1630,6 +1738,7 @@ async def import_cases(
                     oil_handling=row.get("oil_handling") or None,
                     operation_role=row.get("operation_role") or None,
                     current_stage=row.get("current_stage") or None,
+                    operational_area_id=target_area_id,
                 )
                 created_count += 1
         except Exception as e:
@@ -1651,13 +1760,18 @@ def get_hotspot_evolution(
     months: int = 6,
     radius_km: float = 1.0,
     min_cases: int = 2,
+    operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """获取热点时间演化数据（按月分段）"""
     from app.services.geo_analysis_service import GeoAnalysisService
     try:
         return GeoAnalysisService.find_hotspots_by_period(
-            db=db, months=months, radius_km=radius_km, min_cases=min_cases
+            db=db,
+            months=months,
+            radius_km=radius_km,
+            min_cases=min_cases,
+            operational_area_id=operational_area_id,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1681,12 +1795,21 @@ def get_geographic_analysis(
 def get_hotspots(
     radius_km: float = 0.5,
     min_cases: int = 3,
+    operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """获取案件热点区域"""
     from app.services.geo_analysis_service import GeoAnalysisService
     
-    hotspots = GeoAnalysisService.find_hotspots(db, radius_km, min_cases)
+    cases = GeoAnalysisService.get_all_cases_with_geo(
+        db,
+        operational_area_id=operational_area_id,
+    )
+    hotspots = GeoAnalysisService.find_hotspots(
+        radius_km=radius_km,
+        min_cases=min_cases,
+        cases=cases,
+    )
     return {"hotspots": hotspots}
 
 @router.get("/geo/serial-cases")
@@ -1697,6 +1820,7 @@ def get_serial_cases(
     use_semantic: bool = True,
     use_geo: bool = True,
     min_semantic_similarity: float = 0.6,
+    operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -1712,12 +1836,12 @@ def get_serial_cases(
         service = SemanticAnalysisService()
         serial_cases = service.analyze_hybrid_serial_cases(
             db, case_ids, max_distance_km, time_window_days,
-            min_semantic_similarity, use_semantic, use_geo
+            min_semantic_similarity, use_semantic, use_geo, operational_area_id
         )
     else:
         from app.services.geo_analysis_service import GeoAnalysisService
         serial_cases = GeoAnalysisService.analyze_serial_cases(
-            db, case_ids, max_distance_km, time_window_days
+            db, case_ids, max_distance_km, time_window_days, operational_area_id
         )
     return {"serial_cases": serial_cases}
 

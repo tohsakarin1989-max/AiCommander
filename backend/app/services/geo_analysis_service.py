@@ -10,12 +10,18 @@ class GeoAnalysisService:
     """地理线索分析服务 - 基于经纬度进行案件空间研判"""
     
     @staticmethod
-    def get_all_cases_with_geo(db: Session) -> List[Case]:
+    def get_all_cases_with_geo(
+        db: Session,
+        operational_area_id: Optional[int] = None,
+    ) -> List[Case]:
         """获取所有带经纬度的案件"""
-        return db.query(Case).filter(
+        query = db.query(Case).filter(
             Case.latitude.isnot(None),
             Case.longitude.isnot(None)
-        ).all()
+        )
+        if operational_area_id is not None:
+            query = query.filter(Case.operational_area_id == operational_area_id)
+        return query.all()
     
     @staticmethod
     def find_hotspots(
@@ -142,20 +148,27 @@ class GeoAnalysisService:
         db: Session,
         case_ids: List[int] = None,
         max_distance_km: float = 2.0,
-        time_window_days: int = 30
+        time_window_days: int = 30,
+        operational_area_id: int | None = None,
     ) -> List[Dict]:
         """
         分析可能的串案（空间和时间上接近的案件）
         返回：串案组，包含案件列表和关联分析
         """
         if case_ids:
-            cases = db.query(Case).filter(
+            query = db.query(Case).filter(
                 Case.id.in_(case_ids),
                 Case.latitude.isnot(None),
                 Case.longitude.isnot(None)
-            ).all()
+            )
+            if operational_area_id is not None:
+                query = query.filter(Case.operational_area_id == operational_area_id)
+            cases = query.all()
         else:
-            cases = GeoAnalysisService.get_all_cases_with_geo(db)
+            cases = GeoAnalysisService.get_all_cases_with_geo(
+                db,
+                operational_area_id=operational_area_id,
+            )
         
         if len(cases) < 2:
             return []
@@ -181,6 +194,8 @@ class GeoAnalysisService:
             
             for case2 in cases_sorted[i+1:]:
                 if case2.id in processed:
+                    continue
+                if case2.operational_area_id != case1.operational_area_id:
                     continue
                 
                 # 计算空间距离
@@ -325,7 +340,14 @@ class GeoAnalysisService:
         生成地理线索研判报告
         综合热点、串案、地理模式等信息
         """
-        hotspots = GeoAnalysisService.find_hotspots(db)
+        selected_cases = None
+        if case_ids:
+            selected_cases = db.query(Case).filter(
+                Case.id.in_(list(dict.fromkeys(case_ids))),
+                Case.latitude.isnot(None),
+                Case.longitude.isnot(None),
+            ).all()
+        hotspots = GeoAnalysisService.find_hotspots(db, cases=selected_cases)
         serial_cases = GeoAnalysisService.analyze_serial_cases(db, case_ids)
         patterns = GeoAnalysisService.analyze_geographic_patterns(db, case_ids)
         
@@ -390,6 +412,7 @@ class GeoAnalysisService:
         months: int = 6,
         radius_km: float = 1.0,
         min_cases: int = 2,
+        operational_area_id: Optional[int] = None,
     ) -> Dict:
         """
         按月份分段计算热点，返回热点时间演化数据
@@ -425,11 +448,16 @@ class GeoAnalysisService:
             })
 
         # 一次性查出所有带坐标的案件，避免多次数据库查询
-        all_cases = db.query(Case).filter(
+        all_cases_query = db.query(Case).filter(
             Case.latitude.isnot(None),
             Case.longitude.isnot(None),
             Case.occurred_time.isnot(None),
-        ).all()
+        )
+        if operational_area_id is not None:
+            all_cases_query = all_cases_query.filter(
+                Case.operational_area_id == operational_area_id
+            )
+        all_cases = all_cases_query.all()
 
         def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
             if dt is None:

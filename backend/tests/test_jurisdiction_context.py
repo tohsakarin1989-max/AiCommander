@@ -14,7 +14,9 @@ from app.api import jurisdiction
 from app.database import Base, get_db
 from app.models.case import Case
 from app.models.patrol import PatrolRecord
+from app.models.map_foundation import OperationalArea
 from app.services.jurisdiction_service import JurisdictionService
+from app.services.map_foundation_service import MapFoundationService
 from app.services.smart_analysis_service import SmartAnalysisService
 
 
@@ -28,6 +30,9 @@ def api_db_session() -> Session:
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = session_local()
+    area = MapFoundationService.ensure_default_area(session)
+    session.commit()
+    session.info["default_operational_area_id"] = area.id
     try:
         yield session
     finally:
@@ -48,6 +53,7 @@ def _build_client(db_session: Session) -> TestClient:
 def _add_case(db_session: Session) -> Case:
     case = Case(
         case_number="JUR-20260427-001",
+        operational_area_id=db_session.info["default_operational_area_id"],
         occurred_time=datetime(2026, 4, 26, 2, 10, 0),
         location="南区 12 号井附近",
         latitude=39.9000,
@@ -107,6 +113,50 @@ def test_create_assets_and_summary(api_db_session: Session):
     assert payload["by_source"]["map"] == 2
     assert payload["by_layer"]["public_map_reference"] == 2
     assert payload["by_layer"]["oil_business_asset"] == 1
+
+
+def test_asset_list_summary_and_quality_can_select_an_authorized_area(api_db_session: Session):
+    client = _build_client(api_db_session)
+    default_area_id = api_db_session.info["default_operational_area_id"]
+    second = OperationalArea(code="north-factory", name="北厂区", status="active")
+    api_db_session.add(second)
+    api_db_session.commit()
+
+    _create_asset(client, "南区井", "well", 39.9, 116.4, operational_area_id=default_area_id)
+    _create_asset(client, "北区井", "well", 40.1, 116.8, operational_area_id=second.id)
+    imported = client.post(
+        "/api/jurisdiction/assets/import-geojson",
+        json={
+            "operational_area_id": second.id,
+            "source": "internal_gis",
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "properties": {"id": "north-road", "name": "北区道路", "asset_type": "road"},
+                    "geometry": {"type": "Point", "coordinates": [116.81, 40.11]},
+                }],
+            },
+        },
+    )
+    assert imported.status_code == 200
+
+    assets = client.get(
+        "/api/jurisdiction/assets",
+        params={"operational_area_id": second.id},
+    )
+    summary = client.get(
+        "/api/jurisdiction/assets/summary",
+        params={"operational_area_id": second.id},
+    )
+    quality = client.get(
+        "/api/jurisdiction/data-quality",
+        params={"operational_area_id": second.id},
+    )
+
+    assert [item["name"] for item in assets.json()] == ["北区道路", "北区井"]
+    assert summary.json()["total"] == 2
+    assert quality.json()["total_assets"] == 2
 
 
 def test_bulk_import_assets_marks_map_source(api_db_session: Session):
@@ -210,6 +260,9 @@ def test_geojson_import_creates_and_updates_assets(api_db_session: Session):
 
 
 def test_sync_public_map_references_fetches_osm_and_upserts(api_db_session: Session, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ENABLE_LEGACY_PUBLIC_MAP_SYNC", True)
     client = _build_client(api_db_session)
     _add_case(api_db_session)
 
@@ -263,6 +316,26 @@ def test_sync_public_map_references_fetches_osm_and_upserts(api_db_session: Sess
     assert updated.status_code == 200
     assert updated.json()["created"] == 0
     assert updated.json()["updated"] == 3
+
+
+def test_internal_api_does_not_connect_to_public_map_by_default(api_db_session: Session, monkeypatch):
+    from app.config import settings
+
+    client = _build_client(api_db_session)
+    monkeypatch.setattr(settings, "ENABLE_LEGACY_PUBLIC_MAP_SYNC", False)
+    monkeypatch.setattr(
+        JurisdictionService,
+        "_fetch_public_map_elements",
+        staticmethod(lambda _: pytest.fail("内网默认模式不得发起公网地图请求")),
+    )
+
+    response = client.post(
+        "/api/jurisdiction/assets/sync-public-map",
+        json={"radius_km": 1, "max_features": 10},
+    )
+
+    assert response.status_code == 410
+    assert "受控离线地图更新包" in response.json()["detail"]
 
 
 def test_update_and_deactivate_asset(api_db_session: Session):
@@ -511,7 +584,10 @@ def test_prevention_workbench_aggregates_full_decision_context(api_db_session: S
     assert "data_quality" in payload
 
 
-def test_materialize_patrol_plan_creates_patrol_records(api_db_session: Session):
+def test_materialize_patrol_plan_creates_patrol_records(api_db_session: Session, monkeypatch):
+    from app.api import jurisdiction
+
+    monkeypatch.setattr(jurisdiction.settings, "ENABLE_LEGACY_PATROL_MATERIALIZATION", True)
     client = _build_client(api_db_session)
     case = _add_case(api_db_session)
     _create_asset(client, "南区便道", "road", 39.9010, 116.4000)

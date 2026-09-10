@@ -14,6 +14,8 @@ COPY . .
 # 构建
 ARG VITE_ENABLE_AGENT_LAB=false
 ENV VITE_ENABLE_AGENT_LAB=$VITE_ENABLE_AGENT_LAB
+ARG VITE_MAP_TILE_URL=/api/maps/tiles/current/{z}/{x}/{y}
+ENV VITE_MAP_TILE_URL=$VITE_MAP_TILE_URL
 RUN npm run build
 
 # 生产环境

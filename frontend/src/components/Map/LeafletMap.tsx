@@ -1,16 +1,22 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
+import type { Feature, FeatureCollection, Geometry } from 'geojson'
 import 'leaflet/dist/leaflet.css'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup } from '../../types'
 import { CachedTileLayer } from './CachedTileLayer'
+import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
+import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
+import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
+import { resolveMapTileConfig } from './mapTiles'
 import { escapeHtml } from '../../utils/html'
+import { hypothesisRegionColor, parseCircleHypothesisRegion } from './caseHypothesisMap'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2xUrl,
+  iconUrl: markerIconUrl,
+  shadowUrl: markerShadowUrl,
 })
 
 interface LeafletMapProps {
@@ -22,6 +28,20 @@ interface LeafletMapProps {
   center?: [number, number]
   zoom?: number
   onMarkerClick?: (marker: CaseMarker) => void
+  operationalAreaId?: number
+  snapshotRef?: string
+  productionAssetIds?: number[]
+  hypothesisRegions?: Array<{
+    id: string
+    hypothesis_type: string
+    title: string
+    claim: string
+    confidence: number
+    region?: Record<string, unknown> | null
+    supporting_evidence: string[]
+    counter_evidence: string[]
+    information_gaps: string[]
+  }>
 }
 
 const RISK_COLORS: Record<string, string> = {
@@ -36,6 +56,47 @@ const CHAIN_COLORS: Record<ChainPosition, string> = {
   midstream: '#f59e0b',
   downstream: '#3b82f6',
   unknown: '#94a3b8',
+}
+
+const PRODUCTION_COLORS: Record<string, string> = {
+  well: '#ef4444',
+  station: '#f97316',
+  valve: '#f59e0b',
+  storage: '#d97706',
+  road: '#38bdf8',
+  access_road: '#7dd3fc',
+  path: '#a7f3d0',
+  village: '#22c55e',
+  residential: '#84cc16',
+  camera: '#a78bfa',
+  lighting: '#facc15',
+  alarm: '#fb7185',
+  checkpoint: '#60a5fa',
+}
+
+function productionColor(properties: Record<string, unknown> | null | undefined): string {
+  const assetType = typeof properties?.asset_type === 'string' ? properties.asset_type : ''
+  return PRODUCTION_COLORS[assetType] ?? '#94a3b8'
+}
+
+function productionPopup(properties: Record<string, unknown> | null | undefined): string {
+  const name = typeof properties?.name === 'string' ? properties.name : '未命名生产要素'
+  const assetType = typeof properties?.asset_type === 'string' ? properties.asset_type : '未知'
+  const source = typeof properties?.source === 'string' ? properties.source : '未知'
+  const verification = properties?.verified === true ? '已核验' : '待核验'
+  return `<div style="font-size:12px;line-height:1.7;min-width:180px">
+    <div style="font-weight:700">${escapeHtml(name)}</div>
+    <div>类型：${escapeHtml(assetType)}</div>
+    <div>来源：${escapeHtml(source)}</div>
+    <div>状态：${verification}</div>
+    <div style="color:#64748b">研判版本冻结生产图层</div>
+  </div>`
+}
+
+function validFeatureCollection(payload: unknown): payload is FeatureCollection {
+  if (!payload || typeof payload !== 'object') return false
+  const value = payload as { type?: unknown; features?: unknown }
+  return value.type === 'FeatureCollection' && Array.isArray(value.features)
 }
 
 function markerHtml(position: ChainPosition | undefined, color: string, size: number): string {
@@ -72,11 +133,21 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   center,
   zoom = 11,
   onMarkerClick,
+  operationalAreaId,
+  snapshotRef = 'current',
+  productionAssetIds = [],
+  hypothesisRegions = [],
 }) => {
   const mapRef = useRef<L.Map | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const layersRef = useRef<L.Layer[]>([])
   const highlightLayersRef = useRef<L.Layer[]>([])
+  const [productionLayerStatus, setProductionLayerStatus] = useState<string | null>(null)
+  const productionAssetKey = productionAssetIds
+    .filter(id => Number.isSafeInteger(id) && id > 0)
+    .slice(0, 50)
+    .sort((left, right) => left - right)
+    .join(',')
 
   const defaultCenter: [number, number] = (() => {
     if (center) return center
@@ -97,24 +168,73 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     })
     mapRef.current = map
 
-    // OpenStreetMap 底图（国内可访问）
-    new CachedTileLayer(
-      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      {
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        subdomains: 'abc',
-        maxZoom: 19,
+    let disposed = false
+    let tileLayer: CachedTileLayer | null = null
+    let productionLayer: L.GeoJSON | null = null
+    const controller = new AbortController()
+    setProductionLayerStatus(productionAssetKey ? '正在加载研判版本生产图层…' : null)
+    void resolveMapTileConfig(operationalAreaId, snapshotRef).then(async config => {
+      if (disposed) return
+      tileLayer = new CachedTileLayer(config.url, config.options)
+      tileLayer.addTo(map)
+      if (!center && markers.length === 0 && config.bounds) {
+        map.fitBounds(config.bounds, { padding: [24, 24] })
       }
-    ).addTo(map)
+      if (!productionAssetKey) return
+      if (!config.productionLayerUrl) throw new Error('missing_production_layer_url')
+      const separator = config.productionLayerUrl.includes('?') ? '&' : '?'
+      const productionLayerUrl = `${config.productionLayerUrl}${separator}asset_ids=${encodeURIComponent(productionAssetKey)}&limit=50`
+      const response = await fetch(productionLayerUrl, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(`production_layer_http_${response.status}`)
+      const payload: unknown = await response.json()
+      if (!validFeatureCollection(payload)) throw new Error('invalid_production_layer')
+      if (disposed) return
+      productionLayer = L.geoJSON(payload, {
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+          radius: 5,
+          color: productionColor(feature.properties),
+          fillColor: productionColor(feature.properties),
+          fillOpacity: 0.78,
+          weight: 1.5,
+        }),
+        style: (feature?: Feature<Geometry, Record<string, unknown>>) => ({
+          color: productionColor(feature?.properties),
+          fillColor: productionColor(feature?.properties),
+          fillOpacity: 0.1,
+          opacity: 0.72,
+          weight: 2,
+        }),
+        onEachFeature: (feature, layer) => {
+          layer.bindPopup(productionPopup(feature.properties), { maxWidth: 260 })
+        },
+      }).addTo(map)
+      setProductionLayerStatus(
+        payload.features.length > 0
+          ? `已加载 ${payload.features.length} 个研判证据设施`
+          : '当前候选未关联可展示的生产设施',
+      )
+    }).catch(error => {
+      if (!disposed && !(error instanceof DOMException && error.name === 'AbortError')) {
+        console.warn('冻结生产图层加载失败', error)
+        setProductionLayerStatus('冻结生产图层暂不可用，候选范围仍可查看')
+      }
+    })
 
     return () => {
+      disposed = true
+      controller.abort()
+      if (productionLayer && map.hasLayer(productionLayer)) map.removeLayer(productionLayer)
+      if (tileLayer && map.hasLayer(tileLayer)) map.removeLayer(tileLayer)
       // 先停止所有动画，再销毁，避免 Leaflet zoom 动画竞态报错
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
       mapRef.current = null
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [operationalAreaId, snapshotRef, productionAssetKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 当 markers / serialGroups / chainLinks 变化时，更新图层
   useEffect(() => {
@@ -155,6 +275,46 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       ]
       highlightLayersRef.current.push(...circles)
     }
+
+    const mappedHypotheses = hypothesisRegions.flatMap(item => {
+      const region = parseCircleHypothesisRegion(item.region)
+      return region ? [{ item, region }] : []
+    })
+
+    mappedHypotheses.forEach(({ item, region }) => {
+      const color = hypothesisRegionColor(item.hypothesis_type)
+      const circle = L.circle([region.latitude, region.longitude], {
+        radius: region.radiusM,
+        color,
+        weight: 2,
+        opacity: 0.9,
+        fillColor: color,
+        fillOpacity: 0.16,
+        dashArray: item.hypothesis_type === 'activity_area' ? '7 5' : undefined,
+      }).addTo(map)
+      const supporting = item.supporting_evidence[0] || '暂无'
+      const counter = item.counter_evidence[0] || item.information_gaps[0] || '仍需现场核查'
+      circle.bindPopup(
+        `<div style="font-size:12px;line-height:1.7;min-width:240px">
+          <div style="font-weight:700;color:${color}">${escapeHtml(item.title)}</div>
+          <div>${escapeHtml(item.claim)}</div>
+          <div>置信度：${Math.round(item.confidence * 100)}%</div>
+          <div>支持：${escapeHtml(supporting)}</div>
+          <div>反向/缺口：${escapeHtml(counter)}</div>
+          <div style="color:#94a3b8">区域半径约 ${Math.round(region.radiusM)} 米，仅供人工核查</div>
+        </div>`,
+        { maxWidth: 320 },
+      )
+      layersRef.current.push(circle)
+      const caseMarker = markers[0]
+      if (caseMarker) {
+        const line = L.polyline(
+          [[caseMarker.lat, caseMarker.lng], [region.latitude, region.longitude]],
+          { color, weight: 1.5, opacity: 0.7, dashArray: '6 5' },
+        ).addTo(map)
+        layersRef.current.push(line)
+      }
+    })
 
     // 绘制链条推断连线
     chainLinks.forEach((link) => {
@@ -234,23 +394,46 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     })
 
     // 有 markers 时自动调整视野
-    if (markers.length > 0) {
-      const bounds = L.latLngBounds(markers.map((m) => [m.lat, m.lng]))
+    if (markers.length > 0 || mappedHypotheses.length > 0) {
+      const points: Array<[number, number]> = [
+        ...markers.map((marker): [number, number] => [marker.lat, marker.lng]),
+        ...mappedHypotheses.map(({ region }): [number, number] => [region.latitude, region.longitude]),
+      ]
+      const bounds = L.latLngBounds(points)
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 })
     }
-  }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick])
+  }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick, operationalAreaId, hypothesisRegions])
 
   return (
     <div
-      ref={containerRef}
       style={{
+        position: 'relative',
         height,
         width: '100%',
         borderRadius: 6,
         overflow: 'hidden',
         border: '1px solid #1e293b',
       }}
-    />
+    >
+      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      {productionLayerStatus && (
+        <div style={{
+          position: 'absolute',
+          left: 10,
+          bottom: 10,
+          zIndex: 500,
+          maxWidth: 'calc(100% - 20px)',
+          padding: '5px 8px',
+          background: 'rgba(15, 23, 42, 0.86)',
+          border: '1px solid rgba(148, 163, 184, 0.35)',
+          color: '#e2e8f0',
+          fontSize: 11,
+          lineHeight: 1.4,
+        }}>
+          {productionLayerStatus}
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime, timedelta
-from app.database import get_db
+from app.database import AreaWriteAccessError, get_db, require_area_write_access
+from app.models.case import Case
 from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
+from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_service import CaseService
 from app.services.relation_analysis_service import RelationAnalysisService
 from app.services.area_analysis_service import AreaAnalysisService
@@ -39,6 +41,7 @@ def _serialize_event(event: Any) -> Dict[str, Any]:
 
     return {
         "id": event.id,
+        "operational_area_id": event.operational_area_id,
         "event_number": event.event_number,
         "event_type": event.event_type,
         "event_type_name": EVENT_TYPES.get(event.event_type, event.event_type),
@@ -85,8 +88,12 @@ def _serialize_area_analysis(result: Dict[str, Any]) -> Dict[str, Any]:
     return serialized
 
 
-def _next_event_number(db: Session, generated_at: datetime) -> str:
-    prefix = f"EVT{generated_at.strftime('%Y%m%d')}"
+def _next_event_number(
+    db: Session,
+    generated_at: datetime,
+    operational_area_id: int | None,
+) -> str:
+    prefix = f"EVT{generated_at.strftime('%Y%m%d')}A{operational_area_id or 0:04d}"
     existing_numbers = db.query(Event.event_number).filter(
         Event.event_number.like(f"{prefix}%")
     ).all()
@@ -100,8 +107,13 @@ def _next_event_number(db: Session, generated_at: datetime) -> str:
     return f"{prefix}{max_sequence + 1:03d}"
 
 
-def _build_event_model(event: "EventCreate", event_number: str) -> Event:
+def _build_event_model(
+    event: "EventCreate",
+    event_number: str,
+    operational_area_id: int | None,
+) -> Event:
     return Event(
+        operational_area_id=operational_area_id,
         event_number=event_number,
         event_type=event.event_type,
         occurred_time=event.occurred_time,
@@ -131,6 +143,38 @@ def _build_event_model(event: "EventCreate", event_number: str) -> Event:
         observation_details=event.observation_details,
         related_case_id=event.related_case_id,
     )
+
+
+def _resolve_event_area(
+    db: Session,
+    *,
+    operational_area_id: int | None = None,
+    related_case_id: int | None = None,
+    related_asset_id: int | None = None,
+) -> int | None:
+    """从已授权关联对象推导事件厂区，并阻断跨厂区引用。"""
+    related_areas: set[int] = set()
+    if related_case_id is not None:
+        case = db.query(Case).filter(Case.id == related_case_id).first()
+        if case is None:
+            raise HTTPException(status_code=422, detail="关联案件不存在或不在当前授权范围")
+        if case.operational_area_id is not None:
+            related_areas.add(case.operational_area_id)
+    if related_asset_id is not None:
+        asset = db.query(JurisdictionAsset).filter(JurisdictionAsset.id == related_asset_id).first()
+        if asset is None:
+            raise HTTPException(status_code=422, detail="关联地图资源不存在或不在当前授权范围")
+        if asset.operational_area_id is not None:
+            related_areas.add(asset.operational_area_id)
+    if len(related_areas) > 1:
+        raise HTTPException(status_code=422, detail="案件与地图资源不属于同一厂区")
+    inferred_area_id = next(iter(related_areas), operational_area_id)
+    if operational_area_id is not None and related_areas and operational_area_id != inferred_area_id:
+        raise HTTPException(status_code=422, detail="事件厂区与关联对象不一致")
+    try:
+        return require_area_write_access(db, inferred_area_id)
+    except AreaWriteAccessError as exc:
+        raise HTTPException(status_code=403, detail="当前账号没有目标厂区写权限") from exc
 
 
 def _normalize_relation(source_event: Event, relation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -167,11 +211,14 @@ def _normalize_relation(source_event: Event, relation: Dict[str, Any]) -> Option
 
 class EventCreate(BaseModel):
     """创建事件"""
-    event_type: str = Field(..., description="事件类型")
+    model_config = ConfigDict(extra="forbid")
+
+    operational_area_id: Optional[int] = Field(None, ge=1, description="所属厂区ID")
+    event_type: str = Field(..., max_length=50, description="事件类型")
     occurred_time: datetime = Field(..., description="发生时间")
-    location: Optional[str] = Field(None, description="地点描述")
-    latitude: Optional[float] = Field(None, description="纬度")
-    longitude: Optional[float] = Field(None, description="经度")
+    location: Optional[str] = Field(None, max_length=200, description="地点描述")
+    latitude: Optional[float] = Field(None, ge=-90, le=90, description="纬度")
+    longitude: Optional[float] = Field(None, ge=-180, le=180, description="经度")
     village_name: Optional[str] = Field(None, description="关联村屯")
     village_distance_km: Optional[float] = Field(None, description="距村屯距离(km)")
     township: Optional[str] = Field(None, description="所属乡镇")
@@ -198,9 +245,11 @@ class EventCreate(BaseModel):
 
 class EventUpdate(BaseModel):
     """更新事件"""
+    model_config = ConfigDict(extra="forbid")
+
     location: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: Optional[float] = Field(None, ge=-90, le=90)
+    longitude: Optional[float] = Field(None, ge=-180, le=180)
     village_name: Optional[str] = None
     village_distance_km: Optional[float] = None
     township: Optional[str] = None
@@ -230,6 +279,7 @@ class EventUpdate(BaseModel):
 class EventResponse(BaseModel):
     """事件响应"""
     id: int
+    operational_area_id: Optional[int]
     event_number: str
     event_type: str
     occurred_time: datetime
@@ -392,10 +442,17 @@ async def get_event_types():
 @router.post("/", response_model=EventResponse)
 async def create_event(event: EventCreate, db: Session = Depends(get_db)):
     """创建新事件"""
+    operational_area_id = _resolve_event_area(
+        db,
+        operational_area_id=event.operational_area_id,
+        related_case_id=event.related_case_id,
+        related_asset_id=event.related_asset_id,
+    )
     for _ in range(5):
         db_event = _build_event_model(
             event=event,
-            event_number=_next_event_number(db, datetime.now()),
+            event_number=_next_event_number(db, datetime.now(), operational_area_id),
+            operational_area_id=operational_area_id,
         )
         db.add(db_event)
         try:
@@ -474,6 +531,7 @@ async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
         oil_type=event.oil_type,
         oil_volume=event.oil_volume_liters,
         vehicle_info={"vehicles": event.vehicles} if event.vehicles else None,
+        operational_area_id=event.operational_area_id,
     )
 
     event.related_case_id = case.id
@@ -500,6 +558,12 @@ async def update_event(
         raise HTTPException(status_code=404, detail="事件不存在")
 
     update_data = event_update.dict(exclude_unset=True)
+    _resolve_event_area(
+        db,
+        operational_area_id=event.operational_area_id,
+        related_case_id=event.related_case_id,
+        related_asset_id=update_data.get("related_asset_id", event.related_asset_id),
+    )
     for key, value in update_data.items():
         setattr(event, key, value)
 
@@ -514,6 +578,8 @@ async def delete_event(event_id: int, db: Session = Depends(get_db)):
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="事件不存在")
+
+    _resolve_event_area(db, operational_area_id=event.operational_area_id)
 
     db.delete(event)
     db.commit()
@@ -613,6 +679,8 @@ async def refresh_area_profile(
 
     重新计算该区域的统计数据和风险评估
     """
+    operational_area_id = _resolve_event_area(db)
+
     # 先进行区域分析
     analysis = AreaAnalysisService.analyze_area(
         db=db,
@@ -621,10 +689,16 @@ async def refresh_area_profile(
     )
 
     # 查找或创建区域档案
-    profile = db.query(AreaProfile).filter(AreaProfile.area_name == area_name).first()
+    profile = db.query(AreaProfile).filter(
+        AreaProfile.operational_area_id == operational_area_id,
+        AreaProfile.area_name == area_name,
+    ).first()
 
     if not profile:
-        profile = AreaProfile(area_name=area_name)
+        profile = AreaProfile(
+            operational_area_id=operational_area_id,
+            area_name=area_name,
+        )
         db.add(profile)
 
     # 更新统计数据

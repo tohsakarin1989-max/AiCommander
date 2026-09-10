@@ -8,6 +8,7 @@ const timeValue = (iso: string) => ({
 describe('caseEntrySubmitPayload', () => {
   it('removes UI-only bonus scope switches from the API payload', () => {
     const payload = buildCaseEntrySubmitPayload({
+      operational_area_id: 12,
       occurred_time: timeValue('2026-06-05T01:00:00.000Z'),
       description: '现场发现异常',
       bonus_has_vehicle: true,
@@ -18,6 +19,7 @@ describe('caseEntrySubmitPayload', () => {
 
     expect(payload).toMatchObject({
       occurred_time: '2026-06-05T01:00:00.000Z',
+      operational_area_id: 12,
       description: '现场发现异常',
     })
     expect(payload).not.toHaveProperty('bonus_has_vehicle')

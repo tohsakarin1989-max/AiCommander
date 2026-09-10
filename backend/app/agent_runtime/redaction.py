@@ -13,8 +13,10 @@ from typing import Any, Dict
 PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 IDENTITY_RE = re.compile(r"(?<!\d)\d{17}[0-9Xx](?!\d)")
 PLATE_RE = re.compile(r"[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z][A-Z0-9]{5,6}")
-CASE_REF_RE = re.compile(r"^case:(\d+)$")
-ASSET_REF_RE = re.compile(r"^asset:(\d+)$")
+CASE_REF_RE = re.compile(r"(?i)\bcase:(\d+)\b")
+ASSET_REF_RE = re.compile(r"(?i)\b(?:asset|map_asset):(\d+)\b")
+CHINESE_CASE_ID_RE = re.compile(r"案件\s*#?\s*(\d+)\b")
+CHINESE_ASSET_ID_RE = re.compile(r"(?:地图资源|井点|设施)\s*#?\s*(\d+)\b")
 
 DROP_KEYS = {
     "case_number",
@@ -69,7 +71,7 @@ class AgentPayloadRedactor:
 
     def redact(self, payload: Dict[str, Any]) -> RedactionResult:
         self._collect_secrets(payload)
-        redacted = self._redact_value(payload, key=None)
+        redacted = self._redact_value(payload, key=None, entity_kind=None)
         return RedactionResult(
             payload=redacted if isinstance(redacted, dict) else {},
             aliases={
@@ -104,29 +106,58 @@ class AgentPayloadRedactor:
             if len(text) >= 2:
                 self._secrets.add(text)
 
-    def _redact_value(self, value: Any, key: str | None) -> Any:
+    @staticmethod
+    def _entity_kind(value: dict[str, Any], parent_key: str | None) -> str | None:
+        parent = (parent_key or "").lower()
+        target_type = str(value.get("target_type") or "").lower()
+        if "case" in parent or "case" in target_type or "case_id" in value:
+            return "case"
+        if (
+            parent in {"asset", "production_target", "well", "facility"}
+            or any(token in target_type for token in ("asset", "map", "well", "facility"))
+            or "asset_id" in value
+            or "asset_type" in value
+        ):
+            return "asset"
+        return None
+
+    def _redact_value(
+        self,
+        value: Any,
+        key: str | None,
+        entity_kind: str | None,
+    ) -> Any:
         normalized_key = (key or "").lower()
         if normalized_key == "case_id" and value is not None:
             return self._case_alias(value)
         if normalized_key == "asset_id" and value is not None:
             return self._asset_alias(value)
+        if normalized_key == "case_ids" and isinstance(value, (list, tuple)):
+            return [self._case_alias(child) for child in value]
+        if normalized_key == "asset_ids" and isinstance(value, (list, tuple)):
+            return [self._asset_alias(child) for child in value]
+        if normalized_key in {"id", "target_id"} and value is not None:
+            if entity_kind == "case":
+                return self._case_alias(value)
+            if entity_kind == "asset":
+                return self._asset_alias(value)
+            return "[INTERNAL-ID]"
+        if normalized_key.endswith("_id") and value is not None:
+            return "[INTERNAL-ID]"
+        if normalized_key.endswith("_ids") and isinstance(value, (list, tuple)):
+            return ["[INTERNAL-ID]" for _ in value]
         if isinstance(value, dict):
+            dictionary_kind = self._entity_kind(value, key) or entity_kind
             return {
-                child_key: self._redact_value(child, str(child_key))
+                child_key: self._redact_value(child, str(child_key), dictionary_kind)
                 for child_key, child in value.items()
                 if str(child_key).lower() not in DROP_KEYS
             }
         if isinstance(value, list):
-            return [self._redact_value(child, key) for child in value]
+            return [self._redact_value(child, key, entity_kind) for child in value]
         if isinstance(value, tuple):
-            return [self._redact_value(child, key) for child in value]
+            return [self._redact_value(child, key, entity_kind) for child in value]
         if isinstance(value, str):
-            case_match = CASE_REF_RE.match(value)
-            if case_match:
-                return f"case:{self._case_alias(case_match.group(1))}"
-            asset_match = ASSET_REF_RE.match(value)
-            if asset_match:
-                return f"asset:{self._asset_alias(asset_match.group(1))}"
             return self._redact_text(value)
         return value
 
@@ -137,4 +168,14 @@ class AgentPayloadRedactor:
         text = IDENTITY_RE.sub("[ID]", text)
         text = PHONE_RE.sub("[PHONE]", text)
         text = PLATE_RE.sub("[PLATE]", text)
+        text = CASE_REF_RE.sub(lambda match: f"case:{self._case_alias(match.group(1))}", text)
+        text = ASSET_REF_RE.sub(lambda match: f"asset:{self._asset_alias(match.group(1))}", text)
+        text = CHINESE_CASE_ID_RE.sub(
+            lambda match: f"案件 {self._case_alias(match.group(1))}",
+            text,
+        )
+        text = CHINESE_ASSET_ID_RE.sub(
+            lambda match: f"地图资源 {self._asset_alias(match.group(1))}",
+            text,
+        )
         return text

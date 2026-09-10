@@ -17,4 +17,5 @@ httpx==0.28.1
 python-multipart==0.0.31
 cryptography==50.0.0
 openpyxl==3.1.5
+Pillow==11.3.0
 websockets==15.0.1

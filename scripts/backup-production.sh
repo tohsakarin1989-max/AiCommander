@@ -26,6 +26,14 @@ checksum() {
 
 configured_backup_dir="$(read_env BACKUP_DIR)"
 configured_backup_dir="${configured_backup_dir:-./backups/postgres}"
+DATABASE_NAME="$(read_env DB_NAME)"
+DATABASE_NAME="${DATABASE_NAME:-aicommander}"
+case "$DATABASE_NAME" in
+    ""|*[!a-zA-Z0-9_]*)
+        echo "数据库名称仅允许字母、数字和下划线" >&2
+        exit 1
+        ;;
+esac
 case "$configured_backup_dir" in
     /*) BACKUP_DIR="$configured_backup_dir" ;;
     *) BACKUP_DIR="$ROOT_DIR/${configured_backup_dir#./}" ;;
@@ -48,7 +56,8 @@ trap cleanup EXIT HUP INT TERM
 
 echo "正在创建数据库升级前备份..."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
-    sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; exec pg_dump -h 127.0.0.1 -U aicommander -d aicommander --format=custom --compress=9' \
+    sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; exec pg_dump -h 127.0.0.1 -U aicommander -d "$1" --format=custom --compress=9' \
+    sh "$DATABASE_NAME" \
     > "$temporary_path"
 
 [ -s "$temporary_path" ] || {
@@ -59,7 +68,8 @@ mv "$temporary_path" "$backup_path"
 
 database_revision="$(
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
-        sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; psql -h 127.0.0.1 -U aicommander -d aicommander -Atc "SELECT version_num FROM alembic_version"' \
+        sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; psql -h 127.0.0.1 -U aicommander -d "$1" -Atc "SELECT version_num FROM alembic_version"' \
+        sh "$DATABASE_NAME" \
         2>/dev/null || true
 )"
 database_revision="${database_revision:-untracked}"
@@ -70,6 +80,7 @@ printf '%s\n' \
     "created_at=$timestamp" \
     "application_version=${application_version:-unknown}" \
     "source_revision=$source_revision" \
+    "database_name=$DATABASE_NAME" \
     "database_revision=$database_revision" \
     "format=postgres-custom" \
     > "$manifest_path"

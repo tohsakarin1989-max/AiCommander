@@ -31,12 +31,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
 import { caseApi, type CaseImportResult } from '../../services/cases'
+import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
 import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
+import LeafletMap from '../../components/Map/LeafletMap'
+import { hypothesisMapAssetIds } from '../../components/Map/caseHypothesisMap'
+import { authApi } from '../../services/auth'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../../config/features'
 import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
@@ -465,6 +469,7 @@ const Cases: React.FC = () => {
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
+  const [importOperationalAreaId, setImportOperationalAreaId] = useState<number | undefined>()
   const [bonusDraftLoadState, setBonusDraftLoadState] = useState({ vehicles: true, persons: true })
   const [bonusDraftTouched, setBonusDraftTouched] = useState({ vehicles: false, persons: false })
   const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
@@ -484,6 +489,42 @@ const Cases: React.FC = () => {
   const [searchParams] = useSearchParams()
   const editRequestRef = useRef(0)
   const [batchReviewResult, setBatchReviewResult] = useState<BatchReviewResult | null>(null)
+  const areaScopesQuery = useQuery({
+    queryKey: ['my-area-scopes'],
+    queryFn: authApi.myAreaScopes,
+    staleTime: 5 * 60_000,
+  })
+  const defaultOperationalAreaId = (
+    areaScopesQuery.data?.find(scope => scope.is_default)
+    ?? areaScopesQuery.data?.[0]
+  )?.operational_area_id
+  const writableAreaScopes = useMemo(
+    () => (areaScopesQuery.data ?? []).filter(
+      scope => scope.access_level === 'write' || scope.access_level === 'manage',
+    ),
+    [areaScopesQuery.data],
+  )
+  const defaultWritableOperationalAreaId = (
+    writableAreaScopes.find(scope => scope.is_default)
+    ?? writableAreaScopes[0]
+  )?.operational_area_id
+
+  useEffect(() => {
+    if (
+      isModalVisible
+      && !editingCase
+      && defaultWritableOperationalAreaId != null
+      && form.getFieldValue('operational_area_id') == null
+    ) {
+      form.setFieldValue('operational_area_id', defaultWritableOperationalAreaId)
+    }
+  }, [defaultWritableOperationalAreaId, editingCase, form, isModalVisible])
+
+  useEffect(() => {
+    if (importOperationalAreaId == null && defaultWritableOperationalAreaId != null) {
+      setImportOperationalAreaId(defaultWritableOperationalAreaId)
+    }
+  }, [defaultWritableOperationalAreaId, importOperationalAreaId])
 
   // 构建查询参数
   const queryParams = useMemo(() => {
@@ -598,6 +639,40 @@ const Cases: React.FC = () => {
     enabled: !!selectedCase,
   })
 
+  const { data: pipelineStatus } = useQuery({
+    queryKey: ['case-pipeline-status', selectedCase?.id],
+    queryFn: () => intelligenceFlowApi.getCasePipelineStatus(selectedCase!.id),
+    enabled: !!selectedCase,
+    retry: false,
+    refetchInterval: query => ['pending', 'processing', 'degraded'].includes(query.state.data?.status ?? '') ? 3000 : false,
+  })
+
+  const { data: automaticProfile } = useQuery({
+    queryKey: ['case-analysis-profile', selectedCase?.id],
+    queryFn: () => intelligenceFlowApi.getCaseAnalysisProfile(selectedCase!.id),
+    enabled: !!selectedCase,
+    retry: false,
+    refetchInterval: query => (
+      !query.state.data || ['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')
+        ? 5000
+        : false
+    ),
+  })
+
+  const { data: automaticInsights } = useQuery({
+    queryKey: ['case-automatic-insights', selectedCase?.id],
+    queryFn: () => intelligenceFlowApi.getCaseInsights(selectedCase!.id),
+    enabled: !!selectedCase,
+    retry: false,
+    refetchInterval: query => (
+      !query.state.data
+      || ['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')
+      || (automaticProfile && query.state.data.case_profile_id !== automaticProfile.id)
+        ? 5000
+        : false
+    ),
+  })
+
   const { data: processingCard } = useQuery<CaseProcessingCard>({
     queryKey: ['case-processing-card', selectedCase?.id],
     queryFn: () => caseApi.getProcessingCard(selectedCase!.id),
@@ -643,6 +718,9 @@ const Cases: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['case-profile'] })
       queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
       queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
+      queryClient.invalidateQueries({ queryKey: ['case-pipeline-status'] })
+      queryClient.invalidateQueries({ queryKey: ['case-analysis-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['case-automatic-insights'] })
     },
   })
 
@@ -664,6 +742,9 @@ const Cases: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['case-profile'] })
       queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
       queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
+      queryClient.invalidateQueries({ queryKey: ['case-pipeline-status'] })
+      queryClient.invalidateQueries({ queryKey: ['case-analysis-profile'] })
+      queryClient.invalidateQueries({ queryKey: ['case-automatic-insights'] })
     },
   })
 
@@ -774,6 +855,9 @@ const Cases: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['case-profile', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['case-processing-card', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['case-diagram', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-pipeline-status', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-analysis-profile', selectedCase?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-automatic-insights', selectedCase?.id] })
       await queryClient.invalidateQueries({ queryKey: ['cases'] })
     },
     onError: (error: unknown) => {
@@ -795,6 +879,9 @@ const Cases: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['cases-missing-location'] })
       await queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
       await queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+      await queryClient.invalidateQueries({ queryKey: ['case-pipeline-status', variables.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-analysis-profile', variables.id] })
+      await queryClient.invalidateQueries({ queryKey: ['case-automatic-insights', variables.id] })
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
@@ -821,7 +908,9 @@ const Cases: React.FC = () => {
   })
 
   const previewImportMutation = useMutation({
-    mutationFn: (file: File) => caseApi.previewImportCases(file),
+    mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
+      caseApi.previewImportCases(file, operationalAreaId)
+    ),
     onSuccess: (data) => {
       setImportPreview(data)
       if (data.errors?.length) {
@@ -837,7 +926,9 @@ const Cases: React.FC = () => {
   })
 
   const importMutation = useMutation({
-    mutationFn: (file: File) => caseApi.importCases(file),
+    mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
+      caseApi.importCases(file, false, operationalAreaId)
+    ),
     onSuccess: async (data) => {
       message.success(`导入成功：共 ${data.total} 条，成功 ${data.created} 条`)
       if (data.errors && data.errors.length) {
@@ -859,6 +950,7 @@ const Cases: React.FC = () => {
     setImportModalVisible(false)
     setSelectedImportFile(null)
     setImportPreview(null)
+    setImportOperationalAreaId(defaultWritableOperationalAreaId)
     previewImportMutation.reset()
     importMutation.reset()
   }
@@ -868,6 +960,7 @@ const Cases: React.FC = () => {
     setEditingCase(null)
     form.resetFields()
     form.setFieldsValue({
+      operational_area_id: defaultWritableOperationalAreaId,
       bonus_has_vehicle: false,
       bonus_has_person: false,
       bonus_has_oil: false,
@@ -1779,6 +1872,76 @@ const Cases: React.FC = () => {
                     </div>
                   )}
 
+                  <div className="detail-section case-auto-analysis">
+                    <div className="ds-head ds-head--split">
+                      <span>自动治理与双域候选</span>
+                      <span className="case-auto-analysis__version">
+                        {automaticInsights?.algorithm_version || automaticProfile?.schema_version || '后台生成中'}
+                      </span>
+                    </div>
+                    {automaticProfile?.payload.critical_gaps?.length ? (
+                      <div className="case-auto-analysis__gaps">
+                        <b>优先补充</b>
+                        <span>{automaticProfile.payload.critical_gaps.slice(0, 3).map(item => item.label).join('、')}</span>
+                      </div>
+                    ) : automaticProfile ? (
+                      <p className="narr">标准案件画像已生成，未发现需要优先补充的关键缺项。</p>
+                    ) : (
+                      <p className="narr">案件保存不受影响，标准画像正在后台生成。</p>
+                    )}
+                    {automaticInsights?.hypotheses?.length ? (
+                      <>
+                        <div className="case-auto-analysis__list">
+                          {automaticInsights.hypotheses.slice(0, 3).map(item => (
+                            <article key={item.id}>
+                              <header>
+                                <b>{String(item.rank).padStart(2, '0')}</b>
+                                <strong>{item.title}</strong>
+                                <em>{Math.round(item.confidence * 100)}%</em>
+                              </header>
+                              <p>{item.claim}</p>
+                              <small>支持：{item.supporting_evidence[0] || '暂无'}</small>
+                              <small className="counter">
+                                反向：{item.counter_evidence[0] || item.information_gaps[0] || '仍需现场核查'}
+                              </small>
+                            </article>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                          <div className="ds-head ds-head--split">
+                            <span>候选空间展开</span>
+                            <span className="case-auto-analysis__version">固定地图版本</span>
+                          </div>
+                          <LeafletMap
+                            height={320}
+                            operationalAreaId={selectedCase.operational_area_id ?? undefined}
+                            snapshotRef={automaticInsights.map_snapshot_id}
+                            productionAssetIds={hypothesisMapAssetIds(automaticInsights.hypotheses.slice(0, 3))}
+                            markers={selectedCase.latitude != null && selectedCase.longitude != null ? [{
+                              id: selectedCase.id,
+                              lat: selectedCase.latitude,
+                              lng: selectedCase.longitude,
+                              title: selectedCase.location || selectedCase.case_number,
+                              caseNumber: selectedCase.case_number,
+                              caseType: selectedCase.case_type || undefined,
+                              occurredTime: selectedCase.occurred_time,
+                              modus: selectedCase.modus_operandi || undefined,
+                            }] : []}
+                            hypothesisRegions={automaticInsights.hypotheses.slice(0, 3)}
+                          />
+                          <small className="case-auto-analysis__boundary">
+                            圆形仅表示待核验范围，虚线表示空间关系，不代表已确认路线或事实链条。
+                          </small>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="narr">{automaticInsights?.summary || '地图版本就绪后，系统会自动生成最多三项待核验候选。'}</p>
+                    )}
+                    <small className="case-auto-analysis__boundary">
+                      候选只供人工判断，不会写入正式案件事实，也不会自动生成执行任务。
+                    </small>
+                  </div>
+
                   {bonusAccountingEnabled && (
                     <div className="detail-section">
                       <div className="ds-head">奖金考核测算</div>
@@ -2089,6 +2252,22 @@ const Cases: React.FC = () => {
             )}
           </div>
 
+          {writableAreaScopes.length > 1 && !editingCase ? (
+            <Form.Item
+              name="operational_area_id"
+              label="所属厂区"
+              rules={[{ required: true, message: '请选择所属厂区' }]}
+            >
+              <Select placeholder="请选择本案所属厂区">
+                {writableAreaScopes.map(scope => (
+                  <Option key={scope.operational_area_id} value={scope.operational_area_id}>
+                    {scope.area_name}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          ) : null}
+
           <Form.Item
             name="occurred_time"
             label="发生时间"
@@ -2104,12 +2283,18 @@ const Cases: React.FC = () => {
           <Form.Item
             noStyle
             shouldUpdate={(previous, current) => (
-              previous.latitude !== current.latitude || previous.longitude !== current.longitude
+              previous.latitude !== current.latitude
+              || previous.longitude !== current.longitude
+              || previous.operational_area_id !== current.operational_area_id
             )}
           >
             {({ getFieldValue, setFieldsValue }) => {
               const latitude = getFieldValue('latitude')
               const longitude = getFieldValue('longitude')
+              const selectedOperationalAreaId = editingCase?.operational_area_id
+                ?? getFieldValue('operational_area_id')
+                ?? defaultWritableOperationalAreaId
+                ?? defaultOperationalAreaId
               return (
                 <>
                   <div
@@ -2150,8 +2335,10 @@ const Cases: React.FC = () => {
 
                       <Form.Item label="地图选点">
                         <MapPicker
+                          key={selectedOperationalAreaId ?? 'default-area'}
                           lat={latitude}
                           lng={longitude}
+                          operationalAreaId={selectedOperationalAreaId}
                           onChange={(lat, lng) => {
                             setFieldsValue({ latitude: lat, longitude: lng })
                           }}
@@ -2417,9 +2604,11 @@ const Cases: React.FC = () => {
                   <span>{activeLocationCase.location || '未标注地点'} · {activeLocationCase.case_type || '未分类'}</span>
                 </div>
                 <MapPicker
+                  key={activeLocationCase.operational_area_id ?? 'default-area'}
                   height={330}
                   lat={locationDraft.latitude ?? activeLocationCase.latitude}
                   lng={locationDraft.longitude ?? activeLocationCase.longitude}
+                  operationalAreaId={activeLocationCase.operational_area_id ?? undefined}
                   onChange={(latitude, longitude) => setLocationDraft({ latitude, longitude })}
                 />
                 <div className="location-backfill__coord">
@@ -2491,11 +2680,15 @@ const Cases: React.FC = () => {
             loading={importMutation.isPending}
             disabled={
               !selectedImportFile ||
+              importOperationalAreaId == null ||
               !importPreview ||
               (importPreview.valid ?? importPreview.total) === 0 ||
               previewImportMutation.isPending
             }
-            onClick={() => selectedImportFile && importMutation.mutate(selectedImportFile)}
+            onClick={() => selectedImportFile && importMutation.mutate({
+              file: selectedImportFile,
+              operationalAreaId: importOperationalAreaId,
+            })}
           >
             确认导入
           </Button>,
@@ -2509,8 +2702,29 @@ const Cases: React.FC = () => {
           请选择包含以下列的文件：<strong>occurred_time</strong>（发生时间）、<strong>description</strong>（案件描述）。
         </p>
         <p className="cases-import-hint">
-          可选列：<strong>location</strong>、<strong>latitude</strong>、<strong>longitude</strong>。
+          可选列：<strong>location</strong>、<strong>latitude</strong>、<strong>longitude</strong>；单次最多导入 1000 条，更多数据请拆分批次。
         </p>
+        {writableAreaScopes.length > 1 ? (
+          <div style={{ marginBottom: 14 }}>
+            <div className="cases-import-hint">本批案件所属厂区</div>
+            <Select
+              style={{ width: '100%' }}
+              value={importOperationalAreaId}
+              onChange={(value: number) => {
+                setImportOperationalAreaId(value)
+                setImportPreview(null)
+                if (selectedImportFile) previewImportMutation.mutate({
+                  file: selectedImportFile,
+                  operationalAreaId: value,
+                })
+              }}
+              options={writableAreaScopes.map(scope => ({
+                value: scope.operational_area_id,
+                label: scope.area_name,
+              }))}
+            />
+          </div>
+        ) : null}
         <Upload.Dragger
           name="file"
           multiple={false}
@@ -2519,7 +2733,10 @@ const Cases: React.FC = () => {
           beforeUpload={(file) => {
             setSelectedImportFile(file)
             setImportPreview(null)
-            previewImportMutation.mutate(file)
+            previewImportMutation.mutate({
+              file,
+              operationalAreaId: importOperationalAreaId,
+            })
             return false
           }}
           style={{

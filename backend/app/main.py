@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.api import agent_runs, auth, case_steward, cases, dual_domain_pilot, meetings, models, reports, suggestions, system_config, deployment, map_mcp, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime, situation, workbench
+from app.api import agent_runs, auth, case_insights, case_pipeline, case_steward, cases, deployment_advisor, dual_domain_pilot, governance, meetings, models, reports, suggestions, system_config, deployment, map_foundation, map_mcp, offline_maps, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime, situation, workbench
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -76,6 +76,10 @@ app.include_router(health.router, tags=["health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
+app.include_router(case_pipeline.router, prefix="/api", tags=["case-pipeline"])
+app.include_router(case_insights.router, prefix="/api", tags=["case-insights"])
+app.include_router(deployment_advisor.router, prefix="/api", tags=["deployment-advisor"])
+app.include_router(governance.router, prefix="/api", tags=["intelligence-governance"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
@@ -93,12 +97,15 @@ app.include_router(case_steward.router, prefix="/api/agent-case-steward", tags=[
 app.include_router(dual_domain_pilot.router, prefix="/api/agent-dual-domain", tags=["agent-dual-domain"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
-app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])
 app.include_router(gangs.router, prefix="/api/gangs", tags=["gangs"])
 app.include_router(meeting_templates.router, prefix="/api/meeting-templates", tags=["meeting-templates"])
-app.include_router(personnel.router, prefix="/api/personnel", tags=["personnel"])
-app.include_router(key_locations.router, prefix="/api/key-locations", tags=["key-locations"])
+if settings.ENABLE_LEGACY_OPERATIONS_MODULES:
+    app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])
+    app.include_router(personnel.router, prefix="/api/personnel", tags=["personnel"])
+    app.include_router(key_locations.router, prefix="/api/key-locations", tags=["key-locations"])
 app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["jurisdiction"])
+app.include_router(map_foundation.router, prefix="/api", tags=["map-foundation"])
+app.include_router(offline_maps.router, prefix="/api", tags=["offline-maps"])
 app.include_router(case_intelligence.router, prefix="/api/case-intelligence", tags=["case-intelligence"])
 app.include_router(automation_alerts.router, prefix="/api/automation-alerts", tags=["automation-alerts"])
 app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-links"])

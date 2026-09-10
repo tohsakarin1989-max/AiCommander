@@ -67,6 +67,7 @@ export function buildCaseEntrySubmitPayload(
     occurred_time: toIsoString(caseValues.occurred_time),
     report_time: toIsoString(caseValues.report_time),
   }
+  if (options.mode === 'edit') delete payload.operational_area_id
 
   const vehicleScopeSet = typeof bonus_has_vehicle === 'boolean'
   const personScopeSet = typeof bonus_has_person === 'boolean'

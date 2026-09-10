@@ -130,6 +130,39 @@
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
 }
 
+.map-governance-card {
+  border-color: oklch(0.64 0.10 80 / 0.35);
+}
+
+.offline-map-manager { margin-bottom: 16px; }
+.offline-map-manager .ant-steps { margin: 18px 0; }
+.offline-map-manager__controls { display: grid; grid-template-columns: auto minmax(150px, .7fr) minmax(220px, 1.2fr) auto; gap: 10px; align-items: center; }
+.offline-map-manager__versions { display: grid; gap: 6px; margin-top: 16px; }
+.offline-map-manager__versions > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--line-soft); }
+.offline-map-manager__versions > div > span { display: grid; gap: 2px; }
+.offline-map-manager__versions strong { color: var(--ink-1); font: 10px var(--mono); }
+.offline-map-manager__versions small { color: var(--ink-3); font-size: 9px; }
+
+@media (max-width: 900px) {
+  .offline-map-manager__controls { grid-template-columns: 1fr; }
+}
+
+.map-governance-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 8px;
+}
+
+.map-governance-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
 .jurisdiction-asset-name,
 .context-title,
 .similar-title {
@@ -194,5 +227,10 @@
 
   .hero-metric {
     min-width: auto;
+  }
+
+  .map-governance-fields,
+  .map-governance-summary {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,16 +1,27 @@
-# AICommander v3.0.0-stable 服务器部署与运维手册
+# AICommander v3.6.0-stable 服务器部署与运维手册
 
 > 初次生产链路核验：2026-08-14；部署加固回归：2026-09-04
-> 适用版本：AICommander 3.0.0-stable
+> 适用版本：AICommander 3.6.0-stable（2026-09-10 收口）
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
 > 系统边界：涉油案件数智研判与防控辅助系统，生产环境默认部署在单位内网或 VPN 后
 
 > Agent Lab 默认关闭，独立启停且不参与核心就绪判定；启用、验收和紧急关闭步骤见
 > [“油盾·双域研判智能体”部署、运行与验收手册](./agent-lab-runbook.zh-CN.md)。
 
+> v3.1—v3.6 已统一收口，部署门禁、PostGIS 镜像要求和现场待验事项见
+> [v3.1—v3.6 实施状态与 Stable 门禁](./superpowers/specs/2026-09-08-v3.1-v3.6-implementation-status.md)。
+> `v3.0.0-stable` 标签继续保留为回滚基线，不覆盖旧版发布记录。
+> 自2026-09-09起，30天试用和固定数量真实业务样本不再作为Stable发布门槛；相关指标在上线后持续观察。
+> 同日起，目标测试服务器复验不再作为源码 Stable 发布门槛，改为版本发布后的现场部署确认；
+> 未完成域名、HTTPS、单位网络、目标终端和现场恢复确认前，不得表述为已经正式投产。
+
 ## 1. 当前可部署性结论
 
-v3.0.0-stable 已作为双域增量态势、热点变化、重点井关注顺序和一页简报的稳定代码基线，并继承单案
+v3.6.0-stable 新增生产地图治理、真正离线地图、自动案件画像、候选研判、态势部署参考和版本治理。
+已通过后端 452 项、前端 121 项测试、类型检查、构建、PostGIS 实库迁移、Redis 停启、离线地图与备份恢复演练。
+地图包、内网证据和业务数据库单独受控交付，不包含在公开源码中。
+
+v3.0.0-stable 作为双域增量态势、热点变化、重点井关注顺序和一页简报的回滚代码基线，并继承单案
 证据图谱、今日研判工作台、版本化知识资产、统一 Agent 运行中心、两个数据管家和双域融合能力。态势工作台
 只有读取接口，不修改案件、井点、链条或知识资产。Agent 默认关闭；即使开启，
 默认也只运行内网规则引擎，不需要模型密钥或外网。生产容器链路已经在干净的
@@ -30,7 +41,7 @@ PostgreSQL 16 和 Redis 7 环境中完成隔离启动、冒烟与备份恢复验
 | 前端生产依赖审计 | `npm audit`，0 个已知漏洞 |
 | Python 完整依赖审计 | `pip-audit`，0 个已知漏洞 |
 | PostgreSQL 空库迁移 | Alembic 全链路成功，最终 35 张业务表 |
-| SQLite 数据迁移实测 | 31 张源表、998 行，188 起案件完整迁入 PostgreSQL |
+| SQLite 数据迁移实测 | 固定脱敏样本完整迁入 PostgreSQL，逐表数量一致 |
 | 敏感配置迁移 | 旧密钥解密、新密钥重新加密通过 |
 | 生产容器 | PostgreSQL、Redis、后端、Celery、前端共 5 个服务正常 |
 | 网络暴露 | 仅前端绑定 `127.0.0.1`，8000/5432/6379 均未发布 |
@@ -40,14 +51,8 @@ PostgreSQL 16 和 Redis 7 环境中完成隔离启动、冒烟与备份恢复验
 | 浏览器验收 | 登录页、业务首页、真实数据、桌面和手机宽度均已检查 |
 | 生产接口文档 | `/docs`、`/redoc`、`/openapi.json` 均返回 404 |
 
-实测迁移源文件 SHA-256 为：
-
-```text
-bb919925364df9bf698cb8d9af2d160a17d7f857b7d58a5d9384a503d2ef9487
-```
-
-该值只用于识别本次测试样本。正式迁移前如果本地数据继续变化，哈希和行数也应变化，
-以正式迁移报告为准。
+实测迁移源文件的 SHA-256 只保存在内网验收证据中，用于识别本次脱敏样本。正式迁移前
+如果本地数据继续变化，哈希和行数也应变化，以正式迁移报告为准。
 
 ### 1.2 2026-09-04 v2.2.0-stable 已完成的验证
 
@@ -195,7 +200,8 @@ Agent Worker；目标服务器、单位网络、真实案件适用性、报告�
 - 部署前检查域名、端口、版本、密钥长度与文件权限，并在新镜像中再次校验应用配置。
 - 数据库迁移前自动生成 PostgreSQL 备份、版本清单和 SHA-256 校验文件。
 - `/health/ready` 同时检查数据库连接、Redis 和 Alembic 当前迁移版本。
-- PostgreSQL 和 Redis 仅在 Docker 内部网络通信，Redis 已启用密码和 AOF。
+- 后端只连接 Docker 内部应用网和数据网，PostgreSQL、Redis 不发布宿主机端口；前端另接入口网，但页面端口只绑定宿主机 `127.0.0.1`。Redis 已启用密码和 AOF。
+- 案件原文和精确生产坐标不得发给外部模型；如需模型能力，应使用受信任的内网模型地址，并由部署侧提供显式受控通道。
 - 后端容器只读运行、非 root 用户、移除 Linux capabilities，并禁止权限提升。
 - 镜像基础层使用固定 digest，日志启用大小和数量轮转。
 - 当前生产镜像关闭本地 Chroma 向量库，规避其未修复依赖风险；案件、图谱、报告和结构化研判不受影响。
@@ -376,13 +382,13 @@ aicommander.example.org  A  <服务器 IPv4>
 ## 7. 准备发布代码
 
 生产服务器应使用已评审的 Git 标签或固定提交，不要直接复制开发目录中的临时文件。
-本版本发布后应固定使用 `v3.0.0-stable` 标签，不要从开发分支直接部署：
+本版本发布后应固定使用 `v3.6.0-stable` 标签，不要从开发分支直接部署：
 
 ```bash
 sudo install -d -m 0750 -o "$USER" -g "$USER" /opt/aicommander
-git clone --branch v3.0.0-stable --depth 1 <代码仓库地址> /opt/aicommander
+git clone --branch v3.6.0-stable --depth 1 <代码仓库地址> /opt/aicommander
 cd /opt/aicommander
-test "$(cat VERSION)" = "3.0.0-stable"
+test "$(cat VERSION)" = "3.6.0-stable"
 git status --short
 git rev-parse HEAD
 chmod 0755 scripts/*.sh backend/docker-entrypoint.sh
@@ -428,7 +434,9 @@ nano .env.production
 ```dotenv
 APP_DOMAIN=aicommander.example.org
 APP_PORT=3000
-APP_VERSION=3.0.0-stable
+APP_VERSION=3.6.0-stable
+ALEMBIC_TARGET=head
+POSTGIS_IMAGE=postgis/postgis:16-3.4-alpine@sha256:681931a625df344215e9b8998bf34daf146b6a395ceacee4439eb9c85869239f
 SECRETS_DIR=./secrets
 BACKUP_DIR=./backups/postgres
 ENABLE_BONUS_ACCOUNTING=false
@@ -456,8 +464,11 @@ AGENT_DUAL_DOMAIN_PILOT_MAX_ASSETS=100
 | `APP_DOMAIN` | 用户实际访问的域名，不带协议和路径 |
 | `APP_PORT` | 宿主机回环端口，默认 3000；不能绑定公网地址 |
 | `APP_VERSION` | 生产镜像标签，和发布版本一致 |
+| `ALEMBIC_TARGET` | v3.6 固定为 `head`，此标签解析到 `a3e6b7c8d940`；v3.0 回滚使用原标签配置和升级前备份 |
+| `POSTGIS_IMAGE` | 带固定 sha256 摘要的 PostgreSQL 16/PostGIS 镜像，不得换成无 PostGIS 扩展的镜像 |
 | `SECRETS_DIR` | 四个 Docker secret 文件的位置 |
 | `BACKUP_DIR` | 部署前数据库备份目录，默认 `./backups/postgres` |
+| `DB_NAME` | PostgreSQL 数据库名，正式环境默认 `aicommander`；隔离候选演练自动使用一次性数据库名 |
 | `ENABLE_BONUS_ACCOUNTING` | 是否显示内部奖金核算模块，默认关闭 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 登录有效期，默认 480 分钟 |
 | `CELERY_CONCURRENCY` | 后台任务并发，8 GB 内存建议 2 |
@@ -488,7 +499,7 @@ sudo ./scripts/deploy-production.sh
 3. 在新后端镜像中校验生产应用配置。
 4. 启动 PostgreSQL 和 Redis，并等待两个服务健康。
 5. 自动在 `BACKUP_DIR` 生成数据库升级前备份、清单和 SHA-256 校验文件。
-6. 执行 `alembic upgrade head`。
+6. 执行 `.env.production` 中已通过预检的 `alembic upgrade $ALEMBIC_TARGET`；v3.6 最终迁移到 `a3e6b7c8d940`。
 7. 启动后端、Celery 和前端。
 8. 等待 `/health/ready` 成功；数据库迁移版本落后时不会进入就绪状态。
 
@@ -501,8 +512,8 @@ curl -fsS http://127.0.0.1:3000/health/live
 curl -fsS http://127.0.0.1:3000/health/ready
 ```
 
-五个服务应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
-`ok`，并返回 `version=3.0.0-stable`。随后执行自动验收：
+核心服务和独立 Celery Beat 应为运行或健康状态，`ready` 返回的 `database`、`schema` 和 `redis` 都应为
+`ok`，并返回 `version=3.6.0-stable`。Redis 故障时核心就绪保持 HTTP 200/degraded，数据库故障仍为 503。随后执行自动验收：
 
 ```bash
 sudo ./scripts/verify-test-deployment.sh
@@ -512,6 +523,61 @@ sudo ./scripts/verify-test-deployment.sh
 `/docs`、`/redoc`、`/openapi.json` 均为 404。默认把响应和
 `verification.manifest` 写入 `backups/deployment-evidence/<时间>/`；该目录不得包含
 会话 Cookie、初始化令牌或任何业务样本。
+
+### 9.1 v3.6 发布隔离演练
+
+准备一个由联网区工具生成并通过深度验包的
+公共地图 ZIP，以及单位镜像仓库中固定 SHA-256 摘要的 PostGIS 16 镜像，然后执行：
+
+```bash
+REHEARSAL_APP_VERSION=3.6.0-stable \
+REHEARSAL_POSTGIS_IMAGE='registry.example/postgis:16@sha256:<64位摘要>' \
+MAP_BUNDLE_FILE=/secure-transfer/public-factory-map.zip \
+sh scripts/rehearse-release.sh
+```
+
+脚本使用独立 Compose 项目、一次性数据库、独立卷和回环端口，依次完成空库迁移、PostGIS 扩展与
+关键索引核对、双会话并发探针、地图包导入、冻结生产图层、两版发布、地图回滚、健康检查、数据库
+备份和临时库恢复。任何一步失败都会清理隔离容器和卷，并保留无凭据的证据目录。
+
+联网区制包必须使用单位批准的公共地图服务、许可和访问频率，不要把案件、井名、生产台账、技防位置
+或精确生产坐标带到联网区：
+
+```bash
+python3 scripts/build-public-map-bundle.py \
+  --output /secure-transfer/public-factory-map.zip \
+  --bounds <WEST> <SOUTH> <EAST> <NORTH> \
+  --min-zoom 8 --max-zoom 16 \
+  --bundle-id <更新包编号> \
+  --provider <批准的服务名称> \
+  --source-version <来源版本> \
+  --license-record <许可记录编号> \
+  --attribution <地图署名> \
+  --tile-url 'https://approved.example/{z}/{x}/{y}.png' \
+  --allow-host approved.example
+
+python3 scripts/verify-public-map-bundle.py \
+  /secure-transfer/public-factory-map.zip \
+  --evidence /secure-transfer/public-factory-map.verify.json
+```
+
+上述隔离演练不等同于正式投产。2026-09-09 已从正式 `v3.0.0-stable` 标签提交
+`f196a9318cc60e506fbad51f42b4e86a1f071866` 独立重建旧版生产镜像，并完成健康检查、网络暴露、
+Agent关闭态、数据库备份和临时库恢复验收；证据保存在
+`output/release-gates/v3.0-rollback-20260909/`。目标测试服务器复跑改为版本发布后的现场部署确认。
+
+v3.6 自动业务链路的连续五轮技术彩排可使用：
+
+```bash
+MAP_BUNDLE_FILE=/secure-transfer/public-factory-map.zip \
+EVIDENCE_FILE=output/release-gates/v36-competition-demo.json \
+scripts/verify-v36-competition-demo.sh
+```
+
+脚本只在一次性数据库中写入脱敏演示案件，实际执行案件保存、画像、双域候选和部署参考，覆盖模型
+不可用、Outbox Worker暂停恢复、Worker重启和幂等重放；结束后删除一次性数据库。Redis真实中断
+由隔离生产编排脚本停止并恢复 Redis 容器验证，二者不得混为同一项证据。它用于源码发布技术门禁，
+不替代现场讲解和真实业务效果评价。
 
 ## 10. 迁移现有 SQLite 业务数据
 
@@ -572,8 +638,7 @@ backups/migration/sqlite-to-postgres-report.json
 - 会议最终报告引用已恢复。
 - 敏感配置已重新加密。
 
-当前样本实测迁移了 31 张源表、998 行数据，其中案件 188 起。正式库如果发生更新，
-数量应以停写后的正式备份为准。
+当前固定脱敏样本已逐表完成迁移核对。正式库如果发生更新，数量应以停写后的正式备份为准。
 
 迁移成功后再启动全部服务：
 
@@ -672,8 +737,8 @@ sudo cat /opt/aicommander/secrets/bootstrap_token
 管理员在系统设置中录入模型 API Key。Key 会在服务端加密后写入 PostgreSQL，接口只返回
 掩码。不要把 Key 写入代码、Git、Dockerfile 或前端环境变量。
 
-地图默认使用 OpenStreetMap，不要求 API Key。若改用第三方地图，除系统加密保存外，
-还应在供应商控制台设置域名、IP、配额和账单告警。
+地图默认使用已发布的内网离线快照。地图管理员先验包、导入并发布公共底图，再合并授权生产图层。
+没有可用快照时明确提示缺失，不回退公网地图。联网采集仅允许在独立联网区按来源许可和白名单进行。
 
 生产镜像暂时关闭 Chroma 本地向量库。依赖向量库的语义检索能力不应作为当前上线验收
 硬指标；结构化筛选、时空分析、图谱、报告和模型研判可以正常运行。
@@ -873,21 +938,21 @@ sudo ./scripts/deploy-production.sh
 ```bash
 sudo docker compose --env-file .env.production \
   -f docker-compose.production.yml build --pull
-sudo docker pull postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+sudo docker pull postgis/postgis:16-3.4-alpine@sha256:681931a625df344215e9b8998bf34daf146b6a395ceacee4439eb9c85869239f
 sudo docker pull redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
-sudo docker save -o aicommander-v2-images.tar \
-  aicommander-backend:3.0.0-stable \
-  aicommander-frontend:3.0.0-stable \
-  postgres:16-alpine \
+sudo docker save -o aicommander-v3.6-images.tar \
+  aicommander-backend:3.6.0-stable \
+  aicommander-frontend:3.6.0-stable \
+  postgis/postgis:16-3.4-alpine \
   redis:7-alpine
-sha256sum aicommander-v2-images.tar
+sha256sum aicommander-v3.6-images.tar > aicommander-v3.6-images.tar.sha256
 ```
 
 通过单位批准介质传入服务器后：
 
 ```bash
-sha256sum -c aicommander-v2-images.tar.sha256
-sudo docker load -i aicommander-v2-images.tar
+sha256sum -c aicommander-v3.6-images.tar.sha256
+sudo docker load -i aicommander-v3.6-images.tar
 ```
 
 离线部署时不要运行带 `--pull` 的构建。建议由联网区完成镜像漏洞扫描，再连同扫描报告、
@@ -954,7 +1019,7 @@ sudo du -sh /var/lib/docker /opt/aicommander/backups
 - [ ] 正式发布标签、服务器提交号和镜像版本一致。
 - [ ] `.env.production`、四个 secrets 和数据库备份均已加密异机保存。
 - [ ] SQLite 正式迁移报告无数量差异，抽查至少 20 起案件。
-- [ ] 285 项后端测试、95 项前端测试和构建在发布提交上通过。
+- [ ] 452 项后端测试、121 项前端测试和构建在发布提交上通过。
 - [ ] Python 与前端依赖审计无已知高危漏洞。
 - [ ] PostgreSQL、Redis、后端、Celery、前端全部健康。
 - [ ] 只有 80/443 对业务网络开放，数据库、Redis、后端不直接暴露。

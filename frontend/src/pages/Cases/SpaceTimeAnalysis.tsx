@@ -10,6 +10,7 @@ import {
   Radio,
   Spin,
   Empty,
+  Select,
 } from 'antd'
 import {
   RiseOutlined,
@@ -23,6 +24,7 @@ import { useQuery } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import dayjs, { Dayjs } from 'dayjs'
 import { caseApi } from '../../services/cases'
+import { authApi } from '../../services/auth'
 import SpaceTimeMap, { type HeatPoint, type PredictionHotspot } from '../../components/Map/SpaceTimeMap'
 import type { Case, Hotspot } from '../../types'
 import type { ThemeMode } from '../../theme/themeMode'
@@ -237,17 +239,37 @@ const SpaceTimeAnalysis: React.FC = () => {
   ])
   const [timeSlot, setTimeSlot] = useState<TimeSlot>('all')
   const [dayFilter, setDayFilter] = useState<DayFilter>('all')
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
   const chartTheme = useDocumentThemeMode()
   const chartPalette = CHART_PALETTES[chartTheme]
 
+  const areaScopesQuery = useQuery({
+    queryKey: ['my-area-scopes'],
+    queryFn: authApi.myAreaScopes,
+    staleTime: 5 * 60_000,
+  })
+
+  useEffect(() => {
+    const scopes = areaScopesQuery.data ?? []
+    if (scopes.length === 0) return
+    if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
+    const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
+    setActiveAreaId(preferred.operational_area_id)
+  }, [activeAreaId, areaScopesQuery.data])
+
   const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases', 'space-time-all'],
-    queryFn: () => caseApi.getCases({ limit: 2000 }),
+    queryKey: ['cases', 'space-time-all', activeAreaId],
+    queryFn: () => caseApi.getCases({
+      limit: 2000,
+      operational_area_id: activeAreaId as number,
+    }),
+    enabled: activeAreaId != null,
   })
 
   const { data: hotspots } = useQuery({
-    queryKey: ['hotspots'],
-    queryFn: () => caseApi.getHotspots(),
+    queryKey: ['hotspots', activeAreaId],
+    queryFn: () => caseApi.getHotspots(0.5, 3, activeAreaId as number),
+    enabled: activeAreaId != null,
   })
 
   // 时段 + 星期 筛选
@@ -324,8 +346,12 @@ const SpaceTimeAnalysis: React.FC = () => {
 
   // 热点演化数据查询
   const { data: evolution, isLoading: evolutionLoading } = useQuery({
-    queryKey: ['hotspot-evolution'],
-    queryFn: () => caseApi.getHotspotEvolution({ months: 6 }),
+    queryKey: ['hotspot-evolution', activeAreaId],
+    queryFn: () => caseApi.getHotspotEvolution({
+      months: 6,
+      operational_area_id: activeAreaId as number,
+    }),
+    enabled: activeAreaId != null,
   })
 
   // 热点关注区
@@ -526,6 +552,19 @@ const SpaceTimeAnalysis: React.FC = () => {
 
       {/* 筛选栏 */}
       <div className="sta-filter-bar">
+        {(areaScopesQuery.data?.length ?? 0) > 1 && (
+          <Select
+            size="small"
+            aria-label="当前厂区"
+            value={activeAreaId ?? undefined}
+            style={{ minWidth: 160 }}
+            options={areaScopesQuery.data?.map(scope => ({
+              value: scope.operational_area_id,
+              label: scope.area_name,
+            }))}
+            onChange={setActiveAreaId}
+          />
+        )}
         <span className="sta-filter-label">时间范围：</span>
         <RangePicker
           size="small"
@@ -567,9 +606,11 @@ const SpaceTimeAnalysis: React.FC = () => {
             <div className="sta-spin-wrap"><Spin tip="加载数据..." /></div>
           ) : (
             <SpaceTimeMap
+              key={activeAreaId ?? 'no-area'}
               heatPoints={heatPoints}
               predictionHotspots={predictions}
               height="100%"
+              operationalAreaId={activeAreaId ?? undefined}
             />
           )}
         </div>

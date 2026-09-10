@@ -22,7 +22,7 @@ export function canAccessAgentLab(
   role: 'admin' | 'analyst' | 'viewer' | undefined,
   enabled = isAgentLabEnabled(),
 ): boolean {
-  return enabled && (role === 'admin' || role === 'analyst')
+  return enabled && role === 'admin'
 }
 
 export const agentLabEnabled = isAgentLabEnabled()

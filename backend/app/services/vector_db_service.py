@@ -74,6 +74,11 @@ class VectorDBService:
         if not self.is_available():
             logger.warning("向量数据库不可用，跳过添加")
             return False
+        try:
+            operational_area_id = int(case_data.get("operational_area_id"))
+        except (TypeError, ValueError):
+            logger.warning(f"案件 {case_id} 尚未归属厂区，跳过向量化")
+            return False
         
         try:
             # 构建案件文本
@@ -100,6 +105,7 @@ class VectorDBService:
                     "case_type": case_data.get("case_type", ""),
                     "modus_operandi": case_data.get("modus_operandi", ""),
                     "occurred_time": str(case_data.get("occurred_time", "")),
+                    "operational_area_id": operational_area_id,
                 }]
             )
             
@@ -131,7 +137,8 @@ class VectorDBService:
         self,
         query_text: str,
         top_k: int = 10,
-        min_similarity: float = 0.5
+        min_similarity: float = 0.5,
+        operational_area_ids: Optional[List[int]] = None,
     ) -> List[Dict]:
         """
         语义搜索相似案件
@@ -147,6 +154,9 @@ class VectorDBService:
         if not self.is_available():
             logger.warning("向量数据库不可用，无法搜索")
             return []
+        where = self._area_filter(operational_area_ids)
+        if operational_area_ids is not None and where is None:
+            return []
         
         try:
             # 生成查询embedding
@@ -156,10 +166,13 @@ class VectorDBService:
                 return []
             
             # 搜索相似向量
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k
-            )
+            query_options = {
+                "query_embeddings": [query_embedding],
+                "n_results": top_k,
+            }
+            if where is not None:
+                query_options["where"] = where
+            results = self.collection.query(**query_options)
             
             # 解析结果
             similar_cases = []
@@ -176,7 +189,6 @@ class VectorDBService:
                             "similarity": round(similarity, 4),
                             "distance": round(distance, 4),
                             "metadata": metadata,
-                            "document": results["documents"][0][i] if results["documents"] else ""
                         })
             
             return similar_cases
@@ -188,7 +200,8 @@ class VectorDBService:
         self,
         case_id: int,
         top_k: int = 10,
-        min_similarity: float = 0.6
+        min_similarity: float = 0.6,
+        operational_area_ids: Optional[List[int]] = None,
     ) -> List[Dict]:
         """
         基于语义相似度查找串案
@@ -203,10 +216,16 @@ class VectorDBService:
         """
         if not self.is_available():
             return []
+        where = self._area_filter(operational_area_ids)
+        if operational_area_ids is not None and where is None:
+            return []
         
         try:
             # 获取目标案件的embedding
-            results = self.collection.get(ids=[str(case_id)])
+            get_options = {"ids": [str(case_id)]}
+            if where is not None:
+                get_options["where"] = where
+            results = self.collection.get(**get_options)
             if not results["ids"] or len(results["ids"]) == 0:
                 logger.warning(f"案件 {case_id} 不在向量数据库中")
                 return []
@@ -214,10 +233,13 @@ class VectorDBService:
             # 使用目标案件的embedding搜索相似案件（排除自己）
             query_embedding = results["embeddings"][0]
             
-            search_results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k + 1  # 多取一个，因为会排除自己
-            )
+            query_options = {
+                "query_embeddings": [query_embedding],
+                "n_results": top_k + 1,
+            }
+            if where is not None:
+                query_options["where"] = where
+            search_results = self.collection.query(**query_options)
             
             similar_cases = []
             if search_results["ids"] and len(search_results["ids"][0]) > 0:
@@ -241,3 +263,18 @@ class VectorDBService:
         except Exception as e:
             logger.error(f"查找语义串案失败: {e}")
             return []
+
+    @staticmethod
+    def _area_filter(operational_area_ids: Optional[List[int]]) -> Optional[Dict]:
+        """生成 Chroma 厂区过滤；显式空授权采用拒绝而非全库回退。"""
+        if operational_area_ids is None:
+            return None
+        try:
+            normalized = sorted({int(item) for item in operational_area_ids if int(item) > 0})
+        except (TypeError, ValueError):
+            return None
+        if not normalized:
+            return None
+        if len(normalized) == 1:
+            return {"operational_area_id": normalized[0]}
+        return {"operational_area_id": {"$in": normalized}}

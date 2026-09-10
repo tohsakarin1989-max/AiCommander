@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, Optional
@@ -8,7 +8,7 @@ from alembic.script import ScriptDirectory
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 from app.config import settings
 from app.database import SessionLocal
@@ -16,6 +16,7 @@ from app.database import SessionLocal
 
 router = APIRouter()
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+CASE_PIPELINE_STALE_SECONDS = 120
 
 
 class DependencyHealth(BaseModel):
@@ -75,6 +76,8 @@ def _check_redis() -> DependencyHealth:
 
 
 def _expected_schema_revisions() -> set[str]:
+    if settings.ALEMBIC_TARGET != "head":
+        return {settings.ALEMBIC_TARGET}
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     return set(ScriptDirectory.from_config(config).get_heads())
@@ -141,10 +144,7 @@ def health_ready():
     }
     if dependencies["database"].status != "ok" or (
         settings.ENVIRONMENT == "production"
-        and (
-            dependencies["redis"].status != "ok"
-            or dependencies["schema"].status != "ok"
-        )
+        and dependencies["schema"].status != "ok"
     ):
         status = "not_ready"
     elif dependencies["redis"].status == "ok":
@@ -167,6 +167,8 @@ def health_ready():
 def health_agents():
     """Agent 独立健康状态，不参与核心 readiness 判定。"""
     if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == "off":
+        if settings.ENVIRONMENT == "production":
+            return {"status": "off", "affects_core_readiness": False}
         return {
             "status": "off",
             "version": settings.APP_VERSION,
@@ -200,6 +202,11 @@ def health_agents():
         else "missing_credentials"
     )
     ready = redis_health.status == "ok" and worker_status == "online"
+    if settings.ENVIRONMENT == "production":
+        return {
+            "status": "ready" if ready else "degraded",
+            "affects_core_readiness": False,
+        }
     return {
         "status": "ready" if ready else "degraded",
         "version": settings.APP_VERSION,
@@ -217,6 +224,138 @@ def health_agents():
         "mutations_enabled": settings.AGENT_MUTATIONS_ENABLED,
         "affects_core_readiness": False,
     }
+
+
+@router.get("/health/maps")
+def health_maps():
+    """离线地图独立健康状态，不影响案件主链路 readiness。"""
+    from app.services.offline_map_service import OfflineMapService
+
+    db = SessionLocal()
+    try:
+        return OfflineMapService.health(db)
+    finally:
+        db.close()
+
+
+@router.get("/health/case-pipeline")
+def health_case_pipeline():
+    """案件派生画像流水线健康状态，不阻塞案件录入。"""
+    from app.models.case_pipeline import OutboxEvent
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        stale_before = now - timedelta(seconds=CASE_PIPELINE_STALE_SECONDS)
+        pending = db.query(OutboxEvent).filter(OutboxEvent.status.in_(("pending", "retry"))).count()
+        failed = db.query(OutboxEvent).filter(OutboxEvent.status == "failed").count()
+        stale_pending = db.query(OutboxEvent).filter(
+            OutboxEvent.status.in_(("pending", "retry")),
+            OutboxEvent.available_at <= stale_before,
+        ).count()
+        expired_processing = db.query(OutboxEvent).filter(
+            OutboxEvent.status == "processing",
+            or_(OutboxEvent.lease_until.is_(None), OutboxEvent.lease_until <= now),
+        ).count()
+        degraded = bool(failed or stale_pending or expired_processing)
+        if settings.ENVIRONMENT == "production":
+            return {
+                "status": "degraded" if degraded else "ready",
+                "does_not_block_case_writes": True,
+                "affects_core_readiness": False,
+            }
+        return {
+            "status": "degraded" if degraded else "ready",
+            "pending_events": pending,
+            "failed_events": failed,
+            "stale_pending_events": stale_pending,
+            "expired_processing_events": expired_processing,
+            "does_not_block_case_writes": True,
+            "external_model_required": False,
+            "affects_core_readiness": False,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/health/tech-defense")
+def health_tech_defense():
+    """技防是可选增强项，中断不影响案件与地图研判主链路。"""
+    from app.models.deployment_advisor import TechDefenseEventAggregate, TechDefenseSource
+
+    db = SessionLocal()
+    try:
+        active_sources = db.query(TechDefenseSource).filter(
+            TechDefenseSource.status == "active"
+        ).count()
+        latest = db.query(TechDefenseEventAggregate).order_by(
+            TechDefenseEventAggregate.period_end.desc()
+        ).first()
+        if settings.ENVIRONMENT == "production":
+            return {
+                "status": "ready" if active_sources else "optional_not_configured",
+                "affects_core_readiness": False,
+            }
+        return {
+            "status": "ready" if active_sources else "optional_not_configured",
+            "active_sources": active_sources,
+            "latest_period_end": latest.period_end if latest else None,
+            "accepts_aggregates_only": True,
+            "raw_media_accepted": False,
+            "external_model_required": False,
+            "affects_core_readiness": False,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/health/intelligence")
+def health_intelligence():
+    """四条自动业务链路的统一只读健康摘要。"""
+    from app.models.case_insight import CaseAnalysisRun
+    from app.models.case_pipeline import CasePipelineState, OutboxEvent
+    from app.models.deployment_advisor import SituationBrief
+    from app.models.map_foundation import MapSnapshot
+
+    db = SessionLocal()
+    try:
+        failed_events = db.query(OutboxEvent).filter(OutboxEvent.status == "failed").count()
+        current_maps = db.query(MapSnapshot).filter(MapSnapshot.status == "current").count()
+        if settings.ENVIRONMENT == "production":
+            return {
+                "status": "degraded" if failed_events else "ready",
+                "affects_core_readiness": False,
+            }
+        return {
+            "status": "degraded" if failed_events else "ready",
+            "geographic_foundation": {
+                "current_snapshot_count": current_maps,
+                "network_required": False,
+            },
+            "case_governance": {
+                "completed": db.query(CasePipelineState).filter(
+                    CasePipelineState.status == "completed"
+                ).count(),
+                "failed_events": failed_events,
+                "blocks_case_write": False,
+            },
+            "dual_domain_insight": {
+                "completed_runs": db.query(CaseAnalysisRun).filter(
+                    CaseAnalysisRun.status == "completed"
+                ).count(),
+                "external_model_required": False,
+            },
+            "deployment_advisor": {
+                "completed_briefs": db.query(SituationBrief).filter(
+                    SituationBrief.status == "completed"
+                ).count(),
+                "execution_task_creation_allowed": False,
+            },
+            "formal_case_mutations_allowed": False,
+            "affects_core_readiness": False,
+        }
+    finally:
+        db.close()
 
 
 @router.get("/health", response_model=HealthResponse)

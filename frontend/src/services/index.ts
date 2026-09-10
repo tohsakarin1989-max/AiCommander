@@ -70,6 +70,28 @@ export { configApi } from './config'
 
 // 地图服务
 export { mapMCPApi } from './mapMCP'
+export { mapFoundationApi, snapshotLayersToAssets } from './mapFoundation'
+export { intelligenceFlowApi } from './intelligenceFlow'
+export { governanceApi } from './governance'
+export type {
+  CaseAnalysisProfileResult,
+  CaseHypothesisResult,
+  CaseInsightResult,
+  DeploymentRecommendationResult,
+  SituationBriefResult,
+} from './intelligenceFlow'
+export type {
+  MapConflict,
+  MapImportTemplate,
+  MapIngestRun,
+  MapPreview,
+  MapSource,
+  MapSnapshot,
+  MapSnapshotFeature,
+  MapSnapshotLayers,
+  OperationalArea,
+  PublicMapBundle,
+} from './mapFoundation'
 
 // 巡逻服务
 export { patrolApi } from './patrols'

@@ -20,15 +20,18 @@ def test_deployment_scripts_support_isolated_configuration():
     assert 'COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/' in deploy
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.production}"' in init
     assert "$ENV_FILE，" not in init
-    assert 'APP_VERSION: "${APP_VERSION:-3.0.0-stable}"' in compose
+    assert 'APP_VERSION: "${APP_VERSION:-3.6.0-stable}"' in compose
     assert '${IMAGE_PREFIX:-aicommander}-backend:' in compose
     assert '${IMAGE_PREFIX:-aicommander}-frontend:' in compose
+    assert "      - edge" in compose
+    assert "  edge:\n    driver: bridge" in compose
     assert "AICommander v2.0.0" not in deploy
 
 
 def test_release_rehearsal_has_smoke_restore_and_cleanup_guardrails():
     rehearsal = _read("scripts/rehearse-release.sh")
     smoke = _read("scripts/verify-test-deployment.sh")
+    backup = _read("scripts/backup-production.sh")
     restore = _read("scripts/verify-backup-restore.sh")
 
     assert "aicommander_release_rehearsal_" in rehearsal
@@ -49,6 +52,9 @@ def test_release_rehearsal_has_smoke_restore_and_cleanup_guardrails():
     assert 'network-exposure.manifest' in rehearsal
     assert 'agent_worker=absent' in rehearsal
     assert '.HostConfig.PortBindings' in rehearsal
+    assert 'DATABASE_NAME="$(read_env DB_NAME)"' in backup
+    assert 'sh "$DATABASE_NAME"' in backup
+    assert "-d aicommander" not in backup
 
     for endpoint in (
         "/health/live",
@@ -81,6 +87,8 @@ def test_release_quality_gate_checks_rehearsal_scripts():
     assert "continue-on-error: true" in workflow
     assert "sh -n scripts/verify-test-deployment.sh" in workflow
     assert "sh -n scripts/verify-backup-restore.sh" in workflow
+    assert "sh -n scripts/verify-v36-postgis.sh" in workflow
+    assert "sh -n scripts/verify-v36-offline-map.sh" in workflow
     assert "sh -n scripts/rehearse-release.sh" in workflow
     assert "sh -n scripts/verify-evidence-graph.sh" in workflow
     assert "sh -n scripts/verify-situation.sh" in workflow
