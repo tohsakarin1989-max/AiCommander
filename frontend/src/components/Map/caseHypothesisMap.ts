@@ -4,6 +4,16 @@ export interface CircleHypothesisRegion {
   radiusM: number
 }
 
+export function hypothesisSupportLabel(value: { ruleSupport?: number; confidence?: number }): string {
+  if (typeof value.ruleSupport === 'number' && Number.isFinite(value.ruleSupport)) {
+    return `规则支持度：${value.ruleSupport}（非概率）`
+  }
+  if (typeof value.confidence === 'number' && Number.isFinite(value.confidence)) {
+    return `旧版规则指标：${Math.round(value.confidence * 100)}/100（未经概率校准）`
+  }
+  return '未提供有效规则支持度'
+}
+
 export function parseCircleHypothesisRegion(
   region: Record<string, unknown> | null | undefined,
 ): CircleHypothesisRegion | null {

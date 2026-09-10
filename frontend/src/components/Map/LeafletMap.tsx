@@ -9,7 +9,7 @@ import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
 import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import { escapeHtml } from '../../utils/html'
-import { hypothesisRegionColor, parseCircleHypothesisRegion } from './caseHypothesisMap'
+import { hypothesisRegionColor, hypothesisSupportLabel, parseCircleHypothesisRegion } from './caseHypothesisMap'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -36,7 +36,8 @@ interface LeafletMapProps {
     hypothesis_type: string
     title: string
     claim: string
-    confidence: number
+    confidence?: number
+    ruleSupport?: number
     region?: Record<string, unknown> | null
     supporting_evidence: string[]
     counter_evidence: string[]
@@ -302,7 +303,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
         `<div style="font-size:12px;line-height:1.7;min-width:240px">
           <div style="font-weight:700;color:${color}">${escapeHtml(item.title)}</div>
           <div>${escapeHtml(item.claim)}</div>
-          <div>置信度：${Math.round(item.confidence * 100)}%</div>
+          <div>${escapeHtml(hypothesisSupportLabel(item))}</div>
           <div>支持：${escapeHtml(supporting)}</div>
           <div>反向/缺口：${escapeHtml(counter)}</div>
           <div style="color:#94a3b8">区域半径约 ${Math.round(region.radiusM)} 米，仅供人工核查</div>
