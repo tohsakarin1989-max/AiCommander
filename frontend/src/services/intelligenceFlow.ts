@@ -1,5 +1,27 @@
 import api from './api'
 
+export type SemanticReference = {
+  field: string; source_sha256: string; start: number; end: number; quote: string
+}
+export type CaseSemantics = {
+  rule_version: string
+  method: string
+  assertions: Array<{
+    category: string; value: string; kind: string; reference: SemanticReference
+    is_official_fact: false
+  }>
+  time_intervals?: Array<{
+    start: string; end: string; start_precision: string; end_precision: string
+    reference: SemanticReference; timezone: string | null
+  }>
+  structured_sources?: {
+    entries: Array<{ reference: { field: string; path: Array<string | number>; value: unknown } }>
+  }
+  potential_conflicts?: Array<{ category: string; value: string; status: string }>
+  information_gaps?: Array<{ code: string; field?: string; reference?: SemanticReference }>
+  boundary?: string[]
+}
+
 export type CaseAnalysisProfileResult = {
   id: string
   case_id: number
@@ -10,6 +32,7 @@ export type CaseAnalysisProfileResult = {
   quality_score: number
   analysis_readiness: string
   payload: {
+    semantics?: CaseSemantics
     critical_gaps?: Array<{ field: string; label: string; reason: string }>
     spatial_grid?: string | null
     boundary?: string

@@ -34,6 +34,7 @@ import { agentRunApi } from '../../services/agentRuns'
 import { caseApi, type CaseImportOptions, type CaseImportResult, type CasePageParams } from '../../services/cases'
 import CaseImportCorrections from './CaseImportCorrections'
 import CaseImportConfiguration from './CaseImportConfiguration'
+import CaseSemanticProfile from './CaseSemanticProfile'
 import type { ImportCorrectionResult } from '../../services/caseImports'
 import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
@@ -625,7 +626,7 @@ const Cases: React.FC = () => {
     refetchInterval: query => ['pending', 'processing', 'degraded'].includes(query.state.data?.status ?? '') ? 3000 : false,
   })
 
-  const { data: automaticProfile } = useQuery({
+  const { data: automaticProfile, isPending: semanticProfileLoading, error: semanticProfileError } = useQuery({
     queryKey: ['case-analysis-profile', selectedCase?.id],
     queryFn: () => intelligenceFlowApi.getCaseAnalysisProfile(selectedCase!.id),
     enabled: !!selectedCase,
@@ -1860,6 +1861,13 @@ const Cases: React.FC = () => {
                     </div>
                   )}
 
+                  <CaseSemanticProfile
+                    key={selectedCase.id}
+                    semantics={automaticProfile?.payload.semantics}
+                    loading={semanticProfileLoading}
+                    error={!!semanticProfileError && (semanticProfileError as { response?: { status?: number } }).response?.status !== 404}
+                    updating={['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')}
+                  />
                   <div className="detail-section case-auto-analysis">
                     <div className="ds-head ds-head--split">
                       <span>自动治理与双域候选</span>
