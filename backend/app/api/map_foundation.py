@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import zipfile
 from typing import Any, Literal
 
@@ -17,6 +18,195 @@ from app.services.map_foundation_service import MAX_UPLOAD_BYTES, MapFoundationS
 
 
 router = APIRouter()
+
+
+def _road_admin(request: Request):
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        raise HTTPException(401, "请先登录")
+    if principal.role != "admin":
+        raise HTTPException(403, "仅地图管理员可管理内部道路")
+    return principal
+
+
+class EntranceConnectionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    road_import_id: int = Field(gt=0)
+    road_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["connected", "disconnected", "unknown"]
+
+
+class InternalRoadReviewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_key: str = Field(pattern=r"^[A-Za-z0-9_-]{8,80}$")
+    previous_review_id: int | None = Field(default=None, gt=0)
+    decision: Literal["verified", "rejected", "pending_verification"]
+    note: str = Field(min_length=1, max_length=2000)
+    evidence_reference: str = Field(min_length=1, max_length=500)
+    connection_evidence: EntranceConnectionEvidence | None = None
+
+
+@router.post("/map-sources/{source_id}/roads/imports/{import_id}/features/{feature_id}/reviews")
+def review_internal_road_feature(source_id: int, import_id: int, feature_id: str,
+                                 payload: InternalRoadReviewCreate, request: Request,
+                                 db: Session = Depends(get_db)):
+    from app.services.internal_road_service import RoadReviewConflict, review_feature
+
+    principal = _road_admin(request)
+    try:
+        result, created = review_feature(db, source_id, import_id, feature_id, payload.model_dump(), principal.user_id)
+        db.commit()
+    except PermissionError:
+        raise HTTPException(403, "缺少道路来源写入权限") from None
+    except LookupError:
+        raise HTTPException(404, "道路版本或要素不存在或不可访问") from None
+    except RoadReviewConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError:
+        raise HTTPException(422, "道路来源不允许核验") from None
+    return Response(content=json.dumps({**result, "created": created}, ensure_ascii=False),
+                    status_code=201 if created else 200, media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.post("/map-sources/{source_id}/roads/ingest")
+async def ingest_internal_road_source(source_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.internal_road_import import MAX_ROAD_UPLOAD_BYTES
+    from app.services.internal_road_service import authorized_source, ingest_roads
+
+    principal = _road_admin(request)
+    try:
+        authorized_source(db, source_id, write=True)
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > MAX_ROAD_UPLOAD_BYTES:
+                raise HTTPException(413, "道路导入数据超过2MiB")
+        result, created = ingest_roads(db, source_id, json.loads(raw), principal.user_id)
+        db.commit()
+    except PermissionError:
+        raise HTTPException(403, "缺少道路来源写入权限") from None
+    except LookupError:
+        raise HTTPException(404, "来源不存在或不可访问") from None
+    except (ValueError, TypeError, RecursionError):
+        raise HTTPException(422, "道路来源或数据无效，请先预检并修正全部错误") from None
+    return Response(content=json.dumps({**result, "created": created}, ensure_ascii=False, allow_nan=False),
+                    status_code=201 if created else 200, media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/map-sources/{source_id}/roads/imports")
+def list_internal_road_imports(source_id: int, request: Request, db: Session = Depends(get_db),
+                               before_id: int | None = Query(None, gt=0), limit: int = Query(20, ge=1, le=100)):
+    from app.services.internal_road_service import list_imports
+
+    _road_admin(request)
+    try:
+        result = list_imports(db, source_id, before_id, limit)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "来源不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/map-sources/{source_id}/roads/imports/{import_id}/features/{feature_id}/reviews")
+def get_internal_road_reviews(source_id: int, import_id: int, feature_id: str, request: Request,
+                              db: Session = Depends(get_db), before_id: int | None = Query(None, gt=0),
+                              limit: int = Query(20, ge=1, le=100)):
+    from app.services.internal_road_service import review_history
+
+    _road_admin(request)
+    try:
+        result = review_history(db, source_id, import_id, feature_id, before_id, limit)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "道路版本或要素不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/map-sources/{source_id}/roads/compare")
+def compare_internal_road_imports(source_id: int, request: Request,
+                                  before_id: int = Query(..., gt=0), after_id: int = Query(..., gt=0),
+                                  db: Session = Depends(get_db)):
+    from app.services.internal_road_service import compare_imports
+
+    _road_admin(request)
+    try:
+        result = compare_imports(db, source_id, before_id, after_id)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "来源或比较版本不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/map-sources/{source_id}/roads/catalog")
+def internal_road_catalog(source_id: int, request: Request, db: Session = Depends(get_db),
+                          after_feature: str | None = Query(None, max_length=100),
+                          limit: int = Query(20, ge=1, le=100)):
+    from app.services.internal_road_service import road_catalog
+
+    _road_admin(request)
+    try:
+        result = road_catalog(db, source_id, after_feature, limit)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "来源不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/map-sources/{source_id}/roads/imports/{import_id}")
+def get_internal_road_import(source_id: int, import_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.internal_road_service import read_import
+
+    _road_admin(request)
+    try:
+        result = read_import(db, source_id, import_id)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "道路版本不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False, allow_nan=False),
+                    media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/map-sources/{source_id}/roads/preview")
+async def preview_internal_road_source(source_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.internal_road_import import MAX_ROAD_UPLOAD_BYTES, preview_internal_roads
+
+    principal = getattr(request.state, "principal", None)
+    if principal is None:
+        raise HTTPException(401, "请先登录")
+    if principal.role != "admin":
+        raise HTTPException(403, "仅地图管理员可预检内部道路")
+    if "authorized_area_ids" not in db.info:
+        raise HTTPException(403, "缺少有效数据范围")
+    source = db.query(MapSource).filter(MapSource.id == source_id, MapSource.status == "active").first()
+    if source is None:
+        raise HTTPException(404, "来源不存在或不可访问")
+    if source.source_type == "public_map":
+        raise HTTPException(409, "内部道路资料不能放入公共地图来源")
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > MAX_ROAD_UPLOAD_BYTES:
+            raise HTTPException(413, "道路导入数据超过2MiB")
+    try:
+        result = preview_internal_roads(json.loads(raw))
+    except (ValueError, TypeError, RecursionError):
+        raise HTTPException(422, "道路数据格式或坐标声明不合法，请检查输入范围") from None
+    return Response(content=json.dumps({**result, "source_id": source.id, "operational_area_id": source.operational_area_id},
+                                      ensure_ascii=False, allow_nan=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
 
 
 class MapSourceCreate(BaseModel):

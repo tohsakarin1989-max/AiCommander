@@ -1,0 +1,15 @@
+.case-semantics { color: var(--ink-1); font-size: 14px; line-height: 1.6; }
+.case-semantics h3 { margin: 0 0 10px; font-size: 17px; font-weight: 600; }
+.case-semantics p { margin: 8px 0; max-width: 72ch; }
+.case-semantics__note, .case-semantics small { color: var(--ink-2); }
+.case-semantics__items { list-style: none; margin: 10px 0; padding: 0; }
+.case-semantics__items > li { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.case-semantics__items > li > span, .case-semantics__items strong { margin-right: 10px; }
+.case-semantics__kind { color: var(--ink-2); }
+.case-semantics__warning { color: var(--warn); }
+.case-semantics details { margin: 8px 0; overflow-wrap: anywhere; }
+.case-semantics summary { cursor: pointer; color: var(--ink-2); padding: 4px 0; }
+.case-semantics summary:hover { color: var(--accent); }
+.case-semantics summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.case-semantics__reference blockquote { margin: 8px 0; padding: 10px; background: var(--bg-0); white-space: pre-wrap; overflow-wrap: anywhere; }
+.case-semantics__reference p { font-size: 12px; color: var(--ink-2); }

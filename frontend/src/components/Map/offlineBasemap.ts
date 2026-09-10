@@ -20,7 +20,9 @@ export function mountOfflineBasemap(map: L.Map, options: MountOptions): (() => v
   let generation = 0
   let pinned: ResolvedMapTileConfig | undefined
   let configurationDelivered = false
+  let requestController: AbortController | undefined
   const cleanLayer = () => {
+    requestController?.abort()
     clearTimeout(timer)
     unsubscribe()
     unsubscribe = () => {}
@@ -37,6 +39,7 @@ export function mountOfflineBasemap(map: L.Map, options: MountOptions): (() => v
     const fail = () => {
       if (stale() || failed) return
       failed = true
+      requestController?.abort()
       clearTimeout(timer)
       options.onStatus('unavailable')
     }
@@ -46,8 +49,9 @@ export function mountOfflineBasemap(map: L.Map, options: MountOptions): (() => v
       options.onStatus('ready')
     }
     timer = setTimeout(fail, 15000)
+    requestController = new AbortController()
     const pending = pinned ? Promise.resolve(pinned)
-      : resolveMapTileConfig(options.operationalAreaId, options.snapshotRef)
+      : resolveMapTileConfig(options.operationalAreaId, options.snapshotRef, requestController.signal)
     void pending.then(async config => {
       if (stale() || failed) return
       if (!config.manifestResolved) throw new Error('map_manifest_unavailable')

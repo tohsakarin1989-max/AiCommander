@@ -1,0 +1,8 @@
+{
+  "name": "aicommander-document-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-only frozen case-result document rendering",
+  "engines": { "node": ">=20" },
+  "dependencies": { "docx": "9.6.1", "maplibre-gl": "6.9.0" }
+}

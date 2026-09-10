@@ -13,7 +13,7 @@ import time
 from uuid import uuid4
 
 
-def inside(action):
+def inside(action, pipeline=False):
     if not Path('/probe-script').is_file() or not Path('/snapshot/app').is_dir():
         raise RuntimeError('isolated_container_required')
     os.chdir('/tmp')
@@ -35,6 +35,9 @@ def inside(action):
     from app.models.agent_run import AgentRun, AgentEvent
     from app.services.intelligent_query_tasks import create_query
     from app.tasks.celery_app import celery_app
+
+    if pipeline:
+        return pipeline_inside(action, Base, engine, SessionLocal, celery_app)
 
     if action == 'beat':
         # Keep the production query entry unchanged; omit unrelated schedules
@@ -133,9 +136,10 @@ def main():
     parser.add_argument('--inside', choices=['init', 'worker', 'beat', 'start-beat',
                         'enqueue', 'enqueue-block', 'dispatch', 'dispatch-one', 'state'])
     parser.add_argument('--hard-timeout', action='store_true')
+    parser.add_argument('--pipeline', action='store_true', help='Test actual case governance, without model doubles')
     args = parser.parse_args()
     if args.inside:
-        inside(args.inside)
+        inside(args.inside, args.pipeline)
         return
     root = Path(__file__).resolve().parents[1]
     docker = shutil.which('docker') or '/opt/homebrew/bin/docker'
@@ -156,7 +160,8 @@ def main():
         return run.stdout.strip()
 
     def action(value):
-        result = command('exec', runner, 'python', '/probe-script', '--inside', value)
+        result = command('exec', runner, 'python', '/probe-script', '--inside', value,
+                         *(['--pipeline'] if args.pipeline else []))
         return json.loads(result.splitlines()[-1])
 
     def await_completed(count):
@@ -199,6 +204,9 @@ def main():
                     '--entrypoint', 'sleep', image, '600')
             created.append(('container', runner))
             action('init')
+            if args.pipeline:
+                pipeline_experiment(action, command, redis, evidence, image, source_hash.hexdigest())
+                return
             first = action('enqueue')
             action('dispatch')
             initial = await_completed(1)
@@ -270,6 +278,91 @@ def main():
                     (evidence / 'beat.log').write_text(log.stdout + log.stderr)
             for kind, target in reversed(created):
                 command('rm', '-f', '-v', target) if kind == 'container' else command('network', 'rm', target)
+
+
+def pipeline_inside(action, Base, engine, SessionLocal, celery_app):
+    from datetime import datetime
+    from app.models.case import Case
+    from app.models.case_pipeline import CaseAnalysisProfile, OutboxEvent
+    from app.models.case_result import CaseResultSnapshot
+    from app.services.case_service import CaseService
+
+    if action == 'worker':
+        celery_app.worker_main(['worker', '--pool=prefork', '--concurrency=1',
+            '--queues=celery', '--loglevel=INFO', '--without-gossip', '--without-mingle'])
+        return
+    if action == 'beat':
+        celery_app.conf.beat_schedule = {'process-case-pipeline': celery_app.conf.beat_schedule['process-case-pipeline']}
+        celery_app.Beat(loglevel='INFO', schedule='/tmp/pipeline-beat').run()
+        return
+    if action == 'init':
+        assert not Path('/tmp/query-probe.sqlite').exists()
+        Base.metadata.create_all(engine)
+        result = {'initialized': True}
+        for component in ('worker', 'beat'):
+            with open(f'/tmp/{component}.log', 'w') as log:
+                subprocess.Popen([sys.executable, '/probe-script', '--pipeline', '--inside', component],
+                    stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    elif action == 'enqueue':
+        with SessionLocal() as db:
+            count = db.query(Case).count()
+            case = CaseService.create_case(db, case_number=f'SYNTHETIC-PIPELINE-{count + 1}',
+                occurred_time=datetime(2026, 9, 10), location='合成区域',
+                description='未发现罐车，但是发现货车。夜里查获胶管。', case_type='涉油测试')
+            db.commit()
+            assert db.query(OutboxEvent).filter_by(aggregate_id=str(case.id), event_type='case.analysis.requested').count() == 1
+            result = {'case_id': case.id, 'saved': True}
+    elif action == 'state':
+        with SessionLocal() as db:
+            result = {'cases': db.query(Case).count(), 'profiles': [],
+                'results': db.query(CaseResultSnapshot).count(),
+                'events': [{'type': e.event_type, 'status': e.status} for e in db.query(OutboxEvent).all()]}
+            for profile in db.query(CaseAnalysisProfile).all():
+                semantics = profile.payload['semantics']
+                result['profiles'].append({'case_id': profile.case_id, 'version': profile.profile_version,
+                    'schema': profile.schema_version, 'semantics': semantics,
+                    'original_unchanged': db.get(Case, profile.case_id).description == '未发现罐车，但是发现货车。夜里查获胶管。'})
+    elif action == 'dispatch':
+        for _ in range(3):
+            celery_app.send_task('aicommander.case_pipeline.process_pending', retry=False)
+        result = {'wakeups': 3}
+    else:
+        raise ValueError('unsupported_pipeline_action')
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+
+
+def pipeline_experiment(action, command, redis, evidence, image, source_hash):
+    def await_profiles(count):
+        deadline = time.monotonic() + 50
+        while time.monotonic() < deadline:
+            state = action('state')
+            if len(state['profiles']) == count and state['results'] == count:
+                assert all(p['version'] == 1 and p['original_unchanged'] for p in state['profiles'])
+                expected = {('罐车', 'negated'), ('货车', 'stated'), ('夜间', 'stated'), ('软管', 'stated')}
+                assert all(p['schema'] == '4.1.0' and expected <= {
+                    (a['value'], a['kind']) for a in p['semantics']['assertions']} for p in state['profiles'])
+                return state
+            time.sleep(1)
+        raise RuntimeError('pipeline_completion_timeout')
+
+    action('enqueue')
+    initial = await_profiles(1)
+    command('stop', '--time', '2', redis)
+    action('enqueue')
+    outage = action('state')
+    assert outage['cases'] == 2 and len(outage['profiles']) == 1
+    command('start', redis)
+    recovered = await_profiles(2)  # Actual unchanged five-second Beat schedule, no manual dispatch.
+    action('dispatch')
+    time.sleep(2)
+    repeated = action('state')
+    assert len(repeated['profiles']) == repeated['results'] == 2
+    report = {'status': 'passed', 'source_sha256': source_hash, 'runtime_image': image,
+        'real_redis_prefork_beat': True, 'model_used': False,
+        'initial': initial, 'outage': outage, 'recovered': recovered, 'repeated': repeated,
+        'scope': 'synthetic SQLite; Redis outage/recovery, not worker mid-transaction crash'}
+    (evidence / 'pipeline-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    print(json.dumps({'status': 'passed', 'evidence': str(evidence)}), flush=True)
 
 
 if __name__ == '__main__':

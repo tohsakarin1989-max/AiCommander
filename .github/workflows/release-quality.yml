@@ -38,6 +38,9 @@ jobs:
       - name: Install map style validator for backend integration tests
         working-directory: frontend
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Install document renderer for real DOCX tests
+        working-directory: backend/document-renderer
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Run backend tests
         working-directory: backend
         run: python -m pytest
@@ -88,6 +91,8 @@ jobs:
         run: git diff --check
       - name: Validate production Compose
         run: docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
+      - name: Validate optional document renderer Compose
+        run: docker compose --env-file .env.production.example -f docker-compose.production.yml -f docker-compose.document-renderer.yml config --quiet
       - name: Validate deployment scripts
         run: |
           sh -n scripts/preflight-production.sh

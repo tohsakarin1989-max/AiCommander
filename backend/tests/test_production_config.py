@@ -5,6 +5,22 @@ from pathlib import Path
 from app.config import Settings
 
 
+def test_document_runtime_is_optional_and_keeps_host_dependencies_out_of_image():
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / 'backend/Dockerfile').read_text()
+    override = (root / 'docker-compose.document-renderer.yml').read_text()
+    ignored = (root / 'backend/.dockerignore').read_text()
+    assert dockerfile.strip().endswith('FROM core AS runtime')
+    assert 'FROM core AS document-renderer' in dockerfile
+    assert 'npm ci --omit=dev --ignore-scripts' in dockerfile
+    assert 'playwright install --with-deps --only-shell chromium' in dockerfile
+    assert 'fonts-noto-cjk' in dockerfile
+    assert 'USER 10001:10001' in dockerfile
+    assert 'document-renderer/node_modules' in ignored
+    assert 'target: document-renderer' in override
+    assert 'celery:' not in override and 'ports:' not in override
+
+
 def production_settings(**overrides):
     values = {
         "SECRET_KEY": "s" * 64,

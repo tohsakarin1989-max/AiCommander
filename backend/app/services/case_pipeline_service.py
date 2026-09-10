@@ -15,11 +15,12 @@ from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilReco
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
 from app.models.map_foundation import OperationalArea
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_semantic_service import SEMANTIC_RULE_VERSION, TEXT_FIELDS, build_semantic_profile
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 
 
-CASE_PROFILE_SCHEMA_VERSION = "3.3.0"
-CASE_DICTIONARY_VERSION = "oil-case-2026.09"
+CASE_PROFILE_SCHEMA_VERSION = "4.1.0"
+CASE_DICTIONARY_VERSION = SEMANTIC_RULE_VERSION
 ANALYSIS_RELEVANT_FIELDS = {
     "case_number",
     "occurred_time",
@@ -100,6 +101,8 @@ class CasePipelineService:
         if (
             state is not None
             and state.source_hash == source_hash
+            and state.schema_version == CASE_PROFILE_SCHEMA_VERSION
+            and state.dictionary_version == CASE_DICTIONARY_VERSION
             and state.status in {"pending", "processing", "degraded"}
         ):
             return None
@@ -303,6 +306,9 @@ class CasePipelineService:
             db.flush()
             from app.services.case_insight_service import CaseInsightService
             from app.services.offline_map_service import OfflineMapService
+            from app.services.case_result_service import CaseResultService
+
+            CaseResultService.freeze_completed_inputs(db, existing)
 
             snapshot = OfflineMapService.current_snapshot(
                 db,
@@ -534,6 +540,10 @@ class CasePipelineService:
             "case_id": case.id,
             "case_number": case.case_number,
             "source_hash": CasePipelineService.source_hash(db, case),
+            "semantics": build_semantic_profile(
+                {field: getattr(case, field) for field in TEXT_FIELDS},
+                structured={"vehicle_info": case.vehicle_info, "involved_items": case.involved_items},
+            ),
             "spatial_grid": CasePipelineService._spatial_grid(case.latitude, case.longitude),
             "standard": {
                 "occurred_time": CasePipelineService._json_value(case.occurred_time),

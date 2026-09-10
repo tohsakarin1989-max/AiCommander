@@ -34,16 +34,17 @@ import { agentRunApi } from '../../services/agentRuns'
 import { caseApi, type CaseImportOptions, type CaseImportResult, type CasePageParams } from '../../services/cases'
 import CaseImportCorrections from './CaseImportCorrections'
 import CaseImportConfiguration from './CaseImportConfiguration'
+import CaseResultPanel from '../../components/CaseResult/CaseResultPanel'
+import CaseResultMap from '../../components/CaseResult/CaseResultMap'
+import { caseResultsApi } from '../../services/caseResults'
 import type { ImportCorrectionResult } from '../../services/caseImports'
 import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
 import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
-import LeafletMap from '../../components/Map/LeafletMap'
-import { hypothesisMapAssetIds } from '../../components/Map/caseHypothesisMap'
 import { authApi } from '../../services/auth'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../../config/features'
@@ -625,29 +626,19 @@ const Cases: React.FC = () => {
     refetchInterval: query => ['pending', 'processing', 'degraded'].includes(query.state.data?.status ?? '') ? 3000 : false,
   })
 
-  const { data: automaticProfile } = useQuery({
-    queryKey: ['case-analysis-profile', selectedCase?.id],
-    queryFn: () => intelligenceFlowApi.getCaseAnalysisProfile(selectedCase!.id),
+  const { data: unifiedResult, isPending: resultLoading, error: resultError } = useQuery({
+    queryKey: ['case-unified-result', selectedCase?.id],
+    queryFn: () => caseResultsApi.latest(selectedCase!.id),
     enabled: !!selectedCase,
     retry: false,
-    refetchInterval: query => (
-      !query.state.data || ['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')
-        ? 5000
-        : false
-    ),
-  })
-
-  const { data: automaticInsights } = useQuery({
-    queryKey: ['case-automatic-insights', selectedCase?.id],
-    queryFn: () => intelligenceFlowApi.getCaseInsights(selectedCase!.id),
-    enabled: !!selectedCase,
-    retry: false,
+    gcTime: 0,
     refetchInterval: query => (
       !query.state.data
       || ['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')
-      || (automaticProfile && query.state.data.case_profile_id !== automaticProfile.id)
+      || query.state.data.freshness === 'pending_update'
+      || query.state.data.content.analysis_status === 'not_generated'
         ? 5000
-        : false
+        : 30000
     ),
   })
 
@@ -690,6 +681,7 @@ const Cases: React.FC = () => {
     mutationFn: caseApi.createCase,
     onSuccess: () => {
       message.success('创建成功')
+      queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
       setIsModalVisible(false)
       form.resetFields()
       queryClient.invalidateQueries({ queryKey: ['cases'] })
@@ -711,6 +703,7 @@ const Cases: React.FC = () => {
       caseApi.updateCase(id, data),
     onSuccess: () => {
       message.success('更新成功')
+      queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
       setIsModalVisible(false)
       setEditingCase(null)
       form.resetFields()
@@ -828,6 +821,7 @@ const Cases: React.FC = () => {
       caseApi.createCaseEvidence(selectedCase!.id, data),
     onSuccess: async () => {
       message.success('材料已归档')
+      queryClient.invalidateQueries({ queryKey: ['case-unified-result', selectedCase?.id] })
       setEvidenceModalVisible(false)
       evidenceForm.resetFields()
       await queryClient.invalidateQueries({ queryKey: ['case-evidence', selectedCase?.id] })
@@ -852,6 +846,7 @@ const Cases: React.FC = () => {
       caseApi.updateCaseLocation(data.id, { latitude: data.latitude, longitude: data.longitude }),
     onSuccess: async (_, variables) => {
       message.success('坐标已补录')
+      queryClient.invalidateQueries({ queryKey: ['case-unified-result', variables.id] })
       const remaining = (missingLocationCases || []).filter(item => item.id !== variables.id)
       const nextCase = remaining[0]
       setActiveLocationCaseId(nextCase?.id ?? null)
@@ -1860,75 +1855,16 @@ const Cases: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="detail-section case-auto-analysis">
-                    <div className="ds-head ds-head--split">
-                      <span>自动治理与双域候选</span>
-                      <span className="case-auto-analysis__version">
-                        {automaticInsights?.algorithm_version || automaticProfile?.schema_version || '后台生成中'}
-                      </span>
-                    </div>
-                    {automaticProfile?.payload.critical_gaps?.length ? (
-                      <div className="case-auto-analysis__gaps">
-                        <b>优先补充</b>
-                        <span>{automaticProfile.payload.critical_gaps.slice(0, 3).map(item => item.label).join('、')}</span>
-                      </div>
-                    ) : automaticProfile ? (
-                      <p className="narr">标准案件画像已生成，未发现需要优先补充的关键缺项。</p>
-                    ) : (
-                      <p className="narr">案件保存不受影响，标准画像正在后台生成。</p>
-                    )}
-                    {automaticInsights?.hypotheses?.length ? (
-                      <>
-                        <div className="case-auto-analysis__list">
-                          {automaticInsights.hypotheses.slice(0, 3).map(item => (
-                            <article key={item.id}>
-                              <header>
-                                <b>{String(item.rank).padStart(2, '0')}</b>
-                                <strong>{item.title}</strong>
-                                <em>{Math.round(item.confidence * 100)}%</em>
-                              </header>
-                              <p>{item.claim}</p>
-                              <small>支持：{item.supporting_evidence[0] || '暂无'}</small>
-                              <small className="counter">
-                                反向：{item.counter_evidence[0] || item.information_gaps[0] || '仍需现场核查'}
-                              </small>
-                            </article>
-                          ))}
-                        </div>
-                        <div style={{ marginTop: 12 }}>
-                          <div className="ds-head ds-head--split">
-                            <span>候选空间展开</span>
-                            <span className="case-auto-analysis__version">固定地图版本</span>
-                          </div>
-                          <LeafletMap
-                            height={320}
-                            operationalAreaId={selectedCase.operational_area_id ?? undefined}
-                            snapshotRef={automaticInsights.map_snapshot_id}
-                            productionAssetIds={hypothesisMapAssetIds(automaticInsights.hypotheses.slice(0, 3))}
-                            markers={selectedCase.latitude != null && selectedCase.longitude != null ? [{
-                              id: selectedCase.id,
-                              lat: selectedCase.latitude,
-                              lng: selectedCase.longitude,
-                              title: selectedCase.location || selectedCase.case_number,
-                              caseNumber: selectedCase.case_number,
-                              caseType: selectedCase.case_type || undefined,
-                              occurredTime: selectedCase.occurred_time,
-                              modus: selectedCase.modus_operandi || undefined,
-                            }] : []}
-                            hypothesisRegions={automaticInsights.hypotheses.slice(0, 3)}
-                          />
-                          <small className="case-auto-analysis__boundary">
-                            圆形仅表示待核验范围，虚线表示空间关系，不代表已确认路线或事实链条。
-                          </small>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="narr">{automaticInsights?.summary || '地图版本就绪后，系统会自动生成最多三项待核验候选。'}</p>
-                    )}
-                    <small className="case-auto-analysis__boundary">
-                      候选只供人工判断，不会写入正式案件事实，也不会自动生成执行任务。
-                    </small>
-                  </div>
+                  <CaseResultPanel
+                    key={selectedCase.id}
+                    caseId={selectedCase.id}
+                    result={unifiedResult}
+                    loading={resultLoading}
+                    error={!!resultError}
+                    errorStatus={(resultError as { status?: number } | null)?.status}
+                    map={unifiedResult && <CaseResultMap result={unifiedResult} operationalAreaId={selectedCase.operational_area_id ?? undefined} />}
+                    footer={unifiedResult && <Link to={`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`}>在报告中心查看此版本</Link>}
+                  />
 
                   {bonusAccountingEnabled && (
                     <div className="detail-section">

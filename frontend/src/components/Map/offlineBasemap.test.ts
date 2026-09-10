@@ -42,8 +42,27 @@ describe('shared basemap lifecycle', () => {
     let resolve!: (value: typeof config) => void
     vi.mocked(resolveMapTileConfig).mockReturnValue(new Promise(done => { resolve = done }))
     const stop = mountOfflineBasemap(f.map, { onStatus: f.status })
+    const signal = vi.mocked(resolveMapTileConfig).mock.calls[0][2]!
+    expect(signal.aborted).toBe(false)
     stop(); resolve(config); await flush()
+    expect(signal.aborted).toBe(true)
     expect(mocks.raster).not.toHaveBeenCalled()
+  })
+  it('retry cancels the old request and late completion cannot replace the new map', async () => {
+    const f = fixture()
+    let oldResolve!: (value: typeof config) => void
+    vi.mocked(resolveMapTileConfig).mockReturnValueOnce(new Promise(done => { oldResolve = done }))
+      .mockResolvedValueOnce(config)
+    const stop = mountOfflineBasemap(f.map, { onStatus: f.status })
+    const oldSignal = vi.mocked(resolveMapTileConfig).mock.calls[0][2]!
+    stop.retry(); await flush()
+    expect(oldSignal.aborted).toBe(true)
+    const newSignal = vi.mocked(resolveMapTileConfig).mock.calls[1][2]!
+    expect(newSignal.aborted).toBe(false)
+    oldResolve(config); await flush()
+    expect(mocks.raster).toHaveBeenCalledTimes(1)
+    stop()
+    expect(newSignal.aborted).toBe(true)
   })
   it('does not use a fallback whose manifest was not resolved', async () => {
     const f = fixture()

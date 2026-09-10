@@ -39,6 +39,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
 import { knowledgeApi } from '../../services/knowledge'
+import LatestCaseResult from '../../components/CaseResult/LatestCaseResult'
 import {
   AreaProfile,
   IntelligenceCounterItem,
@@ -430,11 +431,13 @@ const CaseIntelligence: React.FC = () => {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const [selectedCaseId, setSelectedCaseId] = useState<number | undefined>()
+  const [globalMode, setGlobalMode] = useState(false)
   const [days, setDays] = useState(365)
   const [limit, setLimit] = useState(8)
   const [knowledgeQuery, setKnowledgeQuery] = useState('')
   const [tagCurationResult, setTagCurationResult] = useState<TagCurationResult | null>(null)
   const [selectedExperienceAssetIds, setSelectedExperienceAssetIds] = useState<number[]>([])
+  const [legacyAnalysis, setLegacyAnalysis] = useState(false)
 
   const casesQuery = useQuery({
     queryKey: ['cases-for-intelligence'],
@@ -442,6 +445,7 @@ const CaseIntelligence: React.FC = () => {
   })
 
   useEffect(() => {
+    if (globalMode) return
     const caseIdFromUrl = Number(searchParams.get('caseId'))
     if (!selectedCaseId && Number.isFinite(caseIdFromUrl) && caseIdFromUrl > 0) {
       setSelectedCaseId(caseIdFromUrl)
@@ -450,10 +454,12 @@ const CaseIntelligence: React.FC = () => {
     if (!selectedCaseId && casesQuery.data?.length) {
       setSelectedCaseId(casesQuery.data[0].id)
     }
-  }, [casesQuery.data, searchParams, selectedCaseId])
+  }, [casesQuery.data, searchParams, selectedCaseId, globalMode])
 
   useEffect(() => {
     setSelectedExperienceAssetIds([])
+    setLegacyAnalysis(false)
+    setTagCurationResult(null)
   }, [selectedCaseId])
 
   const workbenchQuery = useQuery({
@@ -464,7 +470,7 @@ const CaseIntelligence: React.FC = () => {
       limit,
       radius_km: 1.5,
     }),
-    enabled: !casesQuery.isLoading,
+    enabled: !casesQuery.isLoading && (globalMode || (!!selectedCaseId && legacyAnalysis)),
   })
 
   const contextPackQuery = useQuery({
@@ -475,7 +481,7 @@ const CaseIntelligence: React.FC = () => {
       limit,
       radius_km: 1.5,
     }),
-    enabled: !casesQuery.isLoading,
+    enabled: !casesQuery.isLoading && (globalMode || (!!selectedCaseId && legacyAnalysis)),
   })
 
   const diagramQuery = useQuery({
@@ -625,7 +631,7 @@ const CaseIntelligence: React.FC = () => {
           <div className="intel-eyebrow">CASE INTELLIGENCE WORKBENCH</div>
           <Title level={1}>案件研判工作台</Title>
           <Paragraph>
-            围绕已破涉油案件沉淀时间、空间、车辆工具、现场防护和抓获经验，输出相似条件分析、风险区域画像、防控建议草案和复盘报告。
+            查看案件自动形成的事实摘要、候选解释和证据，与案件详情及报告中心使用同一份版本化成果。
           </Paragraph>
         </div>
         <div className="intel-hero-card">
@@ -643,7 +649,7 @@ const CaseIntelligence: React.FC = () => {
               allowClear
               placeholder="选择案件；清空后查看全局规律"
               value={selectedCaseId}
-              onChange={(value?: number) => setSelectedCaseId(value)}
+              onChange={(value?: number) => { setGlobalMode(!value); setSelectedCaseId(value) }}
               optionFilterProp="label"
               style={{ width: '100%' }}
               loading={casesQuery.isLoading}
@@ -656,6 +662,7 @@ const CaseIntelligence: React.FC = () => {
           <Col xs={12} lg={4}>
             <InputNumber
               min={30}
+              disabled={!!selectedCaseId && !legacyAnalysis}
               max={3650}
               value={days}
               addonBefore="时间窗"
@@ -667,6 +674,7 @@ const CaseIntelligence: React.FC = () => {
           <Col xs={12} lg={4}>
             <InputNumber
               min={3}
+              disabled={!!selectedCaseId && !legacyAnalysis}
               max={30}
               value={limit}
               addonBefore="条数"
@@ -676,11 +684,12 @@ const CaseIntelligence: React.FC = () => {
           </Col>
           <Col xs={24} lg={5}>
             <Space wrap>
-              <Button icon={<ApartmentOutlined />} onClick={() => setSelectedCaseId(undefined)}>
+              <Button icon={<ApartmentOutlined />} onClick={() => { setGlobalMode(true); setSelectedCaseId(undefined) }}>
                 全局研判
               </Button>
               <Button
                 type="primary"
+                disabled={!!selectedCaseId && !legacyAnalysis}
                 icon={<ReloadOutlined />}
                 loading={workbenchQuery.isFetching}
                 onClick={() => workbenchQuery.refetch()}
@@ -689,7 +698,7 @@ const CaseIntelligence: React.FC = () => {
               </Button>
               <Button
                 icon={<TagsOutlined />}
-                disabled={!selectedCaseId}
+                disabled={!selectedCaseId || !legacyAnalysis}
                 loading={tagCurationMutation.isPending}
                 onClick={() => tagCurationMutation.mutate(false)}
               >
@@ -698,7 +707,7 @@ const CaseIntelligence: React.FC = () => {
             </Space>
           </Col>
         </Row>
-        <Row gutter={[12, 12]} className="intel-search-row">
+        {(!selectedCaseId || legacyAnalysis) && <Row gutter={[12, 12]} className="intel-search-row">
           <Col xs={24} lg={16}>
             <Input.Search
               allowClear
@@ -711,8 +720,17 @@ const CaseIntelligence: React.FC = () => {
           <Col xs={24} lg={8}>
             <Text type="secondary">检索结果只返回带来源的事实、经验和引用，不直接生成结论。</Text>
           </Col>
-        </Row>
+        </Row>}
       </Card>
+
+      {selectedCaseId && <>
+        <LatestCaseResult key={selectedCaseId} caseId={selectedCaseId} />
+        <Button onClick={() => setLegacyAnalysis(value => !value)} aria-expanded={legacyAnalysis}>
+          {legacyAnalysis ? '收起旧版分析工具' : '打开旧版分析工具（兼容）'}
+        </Button>
+        {legacyAnalysis && <Alert type="warning" showIcon message="旧版动态分析与历史经验工具"
+          description="下方内容按旧接口即时计算，不是上方冻结成果；时间窗及条数仅作用于旧版工具，不改变统一成果或其版本。" />}
+      </>}
 
       {knowledgeQuery && (
         <Card
@@ -801,7 +819,7 @@ const CaseIntelligence: React.FC = () => {
         </Card>
       )}
 
-      {workbenchQuery.isLoading ? (
+      {selectedCaseId && !legacyAnalysis ? null : workbenchQuery.isLoading ? (
         <div className="intel-loading"><Spin /> 正在汇聚案件、地图参考与油区业务资产…</div>
       ) : !workbench ? (
         <Empty description="暂无研判数据" />

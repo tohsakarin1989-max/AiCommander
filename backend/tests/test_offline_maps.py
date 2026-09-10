@@ -416,6 +416,51 @@ def test_map_snapshot_can_roll_back_to_previous_version(client: TestClient, db_s
     assert current["snapshot_id"] == snapshots[0]["id"]
 
 
+def test_public_map_publish_and_rollback_preserve_verified_internal_roads(client, db_session, tmp_path):
+    from app.models.map_foundation import MapSource
+    from app.models.user import User
+    from test_map_foundation import _client
+    from test_internal_road_import import collection, feature
+
+    area = _default_area(db_session)
+    db_session.add(User(id=1, username='internal-road-test', password_hash='not-a-login',
+        display_name='合成测试管理员', role='admin', is_active=True))
+    db_session.add(MapSource(id=1, source_key='private-roads', name='内部道路',
+        source_type='internal_gis', operational_area_id=area.id))
+    db_session.commit()
+    db_session.info['authorized_area_ids'] = (area.id,)
+    db_session.info['area_access_levels'] = {area.id: 'manage'}
+    roads = _client(db_session)
+    base = '/api/map-sources/1/roads'
+    road = feature()
+    road['properties']['conditions'] = {'gate': 'closed'}
+    imported = roads.post(base + '/ingest', json=collection(road))
+    assert imported.status_code == 201
+    batch = imported.json()
+    review = roads.post(f"{base}/imports/{batch['id']}/features/road-1/reviews", json={
+        'input_sha256': batch['input_sha256'], 'request_key': 'public-update-001',
+        'decision': 'verified', 'note': '合成内部资料', 'evidence_reference': '合成台账第1页'})
+    assert review.status_code == 201
+    baseline = roads.get(base + '/catalog').json()
+    original_batch = roads.get(f"{base}/imports/{batch['id']}").json()
+    assert baseline['items'][0]['last_verified_import_id'] == batch['id']
+    snapshots = []
+    for version in ('public-road-test-v1', 'public-road-test-v2'):
+        bundle = _import_bundle(client, tmp_path, bundle_id=version)
+        built = client.post('/api/map-snapshots/build', json={
+            'operational_area_id': area.id, 'public_bundle_id': bundle['id']})
+        assert built.status_code == 201
+        snapshot_id = built.json()['id']
+        assert client.post(f'/api/map-snapshots/{snapshot_id}/publish').status_code == 200
+        assert client.get('/api/maps/current/manifest').json()['snapshot_id'] == snapshot_id
+        assert roads.get(base + '/catalog').json() == baseline
+        assert roads.get(f"{base}/imports/{batch['id']}").json() == original_batch
+        snapshots.append(snapshot_id)
+    assert client.post(f'/api/map-snapshots/{snapshots[0]}/rollback').status_code == 200
+    assert roads.get(base + '/catalog').json() == baseline
+    assert roads.get(f"{base}/imports/{batch['id']}").json() == original_batch
+
+
 def test_snapshot_layers_freeze_production_features(client: TestClient, db_session: Session, tmp_path):
     area = _default_area(db_session)
     asset = JurisdictionAsset(

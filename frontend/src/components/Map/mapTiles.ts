@@ -74,15 +74,22 @@ function mapBounds(value: unknown): [[number, number], [number, number]] | undef
 export async function resolveMapTileConfig(
   operationalAreaId?: number,
   snapshotRef = 'current',
+  signal?: AbortSignal,
 ): Promise<ResolvedMapTileConfig> {
   const suffix = operationalAreaId != null
     ? `?operational_area_id=${encodeURIComponent(String(operationalAreaId))}`
     : ''
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) controller.abort()
+  const timeout = setTimeout(abort, 10000)
   try {
     const encodedSnapshot = encodeURIComponent(snapshotRef)
     const response = await fetch(`/api/maps/${encodedSnapshot}/manifest${suffix}`, {
       cache: 'no-store',
       credentials: 'same-origin',
+      signal: controller.signal,
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const manifest = await response.json() as MapManifest
@@ -148,6 +155,9 @@ export async function resolveMapTileConfig(
       manifestResolved: false,
       options: MAP_TILE_OPTIONS,
     }
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
   }
 }
 

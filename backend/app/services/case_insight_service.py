@@ -138,6 +138,9 @@ class CaseInsightService:
             )
             if existing:
                 CaseInsightService._activate_run_hypotheses(db, existing)
+                from app.services.case_result_service import CaseResultService
+
+                CaseResultService.freeze_completed_inputs(db, profile, existing)
                 OutboxClaimService.finish(
                     db,
                     event_id=event.id,
@@ -221,6 +224,9 @@ class CaseInsightService:
                     )
                 )
             run.completed_at = datetime.now(timezone.utc)
+            from app.services.case_result_service import CaseResultService
+
+            CaseResultService.freeze_completed_inputs(db, profile, run)
             OutboxClaimService.finish(
                 db,
                 event_id=event.id,

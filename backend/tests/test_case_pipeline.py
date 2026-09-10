@@ -70,6 +70,32 @@ def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Ses
     assert db_session.query(CaseAnalysisProfile).count() == 0
 
 
+@pytest.mark.parametrize("status", ["pending", "processing", "degraded"])
+@pytest.mark.parametrize("version_field", ["schema_version", "dictionary_version"])
+def test_rule_upgrade_does_not_discard_request_for_unchanged_case(
+    db_session: Session, status: str, version_field: str,
+):
+    case = _create_case(db_session)
+    original_description = case.description
+    state = db_session.query(CasePipelineState).one()
+    old_event = db_session.query(OutboxEvent).one()
+    state.status = status
+    setattr(state, version_field, "previous-version")
+    old_event.payload = {**old_event.payload, version_field: "previous-version"}
+    db_session.commit()
+
+    new_event = CasePipelineService.enqueue_case_change(db_session, case)
+    assert new_event is not None
+    assert new_event.id != old_event.id
+    db_session.commit()
+    assert CasePipelineService.enqueue_case_change(db_session, case) is None
+    assert CasePipelineService.process_event(db_session, old_event.id)["status"] == "superseded"
+    assert CasePipelineService.process_event(db_session, new_event.id)["status"] == "completed"
+    profile = db_session.query(CaseAnalysisProfile).one()
+    assert getattr(profile, version_field) == new_event.payload[version_field]
+    assert case.description == original_description
+
+
 def test_expired_processing_lease_is_recovered(db_session: Session):
     _create_case(db_session)
     event = db_session.query(OutboxEvent).one()
@@ -87,6 +113,42 @@ def test_expired_processing_lease_is_recovered(db_session: Session):
     assert event.attempts == 2
     assert event.lease_until is None
     assert event.worker_id is None
+
+
+def test_saved_case_semantics_are_derived_and_frozen_per_profile(db_session: Session):
+    case = _create_case(db_session)
+    event = db_session.query(OutboxEvent).one()
+    CasePipelineService.process_event(db_session, event.id)
+    old_profile = db_session.query(CaseAnalysisProfile).one()
+    frozen = old_profile.payload["semantics"]["source_snapshot"]
+    assert old_profile.payload["semantics"]["method"] == "local_dictionary_rules"
+    assert any(item["value"] == "原油" for item in old_profile.payload["semantics"]["assertions"])
+    original = case.description
+    case.description = "未发现罐车。原油没有丢失。"
+    new_event = CasePipelineService.enqueue_case_change(db_session, case)
+    db_session.commit()
+    CasePipelineService.process_event(db_session, new_event.id)
+    current = db_session.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.is_current.is_(True)).one()
+    assert current.id != old_profile.id
+    assert current.payload["semantics"]["source_snapshot"]["sha256"] != frozen["sha256"]
+    assert next(item for item in frozen["fields"] if item["field"] == "description")["text"] == original
+    assert case.description == "未发现罐车。原油没有丢失。"
+    assert CasePipelineService.enqueue_case_change(db_session, case) is None
+
+
+def test_pipeline_includes_json_paths_without_changing_structured_case_fields(db_session: Session):
+    case = _create_case(db_session)
+    case.vehicle_info = [{"type": "罐车", "套牌": False}]
+    case.involved_items = {"名称": "胶管", "数量": 2}
+    event = CasePipelineService.enqueue_case_change(db_session, case)
+    db_session.commit()
+    CasePipelineService.process_event(db_session, event.id)
+    profile = db_session.query(CaseAnalysisProfile).one()
+    entries = profile.payload["semantics"]["structured_sources"]["entries"]
+    assert any(item["reference"]["path"] == [0, "type"] for item in entries)
+    assert any(item["reference"]["path"] == ["数量"] for item in entries)
+    assert case.vehicle_info == [{"type": "罐车", "套牌": False}]
+    assert case.involved_items == {"名称": "胶管", "数量": 2}
 
 
 def test_pipeline_generates_versioned_profile_without_overwriting_case(db_session: Session):
