@@ -15,11 +15,12 @@ from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilReco
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
 from app.models.map_foundation import OperationalArea
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_semantic_service import SEMANTIC_RULE_VERSION, TEXT_FIELDS, build_semantic_profile
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 
 
-CASE_PROFILE_SCHEMA_VERSION = "3.3.0"
-CASE_DICTIONARY_VERSION = "oil-case-2026.09"
+CASE_PROFILE_SCHEMA_VERSION = "4.1.0"
+CASE_DICTIONARY_VERSION = SEMANTIC_RULE_VERSION
 ANALYSIS_RELEVANT_FIELDS = {
     "case_number",
     "occurred_time",
@@ -536,6 +537,7 @@ class CasePipelineService:
             "case_id": case.id,
             "case_number": case.case_number,
             "source_hash": CasePipelineService.source_hash(db, case),
+            "semantics": build_semantic_profile({field: getattr(case, field) for field in TEXT_FIELDS}),
             "spatial_grid": CasePipelineService._spatial_grid(case.latitude, case.longitude),
             "standard": {
                 "occurred_time": CasePipelineService._json_value(case.occurred_time),

@@ -115,6 +115,27 @@ def test_expired_processing_lease_is_recovered(db_session: Session):
     assert event.worker_id is None
 
 
+def test_saved_case_semantics_are_derived_and_frozen_per_profile(db_session: Session):
+    case = _create_case(db_session)
+    event = db_session.query(OutboxEvent).one()
+    CasePipelineService.process_event(db_session, event.id)
+    old_profile = db_session.query(CaseAnalysisProfile).one()
+    frozen = old_profile.payload["semantics"]["source_snapshot"]
+    assert old_profile.payload["semantics"]["method"] == "local_dictionary_rules"
+    assert any(item["value"] == "原油" for item in old_profile.payload["semantics"]["assertions"])
+    original = case.description
+    case.description = "未发现罐车。原油没有丢失。"
+    new_event = CasePipelineService.enqueue_case_change(db_session, case)
+    db_session.commit()
+    CasePipelineService.process_event(db_session, new_event.id)
+    current = db_session.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.is_current.is_(True)).one()
+    assert current.id != old_profile.id
+    assert current.payload["semantics"]["source_snapshot"]["sha256"] != frozen["sha256"]
+    assert next(item for item in frozen["fields"] if item["field"] == "description")["text"] == original
+    assert case.description == "未发现罐车。原油没有丢失。"
+    assert CasePipelineService.enqueue_case_change(db_session, case) is None
+
+
 def test_pipeline_generates_versioned_profile_without_overwriting_case(db_session: Session):
     case = _create_case(db_session)
     original = {
