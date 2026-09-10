@@ -1523,6 +1523,35 @@
 }
 
 @media (max-width: 760px) {
+  .page-cases .cases-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: auto;
+    align-content: start;
+  }
+
+  .page-cases .cases-main {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .page-cases .cases-split {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .page-cases .case-detail {
+    min-width: 0;
+    order: -1;
+    overflow: visible;
+  }
+
+  .page-cases .tools-bar { grid-template-columns: minmax(0, 1fr); }
+  .page-cases .tools-bar-right { flex-wrap: wrap; }
+  .page-cases .search input { min-width: 0; }
+  .page-cases .detail-actions { flex-wrap: wrap; }
+
   .cases-bonus-scope-grid {
     grid-template-columns: 1fr;
   }

@@ -9,6 +9,7 @@ import tempfile
 def main():
     if os.environ.get('AIC_DISPOSABLE_SHOWCASE') != '1':
         raise RuntimeError('explicit_disposable_test_required')
+    semantic_fixture = os.environ.get('AIC_SEMANTIC_FIXTURE') == '1'
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
     with tempfile.TemporaryDirectory(prefix='aic-showcase-http-') as directory:
         os.chdir(directory)
@@ -32,6 +33,24 @@ def main():
             AuthService.create_user(db, username='showcase-check', display_name='隔离展示验证',
                 password='Disposable-showcase-0910!', role='admin')
             db.commit()
+            if semantic_fixture:
+                from datetime import datetime, timezone
+                from app.services.case_service import CaseService
+                from app.services.case_pipeline_service import CasePipelineService
+                from app.models.case_pipeline import CaseAnalysisProfile
+                case = CaseService.create_case(
+                    db=db, case_number='SYNTHETIC-SEMANTIC-001',
+                    occurred_time=datetime(2026, 9, 10, 14, tzinfo=timezone.utc),
+                    location='合成测试区域，无真实坐标', case_type='涉油测试',
+                    description='未发现罐车，但是发现货车。夜里查获胶管。2026年9月10日22时至2026年9月11日2时。',
+                    vehicle_info=[{'type': '货车', '套牌': False}],
+                    involved_items={'名称': '胶管', '数量': 2},
+                    upstream_source='合成区域测试井', downstream_destination='可能去往合成测试区域',
+                )
+                CasePipelineService.process_pending(db)
+                profile = db.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.case_id == case.id).one()
+                assert profile.payload['semantics']['time_intervals']
+                assert profile.payload['semantics']['structured_sources']['entries']
         import uvicorn
         from app.main import app
         try:
