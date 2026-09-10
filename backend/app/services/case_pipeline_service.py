@@ -100,6 +100,8 @@ class CasePipelineService:
         if (
             state is not None
             and state.source_hash == source_hash
+            and state.schema_version == CASE_PROFILE_SCHEMA_VERSION
+            and state.dictionary_version == CASE_DICTIONARY_VERSION
             and state.status in {"pending", "processing", "degraded"}
         ):
             return None

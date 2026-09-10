@@ -70,6 +70,32 @@ def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Ses
     assert db_session.query(CaseAnalysisProfile).count() == 0
 
 
+@pytest.mark.parametrize("status", ["pending", "processing", "degraded"])
+@pytest.mark.parametrize("version_field", ["schema_version", "dictionary_version"])
+def test_rule_upgrade_does_not_discard_request_for_unchanged_case(
+    db_session: Session, status: str, version_field: str,
+):
+    case = _create_case(db_session)
+    original_description = case.description
+    state = db_session.query(CasePipelineState).one()
+    old_event = db_session.query(OutboxEvent).one()
+    state.status = status
+    setattr(state, version_field, "previous-version")
+    old_event.payload = {**old_event.payload, version_field: "previous-version"}
+    db_session.commit()
+
+    new_event = CasePipelineService.enqueue_case_change(db_session, case)
+    assert new_event is not None
+    assert new_event.id != old_event.id
+    db_session.commit()
+    assert CasePipelineService.enqueue_case_change(db_session, case) is None
+    assert CasePipelineService.process_event(db_session, old_event.id)["status"] == "superseded"
+    assert CasePipelineService.process_event(db_session, new_event.id)["status"] == "completed"
+    profile = db_session.query(CaseAnalysisProfile).one()
+    assert getattr(profile, version_field) == new_event.payload[version_field]
+    assert case.description == original_description
+
+
 def test_expired_processing_lease_is_recovered(db_session: Session):
     _create_case(db_session)
     event = db_session.query(OutboxEvent).one()
