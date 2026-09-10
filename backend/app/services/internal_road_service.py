@@ -81,6 +81,12 @@ def read_import(db, source_id, import_id):
         for feature in record.features
     }
     result["entrance_checks"] = entrance_checks(db, record)
+    for item in result["entrance_checks"]:
+        review = latest.get(item["entrance_id"])
+        evidence = review.connection_evidence if review and review.decision == "verified" else None
+        item["recorded_connection_evidence"] = evidence
+        item["connection_review_id"] = review.id if evidence else None
+        # 来源核验证据与路网构建结果分开，不把记录当作已经生成了可通行连接。
     return result
 
 
@@ -239,6 +245,7 @@ def describe_review(record):
             "sequence": record.sequence, "decision": record.decision, "note": record.note,
             "evidence_reference": record.evidence_reference, "created_by": record.created_by,
             "created_at": record.created_at.isoformat(), "routing_available": False,
+            "connection_evidence": record.connection_evidence,
             "boundary": "仅核验来源资料，不代表已连接路网或拥有通行许可"}
 
 
@@ -249,10 +256,19 @@ def review_feature(db, source_id, import_id, feature_id, data, actor_id):
         raise LookupError("道路版本或要素不存在")
     if data["input_sha256"] != record.input_sha256:
         raise RoadReviewConflict("来源版本已变化，请重新读取后核验")
+    connection = data.get("connection_evidence")
+    if connection is not None:
+        check = next((item for item in entrance_checks(db, record) if item["entrance_id"] == feature_id), None)
+        if (data["decision"] != "verified" or check is None or check["status"] in
+                ("declared_road_missing", "declared_target_not_road")):
+            raise ValueError("连接证据只用于有明确道路来源的入口核验")
+        if (connection["road_import_id"] != check["road_import_id"]
+                or connection["road_source_sha256"] != check["road_source_sha256"]):
+            raise RoadReviewConflict("道路来源版本不匹配，请重新核对入口")
     query = db.query(InternalRoadReview).filter_by(import_id=import_id, feature_id=feature_id)
     repeated = query.filter_by(request_key=data["request_key"]).first()
     if repeated:
-        if (repeated.created_by != actor_id or any(getattr(repeated, key) != data[key]
+        if (repeated.created_by != actor_id or repeated.connection_evidence != connection or any(getattr(repeated, key) != data[key]
                 for key in ("decision", "note", "evidence_reference"))):
             raise RoadReviewConflict("重复请求标识对应不同决定")
         return describe_review(repeated), False
@@ -263,7 +279,7 @@ def review_feature(db, source_id, import_id, feature_id, data, actor_id):
         import_id=import_id, operational_area_id=record.operational_area_id, feature_id=feature_id,
         sequence=(previous.sequence if previous else 0) + 1,
         request_key=data["request_key"], decision=data["decision"], note=data["note"],
-        evidence_reference=data["evidence_reference"], created_by=actor_id,
+        evidence_reference=data["evidence_reference"], created_by=actor_id, connection_evidence=connection,
     )
     try:
         with db.begin_nested():

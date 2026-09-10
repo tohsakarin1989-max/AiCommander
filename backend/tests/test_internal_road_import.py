@@ -182,7 +182,7 @@ def test_incremental_road_migration_and_rollback(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO operational_areas (id, code, name, is_default, status) "
                                 "VALUES (991, 'migration-marker', '保留原数据', 0, 'active')"))
-    command.upgrade(config, "3df0a64979d4")
+    command.upgrade(config, "4ef1b75a80e5")
     assert "internal_road_imports" in inspect(engine).get_table_names()
     assert "internal_road_feature_versions" in inspect(engine).get_table_names()
     assert "internal_road_reviews" in inspect(engine).get_table_names()
@@ -192,7 +192,7 @@ def test_incremental_road_migration_and_rollback(tmp_path, monkeypatch):
     assert "internal_road_imports" not in inspect(engine).get_table_names()
     with engine.connect() as connection:
         assert connection.execute(text("SELECT name FROM operational_areas WHERE id=991")).scalar() == "保留原数据"
-    command.upgrade(config, "3df0a64979d4")
+    command.upgrade(config, "4ef1b75a80e5")
     engine.dispose()
 
 
@@ -285,6 +285,24 @@ def test_catalog_migration_backfills_multiple_pages_without_changing_sources(tmp
             assert len(repeated) == 53
             assert all(row.source_id == 1 and row.operational_area_id == 991 for row in repeated)
         command.downgrade(config, "2cef953868c3")
+    # 升级前已有核验不能被默认转换成连接结论；回退保留原核验说明。
+    from sqlalchemy import MetaData, Table
+    old_reviews = Table("internal_road_reviews", MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(old_reviews.insert().values(import_id=original[0][0], operational_area_id=991,
+            feature_id="重复道路", sequence=1, request_key="old-review-0001", decision="verified",
+            note="仅核验来源台账", evidence_reference="合成旧台账", created_by=1))
+    command.upgrade(config, "4ef1b75a80e5")
+    new_reviews = Table("internal_road_reviews", MetaData(), autoload_with=engine)
+    with engine.connect() as connection:
+        stored = connection.execute(select(new_reviews)).mappings().one()
+        assert stored["connection_evidence"] is None
+        assert stored["note"] == "仅核验来源台账"
+        assert stored["decision"] == "verified"
+    command.downgrade(config, "3df0a64979d4")
+    with engine.connect() as connection:
+        stored = connection.execute(select(old_reviews)).mappings().one()
+        assert stored["note"] == "仅核验来源台账" and stored["evidence_reference"] == "合成旧台账"
     engine.dispose()
 
 
@@ -315,6 +333,27 @@ def test_entrance_checks_pin_declared_road_and_do_not_use_future_or_nearest(db_s
     assert client.post(f"{base}/ingest", json=collection(feature("future-road"))).status_code == 201
     later = {item["entrance_id"]: item for item in client.get(url).json()["entrance_checks"]}
     assert later == checks  # 新增未来道路不能倒灌历史入口检查。
+    assert client.get(url).json()["features"] == payload["features"]
+    review_url = f"{url}/features/endpoint/reviews"
+    data = {"input_sha256": imported["input_sha256"], "request_key": "connection-0001",
+            "decision": "verified", "note": "合成控制样本的连接核查，非通行许可", "evidence_reference": "合成核查记录1",
+            "connection_evidence": {"road_import_id": first["id"], "road_source_sha256": first["input_sha256"], "status": "connected"}}
+    bad = {**data, "connection_evidence": {**data["connection_evidence"], "road_import_id": imported["id"]}}
+    assert client.post(review_url, json=bad).status_code == 409
+    verified = client.post(review_url, json=data)
+    assert verified.status_code == 201
+    assert client.post(review_url, json=data).status_code == 200
+    checks = {item["entrance_id"]: item for item in client.get(url).json()["entrance_checks"]}
+    assert checks["endpoint"]["recorded_connection_evidence"] == data["connection_evidence"]
+    assert checks["endpoint"]["connected"] is None
+    assert not checks["endpoint"]["routing_available"]
+    assert client.post(f"{url}/features/missing/reviews", json=data).status_code == 422
+    assert client.post(review_url, json={**data, "connection_evidence": {**data["connection_evidence"], "status": "disconnected"}}).status_code == 409
+    revoked = client.post(review_url, json={**data, "request_key": "connection-0002", "decision": "pending_verification",
+        "previous_review_id": verified.json()["id"], "connection_evidence": None})
+    assert revoked.status_code == 201
+    checks = {item["entrance_id"]: item for item in client.get(url).json()["entrance_checks"]}
+    assert checks["endpoint"]["recorded_connection_evidence"] is None
     assert client.get(url).json()["features"] == payload["features"]
 
 

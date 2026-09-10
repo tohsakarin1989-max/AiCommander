@@ -6,6 +6,19 @@ vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 beforeEach(() => vi.resetAllMocks())
 
 describe('内部道路接口契约', () => {
+  it('入口连接证据绑定后端返回的道路版本，缺失版本不得提交', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: {} })
+    const record = { id: 3, input_sha256: 'a'.repeat(64), entrance_checks: [{ entrance_id: 'entry',
+      road_import_id: 2, road_source_sha256: 'b'.repeat(64) }] } as RoadImport
+    const feature = { id: 'entry' } as RoadFeature
+    await internalRoadsApi.review(1, record, feature, 'verified', '核对记录', '合成依据', 'connected')
+    expect(vi.mocked(api.post).mock.calls[0][1]).toMatchObject({ connection_evidence: {
+      road_import_id: 2, road_source_sha256: 'b'.repeat(64), status: 'connected',
+    } })
+    await expect(internalRoadsApi.review(1, record, feature, 'pending_verification', '备注', '依据', 'connected')).rejects.toThrow()
+    await expect(internalRoadsApi.review(1, { ...record, entrance_checks: [] }, feature, 'verified', '备注', '依据', 'connected')).rejects.toThrow()
+    expect(api.post).toHaveBeenCalledTimes(1)
+  })
   it('目录按来源编号游标查询并传递取消信号', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: {} })
     const signal = new AbortController().signal

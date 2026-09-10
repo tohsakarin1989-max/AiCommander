@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Start the full authenticated API with disposable synthetic-only storage."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -10,7 +11,9 @@ def main():
     if os.environ.get('AIC_DISPOSABLE_SHOWCASE') != '1':
         raise RuntimeError('explicit_disposable_test_required')
     semantic_fixture = os.environ.get('AIC_SEMANTIC_FIXTURE') == '1'
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+    map_fixture = os.environ.get('AIC_PUBLIC_MAP_FIXTURE') == '1'
+    repository = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repository / 'backend'))
     with tempfile.TemporaryDirectory(prefix='aic-showcase-http-') as directory:
         os.chdir(directory)
         retained = {key: os.environ[key] for key in ('PATH', 'LANG', 'TMPDIR', 'FONTCONFIG_FILE') if key in os.environ}
@@ -51,10 +54,36 @@ def main():
                 profile = db.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.case_id == case.id).one()
                 assert profile.payload['semantics']['time_intervals']
                 assert profile.payload['semantics']['structured_sources']['entries']
+            if map_fixture:
+                from app.config import settings
+                from app.models.map_foundation import OperationalArea
+                from app.services.map_package_set import read_manifest
+                from app.services.map_package_import_service import create_import, put_chunk, submit_import
+                from app.services.map_package_import_worker import process_next
+                from app.services.map_auto_publication import publish_next
+                source = repository / 'backups/map-foundation/v4-source/20260908/complete-candidate-v2/transport'
+                manifest = read_manifest(source)
+                area = db.query(OperationalArea).filter(OperationalArea.is_default.is_(True)).one()
+                w, s, e, n = manifest['bounds']
+                area.boundary = {'type': 'Polygon', 'coordinates': [[[w,s],[e,s],[e,n],[w,n],[w,s]]]}
+                db.commit()
+                run = create_import(db, json.dumps(manifest).encode(), user_id=1)
+                for asset in manifest['assets']:
+                    for chunk in asset['chunks']:
+                        put_chunk(db, run.id, chunk['file'], (source / chunk['file']).read_bytes())
+                submit_import(db, run.id)
+                validated = process_next(db)
+                assert validated['status'] == 'render_validated', validated
+                settings.MAP_AUTO_PUBLISH_AREA_IDS = str(area.id)
+                publication = publish_next(db)
+                assert publication['areas'][0]['status'] == 'published', publication
+                print('isolated_public_map_published', flush=True)
         import uvicorn
         from app.main import app
         try:
-            uvicorn.run(app, host='127.0.0.1', port=18050)
+            # The browser helper captures but does not drain child stdout. Tile
+            # access logs can fill that pipe; keep errors, suppress request spam.
+            uvicorn.run(app, host='127.0.0.1', port=18050, access_log=False)
         finally:
             engine.dispose()
 

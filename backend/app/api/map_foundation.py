@@ -29,6 +29,13 @@ def _road_admin(request: Request):
     return principal
 
 
+class EntranceConnectionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    road_import_id: int = Field(gt=0)
+    road_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["connected", "disconnected", "unknown"]
+
+
 class InternalRoadReviewCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -38,6 +45,7 @@ class InternalRoadReviewCreate(BaseModel):
     decision: Literal["verified", "rejected", "pending_verification"]
     note: str = Field(min_length=1, max_length=2000)
     evidence_reference: str = Field(min_length=1, max_length=500)
+    connection_evidence: EntranceConnectionEvidence | None = None
 
 
 @router.post("/map-sources/{source_id}/roads/imports/{import_id}/features/{feature_id}/reviews")

@@ -152,17 +152,29 @@ function RoadReviewForm({ source, record, feature, refresh }: {
     {record.warnings.filter(item => item.source_feature_id === feature.id).flatMap(item => item.warnings)
       .map(warning => <Typography.Paragraph key={warning}>{warning}</Typography.Paragraph>)}
     {record.entrance_checks?.filter(item => item.entrance_id === feature.id).map(item => <Alert key={item.entrance_id}
-      type="warning" showIcon message={entranceLabels[item.status] ?? '入口关联状态未知，请核验'}
+      type="warning" showIcon message={review?.connection_evidence ? '自动位置检查结果（人工连接记录见下方）'
+        : entranceLabels[item.status] ?? '入口关联状态未知，请核验'}
       description={<span>声明道路：{item.declared_road_id}；来源批次：{item.road_import_id ?? '未找到'}。{item.boundary}</span>} />)}
     {review && <Typography.Paragraph>最近核验：{labels[review.decision]}；{review.note}；依据：{review.evidence_reference}</Typography.Paragraph>}
+    {review?.connection_evidence && <Typography.Paragraph>该次连接记录：{
+      { connected: '连接已核验', disconnected: '不连接已核验', unknown: '仍未知' }[review.connection_evidence.status]
+    }；道路批次 {review.connection_evidence.road_import_id}。不代表通行许可。</Typography.Paragraph>}
     {error && <Alert type="error" message={error} />}
-    <Form layout="vertical" disabled={busy} onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string }) => {
+    <Form layout="vertical" disabled={busy} onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string;
+      connection?: 'connected' | 'disconnected' | 'unknown' }) => {
       setBusy(true); setError('')
-      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence); refresh() }
+      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence, values.connection); refresh() }
       catch { setError('核验未确认成功。请刷新批次后查看当前决定，再提交；不覆盖他人的核验。') }
       finally { setBusy(false) }
     }}>
       <Form.Item label="核验决定" name="decision" rules={[{ required: true }]}><Select options={Object.entries(labels).map(([value, label]) => ({ value, label }))} /></Form.Item>
+      {feature.properties.kind === 'entrance' && <Form.Item label="入口连接记录（可选，仅资料已核验时填写）" name="connection"
+        extra="依据和说明必须支持该连接记录；这不会自动生成道路或授予通行许可。">
+        <Select allowClear placeholder="不额外记录连接结论" options={[
+          { value: 'connected', label: '连接已核验' }, { value: 'disconnected', label: '不连接已核验' },
+          { value: 'unknown', label: '连接仍未知' },
+        ]} />
+      </Form.Item>}
       <Form.Item label="核验依据（台账、核查记录等）" name="evidence" rules={[{ required: true, whitespace: true }]}><Input maxLength={500} /></Form.Item>
       <Form.Item label="核验说明" name="note" rules={[{ required: true, whitespace: true }]}><Input.TextArea maxLength={2000} rows={3} /></Form.Item>
       <Button htmlType="submit" type="primary" loading={busy}>记录核验决定</Button>

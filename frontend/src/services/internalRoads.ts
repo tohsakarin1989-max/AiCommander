@@ -13,6 +13,7 @@ export interface RoadReview {
   evidence_reference: string
   created_by: number
   created_at: string
+  connection_evidence?: { road_import_id: number; road_source_sha256: string; status: 'connected' | 'disconnected' | 'unknown' } | null
 }
 export interface RoadImport {
   id: number
@@ -64,10 +65,17 @@ export const internalRoadsApi = {
     (await api.get<RoadImportPage>(`${root(source)}/imports`, { params: { before_id: before, limit: 20 }, signal })).data,
   read: async (source: number, id: number, signal?: AbortSignal) =>
     (await api.get<RoadImport>(`${root(source)}/imports/${id}`, { signal })).data,
-  review: async (source: number, record: RoadImport, feature: RoadFeature, decision: RoadReview['decision'], note: string, evidence: string) =>
-    (await api.post<RoadReview>(`${root(source)}/imports/${record.id}/features/${encodeURIComponent(feature.id)}/reviews`, {
+  review: async (source: number, record: RoadImport, feature: RoadFeature, decision: RoadReview['decision'], note: string, evidence: string,
+    connectionStatus?: 'connected' | 'disconnected' | 'unknown') => {
+    const check = record.entrance_checks?.find(item => item.entrance_id === feature.id)
+    if (connectionStatus && (decision !== 'verified' || !check?.road_import_id || !check.road_source_sha256))
+      throw new Error('入口连接记录缺少已核验决定或绑定道路版本')
+    return (await api.post<RoadReview>(`${root(source)}/imports/${record.id}/features/${encodeURIComponent(feature.id)}/reviews`, {
       input_sha256: record.input_sha256, request_key: crypto.randomUUID(),
       previous_review_id: record.feature_reviews?.[feature.id]?.id ?? null,
       decision, note, evidence_reference: evidence,
-    })).data,
+      ...(connectionStatus ? { connection_evidence: { road_import_id: check!.road_import_id,
+        road_source_sha256: check!.road_source_sha256, status: connectionStatus } } : {}),
+    })).data
+  },
 }

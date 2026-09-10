@@ -38,6 +38,7 @@ class InternalRoadReview(Base):
     decision = Column(String(30), nullable=False)
     note = Column(String(2000), nullable=False)
     evidence_reference = Column(String(500), nullable=False)
+    connection_evidence = Column(JSON, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
