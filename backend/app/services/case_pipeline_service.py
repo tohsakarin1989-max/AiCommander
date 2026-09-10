@@ -537,7 +537,10 @@ class CasePipelineService:
             "case_id": case.id,
             "case_number": case.case_number,
             "source_hash": CasePipelineService.source_hash(db, case),
-            "semantics": build_semantic_profile({field: getattr(case, field) for field in TEXT_FIELDS}),
+            "semantics": build_semantic_profile(
+                {field: getattr(case, field) for field in TEXT_FIELDS},
+                structured={"vehicle_info": case.vehicle_info, "involved_items": case.involved_items},
+            ),
             "spatial_grid": CasePipelineService._spatial_grid(case.latitude, case.longitude),
             "standard": {
                 "occurred_time": CasePipelineService._json_value(case.occurred_time),

@@ -46,3 +46,20 @@ def test_ambiguous_negation_scope_is_not_assigned_to_wrong_entity(text):
     items = build_semantic_profile({"description": text})["assertions"]
     assert items
     assert all(item["kind"] == "uncertain" for item in items)
+
+
+def test_lineage_fields_are_grounded_clues_not_resolved_locations():
+    payload = build_semantic_profile({"upstream_source": "  北区某井  ", "downstream_destination": "可能去往村东"})
+    clues = {item["category"]: item for item in payload["assertions"]}
+    assert clues["upstream_clue"]["value"] == "北区某井"
+    assert clues["upstream_clue"]["reference"]["quote"] == "  北区某井  "
+    assert clues["downstream_clue"]["kind"] == "uncertain"
+    assert all(not item["is_official_fact"] for item in clues.values())
+    assert all("latitude" not in item for item in clues.values())
+
+
+@pytest.mark.parametrize("value", ["未知", "无", "待查", "不详"])
+def test_missing_lineage_markers_do_not_create_candidates(value):
+    result = build_semantic_profile({"upstream_source": value})
+    assert result["assertions"] == []
+    assert any(item["field"] == "upstream_source" for item in result["information_gaps"])

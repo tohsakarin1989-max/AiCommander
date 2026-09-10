@@ -136,6 +136,21 @@ def test_saved_case_semantics_are_derived_and_frozen_per_profile(db_session: Ses
     assert CasePipelineService.enqueue_case_change(db_session, case) is None
 
 
+def test_pipeline_includes_json_paths_without_changing_structured_case_fields(db_session: Session):
+    case = _create_case(db_session)
+    case.vehicle_info = [{"type": "罐车", "套牌": False}]
+    case.involved_items = {"名称": "胶管", "数量": 2}
+    event = CasePipelineService.enqueue_case_change(db_session, case)
+    db_session.commit()
+    CasePipelineService.process_event(db_session, event.id)
+    profile = db_session.query(CaseAnalysisProfile).one()
+    entries = profile.payload["semantics"]["structured_sources"]["entries"]
+    assert any(item["reference"]["path"] == [0, "type"] for item in entries)
+    assert any(item["reference"]["path"] == ["数量"] for item in entries)
+    assert case.vehicle_info == [{"type": "罐车", "套牌": False}]
+    assert case.involved_items == {"名称": "胶管", "数量": 2}
+
+
 def test_pipeline_generates_versioned_profile_without_overwriting_case(db_session: Session):
     case = _create_case(db_session)
     original = {

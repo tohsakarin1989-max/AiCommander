@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping
+from typing import Any, Mapping
 
 from app.services.case_semantic_evidence import (
     TextReference, freeze_sources, grounded_assertion, snapshot_payload,
 )
 from app.services.case_semantic_time import extract_time_intervals
+from app.services.case_semantic_structured import extract_structured_sources
 
 
-SEMANTIC_RULE_VERSION = "local-terms-4.1.0-2"
+SEMANTIC_RULE_VERSION = "local-terms-4.1.0-3"
 TEXT_FIELDS = (
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "upstream_source", "downstream_destination",
@@ -47,7 +48,9 @@ def _mention_kind(text: str, start: int, end: int) -> str:
     return "uncertain"
 
 
-def build_semantic_profile(values: Mapping[str, str | None]) -> dict:
+def build_semantic_profile(
+    values: Mapping[str, str | None], *, structured: dict[str, Any] | None = None,
+) -> dict:
     sources = freeze_sources(values)
     assertions = []
     gaps = []
@@ -79,8 +82,19 @@ def build_semantic_profile(values: Mapping[str, str | None]) -> dict:
                         assertions.append(assertion)
     for field in ("upstream_source", "downstream_destination"):
         value = values.get(field)
-        if not value or not value.strip() or UNCERTAIN.search(value):
+        missing = not value or value.strip() in {"", "无", "暂无", "未知", "不详", "待查", "未查明"}
+        if missing or UNCERTAIN.search(value):
             gaps.append({"code": "lineage_not_established", "field": field})
+        if not missing:
+            source = next(item for item in sources if item.field == field)
+            ref = TextReference(field, source.sha256, 0, len(source.text), source.text)
+            assertions.append(grounded_assertion(
+                source, ref, category="upstream_clue" if field == "upstream_source" else "downstream_clue",
+                normalized_value=source.text.strip(),
+                kind="uncertain" if UNCERTAIN.search(value) or NEGATED.search(value) else "stated",
+            ))
+    structured_result = extract_structured_sources(structured or {})
+    gaps.extend(structured_result["information_gaps"])
     grouped: dict[tuple[str, str], set[str]] = {}
     for item in assertions:
         grouped.setdefault((item["category"], item["value"]), set()).add(item["kind"])
@@ -93,6 +107,7 @@ def build_semantic_profile(values: Mapping[str, str | None]) -> dict:
         "rule_version": SEMANTIC_RULE_VERSION, "method": "local_dictionary_rules",
         "source_snapshot": snapshot_payload(sources), "assertions": assertions,
         "time_intervals": time_intervals,
+        "structured_sources": structured_result,
         "potential_conflicts": conflicts, "information_gaps": gaps,
         "boundary": [
             "词项及句内标记仅整理原文表述，不代表事实已核实。",
