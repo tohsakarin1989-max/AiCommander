@@ -6,6 +6,14 @@ vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 beforeEach(() => vi.resetAllMocks())
 
 describe('内部道路接口契约', () => {
+  it('比较固定来源与两个版本，不请求current或省略授权来源', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: {} })
+    const signal = new AbortController().signal
+    await internalRoadsApi.compare(3, 17, 18, signal)
+    expect(api.get).toHaveBeenCalledWith('/map-sources/3/roads/compare', {
+      params: { before_id: 17, after_id: 18 }, signal,
+    })
+  })
   it('列表和历史读取固定来源及批次，并传递取消信号', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: { id: 17 } })
     const signal = new AbortController().signal

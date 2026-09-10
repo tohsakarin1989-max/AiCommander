@@ -8,10 +8,39 @@ import {
 } from './mapTiles'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
 describe('offline map tile presentation', () => {
+  it('超时取消未完成的真实请求，不把失败结果标成有效地图', async () => {
+    vi.useFakeTimers()
+    let captured: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      captured = options.signal
+      captured!.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')))
+    })))
+    const pending = resolveMapTileConfig(7)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(captured?.aborted).toBe(true)
+    expect((await pending).manifestResolved).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('调用方取消会传递到请求并清除超时计时器', async () => {
+    vi.useFakeTimers()
+    let captured: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      captured = options.signal
+      captured!.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')))
+    })))
+    const controller = new AbortController()
+    const pending = resolveMapTileConfig(7, 'current', controller.signal)
+    controller.abort()
+    expect((await pending).manifestResolved).toBe(false)
+    expect(captured?.aborted).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
   const snapshot = '11111111-1111-4111-8111-111111111111'
   const vectorManifest = () => ({
     schema_version: '2.0', renderer: 'maplibre', snapshot_id: snapshot,
@@ -80,7 +109,7 @@ describe('offline map tile presentation', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/maps/current/manifest?operational_area_id=7',
-      { cache: 'no-store', credentials: 'same-origin' },
+      { cache: 'no-store', credentials: 'same-origin', signal: expect.any(AbortSignal) },
     )
     expect(config.url).toBe(
       '/api/maps/tiles/snapshot-v2/{z}/{x}/{y}?blank_missing=true&operational_area_id=7',
@@ -112,7 +141,7 @@ describe('offline map tile presentation', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/maps/snapshot-a/manifest?operational_area_id=7',
-      { cache: 'no-store', credentials: 'same-origin' },
+      { cache: 'no-store', credentials: 'same-origin', signal: expect.any(AbortSignal) },
     )
     expect(config.url).toContain('/api/maps/tiles/snapshot-a/')
     expect(config.url).not.toContain('/current/')

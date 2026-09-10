@@ -1,5 +1,6 @@
 """Real authenticated browser workflow against disposable synthetic storage only."""
 import json
+from time import monotonic
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout, expect, sync_playwright
@@ -34,6 +35,14 @@ def main():
                 data={"source_key": "synthetic-roads", "name": "合成道路测试来源", "source_type": "internal_gis"})
             assert created.status == 201, created.text()
             source = created.json()["id"]
+            manifest_checks = []
+            for suffix in ("", "?operational_area_id=1"):
+                start = monotonic()
+                response = context.request.get(BASE + "/api/maps/current/manifest" + suffix, timeout=5000)
+                manifest_checks.append({"suffix": suffix, "status": response.status,
+                                        "elapsed_ms": round((monotonic() - start) * 1000)})
+                assert response.status == 404, response.text()
+            print("direct_manifest_checks", manifest_checks, flush=True)
             feature = {"type": "Feature", "id": "test-road-1", "geometry": {
                 "type": "MultiLineString", "coordinates": [[[125.0, 46.0], [125.01, 46.01]],
                                                             [[125.02, 46.02], [125.03, 46.03]]]},
@@ -42,6 +51,9 @@ def main():
             page = context.new_page()
             errors = []
             pending = set()
+            manifest_requests = []
+            page.on("response", lambda response: manifest_requests.append({"url": response.url, "status": response.status})
+                    if "/api/maps/current/manifest" in response.url else None)
             page.on("request", lambda request: pending.add(request.url))
             page.on("requestfinished", lambda request: pending.discard(request.url))
             page.on("requestfailed", lambda request: pending.discard(request.url))
@@ -66,7 +78,13 @@ def main():
             expect(save).to_be_enabled()
             save.click()
             expect(panel.get_by_role("button", name="核对资料")).to_be_visible()
+            geometry_map = panel.get_by_role("region", name="道路来源图形核对")
+            path = geometry_map.locator("path.leaflet-interactive")
+            expect(path).to_have_count(1)
+            assert path.get_attribute("d").count("M") == 2, "separate_segments_must_not_be_joined"
             panel.get_by_role("button", name="核对资料").click()
+            expect(path).to_have_attribute("stroke-width", "6")
+            geometry_map.screenshot(path=str(OUTPUT / "source-geometry.png"))
             form = panel.get_by_role("region", name="核验 合成生产路")
             form.get_by_label("核验决定", exact=True).click()
             page.get_by_title("资料已核验", exact=True).last.click()
@@ -91,6 +109,24 @@ def main():
             save.click()
             expect(panel.get_by_text(f"来源批次 {record_id} 已保存或复用，请核对资料。尚未发布路网。")).to_be_visible()
             assert len(context.request.get(BASE + f"/api/map-sources/{source}/roads/imports").json()["items"]) == 1
+            panel.get_by_role("button", name="设为比较基准", exact=True).click()
+            changed = json.loads(json.dumps(payload))
+            changed["features"][0]["properties"]["conditions"]["gate"] = "closed"
+            upload.set_input_files({"name": "changed-roads.geojson", "mimeType": "application/geo+json",
+                                    "buffer": json.dumps(changed).encode()})
+            expect(save).to_be_enabled()
+            save.click()
+            comparison = panel.get_by_role("region", name="道路版本比较结果")
+            expect(comparison.get_by_text("涉及已核验资料，请核对", exact=True)).to_be_visible()
+            expect(comparison.get_by_role("cell", name="通行条件", exact=True)).to_be_visible()
+            imports = context.request.get(BASE + f"/api/map-sources/{source}/roads/imports").json()["items"]
+            assert len(imports) == 2
+            new_record = context.request.get(BASE + f"/api/map-sources/{source}/roads/imports/{imports[0]['id']}").json()
+            assert new_record["feature_reviews"][feature["id"]] is None
+            assert new_record["features"] == changed["features"]
+            assert context.request.get(record_url).json()["features"] == [feature]
+            assert not new_record["routing_available"]
+            comparison.screenshot(path=str(OUTPUT / "version-comparison.png"))
             for width in (1440, 420):
                 page.set_viewport_size({"width": width, "height": 1000})
                 panel.scroll_into_view_if_needed()
@@ -100,7 +136,10 @@ def main():
             assert not errors, errors
             (OUTPUT / "report.json").write_text(json.dumps({"passed": True, "mockedResponses": False,
                 "syntheticData": True, "unchangedCaseAndAssets": True, "errors": errors,
-                "blockedExternalRequests": external, "importId": record_id}, ensure_ascii=False, indent=2))
+                "blockedExternalRequests": external, "importId": record_id,
+                "comparedImportId": new_record["id"], "newVersionNotAutoVerified": True}, ensure_ascii=False, indent=2))
+            (OUTPUT / "manifest-checks.json").write_text(json.dumps({"direct": manifest_checks,
+                "browserResponses": manifest_requests, "pendingAtEnd": sorted(pending)}, indent=2))
             print("internal_road_browser_workflow_passed")
         finally:
             browser.close()

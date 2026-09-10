@@ -16,6 +16,7 @@ export interface RoadReview {
 }
 export interface RoadImport {
   id: number
+  operational_area_id: number
   input_sha256: string
   features: RoadFeature[]
   feature_reviews?: Record<string, RoadReview | null>
@@ -30,8 +31,21 @@ export interface RoadImportPage {
   items: Array<{ id: number; created_at: string; feature_count: number }>
   next_before_id: number | null
 }
+export type RoadChange = 'added' | 'changed' | 'unchanged' | 'not_provided'
+export interface RoadComparison {
+  source_id: number
+  before_id: number
+  after_id: number
+  before_sha256: string
+  after_sha256: string
+  summary: Record<RoadChange, number>
+  items: Array<{ source_feature_id: string; change: RoadChange; changed_fields: string[];
+    before: RoadFeature | null; after: RoadFeature | null; affects_verified_source: boolean }>
+}
 const root = (source: number) => `/map-sources/${source}/roads`
 export const internalRoadsApi = {
+  compare: async (source: number, before: number, after: number, signal?: AbortSignal) =>
+    (await api.get<RoadComparison>(`${root(source)}/compare`, { params: { before_id: before, after_id: after }, signal })).data,
   preview: async (source: number, payload: unknown) =>
     (await api.post<RoadPreview>(`${root(source)}/preview`, payload)).data,
   ingest: async (source: number, payload: unknown) =>

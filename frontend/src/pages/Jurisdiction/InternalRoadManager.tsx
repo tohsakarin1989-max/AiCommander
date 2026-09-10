@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Form, Input, List, Select, Skeleton, Space, Table, Typography, Upload } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import type { MapSource } from '../../services/mapFoundation'
 import { internalRoadsApi, type RoadFeature, type RoadImport, type RoadPreview, type RoadReview } from '../../services/internalRoads'
+import RoadComparisonPanel from './RoadComparisonPanel'
 
 const labels = { verified: '资料已核验', rejected: '已驳回', pending_verification: '待核验' }
+const RoadGeometryMap = lazy(() => import('./RoadGeometryMap'))
 
 export default function InternalRoadManager({ sources }: { sources: MapSource[] }) {
   const [source, setSource] = useState<number>()
@@ -33,6 +35,7 @@ function RoadSourceWorkspace({ source }: { source: number }) {
   const [notice, setNotice] = useState('')
   const [before, setBefore] = useState<number>()
   const [selected, setSelected] = useState<number>()
+  const [compareBase, setCompareBase] = useState<number>()
   const list = useQuery({ queryKey: ['internal-road-imports', source, before],
     queryFn: ({ signal }) => internalRoadsApi.list(source, before, signal), retry: false })
   const record = useQuery({ queryKey: ['internal-road-import', source, selected],
@@ -83,13 +86,20 @@ function RoadSourceWorkspace({ source }: { source: number }) {
     {list.isError ? <Alert type="error" message="批次读取失败，不显示旧列表。" action={<Button onClick={() => void list.refetch()}>重试</Button>} />
       : list.isFetching ? <Skeleton active paragraph={{ rows: 2 }} /> : <List dataSource={list.data?.items}
         locale={{ emptyText: '尚无道路批次，先选择文件预检。' }} renderItem={item => <List.Item
-          actions={[<Button key="open" onClick={() => setSelected(item.id)}>查看与核验</Button>]}>
+          actions={[<Button key="open" onClick={() => setSelected(item.id)}>查看与核验</Button>,
+            <Button key="baseline" onClick={() => setCompareBase(item.id)}>设为比较基准</Button>]}>
           批次 {item.id} · {item.feature_count} 项 · {item.created_at}
         </List.Item>} />}
     <Space><Button disabled={before == null || list.isFetching} onClick={() => setBefore(undefined)}>回到最新</Button>
       <Button disabled={!list.data?.next_before_id || list.isFetching || list.isError}
         onClick={() => setBefore(list.data!.next_before_id!)}>更早批次</Button></Space>
     {selected != null && <Button disabled={record.isFetching} onClick={() => void record.refetch()}>刷新所选批次</Button>}
+    {compareBase != null && <>
+      <Typography.Paragraph>比较基准：批次 {compareBase}。点击另一批次的“查看与核验”进行比较。
+        <Button onClick={() => setCompareBase(undefined)}>清除比较</Button></Typography.Paragraph>
+      {selected != null && selected !== compareBase && <RoadComparisonPanel key={`${source}:${compareBase}:${selected}`}
+        source={source} before={compareBase} after={selected} />}
+    </>}
     {selected != null && (record.isError ? <Alert type="error" message="该批次不可读取，请检查当前权限或重试。"
       action={<Button onClick={() => void record.refetch()}>重试</Button>} /> : record.isFetching ? <Skeleton active />
       : record.data && <RoadRecord key={`${source}:${record.data.id}:${record.data.input_sha256}`} source={source}
@@ -102,6 +112,8 @@ function RoadRecord({ source, record, refresh }: { source: number; record: RoadI
   return <>
     <Typography.Title level={5}>批次 {record.id} 的来源资料</Typography.Title>
     <Typography.Paragraph>核验只确认资料，不代表入口已连接、获得通行许可或已有参考路径。</Typography.Paragraph>
+    <Suspense fallback={<Skeleton active />}><RoadGeometryMap features={record.features}
+      area={record.operational_area_id} selectedId={feature?.id} onSelect={setFeature} /></Suspense>
     <Table rowKey="id" dataSource={record.features} size="small" scroll={{ x: 600 }} pagination={{ pageSize: 10 }}
       columns={[
         { title: '来源编号', dataIndex: 'id' },
