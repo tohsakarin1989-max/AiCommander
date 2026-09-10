@@ -1,11 +1,19 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Form, Input, List, Select, Skeleton, Space, Table, Typography, Upload } from 'antd'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { MapSource } from '../../services/mapFoundation'
 import { internalRoadsApi, type RoadFeature, type RoadImport, type RoadPreview, type RoadReview } from '../../services/internalRoads'
 import RoadComparisonPanel from './RoadComparisonPanel'
+import RoadCatalogPanel from './RoadCatalogPanel'
 
 const labels = { verified: '资料已核验', rejected: '已驳回', pending_verification: '待核验' }
+const entranceLabels: Record<string, string> = {
+  declared_road_missing: '未找到声明的道路，请补充来源资料',
+  declared_target_not_road: '关联编号不是道路，请核对',
+  coincident_endpoint_pending_verification: '入口与来源道路端点重合，实际连接仍待核验',
+  coincident_vertex_pending_verification: '入口与道路节点重合，实际连接仍待核验',
+  connection_geometry_pending_verification: '入口与道路节点未匹配，请核对连接资料；不代表不可达',
+}
 const RoadGeometryMap = lazy(() => import('./RoadGeometryMap'))
 
 export default function InternalRoadManager({ sources }: { sources: MapSource[] }) {
@@ -26,6 +34,7 @@ export default function InternalRoadManager({ sources }: { sources: MapSource[] 
 }
 
 function RoadSourceWorkspace({ source }: { source: number }) {
+  const queryClient = useQueryClient()
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [payload, setPayload] = useState<unknown>()
@@ -63,6 +72,7 @@ function RoadSourceWorkspace({ source }: { source: number }) {
         setSelected(result.id); setBefore(undefined); setPreview(undefined); setPayload(undefined)
         setNotice(`来源批次 ${result.id} 已保存或复用，请核对资料。尚未发布路网。`)
         void list.refetch()
+        void queryClient.invalidateQueries({ queryKey: ['internal-road-catalog', source] })
       }
     } catch { if (alive.current) setError('保存未确认成功，请查看来源批次；相同资料重新提交会复用已有批次。') }
     finally { if (alive.current) setBusy(false) }
@@ -83,6 +93,7 @@ function RoadSourceWorkspace({ source }: { source: number }) {
       <Button type="primary" disabled={busy || preview.valid !== preview.total} onClick={() => void save()}>保存待核资料</Button>
     </>}
     <Typography.Title level={5}>来源批次</Typography.Title>
+    <RoadCatalogPanel source={source} onOpen={setSelected} />
     {list.isError ? <Alert type="error" message="批次读取失败，不显示旧列表。" action={<Button onClick={() => void list.refetch()}>重试</Button>} />
       : list.isFetching ? <Skeleton active paragraph={{ rows: 2 }} /> : <List dataSource={list.data?.items}
         locale={{ emptyText: '尚无道路批次，先选择文件预检。' }} renderItem={item => <List.Item
@@ -103,7 +114,10 @@ function RoadSourceWorkspace({ source }: { source: number }) {
     {selected != null && (record.isError ? <Alert type="error" message="该批次不可读取，请检查当前权限或重试。"
       action={<Button onClick={() => void record.refetch()}>重试</Button>} /> : record.isFetching ? <Skeleton active />
       : record.data && <RoadRecord key={`${source}:${record.data.id}:${record.data.input_sha256}`} source={source}
-          record={record.data} refresh={() => void record.refetch()} />)}
+          record={record.data} refresh={() => {
+            void record.refetch()
+            void queryClient.invalidateQueries({ queryKey: ['internal-road-catalog', source] })
+          }} />)}
   </Space>
 }
 
@@ -137,6 +151,9 @@ function RoadReviewForm({ source, record, feature, refresh }: {
     <details><summary>完整线形与来源属性</summary><pre style={{ maxHeight: 260, overflow: 'auto' }}>{JSON.stringify(feature, null, 2)}</pre></details>
     {record.warnings.filter(item => item.source_feature_id === feature.id).flatMap(item => item.warnings)
       .map(warning => <Typography.Paragraph key={warning}>{warning}</Typography.Paragraph>)}
+    {record.entrance_checks?.filter(item => item.entrance_id === feature.id).map(item => <Alert key={item.entrance_id}
+      type="warning" showIcon message={entranceLabels[item.status] ?? '入口关联状态未知，请核验'}
+      description={<span>声明道路：{item.declared_road_id}；来源批次：{item.road_import_id ?? '未找到'}。{item.boundary}</span>} />)}
     {review && <Typography.Paragraph>最近核验：{labels[review.decision]}；{review.note}；依据：{review.evidence_reference}</Typography.Paragraph>}
     {error && <Alert type="error" message={error} />}
     <Form layout="vertical" disabled={busy} onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string }) => {

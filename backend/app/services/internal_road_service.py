@@ -1,8 +1,9 @@
 """待核道路来源版本；提交只写派生资料，不发布或认定道路可通行。"""
+from sqlalchemy import func, and_
 from sqlalchemy.exc import IntegrityError
 
 from app.database import AreaWriteAccessError, require_area_write_access
-from app.models.internal_roads import InternalRoadImport, InternalRoadReview
+from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
 from app.models.map_foundation import MapSource
 from app.services.internal_road_import import preview_internal_roads
 
@@ -52,6 +53,11 @@ def ingest_roads(db, source_id, payload, actor_id):
         with db.begin_nested():
             db.add(record)
             db.flush()
+            db.add_all([InternalRoadFeatureVersion(import_id=record.id, source_id=source_id,
+                operational_area_id=source.operational_area_id, feature_id=feature["id"],
+                name=feature["properties"]["name"], kind=feature["properties"]["kind"])
+                for feature in record.features])
+            db.flush()
     except IntegrityError:
         # 同一来源并发提交由唯一约束兜底；其他约束失败不可伪装成成功。
         existing = db.query(InternalRoadImport).filter_by(
@@ -74,11 +80,97 @@ def read_import(db, source_id, import_id):
         feature["id"]: describe_review(latest[feature["id"]]) if feature["id"] in latest else None
         for feature in record.features
     }
+    result["entrance_checks"] = entrance_checks(db, record)
     return result
+
+
+def entrance_checks(db, record):
+    """只检查声明的关联，不搜索/吸附最近道路，不借用未来来源资料。"""
+    entrances = [feature for feature in record.features if feature["properties"]["kind"] == "entrance"]
+    if not entrances:
+        return []
+    ids = {feature["properties"]["road_id"] for feature in entrances}
+    version = InternalRoadFeatureVersion
+    latest = db.query(version.feature_id.label("feature_id"), func.max(version.import_id).label("import_id"))\
+        .filter(version.source_id == record.source_id, version.import_id <= record.id, version.feature_id.in_(ids))\
+        .group_by(version.feature_id).subquery()
+    versions = db.query(version).join(latest, and_(version.feature_id == latest.c.feature_id,
+                                                 version.import_id == latest.c.import_id)).all()
+    by_id = {item.feature_id: item for item in versions}
+    batches = {item.id: item for item in db.query(InternalRoadImport).filter(
+        InternalRoadImport.source_id == record.source_id,
+        InternalRoadImport.id.in_({item.import_id for item in versions})).all()}
+    output = []
+    for entrance in entrances:
+        identifier = entrance["properties"]["road_id"]
+        target_version = by_id.get(identifier)
+        batch = batches.get(target_version.import_id) if target_version else None
+        target = next((feature for feature in batch.features if feature["id"] == identifier), None) if batch else None
+        if target is None:
+            status = "declared_road_missing"
+        elif target["properties"]["kind"] != "road":
+            status = "declared_target_not_road"
+        else:
+            geometry = target["geometry"]
+            lines = [geometry["coordinates"]] if geometry["type"] == "LineString" else geometry["coordinates"]
+            point = entrance["geometry"]["coordinates"]
+            status = "coincident_endpoint_pending_verification" if any(point in (line[0], line[-1]) for line in lines)\
+                else "coincident_vertex_pending_verification" if any(point in line for line in lines)\
+                else "connection_geometry_pending_verification"
+        output.append({"entrance_id": entrance["id"], "declared_road_id": identifier,
+                       "road_import_id": batch.id if batch else None,
+                       "road_source_sha256": batch.input_sha256 if batch else None,
+                       "status": status, "connected": None, "routing_available": False,
+                       "boundary": "只核对来源编号和节点位置；重合不代表实际连通，缺少节点匹配不代表不可达。未生成连接线。"})
+    return output
 
 
 class RoadReviewConflict(ValueError):
     pass
+
+
+def road_catalog(db, source_id, after_feature=None, limit=20):
+    """最新来源与仍有效的历史核验并列；不是可通行道路发布表。"""
+    authorized_source(db, source_id)
+    version = InternalRoadFeatureVersion
+    latest = db.query(version.feature_id.label("feature_id"), func.max(version.import_id).label("import_id"))\
+        .filter(version.source_id == source_id).group_by(version.feature_id).subquery()
+    query = db.query(version).join(latest, and_(version.feature_id == latest.c.feature_id,
+                                               version.import_id == latest.c.import_id))
+    if after_feature is not None:
+        query = query.filter(version.feature_id > after_feature)
+    rows = query.order_by(version.feature_id).limit(limit + 1).all()
+    selected = rows[:limit]
+    ids = [row.feature_id for row in selected]
+    # 每个历史来源版本只取最后决定；已撤回的核验不得复活。
+    last_review = db.query(InternalRoadReview.import_id.label("import_id"), InternalRoadReview.feature_id.label("feature_id"),
+                          func.max(InternalRoadReview.sequence).label("sequence"))\
+        .join(InternalRoadImport, InternalRoadImport.id == InternalRoadReview.import_id)\
+        .filter(InternalRoadImport.source_id == source_id, InternalRoadReview.feature_id.in_(ids))\
+        .group_by(InternalRoadReview.import_id, InternalRoadReview.feature_id).subquery()
+    reviews = db.query(InternalRoadReview).join(last_review, and_(
+        InternalRoadReview.import_id == last_review.c.import_id,
+        InternalRoadReview.feature_id == last_review.c.feature_id,
+        InternalRoadReview.sequence == last_review.c.sequence)).all()
+    by_version = {(review.import_id, review.feature_id): review for review in reviews}
+    verified = {}
+    for review in reviews:
+        if review.decision == "verified" and (review.feature_id not in verified
+                or review.import_id > verified[review.feature_id].import_id):
+            verified[review.feature_id] = review
+    items = []
+    for row in selected:
+        current = by_version.get((row.import_id, row.feature_id))
+        historical = verified.get(row.feature_id)
+        items.append({"source_feature_id": row.feature_id, "name": row.name, "kind": row.kind,
+                      "latest_import_id": row.import_id,
+                      "latest_review": describe_review(current) if current else None,
+                      "last_verified_import_id": historical.import_id if historical else None,
+                      "pending_update": bool(historical and historical.import_id != row.import_id),
+                      "routing_available": False})
+    return {"source_id": source_id, "items": items,
+            "next_after_feature": selected[-1].feature_id if len(rows) > limit else None,
+            "boundary": "来源资料目录，不代表已发布道路或通行许可；最新批次缺失的历史道路不自动删除"}
 
 
 def compare_imports(db, source_id, before_id, after_id):

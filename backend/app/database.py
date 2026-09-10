@@ -82,7 +82,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.event import AreaProfile, Event
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
     from app.models.map_foundation import MapSnapshot, MapSnapshotFeature, MapSource
-    from app.models.internal_roads import InternalRoadImport, InternalRoadReview
+    from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
     from app.models.meeting import Meeting
 
     scoped_models = (
@@ -95,6 +95,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         MapSource,
         InternalRoadImport,
         InternalRoadReview,
+        InternalRoadFeatureVersion,
         MapSnapshot,
         MapSnapshotFeature,
         TechDefenseSource,

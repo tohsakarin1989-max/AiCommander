@@ -127,6 +127,27 @@ def main():
             assert context.request.get(record_url).json()["features"] == [feature]
             assert not new_record["routing_available"]
             comparison.screenshot(path=str(OUTPUT / "version-comparison.png"))
+            catalog = panel.get_by_role("region", name="跨批次道路目录")
+            expect(catalog.get_by_text("有待核更新，历史核验未覆盖", exact=True)).to_be_visible()
+            expect(catalog.get_by_role("button", name=f"历史核验批次 {record_id}", exact=True)).to_be_visible()
+            panel.get_by_role("button", name="清除比较", exact=True).click()
+            entrance = {"type": "Feature", "id": "entry-1", "geometry": {"type": "Point", "coordinates": [125, 46]},
+                        "properties": {"kind": "entrance", "name": "合成入口", "road_id": feature["id"]}}
+            upload.set_input_files({"name": "entrance.geojson", "mimeType": "application/geo+json", "buffer": json.dumps({
+                "type": "FeatureCollection", "coordinate_system": "EPSG:4326", "features": [entrance]}).encode()})
+            expect(save).to_be_enabled()
+            save.click()
+            expect(panel.get_by_role("heading", name="批次 3 的来源资料", exact=True)).to_be_visible()
+            panel.get_by_role("button", name="核对资料", exact=True).click()
+            entrance_form = panel.get_by_role("region", name="核验 合成入口")
+            expect(entrance_form.get_by_text("入口与来源道路端点重合，实际连接仍待核验", exact=True)).to_be_visible()
+            entrance_record = context.request.get(BASE + f"/api/map-sources/{source}/roads/imports/3").json()
+            assert entrance_record["features"] == [entrance]
+            assert entrance_record["entrance_checks"][0]["road_import_id"] == new_record["id"]
+            assert entrance_record["entrance_checks"][0]["connected"] is None
+            expect(catalog.get_by_role("cell", name="合成生产路", exact=True)).to_be_visible()
+            expect(catalog.get_by_role("cell", name="合成入口", exact=True)).to_be_visible()
+            entrance_form.screenshot(path=str(OUTPUT / "entrance-check.png"))
             for width in (1440, 420):
                 page.set_viewport_size({"width": width, "height": 1000})
                 panel.scroll_into_view_if_needed()
@@ -137,7 +158,8 @@ def main():
             (OUTPUT / "report.json").write_text(json.dumps({"passed": True, "mockedResponses": False,
                 "syntheticData": True, "unchangedCaseAndAssets": True, "errors": errors,
                 "blockedExternalRequests": external, "importId": record_id,
-                "comparedImportId": new_record["id"], "newVersionNotAutoVerified": True}, ensure_ascii=False, indent=2))
+                "comparedImportId": new_record["id"], "newVersionNotAutoVerified": True,
+                "entranceHistoricalReference": True, "catalogPreservesOmittedRoad": True}, ensure_ascii=False, indent=2))
             (OUTPUT / "manifest-checks.json").write_text(json.dumps({"direct": manifest_checks,
                 "browserResponses": manifest_requests, "pendingAtEnd": sorted(pending)}, indent=2))
             print("internal_road_browser_workflow_passed")

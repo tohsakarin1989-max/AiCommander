@@ -40,3 +40,16 @@ class InternalRoadReview(Base):
     evidence_reference = Column(String(500), nullable=False)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class InternalRoadFeatureVersion(Base):
+    """批次要素索引，支持跨历史目录检索，不按名称合并。"""
+    __tablename__ = "internal_road_feature_versions"
+    __table_args__ = (UniqueConstraint("import_id", "feature_id", name="uq_internal_road_feature_version"),)
+    id = Column(Integer, primary_key=True)
+    import_id = Column(Integer, ForeignKey("internal_road_imports.id", ondelete="RESTRICT"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("map_sources.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operational_area_id = Column(Integer, ForeignKey("operational_areas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    feature_id = Column(String(100), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    kind = Column(String(20), nullable=False)

@@ -182,8 +182,9 @@ def test_incremental_road_migration_and_rollback(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO operational_areas (id, code, name, is_default, status) "
                                 "VALUES (991, 'migration-marker', '保留原数据', 0, 'active')"))
-    command.upgrade(config, "2cef953868c3")
+    command.upgrade(config, "3df0a64979d4")
     assert "internal_road_imports" in inspect(engine).get_table_names()
+    assert "internal_road_feature_versions" in inspect(engine).get_table_names()
     assert "internal_road_reviews" in inspect(engine).get_table_names()
     assert {c["name"] for c in inspect(engine).get_columns("internal_road_imports")} >= {
         "source_id", "operational_area_id", "input_sha256", "features", "created_by"}
@@ -191,7 +192,7 @@ def test_incremental_road_migration_and_rollback(tmp_path, monkeypatch):
     assert "internal_road_imports" not in inspect(engine).get_table_names()
     with engine.connect() as connection:
         assert connection.execute(text("SELECT name FROM operational_areas WHERE id=991")).scalar() == "保留原数据"
-    command.upgrade(config, "2cef953868c3")
+    command.upgrade(config, "3df0a64979d4")
     engine.dispose()
 
 
@@ -218,6 +219,9 @@ def test_review_binds_exact_version_and_does_not_grant_passage(db_session, sourc
     second = client.post(url, json={**data, "request_key": "review-0002", "decision": "pending_verification",
                                     "previous_review_id": first.json()["id"]})
     assert second.status_code == 201
+    catalog = client.get(f"{base}/catalog").json()["items"][0]
+    assert catalog["last_verified_import_id"] is None
+    assert catalog["latest_review"]["decision"] == "pending_verification"
     assert db_session.query(InternalRoadReview).count() == 2
     history = client.get(url, params={"limit": 1}).json()
     assert history["items"][0]["id"] == second.json()["id"]
@@ -243,6 +247,77 @@ def test_review_binds_exact_version_and_does_not_grant_passage(db_session, sourc
     assert db_session.query(InternalRoadReview).count() == 0
 
 
+def test_catalog_migration_backfills_multiple_pages_without_changing_sources(tmp_path, monkeypatch):
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, select, func
+    from sqlalchemy.orm import Session
+    from app.config import settings
+    from app.models.user import User
+    from app.models.internal_roads import InternalRoadImport, InternalRoadFeatureVersion
+
+    backend = Path(__file__).resolve().parents[1]
+    url = f"sqlite:///{tmp_path / 'existing-road-data.db'}"
+    monkeypatch.setattr(settings, "DATABASE_URL", url)
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("script_location", str(backend / "alembic"))
+    command.upgrade(config, "2cef953868c3")
+    engine = create_engine(url)
+    with Session(engine) as db:
+        db.add(User(id=1, username="migration-admin", display_name="迁移测试", password_hash="test-only", role="admin"))
+        db.add(OperationalArea(id=991, code="migration", name="合成区域"))
+        db.flush()
+        db.add(MapSource(id=1, source_key="roads", name="合成来源", source_type="internal_gis", operational_area_id=991))
+        db.flush()
+        for index in range(53):
+            db.add(InternalRoadImport(source_id=1, operational_area_id=991, input_sha256=f"{index:064x}",
+                schema_version="internal-road-preview-4.1.0-1", created_by=1, warnings=[],
+                features=[feature("重复道路"), feature(f"road-{index}")]))
+        db.commit()
+        original = db.execute(select(InternalRoadImport.id, InternalRoadImport.features).order_by(InternalRoadImport.id)).all()
+    for _ in range(2):
+        command.upgrade(config, "3df0a64979d4")
+        with Session(engine) as db:
+            assert db.scalar(select(func.count()).select_from(InternalRoadFeatureVersion)) == 106
+            assert db.execute(select(InternalRoadImport.id, InternalRoadImport.features).order_by(InternalRoadImport.id)).all() == original
+            repeated = db.scalars(select(InternalRoadFeatureVersion).where(InternalRoadFeatureVersion.feature_id == "重复道路")).all()
+            assert len(repeated) == 53
+            assert all(row.source_id == 1 and row.operational_area_id == 991 for row in repeated)
+        command.downgrade(config, "2cef953868c3")
+    engine.dispose()
+
+
+def test_entrance_checks_pin_declared_road_and_do_not_use_future_or_nearest(db_session, source):
+    db_session.info["area_access_levels"] = {1: "manage"}
+    client = _client(db_session)
+    base = f"/api/map-sources/{source}/roads"
+    first = client.post(f"{base}/ingest", json=collection(feature())).json()
+    def entry(identifier, road_id, point):
+        return {"type": "Feature", "id": identifier, "geometry": {"type": "Point", "coordinates": point},
+                "properties": {"kind": "entrance", "name": "同名入口", "road_id": road_id}}
+    payload = collection(entry("endpoint", "road-1", [125, 46]),
+                         entry("vertex", "road-1", [125.01, 46.01]),
+                         entry("no-match", "road-1", [125.0001, 46.0001]),
+                         entry("missing", "future-road", [125, 46]),
+                         entry("not-road", "endpoint", [125, 46]))
+    imported = client.post(f"{base}/ingest", json=payload).json()
+    url = f"{base}/imports/{imported['id']}"
+    checks = {item["entrance_id"]: item for item in client.get(url).json()["entrance_checks"]}
+    assert checks["endpoint"]["status"] == "coincident_endpoint_pending_verification"
+    assert checks["vertex"]["status"] == "coincident_vertex_pending_verification"
+    assert checks["no-match"]["status"] == "connection_geometry_pending_verification"
+    assert checks["missing"]["status"] == "declared_road_missing"
+    assert checks["not-road"]["status"] == "declared_target_not_road"
+    assert checks["endpoint"]["road_import_id"] == first["id"]
+    assert checks["endpoint"]["road_source_sha256"] == first["input_sha256"]
+    assert all(item["connected"] is None and not item["routing_available"] for item in checks.values())
+    assert client.post(f"{base}/ingest", json=collection(feature("future-road"))).status_code == 201
+    later = {item["entrance_id"]: item for item in client.get(url).json()["entrance_checks"]}
+    assert later == checks  # 新增未来道路不能倒灌历史入口检查。
+    assert client.get(url).json()["features"] == payload["features"]
+
+
 def test_compare_uses_identifiers_not_names_and_preserves_verified_history(db_session, source):
     db_session.info["area_access_levels"] = {1: "manage"}
     client = _client(db_session)
@@ -265,6 +340,16 @@ def test_compare_uses_identifiers_not_names_and_preserves_verified_history(db_se
     assert rows["road-1"]["affects_verified_source"]
     assert rows["road-1"]["after_review"] is None
     assert rows["road-1"]["before"] == original["features"][0]
+    catalog = client.get(f"{base}/catalog").json()
+    by_id = {item["source_feature_id"]: item for item in catalog["items"]}
+    assert by_id["road-1"]["last_verified_import_id"] == before["id"]
+    assert by_id["road-1"]["latest_import_id"] == after["id"]
+    assert by_id["road-1"]["pending_update"]
+    assert by_id["omitted"]["latest_import_id"] == before["id"]
+    assert len(by_id) == 4  # 同名但不同编号不合并，缺失要素不自动删除。
+    first_page = client.get(f"{base}/catalog", params={"limit": 1}).json()
+    second_page = client.get(f"{base}/catalog", params={"after_feature": first_page["next_after_feature"]}).json()
+    assert len(second_page["items"]) == 3
     assert rows["omitted"]["after"] is None
     assert not result["mutations_applied"] and not result["routing_available"]
     assert client.get(f"{base}/imports/{before['id']}").json()["features"] == original["features"]
@@ -274,3 +359,4 @@ def test_compare_uses_identifiers_not_names_and_preserves_verified_history(db_se
     assert client.get(f"{base}/compare", params={"before_id": before["id"], "after_id": 99999}).status_code == 404
     db_session.info["authorized_area_ids"] = ()
     assert client.get(f"{base}/compare", params={"before_id": before["id"], "after_id": after["id"]}).status_code == 404
+    assert client.get(f"{base}/catalog").status_code == 404

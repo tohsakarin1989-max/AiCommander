@@ -139,6 +139,23 @@ def compare_internal_road_imports(source_id: int, request: Request,
                     headers={"Cache-Control": "no-store"})
 
 
+@router.get("/map-sources/{source_id}/roads/catalog")
+def internal_road_catalog(source_id: int, request: Request, db: Session = Depends(get_db),
+                          after_feature: str | None = Query(None, max_length=100),
+                          limit: int = Query(20, ge=1, le=100)):
+    from app.services.internal_road_service import road_catalog
+
+    _road_admin(request)
+    try:
+        result = road_catalog(db, source_id, after_feature, limit)
+    except PermissionError:
+        raise HTTPException(403, "缺少有效数据范围") from None
+    except (LookupError, ValueError):
+        raise HTTPException(404, "来源不存在或不可访问") from None
+    return Response(content=json.dumps(result, ensure_ascii=False), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
 @router.get("/map-sources/{source_id}/roads/imports/{import_id}")
 def get_internal_road_import(source_id: int, import_id: int, request: Request, db: Session = Depends(get_db)):
     from app.services.internal_road_service import read_import

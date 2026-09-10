@@ -133,4 +133,4 @@ __all__ = [
     "EvaluationDataset",
     "EvaluationRun",
 ]
-from .internal_roads import InternalRoadImport, InternalRoadReview
+from .internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion

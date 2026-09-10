@@ -21,6 +21,8 @@ export interface RoadImport {
   features: RoadFeature[]
   feature_reviews?: Record<string, RoadReview | null>
   warnings: Array<{ source_feature_id: string; warnings: string[] }>
+  entrance_checks?: Array<{ entrance_id: string; declared_road_id: string; road_import_id: number | null;
+    road_source_sha256: string | null; status: string; connected: null; boundary: string }>
 }
 export interface RoadPreview {
   total: number
@@ -30,6 +32,12 @@ export interface RoadPreview {
 export interface RoadImportPage {
   items: Array<{ id: number; created_at: string; feature_count: number }>
   next_before_id: number | null
+}
+export interface RoadCatalog {
+  source_id: number
+  items: Array<{ source_feature_id: string; name: string; kind: string; latest_import_id: number;
+    last_verified_import_id: number | null; latest_review: RoadReview | null; pending_update: boolean }>
+  next_after_feature: string | null
 }
 export type RoadChange = 'added' | 'changed' | 'unchanged' | 'not_provided'
 export interface RoadComparison {
@@ -44,6 +52,8 @@ export interface RoadComparison {
 }
 const root = (source: number) => `/map-sources/${source}/roads`
 export const internalRoadsApi = {
+  catalog: async (source: number, after?: string, signal?: AbortSignal) =>
+    (await api.get<RoadCatalog>(`${root(source)}/catalog`, { params: { after_feature: after, limit: 20 }, signal })).data,
   compare: async (source: number, before: number, after: number, signal?: AbortSignal) =>
     (await api.get<RoadComparison>(`${root(source)}/compare`, { params: { before_id: before, after_id: after }, signal })).data,
   preview: async (source: number, payload: unknown) =>
