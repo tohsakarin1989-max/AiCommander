@@ -13,7 +13,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
     with tempfile.TemporaryDirectory(prefix='aic-showcase-http-') as directory:
         os.chdir(directory)
-        retained = {key: os.environ[key] for key in ('PATH', 'LANG', 'TMPDIR') if key in os.environ}
+        retained = {key: os.environ[key] for key in ('PATH', 'LANG', 'TMPDIR', 'FONTCONFIG_FILE') if key in os.environ}
         os.environ.clear()
         os.environ.update(retained)
         os.environ.update(DATABASE_URL=f'sqlite:///{directory}/test.sqlite',

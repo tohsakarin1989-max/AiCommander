@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { CaseResult } from '../../types/caseResult'
 import CaseSemanticProfile from '../../pages/Cases/CaseSemanticProfile'
+import CaseResultDownload from './CaseResultDownload'
 import './CaseResultPanel.css'
 
 const labels: Record<string, string> = {
@@ -37,6 +38,7 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
   return <section className="detail-section case-result" aria-label="统一研判成果">
     <header className="case-result__header"><h3>统一研判成果</h3><span>画像第 {content.versions.profile_version} 版</span></header>
     <p className="case-result__note">事实记录、候选解释和信息缺口分开呈现，供人工判断，不自动形成正式结论或执行任务。</p>
+    <CaseResultDownload key={`${result.id}:${result.content_sha256}`} resultId={result.id} hash={result.content_sha256} />
     {result.freshness === 'pending_update' && <p role="status" className="case-result__warning">等待更新：案件内容或规则已变化，以下为上一次处理结果。</p>}
     <details><summary>原始记录摘要与关联条件</summary>
       <p>{content.facts_summary.label}</p><Facts values={content.facts_summary.recorded_fields} />

@@ -1,5 +1,7 @@
 .case-result { min-width: 0; color: var(--ink-1); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .case-result__header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.case-result__download { margin: 12px 0; }
+.case-result__download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
 .case-result h3 { margin: 0; font-size: 18px; font-weight: 600; }
 .case-result h4 { margin: 18px 0 8px; font-size: 16px; }
 .case-result h5 { margin: 12px 0 4px; font-size: 14px; }
