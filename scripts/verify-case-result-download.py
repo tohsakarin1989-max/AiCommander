@@ -10,7 +10,8 @@ from playwright.sync_api import sync_playwright
 
 
 BASE = "http://127.0.0.1:13043"
-OUTPUT = Path("output/playwright/case-result-download")
+REAL_MAP = os.environ.get('AIC_PUBLIC_MAP_FIXTURE') == '1'
+OUTPUT = Path("output/playwright/case-result-download-real-map" if REAL_MAP else "output/playwright/case-result-download")
 
 
 def main():
@@ -34,6 +35,8 @@ def main():
                 data={"username": "showcase-check", "password": "Disposable-showcase-0910!"})
             assert login.status == 200
             result = context.request.get(BASE + "/api/cases/1/results/latest").json()
+            if REAL_MAP:
+                assert result['content']['versions']['map_snapshot_id']
             original = context.request.get(BASE + "/api/cases/1").json()
             assert original["case_number"] == "SYNTHETIC-SEMANTIC-001"
             page = context.new_page()
@@ -56,6 +59,10 @@ def main():
                     if format == "docx":
                         with ZipFile(target) as archive:
                             assert "原文否定" in archive.read("word/document.xml").decode()
+                            if REAL_MAP:
+                                images = [name for name in archive.namelist() if name.startswith('word/media/') and name.endswith('.png')]
+                                assert len(images) == 1
+                                assert len(archive.read(images[0])) > 10000
                     else:
                         reader = os.environ.get("AIC_PDF_CHECK_PYTHON", sys.executable)
                         text = subprocess.run([reader, "-c",
@@ -73,7 +80,8 @@ def main():
             assert context.request.get(BASE + "/api/cases/1").json()["description"] == original["description"]
             assert not errors and not external
             (OUTPUT / "report.json").write_text(json.dumps({"passed": True, "apiMocking": False,
-                "syntheticData": True, "downloads": downloaded, "errors": errors, "external": external}, ensure_ascii=False, indent=2))
+                "syntheticData": True, "realPublicMap": REAL_MAP, "contentSha256": result['content_sha256'],
+                "downloads": downloaded, "errors": errors, "external": external}, ensure_ascii=False, indent=2))
             print("case_result_download_passed")
         finally:
             browser.close()

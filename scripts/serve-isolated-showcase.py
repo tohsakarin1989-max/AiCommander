@@ -44,7 +44,8 @@ def main():
                 case = CaseService.create_case(
                     db=db, case_number='SYNTHETIC-SEMANTIC-001',
                     occurred_time=datetime(2026, 9, 10, 14, tzinfo=timezone.utc),
-                    location='合成测试区域，无真实坐标', case_type='涉油测试',
+                    location='合成测试区域，公共地图演示位置' if map_fixture else '合成测试区域，无真实坐标', case_type='涉油测试',
+                    latitude=46.6 if map_fixture else None, longitude=125.03 if map_fixture else None,
                     description='未发现罐车，但是发现货车。夜里查获胶管。2026年9月10日22时至2026年9月11日2时。',
                     vehicle_info=[{'type': '货车', '套牌': False}],
                     involved_items={'名称': '胶管', '数量': 2},
@@ -78,6 +79,14 @@ def main():
                 publication = publish_next(db)
                 assert publication['areas'][0]['status'] == 'published', publication
                 print('isolated_public_map_published', flush=True)
+                if semantic_fixture:
+                    from app.models.map_foundation import MapSnapshot
+                    from app.services.case_insight_service import CaseInsightService
+                    snapshot = db.query(MapSnapshot).filter(MapSnapshot.status == 'current').one()
+                    event = CaseInsightService.enqueue_analysis(db, profile, snapshot)
+                    db.commit()
+                    outcome = CaseInsightService.process_event(db, event.id)
+                    assert outcome['status'] in ('completed', 'degraded'), outcome
         import uvicorn
         from app.main import app
         try:

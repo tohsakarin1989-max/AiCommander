@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from PIL import Image
 
 from app.services.case_result_document import CaseResultDocument, load_case_result_document
+from app.services.document_budget import document_budget, remaining_seconds
 
 
 RENDERER = Path(__file__).resolve().parents[2] / "document-renderer" / "render-docx.cjs"
@@ -63,7 +64,7 @@ def render_docx(document: CaseResultDocument, *, map_image: bytes | None = None)
         try:
             result = subprocess.run(
                 [node, str(RENDERER)], input=payload, capture_output=True,
-                cwd=RENDERER.parent, env=environment, timeout=RENDER_TIMEOUT_SECONDS,
+                cwd=RENDERER.parent, env=environment, timeout=remaining_seconds(RENDER_TIMEOUT_SECONDS),
                 check=False, shell=False,
             )
         except subprocess.TimeoutExpired:
@@ -82,6 +83,7 @@ def render_docx(document: CaseResultDocument, *, map_image: bytes | None = None)
         _slots.release()
 
 
+@document_budget
 def export_case_result_docx(db: Session, result_id: str) -> tuple[CaseResultDocument, bytes]:
     document = load_case_result_document(db, result_id)
     maps = [json.loads(block.text) for block in document.blocks if block.kind == "map"]

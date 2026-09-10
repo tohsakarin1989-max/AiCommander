@@ -10,6 +10,7 @@ from threading import BoundedSemaphore
 
 from app.services.case_result_document import load_case_result_document
 from app.services.case_result_export import CaseResultExportError, export_case_result_docx
+from app.services.document_budget import document_budget, remaining_seconds
 
 MAX_BYTES = 20 * 1024 * 1024
 TIMEOUT_SECONDS = 45
@@ -41,7 +42,7 @@ def _convert_generated_docx(data: bytes) -> bytes:
                        "--convert-to", "pdf:writer_pdf_Export", "--outdir", str(output), str(source)]
             try:
                 result = subprocess.run(command, cwd=root, env=environment, capture_output=True,
-                                        timeout=TIMEOUT_SECONDS, shell=False, check=False)
+                                        timeout=remaining_seconds(TIMEOUT_SECONDS), shell=False, check=False)
             except subprocess.TimeoutExpired:
                 raise CaseResultExportError("pdf_renderer_timeout") from None
             except OSError:
@@ -62,6 +63,7 @@ def _convert_generated_docx(data: bytes) -> bytes:
         _slots.release()
 
 
+@document_budget
 def export_case_result_pdf(db, result_id: str):
     document, docx = export_case_result_docx(db, result_id)
     data = _convert_generated_docx(docx)

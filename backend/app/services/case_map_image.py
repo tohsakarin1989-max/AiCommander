@@ -9,6 +9,7 @@ from threading import BoundedSemaphore
 from app.services.case_map_render_resources import CaseMapRenderResources, RENDER_ORIGIN
 from app.services.case_result_map import load_result_map_context
 from app.services.case_result_service import CaseResultService
+from app.services.document_budget import remaining_seconds
 
 
 RENDERER = Path(__file__).resolve().parents[2] / "document-renderer"
@@ -71,7 +72,7 @@ def _render(db, context, resources) -> bytes:
         with sync_playwright() as playwright:
             browser_env = {name: os.environ[name] for name in ("PATH", "LANG", "HOME", "TMPDIR", "SYSTEMROOT")
                            if name in os.environ}
-            browser = playwright.chromium.launch(headless=True, timeout=15000, env=browser_env)
+            browser = playwright.chromium.launch(headless=True, timeout=remaining_seconds(15) * 1000, env=browser_env)
             try:
                 browser_context = browser.new_context(viewport={"width": 960, "height": 700},
                     device_scale_factor=1, service_workers="block", accept_downloads=False)
@@ -79,16 +80,16 @@ def _render(db, context, resources) -> bytes:
                 browser_context.route_web_socket("**/*", lambda socket: socket.close())
                 page = browser_context.new_page()
                 page.set_default_timeout(20000)
-                page.goto(RENDER_ORIGIN + "/", wait_until="networkidle")
-                page.wait_for_function("typeof window.renderFrozenMap === 'function'")
+                page.goto(RENDER_ORIGIN + "/", wait_until="networkidle", timeout=remaining_seconds(20) * 1000)
+                page.wait_for_function("typeof window.renderFrozenMap === 'function'", timeout=remaining_seconds(20) * 1000)
                 # 不把异步渲染Promise直接交给evaluate无限等待；使用有界状态等待。
                 page.evaluate("input => { window.renderFrozenMap(input).catch(() => { window.mapRenderError = 'failed'; }); }", context)
-                page.wait_for_function("window.mapRenderDone || window.mapRenderError")
+                page.wait_for_function("window.mapRenderDone || window.mapRenderError", timeout=remaining_seconds(20) * 1000)
                 if failures or page.evaluate("Boolean(window.mapRenderError)"):
                     raise CaseMapImageError("map_render_failed")
-                if page.locator("#legend").bounding_box()["height"] > 1000:
+                if page.locator("#legend").bounding_box(timeout=remaining_seconds(20) * 1000)["height"] > 1000:
                     raise CaseMapImageError("map_legend_too_large")
-                image = page.screenshot(type="png", full_page=True)
+                image = page.screenshot(type="png", full_page=True, timeout=remaining_seconds(20) * 1000)
             finally:
                 browser.close()
     except CaseMapImageError:

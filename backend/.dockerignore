@@ -19,3 +19,4 @@ data
 logs
 *.log
 .DS_Store
+document-renderer/node_modules

@@ -1,5 +1,33 @@
 # 冻结成果文件渲染器（v4.1开发中）
 
+## Linux导出镜像（候选，验收中）
+
+`backend/Dockerfile`新增可选`document-renderer`目标，默认仍是轻量`runtime`。
+导出目标使用固定摘要Node 24、锁文件依赖、Playwright 1.60对应无头浏览器、LibreOffice Writer、
+Debian提供的Noto中文/通用/Emoji字体。联网构建时安装，运行时不下载；
+系统包实际版本保存在镜像`/usr/share/aicommander/export-packages.tsv`，发布须保存镜像摘要，不能将动态APT源描述为完全可重复构建。
+保留Debian包中的字体及软件许可，不复制开发机系统字体。
+
+```sh
+docker build --target document-renderer -t aicommander-backend-documents:v4.1-candidate ./backend
+```
+
+`docker-compose.document-renderer.yml`仅覆盖API的镜像/构建目标、临时目录和共享内存，
+需与生产Compose合并使用，Celery/Beat仍采用核心镜像。不新增端口或移除原有非root、只读、权限限制。
+完整部署脚本/离线镜像交付整合仍在验收，不应仅运行覆盖文件替换正在使用的服务器。
+
+运行时冒烟脚本`check-runtime.py`只使用合成文本，验证真实DOCX、PDF转换、中文字体匹配及浏览器WebGL。
+须在一次性容器内显式设置`AIC_DISPOSABLE_RENDER_CHECK=1`，禁网、只读根文件系统、非root用户，
+为`/tmp`提供768MiB临时空间、`/dev/shm`提供256MiB；不挂业务库、地图目录或密钥。
+冒烟成功也不代表带地图成果导出、PDF视觉、性能或目标服务器验收已通过。
+
+2026-09-11首次Linux ARM64禁网冒烟已通过：UID10001、只读根目录、2GiB内存，
+Word原文读回、PDF生成、中文字体匹配与WebGL2/截图可用，测试容器已清理。
+复现入口：`AIC_DISPOSABLE_RENDER_CHECK=1 backend/venv/bin/python scripts/verify-document-container.py`。
+镜像和实际组件版本见v4.1实施清单；完整地图导出与视觉验收仍待完成。
+
+以下为按时间保留的开发记录，早期未完成事项以最新实施清单为准。
+
 输入为`case-result-document-4.1.0-1`内容块JSON，标准输入读取，标准输出为DOCX二进制。
 不接受文件路径、外部地址或命令，不执行输入中的HTML。只负责排版，调用方仍必须通过
 `load_case_result_document`重新校验权限；本目录的命令不是对外接口。

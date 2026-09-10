@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -97,3 +98,9 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
         "manifest_sha256": installed["package_hash"],
         "synthetic_case": True,
     }))
+    if os.environ.get('AIC_RENDER_EVIDENCE_DIR'):
+        destination = Path(os.environ['AIC_RENDER_EVIDENCE_DIR'])
+        destination.mkdir(parents=True, exist_ok=True)
+        for name in ('real-vector-result.docx', 'real-vector-result.pdf', 'real-vector-map.png', 'resource-counts.json'):
+            if (tmp_path / name).is_file():
+                shutil.copyfile(tmp_path / name, destination / name)

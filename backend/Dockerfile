@@ -1,4 +1,4 @@
-FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65
+FROM python:3.12-slim@sha256:dd29372629eeba2dd003fd9e9d35a5b8236c44727875a0364254b5127af88e65 AS core
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -31,3 +31,31 @@ EXPOSE 8000
 # 启动命令
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers"]
+
+# Optional export-capable API image. Build in the connected packaging zone;
+# runtime requests never install packages or download browsers/fonts.
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS document-dependencies
+WORKDIR /renderer
+COPY document-renderer/package.json document-renderer/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM core AS document-renderer
+USER root
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/aic-browsers
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libreoffice-writer fontconfig fonts-noto-cjk fonts-noto-core fonts-noto-color-emoji \
+    && pip install -r /app/requirements-renderer.txt \
+    && python -m playwright install --with-deps --only-shell chromium \
+    && fc-cache -f \
+    && mkdir -p /usr/share/aicommander \
+    && dpkg-query -W > /usr/share/aicommander/export-packages.tsv \
+    && apt-get clean
+COPY --from=document-dependencies /usr/local/bin/node /usr/local/bin/node
+COPY --from=document-dependencies /renderer/node_modules /app/document-renderer/node_modules
+RUN chmod -R a+rX /opt/aic-browsers /app/document-renderer
+USER 10001:10001
+RUN node --version && soffice --version && python -c "import playwright.sync_api"
+
+# Keep the existing lightweight default; explicitly select document-renderer
+# only for the API instance that provides full Word/PDF export.
+FROM core AS runtime
