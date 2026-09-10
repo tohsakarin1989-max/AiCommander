@@ -35,6 +35,7 @@ from app.models.user import AuditLog, User, UserSession
 from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
 from app.models.workbench import WorkbenchTaskSession
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
+from app.models.case_result import CaseResultSnapshot
 from app.models.case_insight import CaseAnalysisRun, CaseHypothesis, HypothesisFeedback
 from app.models.deployment_advisor import (
     DeploymentRecommendation,
@@ -51,6 +52,7 @@ from app.models.governance import (
 )
 
 __all__ = [
+    "CaseResultSnapshot",
     "MapPackageImport",
     "MapPackageImportChunk",
     "CaseImportBatch",

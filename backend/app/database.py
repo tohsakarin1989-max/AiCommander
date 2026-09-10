@@ -113,6 +113,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.case import CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
     from app.models.case_insight import CaseAnalysisRun, CaseHypothesis
     from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
+    from app.models.case_result import CaseResultSnapshot
     from app.models.preprocess_job import PreprocessJob
     from app.models.automation_alert import AutomationAlert
     from app.models.chain_link import ChainLink
@@ -133,6 +134,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         PreprocessJob,
         CasePipelineState,
         CaseAnalysisProfile,
+        CaseResultSnapshot,
         CaseAnalysisRun,
         CaseHypothesis,
         Conclusion,

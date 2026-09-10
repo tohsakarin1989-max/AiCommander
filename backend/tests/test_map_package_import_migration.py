@@ -46,7 +46,8 @@ def test_capacity_downgrade_refused_and_compatible_backup_restores(tmp_path):
         db.execute("INSERT INTO operational_areas(code,name,is_default,status) VALUES ('retained','升级前业务数据',0,'active')")
     with closing(sqlite3.connect(database)) as db, closing(sqlite3.connect(backup)) as target:
         db.backup(target)
-    result = migrate('upgrade', 'head')
+    # Pin the capacity revision: later versions have their own rollback gates.
+    result = migrate('upgrade', 'f830b2152595')
     assert result.returncode == 0, result.stderr
     with closing(sqlite3.connect(database)) as db, db:
         db.execute("INSERT INTO operational_areas(code,name,is_default,status) VALUES ('new-data','升级后业务数据',0,'active')")
