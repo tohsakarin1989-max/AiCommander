@@ -7,9 +7,10 @@ from typing import Mapping
 from app.services.case_semantic_evidence import (
     TextReference, freeze_sources, grounded_assertion, snapshot_payload,
 )
+from app.services.case_semantic_time import extract_time_intervals
 
 
-SEMANTIC_RULE_VERSION = "local-terms-4.1.0-1"
+SEMANTIC_RULE_VERSION = "local-terms-4.1.0-2"
 TEXT_FIELDS = (
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "upstream_source", "downstream_destination",
@@ -50,7 +51,11 @@ def build_semantic_profile(values: Mapping[str, str | None]) -> dict:
     sources = freeze_sources(values)
     assertions = []
     gaps = []
+    time_intervals = []
     for source in sources:
+        intervals, time_gaps = extract_time_intervals(source)
+        time_intervals.extend(intervals)
+        gaps.extend(time_gaps)
         for clause in CLAUSE.finditer(source.text):
             fragment = clause.group()
             # 转折后不继承前半句的否定作用范围；保留原文字偏移。
@@ -87,6 +92,7 @@ def build_semantic_profile(values: Mapping[str, str | None]) -> dict:
     return {
         "rule_version": SEMANTIC_RULE_VERSION, "method": "local_dictionary_rules",
         "source_snapshot": snapshot_payload(sources), "assertions": assertions,
+        "time_intervals": time_intervals,
         "potential_conflicts": conflicts, "information_gaps": gaps,
         "boundary": [
             "词项及句内标记仅整理原文表述，不代表事实已核实。",
