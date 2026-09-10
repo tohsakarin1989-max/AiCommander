@@ -48,6 +48,7 @@ window.renderFrozenMap = async (input) => {
     layers: [{ id: 'public', type: 'raster', source: 'public' }],
   };
   const map = new Map({ container: 'map', style, interactive: false, attributionControl: false,
+    localIdeographFontFamily: false,
     fadeDuration: 0, renderWorldCopies: false, canvasContextAttributes: { preserveDrawingBuffer: true },
     center: positions[0], zoom: 12 });
   window.mapRenderError = null;
