@@ -10,6 +10,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true, channel: 'chrome' })
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
   const external = [], errors = [], checks = []
+  let page
   try {
     await context.route('**/*', route => {
       if (new URL(route.request().url()).origin !== base) {
@@ -35,7 +36,7 @@ async function main() {
     const result = await resultResponse.json()
     assert.equal(result.content.versions.case_profile_id, profile.id)
     assert.equal(result.freshness, 'current')
-    const page = await context.newPage()
+    page = await context.newPage()
     const businessReads = []
     page.on('request', request => {
       const url = new URL(request.url())
@@ -85,7 +86,26 @@ async function main() {
     assert.equal(after.description, caseData.description)
     assert.deepEqual(after.vehicle_info, caseData.vehicle_info)
     assert.deepEqual(external, [])
+    const workbenchReads = []
+    page.on('request', request => workbenchReads.push(new URL(request.url()).pathname))
+    await page.goto(base + '/case-intelligence?caseId=1')
+    await page.waitForLoadState('networkidle')
+    const workbenchResult = page.getByRole('region', { name: '统一研判成果', exact: true })
+    await workbenchResult.getByText('原文否定', { exact: true }).first().waitFor()
+    assert.ok(workbenchReads.includes('/api/cases/1/results/latest'))
+    assert.ok(!workbenchReads.some(path => path.endsWith('/workbench') || path.endsWith('/llm-context')))
+    assert.equal(await page.getByRole('button', { name: '打开旧版分析工具（兼容）', exact: true }).getAttribute('aria-expanded'), 'false')
+    assert.equal(await workbenchResult.getByRole('link', { name: '在报告中心查看此版本' }).getAttribute('href'), '/reports?resultId=' + result.id)
+    for (const width of [1440, 420]) {
+      await page.setViewportSize({ width, height: 1000 })
+      await workbenchResult.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: `${output}/workbench-${width}.png` })
+      assert.equal(await workbenchResult.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+    }
     assert.deepEqual(errors, [])
+    // Return to case detail for its existing refresh/failure regression.
+    await page.goto(base + '/cases?caseId=1')
+    await unified.getByText('原文否定', { exact: true }).first().waitFor()
     assert.ok(businessReads.includes('/api/cases/1/results/latest'))
     assert.ok(!businessReads.includes('/api/cases/1/analysis-profile/latest'))
     assert.ok(!businessReads.includes('/api/cases/1/insights/latest'))
@@ -123,10 +143,14 @@ async function main() {
     writeFileSync(`${output}/report.json`, JSON.stringify({ passed: true, apiMocking: false,
       syntheticData: true, profileId: profile.id, ruleVersion: profile.payload.semantics.rule_version,
       resultId: result.id, unifiedResult: true, businessReads, transportFailureHidesCachedContent: true,
-      reportCenterSameSnapshot: true, catalogSearch: true,
+      reportCenterSameSnapshot: true, catalogSearch: true, workbenchSameResult: true, workbenchReads,
       checks, errors, external, targetServerVerified: false }, null, 2))
     console.log('semantic_profile_ui_passed')
   } catch (error) {
+    if (page) {
+      await page.screenshot({ path: `${output}/failure.png` })
+      writeFileSync(`${output}/failure-page.txt`, await page.locator('body').innerText())
+    }
     writeFileSync(`${output}/failure.json`, JSON.stringify({ message: String(error), checks, errors }, null, 2))
     throw error
   } finally { await context.close(); await browser.close() }
