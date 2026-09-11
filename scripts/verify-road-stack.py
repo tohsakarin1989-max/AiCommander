@@ -29,13 +29,13 @@ def main():
         file = secret_dir / name
         file.write_text(value)
         file.chmod(0o600)
-    image = 'aicommander-backend-roads:4.2-integrated-candidate'
+    image = os.environ.get('AIC_STACK_IMAGE', 'aicommander-backend-roads:4.2-integrated-candidate')
     image_id = subprocess.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image],
                               check=True, capture_output=True, text=True, timeout=15).stdout.strip()
     assert image_id.startswith('sha256:') and len(image_id) == 71
     runtime = 'nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236'
     env_file = output / 'stack.env'
-    env_file.write_text(f'APP_DOMAIN=localhost\nAPP_PORT=0\nAPP_VERSION=4.2-integration-test\n'
+    env_file.write_text(f'APP_DOMAIN=localhost\nAPP_PORT=0\nAPP_VERSION=isolated-integration-test\n'
                         f'SECRETS_DIR={secret_dir}\nENABLE_ROAD_ANALYSIS=true\nENABLE_AGENT_LAB=false\n'
                         f'DB_NAME={project.replace("-", "_")}\nAGENT_MODE=off\nCELERY_CONCURRENCY=1\n')
     env_file.chmod(0o600)
@@ -143,6 +143,26 @@ def main():
             report.update(passed=True, http_bootstrap=True, postgres_case_write_read=True,
                           redis_beat_automatic_profile=True, production_tls_tested=False,
                           profile_schema=profile.json().get('schema_version'))
+        report['passed'] = False
+        report['stage'] = 'backup_restore'
+        print('Core HTTP flow passed; restoring a backup into a separate temporary database', flush=True)
+        database = project.replace('-', '_')
+        restored = database + '_restore'
+        run('exec', '-T', 'postgres', 'pg_dump', '-U', 'aicommander', '-Fc',
+            '-f', '/tmp/isolated-stack.dump', database)
+        run('exec', '-T', 'postgres', 'createdb', '-U', 'aicommander', restored)
+        run('exec', '-T', 'postgres', 'pg_restore', '-U', 'aicommander', '--exit-on-error',
+            '--no-owner', '--no-privileges', '-d', restored, '/tmp/isolated-stack.dump')
+        for statement in (
+            'SELECT version_num FROM alembic_version',
+            'SELECT count(*) FROM cases',
+            'SELECT case_number, description FROM cases ORDER BY id',
+            'SELECT count(*) FROM case_analysis_profiles',
+        ):
+            original = run('exec', '-T', 'postgres', 'psql', '-U', 'aicommander', '-d', database, '-Atc', statement)
+            recovered = run('exec', '-T', 'postgres', 'psql', '-U', 'aicommander', '-d', restored, '-Atc', statement)
+            assert original == recovered, 'backup_restore_content_mismatch'
+        report.update(passed=True, backup_restored=True, original_case_preserved=True)
     except Exception as error:
         report['error'] = str(error)
         raise

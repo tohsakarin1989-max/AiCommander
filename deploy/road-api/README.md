@@ -1,4 +1,10 @@
-# 道路与报告组合API镜像（v4.2候选）
+# 道路与报告组合API镜像
+
+v4.3发布候选包含语义查询及专题文档，迁移头93e6a20fd53b；状态见
+[v4.3发布说明](../../docs/releases/v4.3.0-stable.md)。候选镜像
+`aicommander-backend-roads:4.3-release-candidate`的本机清单摘要为
+`bc23aac611a0ec22758ef37bd8ed6ae61b08fcc69dfe7e7965cfe7ec114f74c5`。
+交付时按目标架构重新核验并使用发布版本标签；以下v4.2摘要保留作历史恢复证据。
 
 最新交付状态以[版本核对](../../docs/releases/v4.2-candidate.md)为准；以下摘要保留各阶段的真实构建证据。
 

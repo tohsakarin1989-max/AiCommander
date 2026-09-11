@@ -1,4 +1,4 @@
-"""Five bounded read tools. Returned business data stays inside the intranet.
+"""Bounded read tools. Returned business data stays inside the intranet.
 
 This module does not call models or accept executable expressions. Callers must
 bind the current principal's read scope before every execution, including replay.
@@ -55,6 +55,16 @@ class FindCases(CaseFilters):
     page_size: int = Field(default=20, ge=1, le=50, strict=True)
 
 
+class FindRoadResults(CaseFilters):
+    page: int = Field(default=1, ge=1, le=10000, strict=True)
+    page_size: int = Field(default=20, ge=1, le=20, strict=True)
+    min_detour_ratio: float | None = Field(default=None, ge=1, le=100, allow_inf_nan=False, strict=True)
+
+
+class FindCaseProfiles(FindCases):
+    page_size: int = Field(default=10, ge=1, le=20, strict=True)
+
+
 class ComparePeriods(ScopeArgs):
     start: AwareDatetime
     end: AwareDatetime
@@ -94,6 +104,8 @@ class SummarizeResults(ScopeArgs):
 TOOLS = {
     'find_cases': FindCases, 'find_places': FindPlaces, 'count_cases': CaseFilters,
     'compare_periods': ComparePeriods, 'summarize_results': SummarizeResults,
+    'find_road_results': FindRoadResults,
+    'find_case_profiles': FindCaseProfiles,
 }
 
 
@@ -171,6 +183,7 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
     if args.operational_area_id is not None and allowed is not None and args.operational_area_id not in allowed:
         raise PermissionError('query_area_forbidden')
     gaps = []
+    road_partial = False
     with db.no_autoflush:
         if tool == 'find_cases':
             data, source = _cases(db, args), 'cases'
@@ -188,6 +201,15 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
         elif tool == 'find_places':
             data, gaps = _places(db, args)
             source = 'jurisdiction_assets_and_optional_public_index'
+        elif tool == 'find_road_results':
+            from app.services.intelligent_query_roads import road_results
+            data, gaps, road_partial = road_results(db, args)
+            source = 'case_road_artifacts'
+        elif tool == 'find_case_profiles':
+            from app.services.intelligent_query_profiles import profile_results
+            data, road_partial = profile_results(db, args)
+            source = 'case_analysis_profiles'
+            gaps.append('本批表述按案件去重计数，肯定、否定和不确定分别统计；不是全库规律或已确认事实。')
         else:
             data, source = _results(db, args), 'case_analysis_runs'
             gaps.append('汇总已有成果及可核验候选；规则支持度不是准确概率，历史候选不转为正式事实。')
@@ -195,14 +217,16 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
                 gaps.append('部分成果内容不可读取、证据不可核验或超过展示上限，已返回可用部分。')
     size = data.get('total', data.get('count', data.get('current_count', 0) + data.get('previous_count', 0)))
     public_items = data.get('public_places', {}).get('items', [])
-    empty = size == 0 and not public_items
+    empty = (not data['items'] if tool == 'find_road_results' else size == 0) and not public_items
     if empty:
         gaps.append('当前授权范围与筛选条件下未返回记录，不代表其他范围不存在数据。')
-    partial = (tool == 'find_places' and gaps) or (tool == 'summarize_results' and any(
+    partial = road_partial or (tool == 'find_places' and gaps) or (tool == 'summarize_results' and any(
         item['content_state'] != 'ready' for item in data['items']))
     return {'tool': tool, 'state': 'partial' if partial else ('empty' if empty else 'ready'),
             'data': data, 'information_gaps': gaps,
             'evidence': {'source': source, 'filters': args.model_dump(mode='json'),
                          'scope': None if allowed is None else sorted(allowed),
-                         'queried_at': datetime.now(timezone.utc).isoformat(), 'tool_version': 'v4.0-read-tools-2'},
+                         'queried_at': datetime.now(timezone.utc).isoformat(),
+                         'tool_version': ('v4.3-profile-read-1' if tool == 'find_case_profiles' else
+                             'v4.3-road-read-1' if tool == 'find_road_results' else 'v4.0-read-tools-2')},
             'boundary': '内网只读查询；案件按案发时间、成果按完成时间，时间区间左闭右开；不是新增事实或执行指令。'}

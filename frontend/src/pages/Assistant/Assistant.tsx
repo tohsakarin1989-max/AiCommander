@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { intelligentQueriesApi } from '../../services/intelligentQueries'
-import { activeQuery, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
+import { activeQuery, canFollowup, conditionLines, conditionNames, conditionValue, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
 import { QueryResult } from './QueryResult'
 import './IntelligentQuery.css'
 
@@ -14,6 +14,12 @@ export default function Assistant() {
   const [params, setParams] = useSearchParams()
   const runId = params.get('query') || ''
   const [question, setQuestion] = useState('')
+  const [exportState, setExportState] = useState('')
+  const exportAbort = useRef<AbortController | null>(null)
+  useEffect(() => {
+    setExportState('')
+    return () => { exportAbort.current?.abort(); exportAbort.current = null }
+  }, [runId, sessionEpoch])
   const live = useRef(true)
   const selection = useRef(runId)
   selection.current = runId
@@ -25,7 +31,7 @@ export default function Assistant() {
     refetchInterval: query => !query.state.error && activeQuery(query.state.data?.status) ? 1500 : false,
   })
   const create = useMutation({
-    mutationFn: ({ text }: { text: string; sourceId: string }) => intelligentQueriesApi.create(text),
+    mutationFn: ({ text, parentId }: { text: string; sourceId: string; parentId?: string }) => intelligentQueriesApi.create(text, parentId),
     onSuccess: (data, variables) => {
       if (!live.current || selection.current !== variables.sourceId) return
       setQuestion('')
@@ -43,21 +49,46 @@ export default function Assistant() {
   const current = !task.error && task.data?.id === runId ? task.data : undefined
   const busy = create.isPending || activeQuery(current?.status)
   const canQuery = user?.role === 'admin' || user?.role === 'analyst'
+  const followup = canFollowup(current)
+  const conditions = conditionLines(current?.result.query_conditions ?? current?.followup_context?.conditions)
+  async function download(format: 'docx' | 'pdf') {
+    if (!current || !followup || exportAbort.current) return
+    const id = current.id
+    const controller = new AbortController()
+    exportAbort.current = controller
+    setExportState('正在生成报告…')
+    try {
+      const blob = await intelligentQueriesApi.document(id, format, controller.signal)
+      if (!live.current || selection.current !== id || controller.signal.aborted) return
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = `专题查询-${id}.${format}`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setExportState('报告已生成，使用本次查询的历史证据。')
+    } catch {
+      if (!controller.signal.aborted && live.current && selection.current === id)
+        setExportState('导出未完成，请刷新查询确认权限或联系管理员检查文档服务。')
+    } finally {
+      if (exportAbort.current === controller) exportAbort.current = null
+    }
+  }
   function submit() {
-    if (!canQuery || busy || !question.trim()) return
+    if (!canQuery || busy || !question.trim() || (runId && !current)) return
     cancel.reset()
-    create.mutate({ text: question.trim(), sourceId: runId })
+    create.mutate({ text: question.trim(), sourceId: runId, parentId: followup ? runId : undefined })
   }
   return <main className="page-scrollable intelligent-query">
     <header className="page-title"><h1>智能助手</h1><span className="sub">案件与地图查询</span></header>
     <p className="query-intro">输入要查的问题。系统在当前授权范围内调用只读工具，结果不自动变成案件结论或执行任务。</p>
     <form onSubmit={event => { event.preventDefault(); submit() }} className="query-form">
-      <label htmlFor="query-question">查询问题</label>
+      <label htmlFor="query-question">{followup ? '继续追问' : '查询问题'}</label>
+      {followup && <p className="query-history-note">将继承当前查询条件。改变条件请在问题中说明；不继承时选择“新查询”。</p>}
       <textarea id="query-question" value={question} onChange={event => setQuestion(event.target.value)}
         maxLength={2000} rows={3} placeholder="例如：比较 2026年8月 与上一个等长周期的盗油案件数量。"
         disabled={!canQuery || create.isPending} />
-      <div className="query-actions"><button className="btn-primary" type="submit" disabled={!canQuery || busy || !question.trim()}>
-        {create.isPending ? '正在提交' : '提交查询'}</button>
+      <div className="query-actions"><button className="btn-primary" type="submit" disabled={!canQuery || busy || !question.trim() || Boolean(runId && !current)}>
+        {create.isPending ? '正在提交' : followup ? '继续追问' : '提交查询'}</button>
         {activeQuery(current?.status) && <button className="btn-ghost" type="button" disabled={cancel.isPending}
           onClick={() => cancel.mutate(runId)}>{cancel.isPending ? '正在取消' : '取消本次查询'}</button>}
         {runId && <button className="btn-ghost" type="button" disabled={busy} onClick={() => {
@@ -79,13 +110,27 @@ export default function Assistant() {
       <div className="query-status" role="status"><strong>{statusNames[current.status] || '状态未知'}</strong>
         <button className="btn-ghost" disabled={task.isFetching} onClick={() => void task.refetch()}>刷新状态</button></div>
       <p className="query-original">{current.query}</p>
+      {followup && <div className="query-actions">
+        <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('docx')}>导出 Word</button>
+        <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('pdf')}>导出 PDF</button>
+      </div>}
+      {exportState && <p role="status">{exportState}</p>}
+      {current.followup_context && <p className="query-history-note">接续：{current.followup_context.previous_question}。
+        <button type="button" className="btn-ghost" disabled={busy} onClick={() => setParams({ query: current.followup_context!.parent_query_id })}>查看上一轮</button>
+      </p>}
+      {!!conditions.length && <section aria-label="当前查询条件"><strong>当前查询条件</strong><ul>
+        {conditions.map(line => <li key={line}>{line}</li>)}
+      </ul></section>}
+      {current.result.trace?.flatMap(step => step.condition_changes ?? []).map((change, index) =>
+        <p className="query-history-note" key={index}>条件变化：{conditionNames[change.field] || change.field}，
+          {conditionValue(change.previous)} → {conditionValue(change.current)}。依据：“{change.basis}”。</p>)}
       {current.status === 'queued' && <p>任务已保存，等待后台领取。长时间未开始时请联系管理员检查队列。</p>}
       {current.status === 'running' && <p>正在执行只读查询，可取消；后台故障不会影响案件录入。</p>}
       {current.result.error_code && <p role="status">{failureText(current.result.error_code)}</p>}
       {!!current.result.cards?.length && <p className="query-history-note">以下是该次查询的历史结果，数据更新后请重新查询。</p>}
       {current.result.cards?.map((card, index) => <QueryResult key={index} card={card} />)}
       {!!current.result.trace?.length && <details><summary>查看工具轨迹（{current.result.trace.length} 步）</summary>
-        <ol>{current.result.trace.map(step => <li key={step.step}>{toolNames[step.tool] || '只读查询'}{step.duration_ms != null ? ` · ${step.duration_ms} 毫秒` : ''}</li>)}</ol>
+        <ol>{current.result.trace.map(step => <li key={step.step}>{toolNames[step.tool] || '只读查询'}{step.duration_ms != null ? ` · ${step.duration_ms} 毫秒` : ''}{step.error_code ? ' · 条件未满足，本步未执行' : ''}</li>)}</ol>
       </details>}
     </section>}
   </main>

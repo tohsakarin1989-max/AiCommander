@@ -7,7 +7,7 @@ x-logging: &default-logging
     max-file: "5"
 
 x-backend-environment: &backend-environment
-  APP_VERSION: "${APP_VERSION:-4.2.0-stable}"
+  APP_VERSION: "${APP_VERSION:-4.3.0-stable}"
   ALEMBIC_TARGET: "${ALEMBIC_TARGET:-head}"
   ENVIRONMENT: production
   AUTH_REQUIRED: "true"
@@ -110,7 +110,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.3.0-stable}
     build:
       context: ./backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
@@ -145,7 +145,7 @@ services:
     logging: *default-logging
 
   celery:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.3.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -172,7 +172,7 @@ services:
     logging: *default-logging
 
   celery-beat:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.3.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -200,7 +200,7 @@ services:
 
   agent-worker:
     profiles: ["agent-lab"]
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.3.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=${AGENT_REDIS_QUEUE:-agent_lab}", "--hostname=agent@%h"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -228,7 +228,7 @@ services:
 
   road-worker:
     profiles: ["road-analysis"]
-    image: ${IMAGE_PREFIX:-aicommander}-road-worker:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-road-worker:${APP_VERSION:-4.3.0-stable}
     build:
       context: .
       dockerfile: deploy/road-worker/Dockerfile
@@ -265,7 +265,7 @@ services:
 
   map-worker:
     profiles: ["map-build"]
-    image: ${IMAGE_PREFIX:-aicommander}-map-worker:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-map-worker:${APP_VERSION:-4.3.0-stable}
     build:
       context: .
       dockerfile: deploy/map-worker/Dockerfile
@@ -298,7 +298,7 @@ services:
     logging: *default-logging
 
   frontend:
-    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-4.2.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-4.3.0-stable}
     build:
       context: ./frontend
       args:

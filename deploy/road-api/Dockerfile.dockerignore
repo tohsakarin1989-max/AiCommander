@@ -9,6 +9,7 @@
 !backend/alembic.ini
 !backend/document-renderer/
 !backend/document-renderer/map-render.mjs
+!backend/document-renderer/render-docx.cjs
 **/__pycache__
 **/*.py[cod]
 **/.env*

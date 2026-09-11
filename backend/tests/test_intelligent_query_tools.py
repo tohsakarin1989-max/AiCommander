@@ -9,9 +9,9 @@ from app.services.intelligent_query_tools import execute_tool, tool_catalog
 from tests.test_case_search_page import search_db, add_case  # noqa: F401
 
 
-def test_catalog_has_only_five_read_tools():
+def test_catalog_has_only_registered_read_tools():
     assert set(tool_catalog()) == {'find_cases', 'find_places', 'count_cases',
-                                   'compare_periods', 'summarize_results'}
+                                   'compare_periods', 'summarize_results', 'find_road_results', 'find_case_profiles'}
 
 
 @pytest.mark.parametrize('tool,args', [
