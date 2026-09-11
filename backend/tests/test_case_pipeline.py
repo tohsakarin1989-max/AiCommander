@@ -60,6 +60,33 @@ def _create_case(db: Session):
     )
 
 
+def test_related_vehicle_type_is_frozen_and_not_replaced_by_car_assumption(db_session):
+    from copy import deepcopy
+    from app.services.case_road_vehicle import frozen_road_vehicle
+    from app.services.case_semantic_structured import resolve_reference
+    case = _create_case(db_session)
+    vehicle = CaseVehicle(case_id=case.id, vehicle_type='货车', oil_volume=10.)
+    db_session.add(vehicle)
+    db_session.commit()
+    original_hash = CasePipelineService.source_hash(db_session, case)
+    payload = CasePipelineService.build_profile_payload(db_session, case)
+    structured = payload['semantics']['structured_sources']
+    snapshot = next(item for item in structured['snapshots'] if item['field'] == 'case_vehicles')
+    assert snapshot['value'] == [{'vehicle_type': '货车', 'road_vehicle_kind': None, 'height_m': None, 'gross_weight_t': None}]
+    entry = next(item for item in structured['entries'] if item['reference']['field'] == 'case_vehicles'
+                 and item['reference']['path'] == [0, 'vehicle_type'])
+    assert resolve_reference(snapshot, entry['reference']) == '货车'
+    assert frozen_road_vehicle(payload) is None  # Oil volume is not total vehicle mass.
+    frozen = deepcopy(snapshot)
+    vehicle.vehicle_type = '小客车'
+    db_session.commit()
+    assert CasePipelineService.source_hash(db_session, case) != original_hash
+    updated = CasePipelineService.build_profile_payload(db_session, case)
+    assert frozen_road_vehicle(updated).kind == 'auto'
+    assert frozen_road_vehicle(updated).source == 'case_record'
+    assert snapshot == frozen and case.description.startswith('夜间发现')
+
+
 def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Session):
     case = _create_case(db_session)
 
@@ -67,6 +94,16 @@ def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Ses
     assert event.aggregate_id == str(case.id)
     assert event.event_type == "case.analysis.requested"
     assert event.status == "pending"
+    assert db_session.query(CaseAnalysisProfile).count() == 0
+
+
+def test_case_save_captures_road_delegation_without_starting_road_calculation(db_session):
+    db_session.info.update(principal_user_id=12, authorized_area_ids=None)
+    _create_case(db_session)
+    event = db_session.query(OutboxEvent).one()
+    assert event.payload['road_authority'] == {'user_id': 12, 'scope': None}
+    assert event.event_type == 'case.analysis.requested'
+    # No graph/user lookup here; execution must validate the actual live user.
     assert db_session.query(CaseAnalysisProfile).count() == 0
 
 

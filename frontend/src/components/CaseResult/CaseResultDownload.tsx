@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from 'antd'
 import { caseResultsApi } from '../../services/caseResults'
 
-export default function CaseResultDownload({ resultId, hash }: { resultId: string; hash: string }) {
+export default function CaseResultDownload({ resultId, hash, road }: {
+  resultId: string; hash: string; road?: { id: string; content_sha256: string }
+}) {
   const request = useRef<AbortController | null>(null)
   const [busy, setBusy] = useState<'docx' | 'pdf' | null>(null)
   const [status, setStatus] = useState('')
@@ -15,13 +17,13 @@ export default function CaseResultDownload({ resultId, hash }: { resultId: strin
     setBusy(format)
     setStatus('正在生成当前版本报告，请勿重复点击。')
     try {
-      const blob = await caseResultsApi.download(resultId, hash, format, controller.signal)
+      const blob = await caseResultsApi.download(resultId, hash, format, controller.signal, road)
       if (controller.signal.aborted || request.current !== controller) return
       const url = URL.createObjectURL(blob)
       try {
         const link = document.createElement('a')
         link.href = url
-        link.download = `case-result-${hash.slice(0, 16)}.${format}`
+        link.download = `case-result-${hash.slice(0, 16)}${road ? `-road-${road.content_sha256.slice(0, 16)}` : ''}.${format}`
         document.body.appendChild(link)
         link.click()
         link.remove()
@@ -41,13 +43,14 @@ export default function CaseResultDownload({ resultId, hash }: { resultId: strin
       if (request.current === controller) { request.current = null; setBusy(null) }
     }
   }
-  return <div className="case-result__download" aria-label="下载当前成果">
+  return <div className="case-result__download" aria-label={road ? '下载含道路附件的成果' : '下载当前成果'}>
     <div className="case-result__download-actions">
       <Button disabled={!!busy} onClick={() => void download('docx')}>下载 Word</Button>
       <Button disabled={!!busy} onClick={() => void download('pdf')}>下载 PDF</Button>
       {busy && <Button onClick={() => request.current?.abort()}>停止等待</Button>}
     </div>
-    <small>导出当前展示的冻结版本，不触发新的案件研判。</small>
+    <small>{road ? '导出原冻结成果与本条留存道路附件，路径合入冻结地图，不重新计算。'
+      : '导出当前展示的冻结版本，不触发新的案件研判。'}</small>
     {status && <p role="status" aria-live="polite">{status}</p>}
   </div>
 }

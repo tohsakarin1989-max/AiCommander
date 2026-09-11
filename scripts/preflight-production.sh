@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
 VERSION_FILE="${VERSION_FILE:-$ROOT_DIR/VERSION}"
+. "$ROOT_DIR/scripts/production-compose.sh"
 
 fail() {
     echo "生产部署预检失败: $*" >&2
@@ -50,6 +51,11 @@ agent_provider="$(read_env AGENT_PROVIDER)"
 agent_model="$(read_env AGENT_MODEL)"
 agent_model_id="$(read_env AGENT_MODEL_ID)"
 agent_use_external_model="$(read_env AGENT_USE_EXTERNAL_MODEL)"
+deployment_image_mode="$(read_env DEPLOY_IMAGE_MODE)"
+case "${deployment_image_mode:-build}" in
+    build|prebuilt) ;;
+    *) fail "DEPLOY_IMAGE_MODE 只能为 build 或 prebuilt" ;;
+esac
 
 agent_enabled="${agent_enabled:-false}"
 agent_mode="${agent_mode:-off}"
@@ -152,7 +158,7 @@ bootstrap_value="$(tr -d '\r\n' < "$SECRETS_DIR/bootstrap_token")"
 [ "$db_value" != "$redis_value" ] || fail "数据库和 Redis 不能复用同一密钥"
 [ "$secret_value" != "$bootstrap_value" ] || fail "会话密钥和初始化令牌不能复用"
 
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null \
+compose config >/dev/null \
     || fail "Docker Compose 生产配置无效"
 
 echo "生产部署预检通过: 域名 ${APP_DOMAIN}，版本 ${APP_VERSION}，端口 ${APP_PORT}"

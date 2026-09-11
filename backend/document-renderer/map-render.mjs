@@ -14,6 +14,20 @@ window.renderFrozenMap = async (input) => {
     else if (Array.isArray(value)) value.forEach(collect);
   };
   features.forEach(f => collect(f.geometry?.coordinates));
+  if (input.reference_path !== undefined) {
+    if (!Array.isArray(input.reference_path) || input.reference_path.length < 2
+        || input.reference_path.length > 100000 || !input.reference_path.every(coordinate)) {
+      throw new Error('invalid_road_document_geometry');
+    }
+    input.reference_path.forEach(point => positions.push(point));
+  }
+  const alternatives = input.reference_alternatives ?? [];
+  if (!Array.isArray(alternatives) || alternatives.length > 1) throw new Error('invalid_road_alternatives');
+  for (const path of alternatives) {
+    if (!input.reference_path || !Array.isArray(path) || path.length < 2
+        || path.length > 100000 || !path.every(coordinate)) throw new Error('invalid_road_alternative_geometry');
+    path.forEach(point => positions.push(point));
+  }
   if (spec.case_marker) {
     const m = spec.case_marker;
     const point = [m.longitude, m.latitude];
@@ -57,8 +71,9 @@ window.renderFrozenMap = async (input) => {
     map.once('load', resolve);
     map.once('error', () => reject(new Error('map_load_failed')));
   });
-  const xs = positions.map(p => p[0]), ys = positions.map(p => p[1]);
-  map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]],
+  const extent = positions.reduce((box, p) => [Math.min(box[0], p[0]), Math.min(box[1], p[1]),
+    Math.max(box[2], p[0]), Math.max(box[3], p[1])], [180, 85, -180, -85]);
+  map.fitBounds([[extent[0], extent[1]], [extent[2], extent[3]]],
     { padding: 45, maxZoom: 14, duration: 0 });
   map.addSource('report', { type: 'geojson', data: { type: 'FeatureCollection', features } });
   map.addLayer({ id: 'report-fill', source: 'report', type: 'fill', filter: ['==', '$type', 'Polygon'],
@@ -68,9 +83,23 @@ window.renderFrozenMap = async (input) => {
   map.addLayer({ id: 'report-point', source: 'report', type: 'circle', filter: ['==', '$type', 'Point'],
     paint: { 'circle-radius': 7, 'circle-color': ['case', ['==', ['get', 'report_kind'], 'case'], '#dc2626', '#0369a1'],
       'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+  if (alternatives.length) {
+    map.addSource('saved-road-alternatives', { type: 'geojson', data: { type: 'Feature', properties: {},
+      geometry: { type: 'MultiLineString', coordinates: alternatives } } });
+    map.addLayer({ id: 'saved-road-alternatives', source: 'saved-road-alternatives', type: 'line',
+      paint: { 'line-color': '#0369a1', 'line-width': 3, 'line-dasharray': [2, 2] } });
+  }
+  if (input.reference_path) {
+    map.addSource('saved-road', { type: 'geojson', data: { type: 'Feature', properties: {},
+      geometry: { type: 'LineString', coordinates: input.reference_path } } });
+    map.addLayer({ id: 'saved-road', source: 'saved-road', type: 'line',
+      paint: { 'line-color': '#0369a1', 'line-width': 4 } });
+  }
   const notes = [`地图版本：${basemap.version}；红点：案件记录位置；蓝点：引用设施；橙色：待核验候选范围。`,
     ...spec.candidates.map(c => `${c.rank}. ${c.title}（待核验）`), ...spec.warnings,
     `来源：${basemap.attribution || '见成果来源记录'}。范围不代表实际路线或已确认事实。`];
+  if (input.reference_path) notes.push('蓝色实线：历史留存道路参考路径，不是实际行驶轨迹，不代表当前仍可通行。');
+  if (alternatives.length) notes.push('蓝色虚线：同版本留存备选路径，不代表全部可选通道。');
   document.getElementById('legend').textContent = notes.join('\n');
   await new Promise(resolve => map.once('idle', resolve));
   if (window.mapRenderError) throw new Error(window.mapRenderError);

@@ -17,11 +17,58 @@ from app.services.case_result_service import CaseResultService
 from app.services.map_asset_layout import storage_key
 from app.services.map_package_install import install_assets
 from test_case_results import db_session, prepare, result_data  # noqa: F401
+from test_road_network_service import ready  # noqa: F401
+
+
+def _automatic_road_report(db, profile, run, root):
+    """Real services/native worker; synthetic scope and upstream profile fixture."""
+    from sqlalchemy import select
+    from app.models.case_pipeline import OutboxEvent
+    from app.models.road_network import RoadNetworkVersion
+    from app.services import case_road_triggers, case_road_jobs
+    from app.services.case_road_artifact_service import read_road_artifact, freeze_road_artifact
+    from app.services.case_road_comparison import route_result_target
+    from app.services.case_road_vehicle import frozen_road_vehicle
+    from app.services.road_graph_artifact import graph_inventory_sha256, install_graph_artifact
+    from test_case_road_triggers import source_event
+    from datetime import datetime
+
+    graph_path = Path(os.environ['AIC_TEST_ROAD_GRAPH']).resolve(strict=True)
+    digest = graph_inventory_sha256(graph_path)
+    install_graph_artifact(graph_path, root / 'road-graphs', expected_sha256=digest)
+    graph = db.get(RoadNetworkVersion, 'graph-1')
+    graph.engine_version, graph.graph_sha256, graph.artifact_key = '3.8.3', digest, digest
+    db.commit()
+    source_event(db, profile)
+    result_id, _ = CaseResultService.freeze_completed_inputs(db, profile, run)
+    db.commit()
+    request_id = db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_type == case_road_triggers.REQUEST_TYPE))
+    handoff = case_road_triggers.process_request(db, request_id)
+    assert handoff['status'] == 'completed', handoff
+    job_id = db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_type == case_road_jobs.EVENT_TYPE))
+    calculated = case_road_jobs.process_comparison(db, job_id, artifact_root=root / 'road-graphs')
+    assert calculated['outcome'] == 'calculated', calculated
+    comparison = read_road_artifact(db, calculated['artifact']['id'])['content']
+    matrix = comparison['matrix']
+    assert 600 < matrix['cells'][0]['distance_m'] < 800
+    saved = CaseResultService.read(db, result_id)
+    route = route_result_target(db, result_id=result_id, asset_id=comparison['targets'][0]['asset_id'],
+        network_id=matrix['network_id'], graph_sha256=digest, content_sha256=saved['content_sha256'],
+        analysis_at=datetime.fromisoformat(matrix['analysis_at']),
+        vehicle=frozen_road_vehicle(saved['content']), artifact_root=root / 'road-graphs')
+    artifact = freeze_road_artifact(db, route)
+    db.commit()
+    return saved, artifact
 
 
 @pytest.mark.skipif(os.environ.get("AIC_TEST_REAL_VECTOR_MAP") != "1", reason="requires fixed public map assets and browser")
 @pytest.mark.parametrize("longitude,latitude", [(125.03, 46.6), (123.95, 47.34)], ids=["daqing", "qiqihar"])
-def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_data, tmp_path, monkeypatch, longitude, latitude):
+def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_data, tmp_path, monkeypatch, longitude, latitude, request):
+    road_mode = bool(os.environ.get('AIC_TEST_ROAD_GRAPH'))
+    if road_mode:
+        assert longitude == 125.03, 'road integration fixture is Daqing only'
+        request.getfixturevalue('ready')
+        longitude, latitude = 125.1852727, 46.54446175
     repository = Path(__file__).resolve().parents[2]
     assembly = repository / "backups/map-foundation/v4-source/20260908/complete-candidate-v2/map-assembly-muyp0orr"
     assert assembly.is_dir(), "真实公共资产缺失，不能计入验收"
@@ -57,9 +104,14 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
     profile.payload = {**profile.payload, "analysis_facts": {"latitude": latitude, "longitude": longitude}}
     candidate.region = {"type": "circle", "center": [longitude, latitude], "radius_m": 3000}
     db_session.execute(MapSnapshotFeature.__table__.update().values(
-        snapshot_id=snapshot_id, latitude=latitude + 0.01, longitude=longitude + 0.01))
+        snapshot_id=snapshot_id, latitude=46.5444392 if road_mode else latitude + 0.01,
+        longitude=125.18509545 if road_mode else longitude + 0.01))
     db_session.commit()
-    saved, _ = CaseResultService.create_current(db_session, 1)
+    road_artifact = None
+    if road_mode:
+        saved, road_artifact = _automatic_road_report(db_session, profile, run, root)
+    else:
+        saved, _ = CaseResultService.create_current(db_session, 1)
     db_session.commit()
     requests = []
     real_read = CaseMapRenderResources.read
@@ -70,13 +122,18 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
         return result
 
     monkeypatch.setattr(CaseMapRenderResources, "read", tracked_read)
-    document, data = export_case_result_docx(db_session, saved["id"])
+    artifact_id = road_artifact['id'] if road_artifact else None
+    document, data = export_case_result_docx(db_session, saved["id"], road_artifact_id=artifact_id)
     assert document.content_sha256 == saved["content_sha256"]
     assert any(url.endswith("/style.json") for url in requests)
     assert any("/glyphs/" in url for url in requests)
     assert any("/tiles/" in url for url in requests)
     assert all(url.startswith("https://aic-map.invalid/") for url in requests)
     with ZipFile(io.BytesIO(data)) as archive:
+        if road_artifact:
+            assert document.road_artifact_sha256 == road_artifact['content_sha256']
+            xml = archive.read('word/document.xml').decode()
+            assert '留存道路路径' in xml and '0.69 公里' in xml
         images = [name for name in archive.namelist() if name.startswith("word/media/") and name.endswith(".png")]
         assert len(images) == 1
         image = archive.read(images[0])
@@ -88,7 +145,7 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
     if os.environ.get("AIC_TEST_PDF_OFFICE") == "1":
         from app.services.case_result_pdf import export_case_result_pdf
 
-        pdf_document, pdf = export_case_result_pdf(db_session, saved["id"])
+        pdf_document, pdf = export_case_result_pdf(db_session, saved["id"], road_artifact_id=artifact_id)
         assert pdf_document.content_sha256 == document.content_sha256
         assert pdf.startswith(b"%PDF-") and b"%%EOF" in pdf[-1024:]
         (tmp_path / "real-vector-result.pdf").write_bytes(pdf)
@@ -97,6 +154,9 @@ def test_real_two_city_vector_map_and_chinese_glyphs_in_word(db_session, result_
         "glyphs": sum("/glyphs/" in url for url in requests),
         "manifest_sha256": installed["package_hash"],
         "synthetic_case": True,
+        "automatic_road_services": road_mode,
+        "road_artifact_sha256": road_artifact['content_sha256'] if road_artifact else None,
+        "upstream_profile_fixture": True, "redis_queue_tested": False,
     }))
     if os.environ.get('AIC_RENDER_EVIDENCE_DIR'):
         destination = Path(os.environ['AIC_RENDER_EVIDENCE_DIR'])

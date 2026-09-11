@@ -19,6 +19,7 @@ def main():
     assert not any(p.is_file() for p in (root / 'data').rglob('*'))
     assert not any(p.is_file() for p in Path('/var/lib/aicommander/maps').rglob('*'))
     with tempfile.TemporaryDirectory(prefix='core-image-probe-') as tmp:
+        expected_revision = os.environ.get('AIC_EXPECTED_CORE_REVISION', '4ef1b75a80e5')
         os.environ.clear()
         os.environ.update({
             'DATABASE_URL': f'sqlite:///{tmp}/synthetic.sqlite',
@@ -42,7 +43,7 @@ def main():
         from fastapi.testclient import TestClient
         with SessionLocal() as db:
             revision = db.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
-            assert revision == '4ef1b75a80e5'
+            assert revision == expected_revision, (revision, expected_revision)
             area_id = db.query(OperationalArea.id).order_by(OperationalArea.id).first()[0]
             db.add(User(username='core-image-probe', display_name='合成管理员', role='admin',
                         password_hash=AuthService.hash_password('Synthetic-core-123!')))

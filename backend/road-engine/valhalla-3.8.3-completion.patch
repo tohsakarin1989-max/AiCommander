@@ -1,0 +1,100 @@
+diff --git a/src/thor/expansion_action.cc b/src/thor/expansion_action.cc
+index 895d355..4ae369a 100644
+--- a/src/thor/expansion_action.cc
++++ b/src/thor/expansion_action.cc
+@@ -6,6 +6,7 @@
+ #include "tyr/serializers.h"
+ 
+ #include <ankerl/unordered_dense.h>
++#include <stdexcept>
+ 
+ using namespace rapidjson;
+ using namespace valhalla::midgard;
+@@ -133,7 +134,7 @@ std::string thor_worker_t::expansion(Api& request) {
+         if (tile == nullptr) {
+           LOG_ERROR("thor_worker_t::expansion error, tile no longer available" +
+                     std::to_string(edgeid.tile_base()));
+-          return;
++          throw std::runtime_error("expansion_graph_tile_unavailable");
+         }
+ 
+         // if requested, skip this edge in case its opposite edge has been added
+@@ -168,6 +169,23 @@ std::string thor_worker_t::expansion(Api& request) {
+         }
+       };
+ 
++  // Always detach callbacks capturing local state, including exceptional exits.
++  const auto clear_tracking = [&]() {
++    for (auto* alg : std::vector<PathAlgorithm*>{&multi_modal_transit, &timedep_forward,
++                                                &timedep_reverse, &bidir_astar, &multimodal_astar}) {
++      alg->set_track_expansion(nullptr);
++    }
++    for (auto* alg : std::vector<MatrixAlgorithm*>{&costmatrix_, &time_distance_matrix_,
++                                                  &time_distance_bss_matrix_}) {
++      alg->set_track_expansion(nullptr);
++    }
++    isochrone_gen.SetInnerExpansionCallback(nullptr);
++  };
++  struct TrackingReset {
++    const decltype(clear_tracking)& clear;
++    ~TrackingReset() { clear(); }
++  } tracking_reset{clear_tracking};
++
+   // tell all the algorithms how to track expansion
+   for (auto* alg : std::vector<PathAlgorithm*>{
+            &multi_modal_transit,
+@@ -184,18 +202,15 @@ std::string thor_worker_t::expansion(Api& request) {
+   }
+   isochrone_gen.SetInnerExpansionCallback(track_expansion);
+ 
+-  try {
+-    // track the expansion
+-    if (exp_action == Options::route) {
+-      route(request);
+-    } else if (exp_action == Options::isochrone) {
+-      isochrones(request);
+-    } else if (exp_action == Options::sources_to_targets) {
+-      matrix(request);
+-    }
+-  } catch (...) {
+-    // we swallow exceptions because we actually want to see what the heck the expansion did
+-    // anyway
++  // A partial debugging trace is not a completed calculation. Propagate errors.
++  if (exp_action == Options::route) {
++    route(request);
++  } else if (exp_action == Options::isochrone) {
++    isochrones(request);
++  } else if (exp_action == Options::sources_to_targets) {
++    matrix(request);
++  } else {
++    throw std::runtime_error("expansion_action_unsupported");
+   }
+ 
+   // assemble the properties from latest/highest stages it went through
+@@ -207,14 +222,6 @@ std::string thor_worker_t::expansion(Api& request) {
+     }
+   }
+ 
+-  // tell all the algorithms to stop tracking the expansion
+-  for (auto* alg : std::vector<PathAlgorithm*>{&multi_modal_transit, &timedep_forward,
+-                                               &timedep_reverse, &bidir_astar, &multimodal_astar}) {
+-    alg->set_track_expansion(nullptr);
+-  }
+-  costmatrix_.set_track_expansion(nullptr);
+-  isochrone_gen.SetInnerExpansionCallback(nullptr);
+-
+   // serialize it
+   return tyr::serializeExpansion(request, algo);
+ }
+diff --git a/src/tyr/expansion_serializer.cc b/src/tyr/expansion_serializer.cc
+index 847c64c..d3ca7ff 100644
+--- a/src/tyr/expansion_serializer.cc
++++ b/src/tyr/expansion_serializer.cc
+@@ -88,6 +88,8 @@ std::string serializeExpansion(Api& request, const std::string& algo) {
+   writer.end_array(); // features
+   writer.start_object("properties");
+   writer("algorithm", algo);
++  // This serializer is reached only after the patched action returns normally.
++  writer("aicommander_expansion_contract", "completed-v1");
+   writer.end_object();
+   writer.end_object(); // object

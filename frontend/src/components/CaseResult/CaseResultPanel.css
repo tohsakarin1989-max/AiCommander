@@ -19,5 +19,8 @@
 .case-result__facts dt { color: var(--ink-2); }
 .case-result__facts dd { margin: 0; }
 .case-result code { white-space: normal; font-size: 12px; }
+.case-result__roads button { display: inline-flex; align-items: center; min-height: 34px; padding: 4px 10px; margin: 3px 0; border: 1px solid var(--line-soft); border-radius: 5px; color: var(--ink-1); cursor: pointer; }
+.case-result__roads button:hover, .case-result__roads button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.case-result__roads button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .case-result > .case-semantics { padding: 18px 0 0; border: 0; background: transparent; box-shadow: none; }
 @media (max-width: 480px) { .case-result__facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }

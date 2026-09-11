@@ -11,7 +11,7 @@ from app.services.case_semantic_time import extract_time_intervals
 from app.services.case_semantic_structured import extract_structured_sources
 
 
-SEMANTIC_RULE_VERSION = "local-terms-4.1.0-3"
+SEMANTIC_RULE_VERSION = "local-terms-4.2.0-2"
 TEXT_FIELDS = (
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "upstream_source", "downstream_destination",

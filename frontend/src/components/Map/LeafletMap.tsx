@@ -30,6 +30,8 @@ interface LeafletMapProps {
   onMarkerClick?: (marker: CaseMarker) => void
   operationalAreaId?: number
   snapshotRef?: string
+  referencePath?: Array<[number, number]>
+  referenceRoadSegments?: Array<Array<[number, number]>>
   productionAssetIds?: number[]
   hypothesisRegions?: Array<{
     id: string
@@ -136,6 +138,8 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   onMarkerClick,
   operationalAreaId,
   snapshotRef = 'current',
+  referencePath,
+  referenceRoadSegments,
   productionAssetIds = [],
   hypothesisRegions = [],
 }) => {
@@ -408,6 +412,27 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 })
     }
   }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick, operationalAreaId, hypothesisRegions])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !referencePath || referencePath.length < 2) return
+    const line = L.polyline(referencePath, { color: '#38bdf8', weight: 4, opacity: .9 }).addTo(map)
+    line.bindTooltip('已知路网参考路径，不是实际行驶轨迹')
+    map.fitBounds(line.getBounds(), { padding: [30, 30], maxZoom: 15 })
+    return () => { if (map.hasLayer(line)) map.removeLayer(line) }
+  }, [referencePath, operationalAreaId, snapshotRef])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !referenceRoadSegments?.length) return
+    // A multi-polyline preserves disconnected branches; never join them or fill an area.
+    const lines = L.polyline(referenceRoadSegments, {
+      renderer: L.canvas(), color: PRODUCTION_COLORS.road, weight: 4, opacity: .9,
+    }).addTo(map)
+    lines.bindTooltip('预算内道路段参考；未显示不代表不可达')
+    map.fitBounds(lines.getBounds(), { padding: [30, 30], maxZoom: 15 })
+    return () => { if (map.hasLayer(lines)) map.removeLayer(lines) }
+  }, [referenceRoadSegments, operationalAreaId, snapshotRef])
 
   return (
     <div

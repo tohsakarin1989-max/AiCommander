@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.case_pipeline_tasks",
         "app.tasks.case_insight_tasks",
         "app.tasks.case_result_tasks",
+        "app.tasks.case_road_tasks",
         "app.tasks.deployment_advisor_tasks",
         "app.tasks.map_package_tasks",
         "app.tasks.intelligent_query_tasks",
@@ -26,6 +27,11 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        "process-case-road-comparison": {
+            "task": "aicommander.case_roads.process_next",
+            "schedule": 10.0,
+            "options": {"queue": "road_analysis", "expires": 10},
+        },
         "process-intelligent-query": {
             "task": "aicommander.queries.process_next",
             "schedule": 5.0,

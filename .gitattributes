@@ -1,0 +1,3 @@
+# Unified-diff blank context lines contain one required leading space.
+# Preserve the verified upstream patch; ordinary source whitespace checks remain enabled.
+backend/road-engine/valhalla-3.8.3-completion.patch whitespace=-blank-at-eol

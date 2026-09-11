@@ -5,6 +5,8 @@ import type { MapSource } from '../../services/mapFoundation'
 import { internalRoadsApi, type RoadFeature, type RoadImport, type RoadPreview, type RoadReview } from '../../services/internalRoads'
 import RoadComparisonPanel from './RoadComparisonPanel'
 import RoadCatalogPanel from './RoadCatalogPanel'
+import NewRoadConnectionFields from './NewRoadConnectionFields'
+import { buildNewRoadEvidence, type NewRoadConnectionRow } from '../../services/newRoadEvidence'
 
 const labels = { verified: '资料已核验', rejected: '已驳回', pending_verification: '待核验' }
 const entranceLabels: Record<string, string> = {
@@ -140,12 +142,16 @@ function RoadRecord({ source, record, refresh }: { source: number; record: RoadI
   </>
 }
 
-function RoadReviewForm({ source, record, feature, refresh }: {
+export function RoadReviewForm({ source, record, feature, refresh }: {
   source: number; record: RoadImport; feature: RoadFeature; refresh: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const review = record.feature_reviews?.[feature.id]
+  const [form] = Form.useForm()
+  const newRoadEnabled = Form.useWatch('newRoadEnabled', form)
+  const previousGeometry = review?.connection_evidence && 'kind' in review.connection_evidence
+    ? review.connection_evidence : undefined
   return <section aria-label={`核验 ${feature.properties.name}`}>
     <Typography.Title level={5}>{feature.properties.name} · {feature.id}</Typography.Title>
     <details><summary>完整线形与来源属性</summary><pre style={{ maxHeight: 260, overflow: 'auto' }}>{JSON.stringify(feature, null, 2)}</pre></details>
@@ -156,18 +162,41 @@ function RoadReviewForm({ source, record, feature, refresh }: {
         : entranceLabels[item.status] ?? '入口关联状态未知，请核验'}
       description={<span>声明道路：{item.declared_road_id}；来源批次：{item.road_import_id ?? '未找到'}。{item.boundary}</span>} />)}
     {review && <Typography.Paragraph>最近核验：{labels[review.decision]}；{review.note}；依据：{review.evidence_reference}</Typography.Paragraph>}
-    {review?.connection_evidence && <Typography.Paragraph>该次连接记录：{
+    {review?.connection_evidence && ('kind' in review.connection_evidence
+      ? <Typography.Paragraph>新增内部道路：已记录 {review.connection_evidence.connections.length} 个端点连接依据。
+        构图时仍需核对公共源版本、节点位置及通行许可。</Typography.Paragraph>
+      : <Typography.Paragraph>该次连接记录：{
       { connected: '连接已核验', disconnected: '不连接已核验', unknown: '仍未知' }[review.connection_evidence.status]
-    }；道路批次 {review.connection_evidence.road_import_id}。不代表通行许可。</Typography.Paragraph>}
+    }；道路批次 {review.connection_evidence.road_import_id}。不代表通行许可。</Typography.Paragraph>)}
     {error && <Alert type="error" message={error} />}
-    <Form layout="vertical" disabled={busy} onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string;
-      connection?: 'connected' | 'disconnected' | 'unknown' }) => {
+    <Form form={form} layout="vertical" disabled={busy} initialValues={{ newRoadEnabled: !!previousGeometry,
+      publicSourceHash: previousGeometry?.public_source_sha256,
+      newConnections: previousGeometry?.connections.map(item => ({ segment: item.component + 1,
+        endpoint: item.endpoint, node: String(item.osm_node_id) })) ?? [{ segment: 1, endpoint: 'start', node: '' }] }}
+      onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string;
+      connection?: 'connected' | 'disconnected' | 'unknown'; newRoadEnabled?: boolean;
+      publicSourceHash?: string; newConnections?: NewRoadConnectionRow[] }) => {
+      let geometry
+      try {
+        if (values.newRoadEnabled) {
+          if (values.decision !== 'verified') throw new Error('新增道路连接依据只能随“资料已核验”提交；若要撤回，请先选择“不记录新增道路连接”。')
+          geometry = buildNewRoadEvidence(feature, values.publicSourceHash ?? '', values.newConnections ?? [])
+        }
+      } catch (error) { setError(error instanceof Error ? error.message : '连接依据格式有误'); return }
       setBusy(true); setError('')
-      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence, values.connection); refresh() }
+      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence, values.connection, geometry); refresh() }
       catch { setError('核验未确认成功。请刷新批次后查看当前决定，再提交；不覆盖他人的核验。') }
       finally { setBusy(false) }
     }}>
       <Form.Item label="核验决定" name="decision" rules={[{ required: true }]}><Select options={Object.entries(labels).map(([value, label]) => ({ value, label }))} /></Form.Item>
+      {feature.properties.kind === 'road' && <>
+        <Form.Item label="新增道路连接（可选）" name="newRoadEnabled"
+          extra="普通资料核验无需填写。取消记录后，本次核验不再携带此前的新增道路连接依据。">
+          <Select options={[{ value: false, label: '不记录新增道路连接' },
+            { value: true, label: '记录公共地图未收录道路的连接依据' }]} />
+        </Form.Item>
+        {newRoadEnabled && <NewRoadConnectionFields />}
+      </>}
       {feature.properties.kind === 'entrance' && <Form.Item label="入口连接记录（可选，仅资料已核验时填写）" name="connection"
         extra="依据和说明必须支持该连接记录；这不会自动生成道路或授予通行许可。">
         <Select allowClear placeholder="不额外记录连接结论" options={[

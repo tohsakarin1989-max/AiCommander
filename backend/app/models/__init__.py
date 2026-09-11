@@ -134,3 +134,6 @@ __all__ = [
     "EvaluationRun",
 ]
 from .internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
+from .road_network import RoadAccessGroup, RoadAccessMembership, RoadAccessGrant, RoadNetworkVersion
+from .road_public_alias import RoadPublicAlias
+from .case_road_artifact import CaseRoadArtifact

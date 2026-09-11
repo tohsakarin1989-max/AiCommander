@@ -134,6 +134,10 @@ class CasePipelineService:
             idempotency_key=idempotency_key,
             status="pending",
         )
+        from app.services.case_road_triggers import capture_road_authority
+        authority = capture_road_authority(db)
+        if authority is not None:
+            event.payload = {**event.payload, "road_authority": authority}
         db.add(event)
         # CasePipelineState.event_id 具有外键约束；先持久化 Outbox 主记录，
         # 保证 SQLite 测试与 PostgreSQL 生产环境采用相同的写入顺序。
@@ -433,6 +437,7 @@ class CasePipelineService:
                     item,
                     (
                         "vehicle_type",
+                        "road_vehicle_kind", "height_m", "gross_weight_t",
                         "color",
                         "brand",
                         "model",
@@ -542,7 +547,19 @@ class CasePipelineService:
             "source_hash": CasePipelineService.source_hash(db, case),
             "semantics": build_semantic_profile(
                 {field: getattr(case, field) for field in TEXT_FIELDS},
-                structured={"vehicle_info": case.vehicle_info, "involved_items": case.involved_items},
+                structured={
+                    "vehicle_info": case.vehicle_info,
+                    "involved_items": case.involved_items,
+                    # Keep relational vehicle evidence separate from legacy JSON.
+                    # Only already-hashed road conditions are needed here, not
+                    # plates or oil quantities (not vehicle total mass).
+                    "case_vehicles": [
+                        {"vehicle_type": item.vehicle_type, "road_vehicle_kind": item.road_vehicle_kind,
+                         "height_m": item.height_m, "gross_weight_t": item.gross_weight_t}
+                        for item in db.query(CaseVehicle).filter(CaseVehicle.case_id == case.id)
+                        .order_by(CaseVehicle.id).all()
+                    ],
+                },
             ),
             "spatial_grid": CasePipelineService._spatial_grid(case.latitude, case.longitude),
             "standard": {

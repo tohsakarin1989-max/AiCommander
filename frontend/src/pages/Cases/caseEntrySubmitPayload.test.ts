@@ -5,6 +5,19 @@ const timeValue = (iso: string) => ({
   toISOString: () => iso,
 })
 
+describe('道路车辆参数', () => {
+  it('保留选填道路参数，并允许编辑时清空，不改成零或油量', () => {
+    const result = buildCaseEntrySubmitPayload({ bonus_has_vehicle: true,
+      initial_vehicles: [{ id: 9, road_vehicle_kind: 'truck', height_m: 3.2, gross_weight_t: 12.5 }],
+    }, { mode: 'edit' })
+    expect(result.initial_vehicles).toEqual([{ id: 9, road_vehicle_kind: 'truck', height_m: 3.2, gross_weight_t: 12.5 }])
+    const cleared = buildCaseEntrySubmitPayload({ bonus_has_vehicle: true,
+      initial_vehicles: [{ id: 9, height_m: null, gross_weight_t: null }],
+    }, { mode: 'edit' })
+    expect(cleared.initial_vehicles).toEqual([{ id: 9, height_m: null, gross_weight_t: null }])
+  })
+})
+
 describe('caseEntrySubmitPayload', () => {
   it('removes UI-only bonus scope switches from the API payload', () => {
     const payload = buildCaseEntrySubmitPayload({

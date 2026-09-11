@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -132,6 +132,9 @@ def _require_bonus_accounting_enabled() -> None:
 
 class CaseVehicleDraft(BaseModel):
     id: Optional[int] = None
+    road_vehicle_kind: Optional[Literal['auto', 'truck']] = None
+    height_m: Optional[float] = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
+    gross_weight_t: Optional[float] = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
     vehicle_type: Optional[str] = None
     color: Optional[str] = None
     brand: Optional[str] = None
@@ -420,6 +423,9 @@ class CaseLocationUpdate(BaseModel):
 
 
 class CaseVehicleCreate(BaseModel):
+    road_vehicle_kind: Optional[Literal['auto', 'truck']] = None
+    height_m: Optional[float] = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
+    gross_weight_t: Optional[float] = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
     vehicle_type: Optional[str] = None
     color: Optional[str] = None
     brand: Optional[str] = None

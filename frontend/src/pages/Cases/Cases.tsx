@@ -134,6 +134,9 @@ function vehicleDraftFromRecord(vehicle: CaseVehicle): Record<string, unknown> {
   return {
     id: vehicle.id,
     vehicle_type: vehicle.vehicle_type,
+    road_vehicle_kind: vehicle.road_vehicle_kind,
+    height_m: vehicle.height_m,
+    gross_weight_t: vehicle.gross_weight_t,
     plate_number: vehicle.plate_number,
     handling_status: vehicle.handling_status,
   }
@@ -171,7 +174,7 @@ interface CaseEntryPrecheckProps {
   onBonusPersonScopeChange: (checked: boolean) => void
 }
 
-const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
+export const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
   form,
   onBonusVehicleScopeChange,
   onBonusPersonScopeChange,
@@ -324,7 +327,7 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
           <Form.Item name="bonus_has_vehicle" valuePropName="checked" noStyle>
             <Switch size="small" onChange={onBonusVehicleScopeChange} />
           </Form.Item>
-          <b>涉案车辆奖励</b>
+          <b>涉案车辆资料</b>
           <span>车辆类别、车牌和处置状态</span>
         </div>
         <div>
@@ -395,6 +398,21 @@ const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
                   <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
                     删除
                   </Button>
+                  <details style={{ gridColumn: '1 / -1' }}>
+                    <summary>道路通行条件（选填）</summary>
+                    <p>只填写已掌握的车辆条件。车辆总重不是载油量或核定载质量，未知时留空，不影响案件保存。</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                      <Form.Item {...restField} name={[name, 'road_vehicle_kind']} label="道路计算车型">
+                        <Select allowClear placeholder="未知则留空" options={[{ value: 'auto', label: '小客车' }, { value: 'truck', label: '货车' }]} />
+                      </Form.Item>
+                      <Form.Item {...restField} name={[name, 'height_m']} label="车高（米）" rules={[{ type: 'number', min: 0.01 }]}>
+                        <InputNumber min={0.01} step={0.1} style={{ width: '100%' }} placeholder="选填" />
+                      </Form.Item>
+                      <Form.Item {...restField} name={[name, 'gross_weight_t']} label="车辆总重（吨）" rules={[{ type: 'number', min: 0.01 }]}>
+                        <InputNumber min={0.01} step={0.1} style={{ width: '100%' }} placeholder="选填" />
+                      </Form.Item>
+                    </div>
+                  </details>
                 </div>
               ))}
             </div>

@@ -7,6 +7,7 @@ from app.api import map_package_imports
 from app.api import intelligent_queries
 from app.api import showcase
 from app.api import case_results
+from app.api import road_analysis
 from app.cors import build_cors_origins
 from app.database import engine, Base, SessionLocal
 from app.config import settings
@@ -84,6 +85,7 @@ app.include_router(case_imports.router, prefix="/api/case-imports", tags=["case-
 app.include_router(case_pipeline.router, prefix="/api", tags=["case-pipeline"])
 app.include_router(case_insights.router, prefix="/api", tags=["case-insights"])
 app.include_router(case_results.router, prefix="/api", tags=["case-results"])
+app.include_router(road_analysis.router, prefix="/api/road-analysis", tags=["road-analysis"])
 app.include_router(deployment_advisor.router, prefix="/api", tags=["deployment-advisor"])
 app.include_router(governance.router, prefix="/api", tags=["intelligence-governance"])
 app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { CaseResult } from '../../types/caseResult'
 import CaseSemanticProfile from '../../pages/Cases/CaseSemanticProfile'
 import CaseResultDownload from './CaseResultDownload'
+import CaseRoadComparison from './CaseRoadComparison'
 import './CaseResultPanel.css'
 
 const labels: Record<string, string> = {
@@ -62,6 +63,7 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
     )}</ol> : <p>尚无可展示候选，不代表不存在相关线索。</p>}
     {!!content.information_gaps.analysis.length && <ul className="case-result__gaps">{content.information_gaps.analysis.map((text, index) => <li key={index}>{text}</li>)}</ul>}
     {map}
+    {result.freshness !== 'pending_update' && <CaseRoadComparison key={`${result.id}:${result.content_sha256}`} resultId={result.id} hash={result.content_sha256} />}
     <CaseSemanticProfile key={result.id} semantics={content.semantics ?? undefined} updating={result.freshness === 'pending_update'} />
     <details><summary>成果版本与边界</summary>
       <dl className="case-result__facts">

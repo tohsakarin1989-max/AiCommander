@@ -257,7 +257,13 @@ def review_feature(db, source_id, import_id, feature_id, data, actor_id):
     if data["input_sha256"] != record.input_sha256:
         raise RoadReviewConflict("来源版本已变化，请重新读取后核验")
     connection = data.get("connection_evidence")
-    if connection is not None:
+    if connection is not None and connection.get('kind') == 'new_road':
+        from app.services.road_new_geometry import NewRoadGeometryEvidence
+        NewRoadGeometryEvidence.model_validate(connection)
+        feature = next(item for item in record.features if item['id'] == feature_id)
+        if data['decision'] != 'verified' or feature['properties']['kind'] != 'road':
+            raise ValueError('新增道路连接证据只用于已核验道路')
+    elif connection is not None:
         check = next((item for item in entrance_checks(db, record) if item["entrance_id"] == feature_id), None)
         if (data["decision"] != "verified" or check is None or check["status"] in
                 ("declared_road_missing", "declared_target_not_road")):

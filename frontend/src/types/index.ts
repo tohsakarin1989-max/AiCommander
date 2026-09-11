@@ -58,6 +58,9 @@ export interface CaseQualityPreview extends CaseQuality {
 export interface CaseVehicle {
   id: number
   case_id: number
+  road_vehicle_kind?: 'auto' | 'truck' | null
+  height_m?: number | null
+  gross_weight_t?: number | null
   vehicle_type?: string
   color?: string
   brand?: string

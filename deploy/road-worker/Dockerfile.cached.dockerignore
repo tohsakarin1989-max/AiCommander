@@ -1,0 +1,11 @@
+**
+!backend/
+!backend/requirements.txt
+!backend/docker-entrypoint.sh
+!backend/app/
+!backend/app/**
+**/__pycache__
+**/*.py[cod]
+**/.env*
+**/*.db
+**/*.sqlite*

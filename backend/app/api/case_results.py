@@ -1,6 +1,7 @@
 """统一案件成果：兼容生成入口及不可变历史读取。"""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import AreaWriteAccessError, get_db, require_area_write_access
@@ -97,22 +98,27 @@ def read_result(result_id: str, request: Request, response: Response, db: Sessio
 
 
 @router.get("/case-results/{result_id}/document.docx")
-def download_result_docx(result_id: str, request: Request, db: Session = Depends(get_db)):
-    return _download_result(result_id, request, db, "docx")
+def download_result_docx(result_id: str, request: Request, db: Session = Depends(get_db),
+                         road_artifact_id: str | None = Query(None, min_length=36, max_length=36, pattern=r"^[a-f0-9-]+$")):
+    return _download_result(result_id, request, db, "docx", road_artifact_id)
 
 
 @router.get("/case-results/{result_id}/document.pdf")
-def download_result_pdf(result_id: str, request: Request, db: Session = Depends(get_db)):
-    return _download_result(result_id, request, db, "pdf")
+def download_result_pdf(result_id: str, request: Request, db: Session = Depends(get_db),
+                        road_artifact_id: str | None = Query(None, min_length=36, max_length=36, pattern=r"^[a-f0-9-]+$")):
+    return _download_result(result_id, request, db, "pdf", road_artifact_id)
 
 
-def _download_result(result_id: str, request: Request, db: Session, format: str):
+def _download_result(result_id: str, request: Request, db: Session, format: str, road_artifact_id: str | None = None):
     _principal(request)
     try:
         exporter = export_case_result_pdf if format == "pdf" else export_case_result_docx
-        document, data = exporter(db, result_id)
-    except CaseResultAccessError:
+        document, data = (exporter(db, result_id, road_artifact_id=road_artifact_id)
+                          if road_artifact_id else exporter(db, result_id))
+    except (CaseResultAccessError, PermissionError):
         raise _unavailable() from None
+    except SQLAlchemyError:
+        raise HTTPException(503, "成果存储暂不可用", headers={"Cache-Control": "no-store"}) from None
     except CaseResultExportError as error:
         if error.code in {"document_too_large", "pdf_output_too_large"}:
             raise HTTPException(413, "成果过大，暂不能交互式导出", headers={"Cache-Control": "no-store"}) from None
@@ -123,7 +129,10 @@ def _download_result(result_id: str, request: Request, db: Session, format: str)
     except ValueError:
         raise HTTPException(409, "成果格式不完整或版本暂不支持导出", headers={"Cache-Control": "no-store"}) from None
     media_type = "application/pdf" if format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    road_headers = ({"X-Road-Artifact-ID": document.road_artifact_id,
+                     "X-Road-Artifact-SHA256": document.road_artifact_sha256} if document.road_artifact_id else {})
+    suffix = f'-road-{document.road_artifact_sha256[:16]}' if document.road_artifact_sha256 else ''
     return Response(data, media_type=media_type,
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-                             "Content-Disposition": f'attachment; filename="case-result-{document.content_sha256[:16]}.{format}"',
-                             "X-Result-Content-SHA256": document.content_sha256})
+                             "Content-Disposition": f'attachment; filename="case-result-{document.content_sha256[:16]}{suffix}.{format}"',
+                             "X-Result-Content-SHA256": document.content_sha256, **road_headers})
