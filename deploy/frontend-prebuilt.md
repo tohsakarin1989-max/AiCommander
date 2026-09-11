@@ -27,7 +27,7 @@ docker build --pull=false --network none -f Dockerfile.prebuilt \
 前后端版本、镜像摘要与验证记录必须匹配，不能挂载旧`dist`覆盖新镜像内容。
 公共地图/路网及生产数据仍在独立受控卷，不写进前端镜像。
 
-## 当前候选证据
+## 五轮验收工作包镜像
 
 `aicommander-frontend:4.5-closeout-candidate`清单摘要：
 `00371a26e99e492cadf5776523e84fb32f39bf55fdc420c55b58cde9e277e337`。
@@ -40,3 +40,10 @@ docker build --pull=false --network none -f Dockerfile.prebuilt \
 该构建曾通过单轮HTTPS案件路径和Word/PDF下载，但后续复测发现图表白屏，不能作为修复完成证明。
 更早的空态修复候选为`6fa61a20d809d802ee4c5058d2468f535f16d1b51d79acd6bdf52b3c9402a74f`。
 这些历史候选均已被当前候选替代；具体失败及修复过程保留在收口核对记录中。
+
+## rc.1版本打包
+
+`aicommander-frontend:4.5.0-rc.1`摘要为
+`fa649c248731038115a998d5e6f2d6cf643bcb656520eee760b5cf3a0e1e3ab9`。
+相对五轮工作包仅更新界面版本回退文字；类型检查和生产构建通过。
+未覆盖五轮验收镜像，不将rc.1称为Stable或已完成现场部署。
