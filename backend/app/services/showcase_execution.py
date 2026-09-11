@@ -165,7 +165,8 @@ def _execute(db, scenario):
         'trace': trace, 'fault': fault,
         'original_facts_unchanged': before == CasePipelineService.source_hash(db, case),
         'boundary': '全部案件、设施和坐标均为合成数据；规则实时计算，不是实时模型推理。'
-                    '该合成地图快照不可用作离线底图或道路通行证明。候选不是已确认事实。',
+                    '该合成地图快照不可用作离线底图或道路通行证明。候选不是已确认事实。'
+                    '即时案件分析与上一完整周期简报分别展示，不把刚生成的候选倒填历史周期。',
     })
 
 

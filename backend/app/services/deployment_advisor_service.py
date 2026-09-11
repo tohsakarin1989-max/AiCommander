@@ -21,6 +21,9 @@ from app.models.deployment_advisor import (
 )
 from app.models.map_foundation import MapSnapshot, OperationalArea
 from app.services.case_insight_service import CASE_INSIGHT_ALGORITHM_VERSION
+from app.services.situation_change_service import closed_window, case_changes, change_recommendations, CHANGE_RULE
+from app.services.tech_defense_change_service import tech_changes, tech_recommendations
+from app.services.road_situation_changes import road_source_changes, road_sources_visible
 
 
 class DeploymentAdvisorService:
@@ -106,14 +109,22 @@ class DeploymentAdvisorService:
         area = db.query(OperationalArea).filter(OperationalArea.id == operational_area_id).first()
         if not area or area.status != "active":
             raise ValueError("operational_area_not_found")
-        end = DeploymentAdvisorService._aware(as_of)
-        if period_type == "daily":
-            start = end.replace(hour=0, minute=0, second=0, microsecond=0)
-            valid_until = end + timedelta(days=1)
-        else:
-            day_start = end.replace(hour=0, minute=0, second=0, microsecond=0)
-            start = day_start - timedelta(days=day_start.weekday())
-            valid_until = end + timedelta(days=7)
+        window = closed_window(as_of, period_type)
+        start, end = window.current_start, window.current_end
+        valid_until = DeploymentAdvisorService._aware(as_of) + timedelta(days=1 if period_type == 'daily' else 7)
+        # Unbound internal jobs are narrowed to the already resolved area. Never
+        # replace a bound request scope, including an empty authorization set.
+        internal_scope = 'authorized_area_ids' not in db.info
+        if internal_scope:
+            db.info['authorized_area_ids'] = (area.id,)
+        try:
+            comparison = case_changes(db, area.id, window)
+            comparison['tech_defense'] = tech_changes(db, area.id, window)
+            comparison['roads'] = road_source_changes(db, area.id, window)
+        finally:
+            if internal_scope:
+                db.info.pop('authorized_area_ids', None)
+        comparison['change_rule'] = dict(CHANGE_RULE)
 
         hypothesis_rows = (
             db.query(CaseHypothesis, CaseAnalysisRun)
@@ -127,7 +138,7 @@ class DeploymentAdvisorService:
             .filter(
                 Case.operational_area_id == area.id,
                 CaseAnalysisRun.completed_at >= start,
-                CaseAnalysisRun.completed_at <= end,
+                CaseAnalysisRun.completed_at < end,
                 CaseAnalysisRun.algorithm_version == CASE_INSIGHT_ALGORITHM_VERSION,
                 CaseAnalysisRun.status == "completed",
                 CaseAnalysisProfile.is_current.is_(True),
@@ -142,7 +153,7 @@ class DeploymentAdvisorService:
             db.query(TechDefenseEventAggregate)
             .filter(
                 TechDefenseEventAggregate.operational_area_id == area.id,
-                TechDefenseEventAggregate.period_end >= start,
+                TechDefenseEventAggregate.period_start >= start,
                 TechDefenseEventAggregate.period_end <= end,
             )
             .order_by(TechDefenseEventAggregate.period_end, TechDefenseEventAggregate.id)
@@ -161,6 +172,9 @@ class DeploymentAdvisorService:
             "area": area.id,
             "period_type": period_type,
             "period_start": start.isoformat(),
+            "period_end": end.isoformat(),
+            "comparison": comparison,
+            "algorithm_version": "deployment-advisor-4.4-1",
             "hypotheses": [item.id for item, _ in hypothesis_rows],
             "tech": [item.id for item in tech_items],
             "map_snapshot": map_snapshot.id if map_snapshot else None,
@@ -180,18 +194,24 @@ class DeploymentAdvisorService:
         if existing:
             return existing, True
 
-        recommendations = DeploymentAdvisorService._recommendations(
-            hypothesis_rows,
-            tech_items,
-            valid_until,
-        )
+        recommendations = change_recommendations(comparison, area.name)
+        tech_advice = tech_recommendations(comparison['tech_defense'], area.name)
+        recommendations = recommendations[:3 - len(tech_advice)] + tech_advice
         evidence_refs = [f"case_hypothesis:{item.id}" for item, _ in hypothesis_rows]
         evidence_refs.extend(f"tech_aggregate:{item.id}" for item in tech_items)
+        for item in comparison['tech_defense']['items']:
+            evidence_refs.extend(item['evidence_refs'])
+        evidence_refs.extend(f"case:{identifier}" for identifier in sorted(set(
+            comparison['current']['case_ids'] + comparison['previous']['case_ids'])))
         if map_snapshot:
             evidence_refs.append(f"map_snapshot:{map_snapshot.id}")
         gaps = []
         if not tech_items:
             gaps.append("本周期无技防聚合数据，建议仅基于案件和地图候选判断")
+        gaps.extend(comparison['tech_defense']['information_gaps'])
+        gaps.extend(comparison['roads']['information_gaps'])
+        for item in comparison['roads']['items']:
+            evidence_refs.extend(item['evidence_refs'])
         if not map_snapshot:
             gaps.append("厂区离线地图尚未发布")
         brief = SituationBrief(
@@ -202,13 +222,16 @@ class DeploymentAdvisorService:
             period_end=end,
             input_fingerprint=fingerprint,
             status="completed" if recommendations else "no_change",
-            algorithm_version="deployment-advisor-3.5.0",
+            algorithm_version="deployment-advisor-4.4-1",
             scope_policy_version="area-scope-3.6.0",
-            summary=(
+            comparison_snapshot=comparison,
+            summary=(f"本期案发 {comparison['current']['case_count']} 起，上一等长周期 {comparison['previous']['case_count']} 起；"
+                f"本期生成画像版本 {comparison['current']['profile_versions_generated']} 份（处理进度，非新增案发）。" + (
                 f"本周期识别到 {len(hypothesis_rows)} 项案件候选和 {len(tech_items)} 组技防摘要，形成 {len(recommendations)} 项部署参考。"
                 if recommendations
                 else "本周期未发现足以形成新增部署建议的明显变化。"
-            ),
+            ) + (f"本期登记道路/入口资料变化 {len(comparison['roads']['items'])} 项，"
+                 "不等同现场通行状态变化。" if comparison['roads']['items'] else "")),
             evidence_refs=evidence_refs,
             information_gaps=gaps,
         )
@@ -320,6 +343,25 @@ class DeploymentAdvisorService:
 
     @staticmethod
     def brief_to_dict(db: Session, brief: SituationBrief) -> dict[str, Any]:
+        snapshot = brief.comparison_snapshot
+        if snapshot:
+            referenced = {identifier for period in ('previous', 'current')
+                          for key in ('case_ids', 'profile_case_ids')
+                          for identifier in snapshot[period].get(key, [])}
+            visible = {row[0] for row in db.query(Case.id).filter(Case.id.in_(referenced)).all()}
+            tech_ids = {int(ref.split(':')[1]) for item in snapshot.get('tech_defense', {}).get('items', [])
+                        for ref in item['evidence_refs']}
+            visible_tech = {row[0] for row in db.query(TechDefenseEventAggregate.id).join(TechDefenseSource)
+                            .filter(TechDefenseEventAggregate.id.in_(tech_ids)).all()}
+            if (visible != referenced or visible_tech != tech_ids
+                    or not road_sources_visible(db, snapshot.get('roads', {}), brief.operational_area_id)):
+                return {'id': brief.id, 'status': 'unavailable', 'comparison_snapshot': None,
+                        'operational_area_id': brief.operational_area_id, 'period_type': brief.period_type,
+                        'period_start': brief.period_start, 'period_end': brief.period_end,
+                        'algorithm_version': brief.algorithm_version, 'scope_policy_version': brief.scope_policy_version,
+                        'generated_at': brief.generated_at,
+                        'summary': '部分来源已移出当前权限范围或不存在，历史简报不再展示。',
+                        'recommendations': [], 'evidence_refs': [], 'information_gaps': ['请重新生成授权范围内的简报。']}
         recommendations = (
             db.query(DeploymentRecommendation)
             .filter(DeploymentRecommendation.brief_id == brief.id)
@@ -336,6 +378,7 @@ class DeploymentAdvisorService:
             "algorithm_version": brief.algorithm_version,
             "scope_policy_version": brief.scope_policy_version,
             "summary": brief.summary,
+            "comparison_snapshot": brief.comparison_snapshot,
             "evidence_refs": brief.evidence_refs,
             "information_gaps": brief.information_gaps,
             "generated_at": brief.generated_at,
@@ -357,7 +400,8 @@ class DeploymentAdvisorService:
             "evidence_refs": item.evidence_refs,
             "supporting_evidence": item.supporting_evidence,
             "information_gaps": item.information_gaps,
-            "confidence": item.confidence,
+            "confidence": None,
+            "confidence_kind": "uncalibrated_rule_reference",
             "valid_until": item.valid_until,
             "status": item.status,
             "auto_execution_allowed": item.auto_execution_allowed,

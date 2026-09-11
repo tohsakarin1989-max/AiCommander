@@ -43,6 +43,7 @@ from app.services.case_insight_service import CaseInsightService
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.case_service import CaseService
 from app.services.deployment_advisor_service import DeploymentAdvisorService
+from app.services.situation_change_service import closed_window
 from app.services.offline_map_service import MAX_BUNDLE_BYTES, OfflineMapService
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 
@@ -246,16 +247,21 @@ def run_rehearsal_rounds(
 
     runs: list[dict[str, Any]] = []
     rehearsal_started = datetime.now(timezone.utc)
+    window = closed_window(rehearsal_started, 'daily')
+    if db.query(Case.id).filter(Case.operational_area_id == area.id).first():
+        raise ValueError('competition_requires_empty_synthetic_case_scope')
     for sequence, scenario in enumerate(FAULT_SCENARIOS, start=1):
         started = time.perf_counter()
         case_time = datetime.now(timezone.utc)
+        occurred_time = window.current_start + timedelta(hours=1, minutes=sequence)
         if db.get_bind().dialect.name == "sqlite":
             # SQLite 不保留时区；显式使用无时区 UTC 以模拟数据库回读行为。
             case_time = case_time.replace(tzinfo=None)
+            occurred_time = occurred_time.replace(tzinfo=None)
         case = CaseService.create_case(
             db=db,
             case_number=f"V36-DEMO-{rehearsal_started:%Y%m%d%H%M%S}-{sequence:02d}",
-            occurred_time=case_time - timedelta(minutes=sequence),
+            occurred_time=occurred_time,
             location="脱敏演示网格",
             latitude=float(anchor.latitude) + sequence * 0.0001,
             longitude=float(anchor.longitude) + sequence * 0.0001,
@@ -411,7 +417,7 @@ def run_rehearsal_rounds(
             db,
             operational_area_id=area.id,
             period_type="daily",
-            as_of=datetime.now(timezone.utc) + timedelta(seconds=1),
+            as_of=rehearsal_started,
         )
         recommendations = (
             db.query(DeploymentRecommendation)
@@ -437,8 +443,12 @@ def run_rehearsal_rounds(
             raise RuntimeError("candidate_count_out_of_bounds")
         if evidence_coverage != 1.0 or counter_coverage != 1.0:
             raise RuntimeError("candidate_evidence_incomplete")
-        if not 1 <= recommendation_count <= 3:
+        expected_recommendations = 0 if sequence < 3 else 1
+        if recommendation_count != expected_recommendations:
             raise RuntimeError("recommendation_count_out_of_bounds")
+        if (brief.comparison_snapshot['current']['case_count'] != sequence
+                or brief.comparison_snapshot['previous']['case_count'] != 0):
+            raise RuntimeError('rehearsal_closed_window_counts_inconsistent')
         if any(not item.evidence_refs for item in recommendations):
             raise RuntimeError("recommendation_evidence_incomplete")
         if any(item.auto_execution_allowed for item in recommendations):
@@ -477,6 +487,7 @@ def run_rehearsal_rounds(
                 "brief_id": brief.id,
                 "brief_replay": brief_replay,
                 "recommendation_count": recommendation_count,
+                "recommendation_expectation": 'no_material_change' if sequence < 3 else 'material_case_count_change',
                 "formal_case_changed": formal_domain_changed,
                 "formal_domain_changed": formal_domain_changed,
                 "execution_task_created": execution_task_created,

@@ -21,7 +21,11 @@ def test_real_pipeline_returns_evidence_and_keeps_original_facts(monkeypatch):
     assert all(item['counter_evidence'] or item['information_gaps']
                for item in result['analysis']['hypotheses'])
     assert result['brief']['evidence_refs']
-    assert f"case_hypothesis:{result['analysis']['hypotheses'][0]['id']}" in result['brief']['evidence_refs']
+    # The single-case analysis is live; the daily brief covers a closed period.
+    # A just-generated hypothesis must not be retroactively inserted there.
+    assert f"case_hypothesis:{result['analysis']['hypotheses'][0]['id']}" not in result['brief']['evidence_refs']
+    assert result['brief']['recommendations'] == []
+    assert result['brief']['comparison_snapshot']['current']['case_count'] <= 1
     assert [step['service'] for step in result['trace']] == [
         'CaseTableParser', 'CaseService', 'CasePipelineService', 'CaseInsightService', 'DeploymentAdvisorService']
     assert result['import']['rows'] == 1

@@ -9,6 +9,14 @@
     radial-gradient(circle at 78% 3%, color-mix(in srgb, var(--sw-cyan) 8%, transparent), transparent 34%);
 }
 
+.sw-semantic-changes { padding: 16px 0; font-size: 15px; line-height: 1.65; }
+.sw-semantic-changes summary { cursor: pointer; color: var(--ink-0); }
+.sw-semantic-changes p { max-width: 75ch; }
+.sw-semantic-changes table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.sw-semantic-changes caption { text-align: left; padding-bottom: 10px; }
+.sw-semantic-changes th, .sw-semantic-changes td { padding: 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.sw-semantic-changes th:first-child, .sw-semantic-changes td:nth-child(2) { text-align: left; }
+
 .sw-hero {
   position: relative;
   display: grid;

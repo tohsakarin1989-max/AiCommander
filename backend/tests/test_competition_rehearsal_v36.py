@@ -139,7 +139,7 @@ def test_five_round_competition_rehearsal_uses_automatic_v36_flow(demo_scope):
         assert item["candidate_count"] in {1, 2, 3}
         assert item["evidence_coverage"] == 1.0
         assert item["counter_evidence_or_gap_coverage"] == 1.0
-        assert item["recommendation_count"] in {1, 2, 3}
+        assert item["recommendation_count"] == (0 if item['sequence'] < 3 else 1)
         assert item["formal_case_changed"] is False
         assert item["formal_domain_changed"] is False
         assert item["execution_task_created"] is False

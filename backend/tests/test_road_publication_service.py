@@ -7,6 +7,8 @@ pytest.importorskip('osmium', reason='optional PBF fixture dependency')
 
 from app.models.road_network import RoadAccessGroup, RoadNetworkVersion
 from app.models.user import User
+from app.models.case_pipeline import OutboxEvent
+from app.services.road_refresh_jobs import EVENT_TYPE as REFRESH_TYPE
 from app.services import road_build_job, road_publication_service as service
 from app.services.road_graph_artifact import graph_inventory_sha256
 from test_road_build_job import job  # noqa: F401
@@ -43,6 +45,7 @@ def test_publish_installs_before_ready_and_repeat_is_idempotent(candidate):
     directory.rename(paths['work_root'] / 'archived-build-output')
     second = service.publish_road_candidate(db, identifier, **paths)
     assert second['created'] is False and second['artifact_key'] == first['artifact_key']
+    assert db.query(OutboxEvent).filter_by(event_type=REFRESH_TYPE).count() == 1
 
 
 @pytest.mark.parametrize('change', ['copy_failure', 'policy', 'role'])
@@ -66,6 +69,7 @@ def test_failed_or_revoked_publication_never_marks_candidate_ready(candidate, mo
     row = db.get(RoadNetworkVersion, identifier, populate_existing=True)
     assert row.status == 'building' and row.artifact_key is None
     assert row.source_manifest['build_status'] == 'built_not_published'
+    assert db.query(OutboxEvent).filter_by(event_type=REFRESH_TYPE).count() == 0
 
 
 def test_unauthorized_publish_does_not_copy_files(candidate):

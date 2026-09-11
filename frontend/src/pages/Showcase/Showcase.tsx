@@ -105,8 +105,8 @@ export default function Showcase() {
               <h5>反向证据与信息缺口</h5><Lines values={[...item.counter_evidence, ...item.information_gaps]} />
               <details><summary>证据编号与边界</summary><Lines values={item.evidence_refs} /><p>{item.boundary}</p></details>
             </article>)}<Lines values={result.analysis.information_gaps} /></section>}
-          {result?.brief && <section className="showcase-section"><h3>03 / 本次成果简报</h3><p>{result.brief.summary}</p>
-            <p>简报按本次成果生成时间统计，不把成果生成时间当作案发时间。</p>
+          {result?.brief && <section className="showcase-section"><h3>03 / 上一完整周期简报</h3><p>{result.brief.summary}</p>
+            <p>案件按案发时间比较上一完整周期，画像处理量按生成时间统计。本次即时研判不倒填进历史周期；变化不足时不强行生成部署建议。</p>
             <Lines values={result.brief.information_gaps} /><details><summary>简报引用</summary><Lines values={result.brief.evidence_refs} /></details></section>}
           {result?.fault && <div className="showcase-notice">故障演练：注入模型超时 {result.fault.calls} 次，实际执行器返回 {result.fault.status}，降级方式 {result.fault.fallback_mode}。</div>}
           {result?.trace && <section className="showcase-section"><h3>真实调用轨迹</h3><ol>{result.trace.map(step => <li key={step.sequence}>

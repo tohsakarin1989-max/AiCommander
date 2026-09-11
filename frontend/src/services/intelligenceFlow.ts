@@ -90,7 +90,8 @@ export type DeploymentRecommendationResult = {
   evidence_refs: string[]
   supporting_evidence: string[]
   information_gaps: string[]
-  confidence: number
+  confidence: number | null
+  confidence_kind?: string
   valid_until: string
   boundary: string
 }
@@ -108,6 +109,31 @@ export type SituationBriefResult = {
   information_gaps: string[]
   generated_at: string
   recommendations: DeploymentRecommendationResult[]
+  comparison_snapshot?: {
+    timezone: string
+    previous: { start: string; end: string; case_count: number; profile_versions_generated: number }
+    current: { start: string; end: string; case_count: number; profile_versions_generated: number }
+    semantic_changes?: {
+      state: string; boundary: string; information_gaps: string[]
+      previous: { case_count: number; readable_case_count: number }
+      current: { case_count: number; readable_case_count: number }
+      changes: { category: string; value: string; kind: string; previous_count: number; current_count: number; case_count_change: number }[]
+    }
+    roads?: {
+      state: string; boundary: string; information_gaps: string[]
+      items: { source_id: number; feature_id: string; name: string; kind: string; change: string;
+        changed_fields: string[]; before_import_id: number | null; after_import_id: number;
+        previous_conditions: Record<string, string | number> | null; current_conditions: Record<string, string | number>;
+        previous_status?: { validity: string; review_state: string } | null;
+        current_status?: { validity: string; review_state: string };
+        evidence_refs: string[] }[]
+    }
+    tech_defense?: { boundary: string; information_gaps: string[]; items: {
+      source_id: number; device_type: string; state: string; information_gaps: string[];
+      previous?: { reported_offline: number }; current?: { reported_offline: number };
+      offline_change?: number; alert_change?: number;
+    }[] }
+  } | null
 }
 
 export const intelligenceFlowApi = {

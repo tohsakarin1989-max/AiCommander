@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import ReactECharts from 'echarts-for-react'
+import SituationChart from './SituationChart'
 
 import {
   situationApi,
@@ -24,6 +24,9 @@ import {
   getPriorityPresentation,
 } from './situationPresentation'
 import './SituationWorkbench.css'
+import SpatialCoveragePanel from './SpatialCoveragePanel'
+import RoadChanges from './RoadChanges'
+import AutomaticBriefStatus from './AutomaticBriefStatus'
 
 
 const WINDOW_OPTIONS = [7, 14, 30, 90].map(value => ({
@@ -84,11 +87,13 @@ const SituationWorkbench: React.FC = () => {
   })
   const [applied, setApplied] = useState<SituationQuery>({ ...draft })
   const [selectedPriorityId, setSelectedPriorityId] = useState<string | null>(null)
+  const [legacyOpen, setLegacyOpen] = useState(false)
 
   const overviewQuery = useQuery({
     queryKey: ['situation-overview', applied],
     queryFn: () => situationApi.getOverview(applied),
     staleTime: 60_000,
+    enabled: legacyOpen,
   })
   const overview = overviewQuery.data
   const automaticBriefQuery = useQuery({
@@ -104,6 +109,7 @@ const SituationWorkbench: React.FC = () => {
     onSuccess: result => message.success(result.execution_task_created ? '反馈已记录' : '反馈已记录，未生成执行任务'),
     onError: () => message.error('反馈记录失败，请稍后重试'),
   })
+  const automaticBrief = automaticBriefQuery.isError ? undefined : automaticBriefQuery.data
 
   useEffect(() => {
     setSelectedPriorityId(overview?.priorities[0]?.id ?? null)
@@ -142,26 +148,63 @@ const SituationWorkbench: React.FC = () => {
     <div className="page-scrollable situation-workbench" data-testid="situation-workbench">
       <section className="sw-hero">
         <div className="sw-hero-copy">
-          <span className="sw-kicker">v3.6 · AUTOMATIC SITUATION ADVISOR</span>
+          <span className="sw-kicker">同期变化 · 自动部署参考</span>
           <h1>自动态势与部署参谋</h1>
           <p>系统自动汇总案件画像、地图版本和技防摘要，每期只给出最多三项有证据的部署参考。</p>
           <div className="sw-hero-boundary">
             <span>只读分析</span><span>内网计算</span><span>不做犯罪预测</span><span>不自动调度</span>
           </div>
         </div>
-        <div className="sw-auto-status">
-          <span>当前自动简报</span>
-          <strong>{automaticBriefQuery.data?.recommendations.length ?? 0}</strong>
-          <small>{automaticBriefQuery.data?.summary || '后台按厂区范围自动生成，无需选择案件或井点。'}</small>
-          <code>{automaticBriefQuery.data?.algorithm_version || '等待首期简报'}</code>
-        </div>
+        <AutomaticBriefStatus loading={automaticBriefQuery.isPending} failed={automaticBriefQuery.isError}
+          errorStatus={(automaticBriefQuery.error as { response?: { status?: number }; status?: number } | null)?.response?.status
+            ?? (automaticBriefQuery.error as { status?: number } | null)?.status}
+          count={automaticBrief?.recommendations.length} summary={automaticBrief?.summary}
+          unavailable={automaticBrief?.status === 'unavailable'} version={automaticBrief?.algorithm_version}
+          retry={() => void automaticBriefQuery.refetch()} />
       </section>
 
-      {automaticBriefQuery.data && (
+      {!automaticBriefQuery.isError && automaticBriefQuery.data?.comparison_snapshot && <section aria-label="完整周期比较">
+        <h2>完整周期比较</h2>
+        <p>业务时区：{automaticBriefQuery.data.comparison_snapshot.timezone}；区间左闭右开，下面时间使用 UTC 标识。</p>
+        <p>本期：{automaticBriefQuery.data.comparison_snapshot.current.start} — {automaticBriefQuery.data.comparison_snapshot.current.end}，
+          案发 {automaticBriefQuery.data.comparison_snapshot.current.case_count} 起。</p>
+        <p>对照期：{automaticBriefQuery.data.comparison_snapshot.previous.start} — {automaticBriefQuery.data.comparison_snapshot.previous.end}，
+          案发 {automaticBriefQuery.data.comparison_snapshot.previous.case_count} 起。</p>
+        <p>本期生成画像版本 {automaticBriefQuery.data.comparison_snapshot.current.profile_versions_generated} 份，仅代表处理进度。</p>
+        {automaticBriefQuery.data.comparison_snapshot.semantic_changes && <details className="sw-semantic-changes">
+          <summary>手法、地点与时段表述变化</summary>
+          <p>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.boundary}</p>
+          <p>可用画像：上期 {automaticBriefQuery.data.comparison_snapshot.semantic_changes.previous.readable_case_count}/{automaticBriefQuery.data.comparison_snapshot.semantic_changes.previous.case_count} 案，
+            本期 {automaticBriefQuery.data.comparison_snapshot.semantic_changes.current.readable_case_count}/{automaticBriefQuery.data.comparison_snapshot.semantic_changes.current.case_count} 案。</p>
+          {automaticBriefQuery.data.comparison_snapshot.semantic_changes.state === 'comparable'
+            ? <div className="sw-coverage-table"><table><caption>涉及案件数量，非词语出现次数或已确认事实</caption>
+              <thead><tr><th>表述</th><th>性质</th><th>上期</th><th>本期</th><th>变化</th></tr></thead>
+              <tbody>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.changes.map(item => <tr key={`${item.category}:${item.value}:${item.kind}`}>
+                <th>{item.value}</th><td>{{ stated: '明确表述', negated: '否定表述', uncertain: '不确定表述', inferred: '推断表述' }[item.kind] || '待核'}</td>
+                <td>{item.previous_count}</td><td>{item.current_count}</td><td>{item.case_count_change}</td>
+              </tr>)}</tbody></table></div>
+            : <p>两期画像条件不同，暂不计算语义变化。</p>}
+          <p>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.information_gaps.join('；')}</p>
+        </details>}
+        {automaticBriefQuery.data.comparison_snapshot.roads && <RoadChanges data={automaticBriefQuery.data.comparison_snapshot.roads} />}
+        {automaticBriefQuery.data.comparison_snapshot.tech_defense && <details><summary>技防同期变化与缺口</summary>
+          <p>{automaticBriefQuery.data.comparison_snapshot.tech_defense.boundary}</p>
+          {automaticBriefQuery.data.comparison_snapshot.tech_defense.items.map(item => <div key={`${item.source_id}-${item.device_type}`}>
+            <strong>来源 {item.source_id} · {item.device_type}</strong>
+            <p>{item.state === 'comparable'
+              ? `离线报告数：${item.previous?.reported_offline} → ${item.current?.reported_offline}；报警数量变化：${item.alert_change}`
+              : '摘要不满足同口径条件，不计算变化率。'}</p>
+            <p>{item.information_gaps.join('；')}</p>
+          </div>)}
+          <p>{automaticBriefQuery.data.comparison_snapshot.tech_defense.information_gaps.join('；')}</p>
+        </details>}
+      </section>}
+
+      {automaticBrief && automaticBriefQuery.data && (
         <section className="sw-auto-recommendations" aria-label="自动部署建议">
           {automaticBriefQuery.data.recommendations.map(item => (
             <article key={item.id}>
-              <header><b>{String(item.rank).padStart(2, '0')}</b><strong>{item.title}</strong><em>{Math.round(item.confidence * 100)}%</em></header>
+              <header><b>{String(item.rank).padStart(2, '0')}</b><strong>{item.title}</strong><em>规则参考 · 非概率</em></header>
               <p>{item.suggested_action}</p>
               <small>依据：{item.supporting_evidence[0] || item.evidence_refs[0]}</small>
               <small className="gap">缺口：{item.information_gaps[0] || '仍需人工结合现场条件判断'}</small>
@@ -172,13 +215,22 @@ const SituationWorkbench: React.FC = () => {
             </article>
           ))}
           {!automaticBriefQuery.data.recommendations.length && (
-            <div className="empty-state"><span className="icon">◇</span>本期没有明显变化，系统未生成泛化建议</div>
+            <div className="empty-state"><span className="icon">◇</span>{automaticBriefQuery.data.status === 'unavailable'
+              ? '来源访问条件已变化，历史建议不可展示。' : '本期未达到关注规则，系统未生成泛化建议。'}</div>
           )}
         </section>
       )}
 
-      <details className="sw-history-controls">
-        <summary>查看历史窗口对比参数（非日常必需）</summary>
+      <SpatialCoveragePanel />
+
+      <details className="sw-history-controls" open={legacyOpen}>
+        <summary onClick={event => {
+          // Native toggle hides canvases before the deferred toggle event.
+          // Keep visibility and chart unmount in the same React update instead.
+          event.preventDefault()
+          setLegacyOpen(value => !value)
+        }}>旧版手动窗口分析（兼容入口，默认不运行）</summary>
+        <p>以下采用手动窗口与直线半径，仅供历史对照；不是上方完整周期自动简报，也不代表道路可达性。</p>
         <div className="sw-scope" aria-label="历史态势研判范围">
           <label>
             <span>时间窗口</span>
@@ -196,9 +248,7 @@ const SituationWorkbench: React.FC = () => {
             <ThunderboltOutlined />{overviewQuery.isFetching ? '正在研判…' : '重新对比'}
           </button>
         </div>
-      </details>
-
-      {overviewQuery.isError ? (
+      {legacyOpen && (overviewQuery.isError ? (
         <section className="empty-state sw-state-panel">
           <span className="icon">!</span>
           <strong>态势研判暂不可用</strong>
@@ -298,14 +348,14 @@ const SituationWorkbench: React.FC = () => {
                     <RadarChartOutlined className="ico" /><span className="ti">双域时空态势沙盘</span>
                     <span className="spacer" /><span className="sw-map-legend"><i className="case" />案件<i className="hot" />聚集<i className="well" />井点</span>
                   </div>
-                  {mapOption && <ReactECharts option={mapOption} style={{ height: 520 }} />}
+                  {mapOption && <SituationChart option={mapOption} height={520} />}
                   <div className="sw-map-note">空间坐标窗仅用于态势对比，不是导航地图；虚线只表示限定半径内的空间参考。</div>
                 </div>
 
                 <div className="sw-side-stack">
                   <div className="card sw-trend-card">
                     <div className="card-head"><span className="ico">⌁</span><span className="ti">相邻窗口案件走势</span></div>
-                    <ReactECharts option={trendOption} style={{ height: 235 }} />
+                    <SituationChart option={trendOption} height={235} />
                   </div>
                   <div className="card sw-pattern-card">
                     <div className="card-head"><span className="ico">≋</span><span className="ti">作案手法变化</span></div>
@@ -380,7 +430,8 @@ const SituationWorkbench: React.FC = () => {
             {overview.boundary.statements.map(item => <span key={item}>{item}</span>)}
           </section>
         </>
-      )}
+      ))}
+      </details>
     </div>
   )
 }

@@ -151,6 +151,8 @@ class GovernanceService:
         dataset = db.query(EvaluationDataset).filter(EvaluationDataset.id == dataset_id).first()
         if not dataset:
             raise ValueError("dataset_not_found")
+        if dataset.manifest.get('schema') in ('fixed-evaluation-4.5-1', 'fixed-road-evaluation-4.5-1'):
+            raise ValueError('fixed_dataset_requires_frozen_runner')
         versions = GovernanceService.ensure_versions(db)
         case_ids = list(dataset.case_ids or [])
         active_algorithm = ALGORITHMS["dual-domain"][0]
@@ -452,10 +454,13 @@ class GovernanceService:
                     "coverage_factor": coverage_factor,
                     "availability_factor": availability_factor,
                 },
-                "boundary": "仅比较覆盖假设，不创建、不调度任何执行任务。",
+                "boundary": "历史系数模拟，不是空间覆盖面积、井点覆盖或道路可达性，不得用于评估真实部署效果；不创建执行任务。",
             })
         results.sort(key=lambda item: (-item["estimated_coverage_score"], item["name"]))
-        return {"scenarios": results, "execution_task_created": False, "persisted": False}
+        return {"scenarios": results, "execution_task_created": False, "persisted": False,
+                "comparison_kind": "legacy_coefficient_simulation", "deprecated": True,
+                "spatial_measurement": False,
+                "replacement": "/api/deployment-sandbox/spatial-compare"}
 
     @staticmethod
     def _checksum(payload: Any) -> str:
