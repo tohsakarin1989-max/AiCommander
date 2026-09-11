@@ -1,8 +1,43 @@
+import type { QueryConditions, QueryTask } from '../../services/intelligentQueries'
+
+export const canFollowup = (task?: QueryTask) => Boolean(task &&
+  ['completed', 'degraded'].includes(task.status) && task.result.cards?.length)
+export const conditionNames: Record<string, string> = {
+  operational_area_id: '辖区编号', keyword: '关键词', statuses: '案件状态', case_types: '案件类型',
+  oil_types: '油品', has_geo: '有坐标', start_date: '案发起始时间', end_date: '案发截止时间',
+  start: '本期起始时间', end: '本期截止时间', case_id: '案件编号',
+  completed_after: '成果生成起始时间', completed_before: '成果生成截止时间', include_public_places: '包含公共地名',
+  min_detour_ratio: '最小沿路/直线比',
+}
+export function conditionValue(value: unknown): string {
+  if (value == null) return '不限'
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  if (Array.isArray(value)) return value.map(textValue).join('、') || '不限'
+  return textValue(value)
+}
+export function conditionLines(conditions?: QueryConditions): string[] {
+  if (!conditions) return []
+  const values = { ...conditions.case_filters }
+  if (conditions.area != null) values.operational_area_id = conditions.area
+  const lines = Object.entries(values).filter(([, value]) => value != null)
+    .map(([key, value]) => `${conditionNames[key] || key}：${conditionValue(value)}`)
+  for (const [tool, defaults] of Object.entries(conditions.tool_defaults)) {
+    if (['find_cases', 'count_cases', 'compare_periods'].includes(tool)) continue
+    for (const [key, value] of Object.entries(defaults)) {
+      if (value != null && key !== 'operational_area_id')
+        lines.push(`${toolNames[tool] || tool} · ${conditionNames[key] || key}：${conditionValue(value)}`)
+    }
+  }
+  return lines
+}
+
 export const activeQuery = (status?: string) => status === 'queued' || status === 'running'
 export const queryIdValid = (id: string) => /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id)
 export const toolNames: Record<string, string> = {
   find_cases: '案件查找', find_places: '地点与设施', count_cases: '案件统计',
   compare_periods: '周期比较', summarize_results: '已有研判成果',
+  find_road_results: '道路研判成果',
+  find_case_profiles: '案件语义画像',
 }
 export const statusNames: Record<string, string> = {
   queued: '排队中', running: '正在查询', completed: '查询完成',
@@ -14,7 +49,7 @@ export function failureText(code?: string | null): string {
     query_timeout: '查询超时，已取得的结果保留在下方。',
     query_step_limit: '已达到本次查询步骤上限，可缩小问题范围后重新查询。',
     query_insufficient_data: '当前条件不足，请补充明确的时间或查询条件。',
-    query_unsupported: '当前仅支持案件、地点、统计、周期比较和已有成果查询。',
+    query_unsupported: '当前支持案件、地点、统计、周期比较、已有研判和道路成果查询。',
   }
   return code ? messages[code] || '本次查询未完整完成，请查看已有结果和信息缺口。' : ''
 }

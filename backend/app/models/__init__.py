@@ -1,4 +1,5 @@
 from app.models.ai_model import AIModel
+from app.models.query_scope_revision import QueryScopeRevision
 from app.models.map_package_import import MapPackageImport, MapPackageImportChunk
 from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord

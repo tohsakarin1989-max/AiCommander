@@ -64,7 +64,7 @@ function frozenMapImage(input, map) {
 }
 
 async function render(input) {
-  if (input.schema !== 'case-result-document-4.1.0-1' || !Array.isArray(input.blocks)) {
+  if (!['case-result-document-4.1.0-1', 'intelligent-query-document-4.3-1'].includes(input.schema) || !Array.isArray(input.blocks)) {
     throw new Error('unsupported_document_schema')
   }
   const children = []
@@ -93,7 +93,7 @@ async function render(input) {
     } else throw new Error('unsupported_document_block')
   }
   const document = new Document({
-    creator: 'AiCommander', title: '案件统一研判成果',
+    creator: 'AiCommander', title: input.schema === 'intelligent-query-document-4.3-1' ? '专题查询研判报告' : '案件统一研判成果',
     styles: {
       default: { document: { run: { font: FONT, size: 22 }, paragraph: { spacing: { line: 320 } } } },
       paragraphStyles: [

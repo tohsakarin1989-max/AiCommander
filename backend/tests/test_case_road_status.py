@@ -50,7 +50,16 @@ def test_job_states_never_masquerade_as_success_or_leak_payload(artifact_input, 
     assert response.status_code == 200
     value = response.json()
     assert value['status'] == expected and value['artifact'] is None
-    assert 'sensitive' not in response.text and '999' not in response.text
+    # Scope 999 must not leak, but a random UUID/hash can legitimately contain
+    # these digits. Assert the complete public response contract instead.
+    expected_keys = {'result_id', 'content_sha256', 'artifact', 'status'}
+    if expected in {'processing', 'waiting_network'}:
+        expected_keys.add('poll_after_seconds')
+        assert value['poll_after_seconds'] == (60 if expected == 'waiting_network' else 10)
+    assert set(value) == expected_keys
+    assert value['result_id'] == content['result_id']
+    assert len(value['content_sha256']) == 64
+    assert 'sensitive' not in response.text
 
 
 def test_revoked_latest_artifact_does_not_fall_back_to_older_content(artifact_input):

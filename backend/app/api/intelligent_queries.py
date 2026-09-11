@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.services import intelligent_query_tasks as service
+from app.services.intelligent_query_document import export_query_document
+from app.services.case_result_export import CaseResultExportError
 
 
 router = APIRouter()
@@ -17,6 +19,7 @@ router = APIRouter()
 class QueryCreate(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     query: str = Field(min_length=1, max_length=2000)
+    parent_query_id: UUID | None = None
 
 
 def _authorize(request, db, response):
@@ -53,7 +56,8 @@ def _call(db, operation, *args):
 @router.post('', status_code=201)
 def create(payload: QueryCreate, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, db, response)
-    result = _call(db, service.create_query, payload.query)
+    result = _call(db, service.create_query, payload.query,
+                   str(payload.parent_query_id) if payload.parent_query_id else None)
     response.headers['Location'] = f"/api/intelligent-queries/{result['id']}"
     return result
 
@@ -68,3 +72,26 @@ def read(run_id: UUID, request: Request, response: Response, db: Session = Depen
 def cancel(run_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, db, response)
     return _call(db, service.cancel_query, str(run_id))
+
+
+def _download(run_id, format, request, response, db):
+    _authorize(request, db, response)
+    try:
+        document, content = _call(db, export_query_document, str(run_id), format)
+    except CaseResultExportError as exc:
+        raise HTTPException(503, detail='文档导出暂不可用，请稍后重试',
+                            headers={'Cache-Control': 'no-store'}) from exc
+    return Response(content, media_type=('application/pdf' if format == 'pdf' else
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), headers={
+        'Cache-Control': 'no-store', 'X-Result-Content-SHA256': document.content_sha256,
+        'Content-Disposition': f'attachment; filename="query-{run_id}.{format}"'})
+
+
+@router.get('/{run_id}/document.docx')
+def download_docx(run_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    return _download(run_id, 'docx', request, response, db)
+
+
+@router.get('/{run_id}/document.pdf')
+def download_pdf(run_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    return _download(run_id, 'pdf', request, response, db)

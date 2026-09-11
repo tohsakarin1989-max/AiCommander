@@ -10,11 +10,9 @@ from app.utils.datetimes import utc_datetime
 
 class CaseSearchService:
     @staticmethod
-    def page(
+    def filtered_query(
         db: Session,
         *,
-        page: int,
-        page_size: int,
         keyword: str | None = None,
         statuses: list[str] | None = None,
         case_types: list[str] | None = None,
@@ -23,7 +21,8 @@ class CaseSearchService:
         end_date: datetime | None = None,
         has_geo: bool | None = None,
         operational_area_id: int | None = None,
-    ) -> dict:
+        include_categories: bool = True,
+    ):
         # 使用 ORM 保持 database.py 对查询、分类聚合和计数的一致范围控制。
         query = db.query(Case)
         if operational_area_id is not None:
@@ -42,6 +41,19 @@ class CaseSearchService:
             query = query.filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
         elif has_geo is False:
             query = query.filter(or_(Case.latitude.is_(None), Case.longitude.is_(None)))
+        if include_categories:
+            for values, field in ((statuses, Case.status), (case_types, Case.case_type), (oil_types, Case.oil_type)):
+                if values:
+                    query = query.filter(field.in_(values))
+        return query
+
+    @staticmethod
+    def page(db: Session, *, page: int, page_size: int, keyword=None, statuses=None,
+             case_types=None, oil_types=None, start_date=None, end_date=None,
+             has_geo=None, operational_area_id=None) -> dict:
+        query = CaseSearchService.filtered_query(db, keyword=keyword, start_date=start_date,
+            end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id,
+            include_categories=False)
 
         # 分类计数基于授权 + 关键词 + 日期 + 坐标条件，故多选后仍可发现其他分类。
         facets = {}
