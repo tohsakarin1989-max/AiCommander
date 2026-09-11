@@ -54,6 +54,19 @@ def main():
         install_graph_artifact(Path('/fixtures/graph'), Path(settings.MAP_PACKAGE_ROOT) / 'road-graphs',
                                expected_sha256=graph_values['graph_sha256'])
         db.add(RoadNetworkVersion(**graph_values))
+        if os.environ.get('AIC_STACK_COVERAGE_ONLY') == '1':
+            common = {'operational_area_id': area.id, 'source': 'synthetic', 'status': 'active',
+                      'verified': True, 'coordinate_system': 'EPSG:4326', 'geometry_type': 'point'}
+            db.add(JurisdictionAsset(name='合成道路参考出发点', asset_type='checkpoint',
+                latitude=46.54446175, longitude=125.1852727, **common,
+                attributes={'road_reference_origin': True, 'coverage_radius_m': 200,
+                    'operational_status': 'online', 'operational_status_valid_until': '2099-01-01T00:00:00+00:00'}))
+            db.add(JurisdictionAsset(name='合成覆盖测试井', asset_type='well',
+                latitude=46.5444392, longitude=125.18509545, **common))
+            db.commit()
+            print(json.dumps({'area_id': area.id, 'graph_sha256': graph_values['graph_sha256'],
+                              'coverage_fixture': True}), flush=True)
+            return
         assembly = Path('/fixtures/assembly')
         installed = install_assets(assembly, Path(settings.MAP_PACKAGE_ROOT))
         assert installed['package_hash'] == 'd4ab1cf9b73f4352b437f81939aed2a86f2afd313fc12185690bb3af772ede48'
@@ -71,8 +84,15 @@ def main():
                 sha256=asset['sha256'], size_bytes=asset['size_bytes']))
         db.add(JurisdictionAsset(name='合成部署测试井（不是真实井场）', asset_type='well',
             operational_area_id=area.id, latitude=46.5444392, longitude=125.18509545,
-            source='synthetic', status='active', verified=True,
+            source='synthetic', status='active', verified=True, coordinate_system='EPSG:4326', geometry_type='point',
             attributes={'oil_type': '原油', 'production_output': 90}))
+        if os.environ.get('AIC_STACK_EXTENDED_SHOWCASE') == '1':
+            db.add(JurisdictionAsset(name='合成覆盖设备（非真实技防）', asset_type='checkpoint',
+                operational_area_id=area.id, latitude=46.54446175, longitude=125.1852727,
+                source='synthetic', status='active', verified=True,
+                coordinate_system='EPSG:4326', geometry_type='point',
+                attributes={'road_reference_origin': True, 'coverage_radius_m': 200,
+                    'operational_status': 'online', 'operational_status_valid_until': '2099-01-01T00:00:00+00:00'}))
         db.commit()
         snapshot, _ = OfflineMapService.build_snapshot(db, operational_area_id=area.id,
             public_bundle_id=map_bundle.id, built_by=user.id)

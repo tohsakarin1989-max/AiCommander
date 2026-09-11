@@ -2,6 +2,7 @@ import { Alert, Card, Empty, Spin, Tag } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 
 import { governanceApi } from '../../services/governance'
+import FixedEvaluationPanel from './FixedEvaluationPanel'
 import './IntelligenceRuntimeCenter.css'
 
 
@@ -80,7 +81,7 @@ export default function IntelligenceRuntimeCenter() {
                 <div><span>scope-policy</span><strong>{overview.versions.scope_policy.version}</strong><code>{overview.versions.scope_policy.checksum.slice(0, 12)}</code></div>
               </div>
             </Card>
-            <Card title="最近一次脱敏评测">
+            <Card title="最近一次评测摘要">
               {overview.latest_evaluation ? (
                 <div className="runtime-center__evaluation">
                   <strong>{overview.latest_evaluation.status}</strong>
@@ -91,6 +92,7 @@ export default function IntelligenceRuntimeCenter() {
               ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未运行固定评测集" />}
             </Card>
           </section>
+          <FixedEvaluationPanel />
           <section className="runtime-center__boundary">
             <span>正式案件自动改写：{overview.formal_case_mutations_allowed ? '允许' : '禁止'}</span>
             <span>自动创建执行任务：{overview.execution_task_creation_allowed ? '允许' : '禁止'}</span>

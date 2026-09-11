@@ -22,6 +22,7 @@ from app.services.road_network_contracts import RoadNetworkBinding
 from app.services.road_source_revision import source_revision
 from app.services.vehicle_router import ENGINE_VERSION
 from app.services.public_road_access import NODE_POLICY_VERSION
+from app.services.road_refresh_jobs import enqueue_publication
 
 
 def _authorize(db):
@@ -108,6 +109,7 @@ def publish_road_candidate(db, network_id: str, *, work_root: Path, artifact_roo
             .values(status='ready', artifact_key=key, source_manifest=manifest))
         if changed.rowcount != 1:
             raise ValueError('road_publish_candidate_changed')
+        enqueue_publication(db, network_id, valid_from=row.valid_from)
         db.commit()
         return {'id': network_id, 'status': 'ready', 'created': True, 'artifact_key': key}
     except Exception:

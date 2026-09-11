@@ -43,13 +43,15 @@ def calculate_reference_route(db, *, network_id: str | None = None, analysis_at:
 
 def calculate_distance_matrix(db, *, network_id: str | None = None, analysis_at: datetime,
                               sources: list[RoadLocation], targets: list[RoadLocation],
-                              vehicle: VehicleAssumption, artifact_root: Path, cancel_event=None):
+                              vehicle: VehicleAssumption, artifact_root: Path, cancel_event=None,
+                              timeout_seconds: float | None = None):
     _check_cancelled(cancel_event)
     binding = _binding(db, network_id, analysis_at, vehicle)
     if binding.engine_version != ENGINE_VERSION:
         raise RoadNetworkUnavailable('road_engine_version_mismatch')
     tiles = verify_graph_artifact(artifact_root, binding)
-    result = run_matrix_process(tiles, sources, targets, vehicle, cancel_event=cancel_event)
+    budget = {} if timeout_seconds is None else {'timeout_seconds': timeout_seconds}
+    result = run_matrix_process(tiles, sources, targets, vehicle, cancel_event=cancel_event, **budget)
     recheck_network(db, binding, analysis_at=analysis_at, vehicle=vehicle)
     _check_cancelled(cancel_event)
     return {**result, 'network_id': binding.network_id,

@@ -63,6 +63,7 @@ class SituationBrief(Base):
     algorithm_version = Column(String(80), nullable=False, default="deployment-advisor-3.5.0")
     scope_policy_version = Column(String(80), nullable=False, default="area-scope-3.6.0")
     summary = Column(Text, nullable=False)
+    comparison_snapshot = Column(JSON, nullable=True)
     evidence_refs = Column(JSON, nullable=False)
     information_gaps = Column(JSON, nullable=False)
     generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

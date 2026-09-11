@@ -1,5 +1,16 @@
 # 道路与报告组合API镜像
 
+## 4.x当前收口候选
+
+当前工作树迁移头为`b508c42fd75b`，两种构建入口已同步校验该版本。
+本机候选`aicommander-backend-roads:4.5-closeout-candidate`清单摘要：
+`9a51a5be1511f6d95d9818b9fde05137e14931e05d1099d6139d573e63548ad0`。
+已在不挂载开发源码的独立PostgreSQL/Redis环境通过录入、自动画像、原生道路计算、
+新目录版本自动刷新、Word/PDF、固定输入重放及备份恢复；不等同Stable发布或目标服务器验收。
+记录见[4.x收口核对](../../docs/validation/v4.5-closeout-audit.md)。
+
+以下v4.3/v4.2内容为历史发布准备与恢复证据，不是当前候选迁移头。
+
 v4.3发布候选包含语义查询及专题文档，迁移头93e6a20fd53b；状态见
 [v4.3发布说明](../../docs/releases/v4.3.0-stable.md)。候选镜像
 `aicommander-backend-roads:4.3-release-candidate`的本机清单摘要为

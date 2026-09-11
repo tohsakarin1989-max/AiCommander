@@ -65,3 +65,16 @@ class EvaluationRun(Base):
     failure_reason = Column(Text, nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class SpatialCoverageComparison(Base):
+    """Frozen derived comparison, never an execution instruction."""
+
+    __tablename__ = "spatial_coverage_comparisons"
+
+    id = Column(String(36), primary_key=True)
+    operational_area_id = Column(Integer, ForeignKey("operational_areas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    snapshot = Column(JSON, nullable=False)
+    checksum = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

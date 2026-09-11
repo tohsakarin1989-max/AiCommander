@@ -80,6 +80,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
     from app.models.deployment_advisor import SituationBrief, TechDefenseEventAggregate, TechDefenseSource
     from app.models.event import AreaProfile, Event
+    from app.models.governance import SpatialCoverageComparison
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
     from app.models.map_foundation import MapSnapshot, MapSnapshotFeature, MapSource
     from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
@@ -103,6 +104,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         TechDefenseSource,
         TechDefenseEventAggregate,
         SituationBrief,
+        SpatialCoverageComparison,
         Meeting,
         Event,
         AreaProfile,

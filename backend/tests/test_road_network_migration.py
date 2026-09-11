@@ -13,6 +13,8 @@ import pytest
     ('71c4e08db318', 'restore_compatible_backup_required_for_case_road_artifact_downgrade'),
     ('82d5f19ec429', 'restore_compatible_backup_required_for_vehicle_conditions_downgrade'),
     ('93e6a20fd53b', 'restore_compatible_backup_required_for_query_scope_downgrade'),
+    ('a4f7b31ec64a', 'restore_compatible_backup_required_for_situation_downgrade'),
+    ('b508c42fd75b', 'restore_compatible_backup_required_for_spatial_comparison_downgrade'),
 ])
 def test_upgrade_preserves_cases_and_requires_compatible_restore(tmp_path, head, error_code):
     database = tmp_path / 'roads.sqlite'
@@ -32,6 +34,10 @@ def test_upgrade_preserves_cases_and_requires_compatible_restore(tmp_path, head,
     assert upgrade.returncode == 0, upgrade.stderr
     with closing(sqlite3.connect(database)) as db:
         assert db.execute('SELECT description FROM cases').fetchone()[0] == '原文不可改变'
+        if head == 'b508c42fd75b':
+            assert db.execute('SELECT count(*) FROM spatial_coverage_comparisons').fetchone()[0] == 0
+        if head == 'a4f7b31ec64a':
+            assert 'comparison_snapshot' in {row[1] for row in db.execute('PRAGMA table_info(situation_briefs)')}
         if head == '93e6a20fd53b':
             assert db.execute('SELECT revision FROM query_scope_revision WHERE id=1').fetchone()[0] == 0
             assert db.execute("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'aic_query_scope_%'").fetchone()[0] == 6

@@ -40,7 +40,7 @@ def _analysis_fixture(db: Session) -> OperationalArea:
     case = Case(
         case_number="ADVISOR-001",
         operational_area_id=area.id,
-        occurred_time=datetime.now(timezone.utc) - timedelta(hours=3),
+        occurred_time=datetime.now(timezone.utc) - timedelta(days=1),
         location="南区井场",
         latitude=46.6,
         longitude=125.1,
@@ -48,6 +48,9 @@ def _analysis_fixture(db: Session) -> OperationalArea:
         modus_operandi="车辆转运",
     )
     db.add(case)
+    for index in (2, 3):
+        db.add(Case(case_number=f'ADVISOR-00{index}', operational_area_id=area.id,
+                    occurred_time=case.occurred_time, case_type='涉油盗窃'))
     db.flush()
     profile = CaseAnalysisProfile(
         id="profile-advisor",
@@ -92,7 +95,8 @@ def _analysis_fixture(db: Session) -> OperationalArea:
         algorithm_version="dual-domain-3.4.0",
         status="completed",
         information_gaps=[],
-        completed_at=datetime.now(timezone.utc),
+        # Daily briefs now use the last closed business day, not a partial today.
+        completed_at=datetime.now(timezone.utc) - timedelta(days=1),
     )
     db.add(run)
     db.flush()

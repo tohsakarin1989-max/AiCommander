@@ -50,6 +50,7 @@ from app.models.governance import (
     EvaluationDataset,
     EvaluationRun,
     ScopePolicyVersion,
+    SpatialCoverageComparison,
 )
 
 __all__ = [
@@ -133,6 +134,7 @@ __all__ = [
     "ScopePolicyVersion",
     "EvaluationDataset",
     "EvaluationRun",
+    "SpatialCoverageComparison",
 ]
 from .internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
 from .road_network import RoadAccessGroup, RoadAccessMembership, RoadAccessGrant, RoadNetworkVersion
