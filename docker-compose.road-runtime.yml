@@ -1,0 +1,22 @@
+# Optional API override, used after the two input images are accepted locally.
+# API and ordinary consumers share application code and report dependencies.
+x-road-api-image: &road-api-image ${IMAGE_PREFIX:-aicommander}-backend-roads:${APP_VERSION:-4.2.0-stable}
+services:
+  backend:
+    image: *road-api-image
+    build:
+      context: .
+      dockerfile: deploy/road-api/Dockerfile
+      target: road-api
+      args:
+        DOCUMENT_API_IMAGE: ${DOCUMENT_API_IMAGE:-aicommander-backend-documents:v4.1-final-candidate}
+        ROAD_ENGINE_IMAGE: ${ROAD_ENGINE_IMAGE:-aicommander-road-engine:3.8.3-completion-candidate}
+    shm_size: 256m
+    tmpfs:
+      - /tmp:size=768m,mode=1777
+  celery:
+    image: *road-api-image
+  celery-beat:
+    image: *road-api-image
+  agent-worker:
+    image: *road-api-image

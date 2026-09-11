@@ -1,0 +1,16 @@
+**
+!backend/
+!backend/requirements.txt
+!backend/docker-entrypoint.sh
+!backend/app/
+!backend/app/**
+!backend/alembic/
+!backend/alembic/**
+!backend/alembic.ini
+!backend/document-renderer/
+!backend/document-renderer/map-render.mjs
+**/__pycache__
+**/*.py[cod]
+**/.env*
+**/*.db
+**/*.sqlite*

@@ -92,6 +92,9 @@ class CaseVehicle(Base):
     id = Column(Integer, primary_key=True, index=True)
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
     vehicle_type = Column(String(50))
+    road_vehicle_kind = Column(String(10))  # 道路车型，不等同于奖金考核类别
+    height_m = Column(Float)
+    gross_weight_t = Column(Float)  # 车辆总重，不是载油量或核定载质量
     color = Column(String(50))
     brand = Column(String(100))
     model = Column(String(100))

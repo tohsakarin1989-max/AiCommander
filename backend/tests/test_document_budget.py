@@ -40,7 +40,7 @@ def test_pdf_conversion_gets_only_remaining_budget(monkeypatch):
     from app.services import case_result_pdf as pdf
     clock = [0.0]
     monkeypatch.setattr(budget, 'monotonic', lambda: clock[0])
-    document = SimpleNamespace(content_sha256='same-version')
+    document = SimpleNamespace(content_sha256='same-version', road_artifact_sha256=None)
 
     def docx(*args):
         clock[0] = 110

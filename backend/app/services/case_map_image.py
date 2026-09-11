@@ -26,8 +26,20 @@ class CaseMapImageError(ValueError):
     pass
 
 
-def render_case_map_image(db, result_id: str) -> bytes:
+def render_case_map_image(db, result_id: str, *, road_artifact_id: str | None = None) -> bytes:
     context = load_result_map_context(db, result_id)
+    artifact = None
+    if road_artifact_id:
+        from app.services.case_road_document import decode_road_geometry, load_document_road
+
+        artifact = load_document_road(db, result_id, context['content_sha256'],
+                                     context['map']['map_snapshot_id'], road_artifact_id)
+        if artifact['content']['schema_version'] == 'case-road-route-4.2.0-1':
+            context['reference_path'] = decode_road_geometry(artifact['content']['route']['shape_polyline6'])
+            alternatives = artifact['content']['route'].get('alternatives', [])
+            if not isinstance(alternatives, list) or len(alternatives) > 1:
+                raise CaseMapImageError('road_alternatives_invalid')
+            context['reference_alternatives'] = [decode_road_geometry(item['shape_polyline6']) for item in alternatives]
     if context["basemap"] is None:
         raise CaseMapImageError("map_snapshot_required")
     if len(json.dumps(context, ensure_ascii=False).encode()) > 2 * 1024 * 1024:
@@ -36,7 +48,13 @@ def render_case_map_image(db, result_id: str) -> bytes:
     if not SLOTS.acquire(blocking=False):
         raise CaseMapImageError("map_renderer_busy")
     try:
-        return _render(db, context, resources)
+        image = _render(db, context, resources)
+        if artifact:
+            current = load_document_road(db, result_id, context['content_sha256'],
+                                         context['map']['map_snapshot_id'], road_artifact_id)
+            if current['content_sha256'] != artifact['content_sha256']:
+                raise CaseMapImageError('road_artifact_changed')
+        return image
     finally:
         SLOTS.release()
 

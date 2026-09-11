@@ -2,7 +2,7 @@
 # Only the API image changes. Celery/Beat keep the lightweight core image.
 services:
   backend:
-    image: ${IMAGE_PREFIX:-aicommander}-backend-documents:${APP_VERSION:-4.1.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend-documents:${APP_VERSION:-4.2.0-stable}
     build:
       context: ./backend
       target: document-renderer

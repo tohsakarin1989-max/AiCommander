@@ -84,21 +84,22 @@ def render_docx(document: CaseResultDocument, *, map_image: bytes | None = None)
 
 
 @document_budget
-def export_case_result_docx(db: Session, result_id: str) -> tuple[CaseResultDocument, bytes]:
-    document = load_case_result_document(db, result_id)
+def export_case_result_docx(db: Session, result_id: str, road_artifact_id: str | None = None) -> tuple[CaseResultDocument, bytes]:
+    document = load_case_result_document(db, result_id, road_artifact_id)
     maps = [json.loads(block.text) for block in document.blocks if block.kind == "map"]
     if any(item.get("map_snapshot_id") for item in maps):
         from app.services.case_map_image import CaseMapImageError, render_case_map_image
 
         try:
-            image = render_case_map_image(db, result_id)
+            image = (render_case_map_image(db, result_id, road_artifact_id=road_artifact_id)
+                     if road_artifact_id else render_case_map_image(db, result_id))
         except CaseMapImageError:
             raise CaseResultExportError("map_rendering_not_ready") from None
         data = render_docx(document, map_image=image)
     else:
         data = render_docx(document)
     # 返回前重新校验证据；渲染期间失效时不交付已生成文件。
-    current = load_case_result_document(db, result_id)
-    if current.content_sha256 != document.content_sha256:
+    current = load_case_result_document(db, result_id, road_artifact_id)
+    if (current.content_sha256, current.road_artifact_sha256) != (document.content_sha256, document.road_artifact_sha256):
         raise CaseResultExportError("result_changed")
     return document, data

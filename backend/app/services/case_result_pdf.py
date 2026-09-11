@@ -64,10 +64,11 @@ def _convert_generated_docx(data: bytes) -> bytes:
 
 
 @document_budget
-def export_case_result_pdf(db, result_id: str):
-    document, docx = export_case_result_docx(db, result_id)
+def export_case_result_pdf(db, result_id: str, road_artifact_id: str | None = None):
+    document, docx = (export_case_result_docx(db, result_id, road_artifact_id=road_artifact_id)
+                      if road_artifact_id else export_case_result_docx(db, result_id))
     data = _convert_generated_docx(docx)
-    current = load_case_result_document(db, result_id)
-    if current.content_sha256 != document.content_sha256:
+    current = load_case_result_document(db, result_id, road_artifact_id)
+    if (current.content_sha256, current.road_artifact_sha256) != (document.content_sha256, document.road_artifact_sha256):
         raise CaseResultExportError("result_changed")
     return document, data

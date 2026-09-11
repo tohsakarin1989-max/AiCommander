@@ -14,12 +14,15 @@ from app.services.case_map_image import CaseMapImageError, render_case_map_image
 from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
 from test_case_results import db_session, prepare, result_data  # noqa: F401
+from test_road_network_service import ready  # noqa: F401
 from tests.test_offline_maps import _mbtiles_bytes
 
 
 @pytest.mark.skipif(os.environ.get("AIC_TEST_MAP_BROWSER") != "1", reason="requires explicit real browser rendering")
-@pytest.mark.parametrize("failure", [None, "missing_tile", "invalid_region", "revoked_after_render"])
-def test_real_browser_renders_registered_offline_raster(db_session, result_data, tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("failure", [None, "missing_tile", "invalid_region", "revoked_after_render", "saved_road"])
+def test_real_browser_renders_registered_offline_raster(db_session, result_data, tmp_path, monkeypatch, failure, request):
+    if failure == 'saved_road':
+        request.getfixturevalue('ready')
     prepare(db_session)
     monkeypatch.setattr(settings, "MAP_PACKAGE_ROOT", str(tmp_path))
     tile = Image.new("RGB", (256, 256), "#d5e3d0")
@@ -63,13 +66,35 @@ def test_real_browser_renders_registered_offline_raster(db_session, result_data,
         with pytest.raises(CaseResultAccessError):
             render_case_map_image(db_session, saved["id"])
         return
-    if failure:
+    if failure and failure != 'saved_road':
         with pytest.raises(CaseMapImageError, match="^map_render_failed$"):
             render_case_map_image(db_session, saved["id"])
         return
     from app.services.case_result_export import export_case_result_docx
 
-    document, data = export_case_result_docx(db_session, saved["id"])
+    artifact_id = None
+    if failure == 'saved_road':
+        from app.services.case_road_artifact_service import freeze_road_artifact
+        from test_road_access_policy import AT
+
+        def encode_deltas(values):
+            encoded = ''
+            for value in values:
+                value = value << 1 if value >= 0 else ~(value << 1)
+                while value >= 32:
+                    encoded += chr((32 | (value & 31)) + 63)
+                    value >>= 5
+                encoded += chr(value + 63)
+            return encoded
+        road = {'schema_version': 'case-road-route-4.2.0-1', 'result_id': saved['id'],
+            'content_sha256': saved['content_sha256'], 'map_snapshot_id': 'map-1',
+            'target': {'asset_id': 1, 'name': '合成设施'}, 'boundary': '合成留存路径，不是实际轨迹',
+            'route': {'network_id': 'graph-1', 'graph_sha256': 'c' * 64, 'policy_revision': 1,
+                'analysis_at': AT.isoformat(), 'vehicle': {'kind': 'auto', 'source': 'explicit_reference_assumption'},
+                'distance_m': 1350, 'shape_polyline6': encode_deltas([46600000, 125100000, 10000, 10000])}}
+        artifact_id = freeze_road_artifact(db_session, road)['id']
+        db_session.commit()
+    document, data = export_case_result_docx(db_session, saved["id"], road_artifact_id=artifact_id)
     assert document.content_sha256 == saved["content_sha256"]
     (tmp_path / "map-result.docx").write_bytes(data)
     with ZipFile(io.BytesIO(data)) as archive:
@@ -86,3 +111,14 @@ def test_real_browser_renders_registered_offline_raster(db_session, result_data,
     assert any(count > 10000 and color == (213, 227, 208) for count, color in colors)
     assert any(count > 30 and color == (220, 38, 38) for count, color in colors)
     assert any(count > 100 and color == (114, 153, 187) for count, color in colors)
+    if failure == 'saved_road':
+        assert '道路参考分析（历史留存）' in xml and '1.35 公里' in xml
+        assert document.road_artifact_id == artifact_id
+        assert any(count > 150 and color == (3, 105, 161) for count, color in colors)
+        print(f'road_document_artifacts={tmp_path}')
+        if os.environ.get('AIC_TEST_PDF_OFFICE') == '1':
+            from app.services.case_result_pdf import export_case_result_pdf
+            pdf_document, pdf = export_case_result_pdf(db_session, saved['id'], road_artifact_id=artifact_id)
+            assert pdf_document.road_artifact_sha256 == document.road_artifact_sha256
+            assert pdf.startswith(b'%PDF-')
+            (tmp_path / 'road-result.pdf').write_bytes(pdf)

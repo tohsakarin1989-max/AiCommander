@@ -6,6 +6,34 @@ vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 beforeEach(() => vi.resetAllMocks())
 
 describe('内部道路接口契约', () => {
+  it('新增道路连接只随已核验道路提交，保留固定批次与前次决定', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: {} })
+    const record = { id: 3, input_sha256: 'a'.repeat(64), feature_reviews: { r: { id: 2 } } } as unknown as RoadImport
+    const feature = { id: 'r', properties: { kind: 'road' } } as RoadFeature
+    const geometry = { kind: 'new_road' as const, public_source_sha256: 'b'.repeat(64),
+      connections: [{ component: 0, endpoint: 'start' as const, osm_node_id: 12345 }] }
+    await internalRoadsApi.review(1, record, feature, 'verified', '说明', '依据', undefined, geometry)
+    expect(vi.mocked(api.post).mock.calls[0][1]).toMatchObject({ previous_review_id: 2,
+      input_sha256: record.input_sha256, connection_evidence: geometry })
+    await expect(internalRoadsApi.review(1, record, feature, 'rejected', '说明', '依据', undefined, geometry)).rejects.toThrow()
+    expect(api.post).toHaveBeenCalledTimes(1)
+  })
+  it('公共道路关联绑定双端版本并保留请求标识', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { items: [] } })
+    vi.mocked(api.post).mockResolvedValue({ data: {} })
+    const signal = new AbortController().signal
+    await internalRoadsApi.publicAliases(3, 17, '路:1', 'a'.repeat(64), 8, signal)
+    expect(api.get).toHaveBeenCalledWith('/map-sources/3/roads/imports/17/features/%E8%B7%AF%3A1/public-aliases', {
+      params: { public_source_sha256: 'a'.repeat(64), before_id: 8, limit: 20 }, signal,
+    })
+    const payload = { import_id: 17, feature_id: '路:1', public_source_sha256: 'a'.repeat(64),
+      osm_way_id: 12345678901, decision: 'verified' as const, request_key: 'same-request',
+      evidence_reference: '合成核验', previous_id: null }
+    await internalRoadsApi.recordPublicAlias(3, payload)
+    expect(api.post).toHaveBeenCalledWith('/map-sources/3/roads/public-aliases', payload)
+    await expect(internalRoadsApi.recordPublicAlias(3, { ...payload, osm_way_id: Number.MAX_SAFE_INTEGER + 1 })).rejects.toThrow()
+    expect(api.post).toHaveBeenCalledTimes(1)
+  })
   it('入口连接证据绑定后端返回的道路版本，缺失版本不得提交', async () => {
     vi.mocked(api.post).mockResolvedValue({ data: {} })
     const record = { id: 3, input_sha256: 'a'.repeat(64), entrance_checks: [{ entrance_id: 'entry',

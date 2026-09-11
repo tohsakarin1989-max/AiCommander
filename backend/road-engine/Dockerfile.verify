@@ -1,0 +1,25 @@
+# Isolated native-engine verification image, not a business deployment image.
+# Build context: the checked-out upstream 3.8.3 tree with completion.patch applied.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    g++ git pkg-config libboost-dev libprotobuf-dev protobuf-compiler \
+    libsqlite3-dev libspatialite-dev libluajit-5.1-dev libgeos-dev \
+    libssl-dev libexpat1-dev zlib1g-dev libbz2-dev liblz4-dev
+# Upstream DATA_TOOLS configuration requires both spatialite executables.
+RUN apt-get install -y --no-install-recommends spatialite-bin
+# The bundled timezone target invokes make even when CMake uses Ninja.
+RUN apt-get install -y --no-install-recommends make
+WORKDIR /src
+COPY . /src
+RUN test "$(git rev-parse HEAD)" = a60c7cbfc83e073f50887cd27e0109d02e6b64e5 \
+    && grep -q aicommander_expansion_contract src/tyr/expansion_serializer.cc
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=3.8.3
+ENV CMAKE_BUILD_PARALLEL_LEVEL=2
+ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=3
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip wheel --no-deps --wheel-dir /wheels . \
+    -Ccmake.define.ENABLE_SERVICES=OFF -Ccmake.define.ENABLE_HTTP=OFF \
+    -Ccmake.define.ENABLE_GEOTIFF=OFF -Ccmake.define.ENABLE_TESTS=OFF \
+    -Ccmake.define.ENABLE_SINGLE_FILES_WERROR=OFF \
+    && python -m pip install --no-deps /wheels/pyvalhalla-*.whl
+WORKDIR /work
+CMD ["python", "-c", "from valhalla import Actor; print('native bindings importable; runtime acceptance still required')"]

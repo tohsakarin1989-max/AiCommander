@@ -93,9 +93,12 @@ jobs:
         run: docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
       - name: Validate optional document renderer Compose
         run: docker compose --env-file .env.production.example -f docker-compose.production.yml -f docker-compose.document-renderer.yml config --quiet
+      - name: Validate optional road runtime Compose
+        run: docker compose --env-file .env.production.example -f docker-compose.production.yml -f docker-compose.road-runtime.yml --profile road-analysis config --quiet
       - name: Validate deployment scripts
         run: |
           sh -n scripts/preflight-production.sh
+          sh -n scripts/production-compose.sh
           sh -n scripts/backup-production.sh
           sh -n scripts/deploy-production.sh
           sh -n scripts/verify-test-deployment.sh

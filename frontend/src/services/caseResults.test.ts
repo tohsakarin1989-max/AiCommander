@@ -7,6 +7,19 @@ const hash = 'a'.repeat(64)
 beforeEach(() => vi.clearAllMocks())
 
 describe('冻结成果下载', () => {
+  it('道路附件下载固定留存编号并拒绝摘要错配', async () => {
+    const signal = new AbortController().signal
+    const road = { id: 'saved-road', content_sha256: 'b'.repeat(64) }
+    const blob = new Blob(['%PDF-test'], { type: 'application/pdf' })
+    const headers = { 'x-result-content-sha256': hash, 'x-road-artifact-id': road.id, 'x-road-artifact-sha256': road.content_sha256 }
+    vi.mocked(api.get).mockResolvedValue({ data: blob, headers })
+    expect(await caseResultsApi.download('result', hash, 'pdf', signal, road)).toBe(blob)
+    expect(api.get).toHaveBeenCalledWith('/case-results/result/document.pdf', {
+      responseType: 'blob', signal, timeout: 180000, params: { road_artifact_id: road.id },
+    })
+    vi.mocked(api.get).mockResolvedValue({ data: blob, headers: { ...headers, 'x-road-artifact-sha256': 'wrong' } })
+    await expect(caseResultsApi.download('result', hash, 'pdf', signal, road)).rejects.toThrow('道路成果版本不一致')
+  })
   it('使用固定成果、取消信号和二进制请求，不请求最新成果', async () => {
     const signal = new AbortController().signal
     const blob = new Blob(['%PDF-test'], { type: 'application/pdf' })

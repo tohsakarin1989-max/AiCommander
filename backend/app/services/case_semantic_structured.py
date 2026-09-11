@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 
-FIELDS = frozenset({"vehicle_info", "involved_items"})
+FIELDS = frozenset({"vehicle_info", "involved_items", "case_vehicles"})
 
 
 def _encode(value: Any) -> str:

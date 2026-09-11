@@ -15,6 +15,8 @@ from app.config import settings
 from app.database import get_db
 from app.models.map_foundation import MapImportTemplate, MapIngestRun, MapSource, OperationalArea
 from app.services.map_foundation_service import MAX_UPLOAD_BYTES, MapFoundationService
+from app.services.road_public_alias_service import AliasDecision
+from app.services.road_new_geometry import NewRoadGeometryEvidence
 
 
 router = APIRouter()
@@ -27,6 +29,62 @@ def _road_admin(request: Request):
     if principal.role != "admin":
         raise HTTPException(403, "仅地图管理员可管理内部道路")
     return principal
+
+
+def _alias_source(db, source_id, import_id, feature_id, *, write=False):
+    from app.models.internal_roads import InternalRoadImport
+    from app.services.internal_road_service import authorized_source
+    authorized_source(db, source_id, write=write)
+    batch = db.query(InternalRoadImport).filter_by(id=import_id, source_id=source_id).first()
+    if batch is None or not any(feature['id'] == feature_id and feature['properties']['kind'] == 'road'
+                                for feature in batch.features):
+        raise LookupError('road_alias_source_unavailable')
+
+
+@router.post('/map-sources/{source_id}/roads/public-aliases')
+def create_road_public_alias(source_id: int, payload: AliasDecision, request: Request,
+                             db: Session = Depends(get_db)):
+    from app.services.road_public_alias_service import record_alias_decision, describe_alias
+    _road_admin(request)
+    try:
+        _alias_source(db, source_id, payload.import_id, payload.feature_id, write=True)
+        record, created = record_alias_decision(db, payload)
+        result = describe_alias(record)
+        db.commit()
+    except PermissionError:
+        db.rollback()
+        raise HTTPException(403, '缺少道路来源写入权限') from None
+    except LookupError:
+        db.rollback()
+        raise HTTPException(404, '道路来源或要素不存在或不可访问') from None
+    except ValueError as error:
+        db.rollback()
+        conflict = str(error) in {'road_alias_request_conflict', 'road_alias_review_changed', 'road_alias_concurrent_review'}
+        raise HTTPException(409 if conflict else 422, '道路关联状态已变化，请刷新核验' if conflict else '道路关联参数不适用') from None
+    return Response(json.dumps({**result, 'created': created}, ensure_ascii=False),
+                    status_code=201 if created else 200, media_type='application/json',
+                    headers={'Cache-Control': 'no-store'})
+
+
+@router.get('/map-sources/{source_id}/roads/imports/{import_id}/features/{feature_id}/public-aliases')
+def list_road_public_aliases(source_id: int, import_id: int, feature_id: str, request: Request,
+                             public_source_sha256: str = Query(pattern='^[a-f0-9]{64}$'),
+                             limit: int = Query(20, ge=1, le=100), before_id: int | None = Query(None, gt=0),
+                             db: Session = Depends(get_db)):
+    from app.services.road_public_alias_service import alias_history
+    _road_admin(request)
+    try:
+        _alias_source(db, source_id, import_id, feature_id)
+        result = alias_history(db, import_id=import_id, feature_id=feature_id,
+            public_source_sha256=public_source_sha256, limit=limit, before_id=before_id)
+    except PermissionError:
+        raise HTTPException(403, '缺少道路来源读取权限') from None
+    except LookupError:
+        raise HTTPException(404, '道路来源或要素不存在或不可访问') from None
+    except ValueError:
+        raise HTTPException(422, '道路关联查询参数不适用') from None
+    return Response(json.dumps(result, ensure_ascii=False), media_type='application/json',
+                    headers={'Cache-Control': 'no-store'})
 
 
 class EntranceConnectionEvidence(BaseModel):
@@ -45,7 +103,7 @@ class InternalRoadReviewCreate(BaseModel):
     decision: Literal["verified", "rejected", "pending_verification"]
     note: str = Field(min_length=1, max_length=2000)
     evidence_reference: str = Field(min_length=1, max_length=500)
-    connection_evidence: EntranceConnectionEvidence | None = None
+    connection_evidence: EntranceConnectionEvidence | NewRoadGeometryEvidence | None = None
 
 
 @router.post("/map-sources/{source_id}/roads/imports/{import_id}/features/{feature_id}/reviews")

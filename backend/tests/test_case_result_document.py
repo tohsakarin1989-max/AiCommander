@@ -108,6 +108,7 @@ def test_real_semantics_export_has_readable_precision_paths_negation_and_gaps():
     source = "2026年9月10日22时至2026年9月11日2时30分。发现罐车。后来未见罐车。昨晚信息需核对。"
     profile.payload["semantics"] = build_semantic_profile({"description": source}, structured={
         "vehicle_info": [{"是否核实": False, "数量": 0, "说明": ""}],
+        "case_vehicles": [{"vehicle_type": "货车"}],
     })
     document = build_case_result_document({"id": "real-semantics", **assemble_case_result(profile, None, [])})
     rows = [row for block in document.blocks for row in block.rows]
@@ -116,6 +117,9 @@ def test_real_semantics_export_has_readable_precision_paths_negation_and_gaps():
     assert ("结束", "2026-09-11 02:30（精度：分钟）") in rows
     assert ("时区", "未注明，不自动转换") in rows
     assert ("字段路径", "第1项 / 是否核实") in rows
+    assert ("来源字段", "关联车辆记录") in rows
+    assert ("字段路径", "第1项 / vehicle_type") in rows
+    assert ("记录值", "货车") in rows
     assert ("记录值", "否") in rows and ("记录值", "0") in rows
     assert "表述冲突待核：罐车" in text
     assert "相对时间缺少日期依据" in text

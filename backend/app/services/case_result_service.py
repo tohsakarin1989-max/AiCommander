@@ -83,7 +83,11 @@ class CaseResultService:
         hypotheses = list(db.scalars(select(CaseHypothesis).where(
             CaseHypothesis.analysis_run_id == run.id,
         ).order_by(CaseHypothesis.rank).execution_options(populate_existing=True))) if run else []
-        return CaseResultService._persist(db, assemble_case_result(profile, run, hypotheses))
+        result_id, created = CaseResultService._persist(db, assemble_case_result(profile, run, hypotheses))
+        if run is not None:
+            from app.services.case_road_triggers import enqueue_completed_result
+            enqueue_completed_result(db, profile, result_id)
+        return result_id, created
 
     @staticmethod
     def _persist(db: Session, snapshot: dict) -> tuple[str, bool]:

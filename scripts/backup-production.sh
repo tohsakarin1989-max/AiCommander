@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
+. "$ROOT_DIR/scripts/production-compose.sh"
 
 [ -f "$ENV_FILE" ] || {
     echo "缺少 ${ENV_FILE}，无法备份生产数据库" >&2
@@ -55,7 +56,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 echo "正在创建数据库升级前备份..."
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
+compose exec -T postgres \
     sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; exec pg_dump -h 127.0.0.1 -U aicommander -d "$1" --format=custom --compress=9' \
     sh "$DATABASE_NAME" \
     > "$temporary_path"
@@ -67,7 +68,7 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
 mv "$temporary_path" "$backup_path"
 
 database_revision="$(
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
+    compose exec -T postgres \
         sh -c 'export PGPASSWORD="$(cat /run/secrets/db_password)"; psql -h 127.0.0.1 -U aicommander -d "$1" -Atc "SELECT version_num FROM alembic_version"' \
         sh "$DATABASE_NAME" \
         2>/dev/null || true

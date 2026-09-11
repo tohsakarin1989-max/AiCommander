@@ -221,6 +221,7 @@ class CaseService:
         commit: bool = True,
     ) -> None:
         vehicle_fields = {
+            "road_vehicle_kind", "height_m", "gross_weight_t",
             "vehicle_type",
             "color",
             "brand",

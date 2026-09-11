@@ -83,6 +83,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
     from app.models.map_foundation import MapSnapshot, MapSnapshotFeature, MapSource
     from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
+    from app.models.road_public_alias import RoadPublicAlias
     from app.models.meeting import Meeting
 
     scoped_models = (
@@ -96,6 +97,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         InternalRoadImport,
         InternalRoadReview,
         InternalRoadFeatureVersion,
+        RoadPublicAlias,
         MapSnapshot,
         MapSnapshotFeature,
         TechDefenseSource,
@@ -118,6 +120,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.case_insight import CaseAnalysisRun, CaseHypothesis
     from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
     from app.models.case_result import CaseResultSnapshot
+    from app.models.case_road_artifact import CaseRoadArtifact
     from app.models.preprocess_job import PreprocessJob
     from app.models.automation_alert import AutomationAlert
     from app.models.chain_link import ChainLink
@@ -139,6 +142,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         CasePipelineState,
         CaseAnalysisProfile,
         CaseResultSnapshot,
+        CaseRoadArtifact,
         CaseAnalysisRun,
         CaseHypothesis,
         Conclusion,

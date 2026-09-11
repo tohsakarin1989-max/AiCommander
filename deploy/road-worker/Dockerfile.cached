@@ -1,0 +1,23 @@
+# Optional offline assembly using an already accepted app dependency image.
+# Both images must use Linux/Python 3.12 on the same CPU architecture.
+ARG ROAD_DEPENDENCY_IMAGE=aicommander-backend:v4-core-candidate
+ARG ROAD_ENGINE_IMAGE=aicommander-road-engine:3.8.3-completion-candidate
+FROM ${ROAD_DEPENDENCY_IMAGE} AS dependencies
+FROM ${ROAD_ENGINE_IMAGE}
+USER root
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /opt/aic/backend
+COPY --from=dependencies /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY backend/requirements.txt ./requirements.txt
+# Validate every direct requirement without downloading anything.
+RUN pip install --no-index --no-deps -r requirements.txt && pip check
+COPY backend/app ./app
+COPY backend/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod 0755 docker-entrypoint.sh \
+    && chmod -R a+rX /opt/aic/backend/app \
+    && groupadd --system --gid 10001 aicommander \
+    && useradd --system --uid 10001 --gid aicommander --home-dir /opt/aic/backend aicommander
+USER 10001:10001
+RUN python -c "import importlib.metadata; from valhalla import Actor; import celery, sqlalchemy, pydantic; assert importlib.metadata.version('pyvalhalla') == '3.8.3'"
+ENTRYPOINT ["/opt/aic/backend/docker-entrypoint.sh"]
+CMD ["python", "-m", "celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=road_analysis", "--hostname=roads@%h", "--prefetch-multiplier=1", "--max-tasks-per-child=20"]

@@ -23,7 +23,7 @@ FIELD_LABELS = {
     "water_cut": "含水率（记录值）", "oil_volume": "涉油数量（记录值）",
     "oil_value": "涉油价值（记录值）", "evidence_count": "证据记录数",
     "vehicle_count": "车辆记录数", "person_count": "人员记录数",
-    "description": "案情描述", "vehicle_info": "车辆信息", "involved_items": "涉案物品",
+    "description": "案情描述", "vehicle_info": "车辆信息", "case_vehicles": "关联车辆记录", "involved_items": "涉案物品",
     "case_profile_id": "画像编号", "profile_version": "画像版本", "case_source_hash": "源案件摘要",
     "profile_schema": "画像结构版本", "dictionary_version": "字典版本", "analysis_run_id": "分析运行编号",
     "map_snapshot_id": "地图快照编号", "algorithm_version": "算法版本",
@@ -51,6 +51,8 @@ class CaseResultDocument:
     result_id: str
     content_sha256: str
     blocks: tuple[DocumentBlock, ...]
+    road_artifact_id: str | None = None
+    road_artifact_sha256: str | None = None
 
 
 def _text(value: object) -> str:
@@ -186,6 +188,14 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
     return CaseResultDocument(DOCUMENT_SCHEMA, result["id"], result["content_sha256"], tuple(blocks))
 
 
-def load_case_result_document(db: Session, result_id: str) -> CaseResultDocument:
+def load_case_result_document(db: Session, result_id: str, road_artifact_id: str | None = None) -> CaseResultDocument:
     """每次准备导出均重新读取并核对当前权限；不缓存已授权正文。"""
-    return build_case_result_document(CaseResultService.read(db, result_id))
+    result = CaseResultService.read(db, result_id)
+    document = build_case_result_document(result)
+    if road_artifact_id is not None:
+        from app.services.case_road_document import attach_road_document, load_document_road
+
+        artifact = load_document_road(db, result_id, result['content_sha256'],
+                                     result['content']['versions']['map_snapshot_id'], road_artifact_id)
+        document = attach_road_document(document, artifact)
+    return document

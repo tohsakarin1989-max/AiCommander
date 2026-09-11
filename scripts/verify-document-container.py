@@ -12,6 +12,8 @@ def main():
     parser.add_argument('--image', default='aicommander-backend-documents:v4.1-candidate')
     parser.add_argument('--embedded', action='store_true', help='Run the check shipped inside the image without a host mount')
     parser.add_argument('--core', action='store_true', help='Verify migrations and authenticated case APIs instead of export smoke')
+    parser.add_argument('--expected-revision', default='4ef1b75a80e5',
+                        help='Expected migration head for the selected core image')
     args = parser.parse_args()
     if os.environ.get('AIC_DISPOSABLE_RENDER_CHECK') != '1':
         raise RuntimeError('explicit_disposable_check_required')
@@ -32,6 +34,7 @@ def main():
                *([] if args.embedded else ['--mount', f'type=bind,source={source},target={target},readonly']),
                '-e', 'AIC_DISPOSABLE_RENDER_CHECK=1', '-e', 'SECRET_KEY=synthetic-offline-export-only',
                '-e', 'ENVIRONMENT=development', '-e', 'ENABLE_VECTOR_DB=false',
+               '-e', f'AIC_EXPECTED_CORE_REVISION={args.expected_revision}',
                '-e', 'PYTHONPATH=/app', '--entrypoint', 'python', image, target]
     # Keep the exact newly created ID so timeouts also clean up the container.
     container = subprocess.run(command, check=True, capture_output=True, text=True, timeout=30).stdout.strip()

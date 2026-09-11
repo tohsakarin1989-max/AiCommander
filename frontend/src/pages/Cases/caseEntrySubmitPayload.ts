@@ -19,7 +19,7 @@ export interface CaseEntrySubmitValues extends Record<string, unknown> {
   initial_persons?: Array<Record<string, unknown>>
 }
 
-const vehicleDraftFields = ['vehicle_type', 'plate_number', 'handling_status']
+const vehicleDraftFields = ['vehicle_type', 'plate_number', 'handling_status', 'road_vehicle_kind', 'height_m', 'gross_weight_t']
 const personDraftFields = ['name', 'handling_status', 'role']
 
 function toIsoString(value: unknown): unknown {
