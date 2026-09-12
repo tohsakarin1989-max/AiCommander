@@ -360,6 +360,7 @@ class CaseAutomationService:
 5. description 要写成符合业务管理细则的标准案情摘要：时间、报送保卫班、地点、作业区/区块、车辆、油品数量/含水率、人员、报案立案、车辆/人员/原油处理方式，缺项不编。
 6. 每个 candidates 项要给 label、field、value、source、confidence、status=candidate。
 7. 身份证号、家庭住址可保留在摘要中供人工核对，但不要编造，不要外推。
+8. oil_volume 的单位是吨；原文仅提供升/L时保留原始单位，不假设密度、不换算吨数。
 
 {STANDARD_CASE_REPORTING_REQUIREMENTS}
 
@@ -393,14 +394,25 @@ class CaseAutomationService:
         model_fields = CaseAutomationService._sanitize_llm_case_fields(
             model_payload.get("case_fields") or model_payload.get("standard_fields") or {}
         )
+        unweighed_liters = bool(re.search(r"\d+(?:\.\d+)?\s*(?:升|L|l)", text)) and (
+            CaseAutomationService._extract_volume_tons(text) is None
+        )
+        if unweighed_liters:
+            model_fields.pop("oil_volume", None)
+            # 保留原始单位，避免模型在摘要中把未经核定的升数改写成吨数。
+            model_fields["description"] = text
         fields = {**fallback_fields, **model_fields}
 
         field_sources = dict(fallback.get("field_sources") or {})
         for field, source in (model_payload.get("field_sources") or {}).items():
+            if unweighed_liters and field in {"oil_volume", "description"}:
+                continue
             if field in AI_INTAKE_FIELD_NAMES and source:
                 field_sources[field] = f"大模型整理：{source}"
         for field in model_fields:
             field_sources.setdefault(field, "大模型语义整理")
+        if unweighed_liters:
+            field_sources["description"] = "保留原始案情与升数，吨数待核定"
 
         model_evidence = [
             item for item in (model_payload.get("suggested_evidence") or model_payload.get("material_recommendations") or [])
@@ -414,6 +426,8 @@ class CaseAutomationService:
             *(fallback.get("warnings") or []),
             *(model_payload.get("warnings") or []),
         ]
+        if unweighed_liters:
+            warnings.append("原文仅提供升数，涉油数量（吨）待检斤核定，不按体积推算重量。")
         confidence = float(model_payload.get("confidence") or fallback.get("confidence") or 0.75)
         confidence = max(0.0, min(0.98, confidence))
 
@@ -428,6 +442,7 @@ class CaseAutomationService:
         model_candidates = [
             item for item in (model_payload.get("candidates") or [])
             if isinstance(item, dict) and item.get("field")
+            and not (unweighed_liters and item.get("field") in {"oil_volume", "description"})
         ]
         if model_candidates:
             ai_intake["candidates"] = CaseAutomationService._merge_ai_candidates(
@@ -790,7 +805,7 @@ class CaseAutomationService:
             limit=6,
             radius_km=1.5,
         )
-        experience = CaseIntelligenceService.build_experience_card(db, case.id)
+        experience = CaseIntelligenceService.build_experience_card(db, case.id, persist=False)
 
         facts = context.get("facts") or []
         inferences = context.get("pattern_inferences") or []
@@ -1668,14 +1683,13 @@ class CaseAutomationService:
 
     @staticmethod
     def _extract_volume_tons(text: str) -> Optional[float]:
-        match = re.search(r"(\d+(?:\.\d+)?)\s*(吨|t|T|公斤|千克|kg|KG|升|L|l)", text)
+        # 体积（升）不能在缺少密度依据时换算重量（吨）。
+        match = re.search(r"(\d+(?:\.\d+)?)\s*(吨|t|T|公斤|千克|kg|KG)", text)
         if not match:
             return None
         value = float(match.group(1))
         unit = match.group(2)
         if unit in {"公斤", "千克", "kg", "KG"}:
-            return round(value / 1000, 3)
-        if unit in {"升", "L", "l"}:
             return round(value / 1000, 3)
         return value
 

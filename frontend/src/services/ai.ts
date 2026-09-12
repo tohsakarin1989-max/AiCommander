@@ -40,6 +40,13 @@ export type {
   MeetingTemplateUpdate,
 }
 
+export interface MeetingModelOption {
+  id: number
+  name: string
+  role: string
+  is_active: boolean
+}
+
 // ==================== API 实现 ====================
 
 export const aiApi = {
@@ -88,6 +95,10 @@ export const aiApi = {
 
   // ---------- 圆桌会议 ----------
   meeting: {
+    modelOptions: async () => {
+      const response = await api.get<MeetingModelOption[]>('/meetings/model-options')
+      return response.data
+    },
     /** 创建并启动会议 */
     create: async (data: MeetingCreate) => {
       const response = await api.post<{ meeting_id: string; status: string }>('/meetings', data)

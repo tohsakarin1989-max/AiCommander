@@ -14,6 +14,7 @@ from app.models.agent_run import AgentApproval
 from app.models.case import Case
 from app.models.knowledge_asset import KnowledgeAsset
 from app.models.workbench import WorkbenchTaskSession
+from app.services.daily_workbench_service import information_gaps
 
 
 TERMINAL_SESSION_STATUSES = {"completed", "abandoned"}
@@ -60,7 +61,6 @@ class WorkbenchService:
         cases = (
             db.query(Case)
             .order_by(Case.created_at.desc(), Case.id.desc())
-            .limit(500)
             .all()
         )
         case_ids = [case.id for case in cases]
@@ -129,11 +129,14 @@ class WorkbenchService:
                 {"stage": "data_review", "label": "数据核验", "count": summary["data_review"]},
                 {"stage": "experience_review", "label": "经验沉淀", "count": summary["experience_review"]},
                 {"stage": "report_review", "label": "报告复核", "count": summary["report_review"]},
-                {"stage": "completed", "label": "当前闭环", "count": summary["completed"]},
+                {"stage": "completed", "label": "无待确认事项", "count": summary["completed"]},
             ],
             "tasks": tasks[:limit],
             "active_session": WorkbenchService.active_session(db, user_id=user_id),
-            "boundary": "工作台只负责分流、记录和提示，案件事实、经验卡与报告仍由人工核验确认。",
+            "boundary": (
+                "工作台只负责分流、记录和提示，案件事实、经验卡与报告仍由人工核验确认。"
+                "经验卡和报告按需形成；无待确认事项或分析就绪不代表案件办结。"
+            ),
         }
 
     @staticmethod
@@ -141,29 +144,15 @@ class WorkbenchService:
         case: Case,
         latest_assets: dict[tuple[int, str], KnowledgeAsset],
     ) -> str:
-        missing_required = (case.quality_issues or {}).get("missing_required", [])
-        quality_problem = (
-            case.latitude is None
-            or case.longitude is None
-            or not case.occurred_time
-            or not (case.location or "").strip()
-            or not (case.description or "").strip()
-            or bool(missing_required)
-            or (case.quality_score is not None and case.quality_score < 70)
-        )
-        if quality_problem:
+        if information_gaps(case):
             return "data_review"
 
         experience = latest_assets.get((case.id, "experience_card"))
-        if not experience or experience.status == "archived":
-            return "experience_generate"
-        if experience.status != "confirmed":
+        if experience and experience.status not in {"confirmed", "archived"}:
             return "experience_review"
 
         report = latest_assets.get((case.id, "case_report"))
-        if not report or report.status == "archived":
-            return "report_generate"
-        if report.status != "confirmed":
+        if report and report.status not in {"confirmed", "archived"}:
             return "report_review"
         return "completed"
 
@@ -173,7 +162,7 @@ class WorkbenchService:
             "data_review": {
                 "priority": "high",
                 "title": "补齐案件研判底座",
-                "why": "案件存在坐标、必填字段或质量评分缺口。",
+                "why": "案件缺少案发时间、地点依据或案情描述。",
                 "impact": "缺口会影响时空关联、相似条件和后续报告可信度。",
                 "next_action": "进入案件页核验字段，只保存人工确认后的内容。",
                 "target_path": f"/cases?caseId={case.id}",

@@ -32,7 +32,6 @@ const StatisticCard: React.FC<StatisticCardProps> = ({
   title,
   value,
   icon,
-  theme = 'light',
   type = 'primary',
   suffix,
   trend,
@@ -40,14 +39,14 @@ const StatisticCard: React.FC<StatisticCardProps> = ({
   animated = true,
   size = 'medium',
 }) => {
-  const isDark = theme === 'dark'
+  const isDark = false
 
   const colorMap = {
-    primary: isDark ? '#00d4ff' : '#1890ff',
-    success: isDark ? '#6bcb77' : '#52c41a',
-    warning: isDark ? '#ffd93d' : '#faad14',
-    danger: isDark ? '#ff6b6b' : '#ff4d4f',
-    info: isDark ? '#a855f7' : '#722ed1',
+    primary: '#126759',
+    success: '#126759',
+    warning: '#ad6800',
+    danger: '#c63845',
+    info: '#246da5',
   }
 
   const accentColor = colorMap[type]

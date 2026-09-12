@@ -6,10 +6,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
+from app.models.case_history_index import CaseHistoryIndexCursor
 from app.models.case_insight import CaseAnalysisRun, CaseHypothesis, HypothesisFeedback
 from app.models.case_pipeline import CaseAnalysisProfile, OutboxEvent
 from app.models.map_foundation import MapSnapshot, MapSnapshotFeature
@@ -314,6 +315,26 @@ class CaseInsightService:
     @staticmethod
     def reconcile_current_pairs(db: Session, limit: int = 500) -> dict[str, int]:
         """补偿画像发布与地图发布交错时遗漏的当前版本组合。"""
+        if db.info.get('authorized_area_ids') is not None:
+            raise PermissionError('case_insight_reconcile_background_session_required')
+        # Reuse the durable background cursor table with an independent key.
+        # Cursor advancement and enqueues commit together; unchanged early cases
+        # must not starve later cases after a new map is published.
+        dialect = db.get_bind().dialect.name
+        if dialect == 'postgresql':
+            from sqlalchemy.dialects.postgresql import insert
+        elif dialect == 'sqlite':
+            from sqlalchemy.dialects.sqlite import insert
+        else:
+            raise ValueError('unsupported_case_insight_database')
+        cursor_name = 'case-insight-pairs'
+        db.execute(insert(CaseHistoryIndexCursor).values(
+            name=cursor_name, after_case_id=0, completed_passes=0).on_conflict_do_nothing())
+        db.execute(update(CaseHistoryIndexCursor).where(CaseHistoryIndexCursor.name == cursor_name)
+                   .values(updated_at=datetime.now(timezone.utc)))
+        cursor = db.scalar(select(CaseHistoryIndexCursor).where(
+            CaseHistoryIndexCursor.name == cursor_name).execution_options(populate_existing=True))
+        size = max(1, min(limit, 5000))
         snapshots = {
             item.operational_area_id: item
             for item in db.query(MapSnapshot)
@@ -327,14 +348,15 @@ class CaseInsightService:
             .filter(
                 CaseAnalysisProfile.is_current.is_(True),
                 Case.operational_area_id.isnot(None),
+                Case.id > cursor.after_case_id,
             )
             .order_by(Case.id)
-            .limit(max(1, min(limit, 5000)))
+            .limit(size + 1)
             .all()
         )
         paired = 0
         missing = 0
-        for profile, case in rows:
+        for profile, case in rows[:size]:
             snapshot = snapshots.get(case.operational_area_id)
             if snapshot is None:
                 continue
@@ -351,8 +373,15 @@ class CaseInsightService:
             if existing is None:
                 missing += 1
             CaseInsightService.enqueue_analysis(db, profile, snapshot)
+        if len(rows) > size:
+            cursor.after_case_id = rows[size - 1][1].id
+        else:
+            cursor.after_case_id = 0
+            cursor.completed_passes += 1
+        after_case_id, completed_passes = cursor.after_case_id, cursor.completed_passes
         db.commit()
-        return {"scanned": len(rows), "paired": paired, "missing_pairs": missing}
+        return {"scanned": min(len(rows), size), "paired": paired, "missing_pairs": missing,
+                "after_case_id": after_case_id, "completed_passes": completed_passes}
 
     @staticmethod
     def record_feedback(

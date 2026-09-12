@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  Alert,
   InputNumber,
   Space,
   message,
@@ -21,12 +22,15 @@ import {
   FlagOutlined,
   CopyOutlined,
 } from '@ant-design/icons'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '../../auth/AuthContext'
 import { aiApi } from '../../services/ai'
+import { useCaseWorkspace } from '../../services/useCaseWorkspace'
+import LatestCaseResult from '../../components/CaseResult/LatestCaseResult'
 import type { Conclusion, ConclusionFilters } from '../../types'
 import type { ConclusionDraft } from '../../types'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
+import { conclusionConfidence, conclusionConfidenceLabel, getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
 import './ConclusionFactory.css'
 
 /* ── 状态标签辅助 ─────────────────────────────────────────── */
@@ -67,30 +71,48 @@ const RISK_LABEL: Record<string, string> = {
 }
 
 const ConclusionFactory: React.FC = () => {
-  const [caseId, setCaseId]       = useState<number | null>(null)
+  const { user, sessionEpoch } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
+  const [searchParams, setSearchParams] = useSearchParams()
+  const parsedCaseId = Number(searchParams.get('caseId'))
+  const caseId = Number.isSafeInteger(parsedCaseId) && parsedCaseId > 0 ? parsedCaseId : null
+  const setCaseId = (value: number | null) => setSearchParams(previous => {
+    const next = new URLSearchParams(previous)
+    next.delete('conclusionId')
+    if (value && Number.isSafeInteger(value) && value > 0) next.set('caseId', String(value))
+    else next.delete('caseId')
+    return next
+  }, { replace: true })
+  const queryClient = useQueryClient()
   const [meetingId, setMeetingId] = useState<string>('')
   const [filters, setFilters]     = useState<ConclusionFilters>({})
   const [detailId, setDetailId]   = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [draftPreview, setDraftPreview] = useState<ConclusionDraft | null>(null)
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const workspaceQuery = useCaseWorkspace(caseId ?? undefined)
+  const resultReady = workspaceQuery.workspace?.result.status === 'ready'
+    && !!workspaceQuery.workspace.result.data && workspaceQuery.workspace.result.data.freshness !== 'pending_update'
 
   useEffect(() => {
     const conclusionId = Number(searchParams.get('conclusionId'))
-    if (!Number.isFinite(conclusionId) || conclusionId <= 0) return
+    if (!Number.isSafeInteger(conclusionId) || conclusionId <= 0) {
+      setDetailId(null)
+      setDetailOpen(false)
+      return
+    }
     setDetailId(conclusionId)
     setDetailOpen(true)
   }, [searchParams])
 
-  const { data, refetch, isFetching } = useQuery({
-    queryKey: ['conclusions', filters],
-    queryFn: () => aiApi.conclusion.list(filters),
+  const { data, refetch, isFetching, isError } = useQuery({
+    queryKey: ['conclusions', filters, caseId, user?.id, sessionEpoch],
+    queryFn: () => aiApi.conclusion.list({ ...filters, ...(caseId ? { case_id: caseId } : {}) }),
   })
 
   const generateMutation = useMutation({
     mutationFn: (id: number) => aiApi.conclusion.generate(id),
-    onSuccess: () => { message.success('结论生成完成'); refetch() },
+    onSuccess: () => { message.success('已打开或保存基于既有成果的结论，人工确认状态保持不变'); refetch() },
     onError: (error: any) => { message.error(error?.response?.data?.detail || '结论生成失败') },
   })
 
@@ -112,17 +134,21 @@ const ConclusionFactory: React.FC = () => {
   const reviewMutation = useMutation({
     mutationFn: (payload: { id: number; action: 'approve' | 'reject' | 'flag' }) =>
       aiApi.conclusion.review(payload.id, { action: payload.action }),
-    onSuccess: () => { message.success('已更新结论状态'); refetch() },
+    onSuccess: () => {
+      message.success('已更新结论状态'); refetch()
+      void queryClient.invalidateQueries({ queryKey: ['conclusion-detail'] })
+    },
     onError: (error: any) => { message.error(error?.response?.data?.detail || '操作失败') },
   })
 
-  const { data: detail, isFetching: isDetailLoading } = useQuery({
-    queryKey: ['conclusion-detail', detailId],
+  const { data: detailData, isFetching: isDetailLoading, isError: detailError } = useQuery({
+    queryKey: ['conclusion-detail', detailId, user?.id, sessionEpoch],
     queryFn: () => aiApi.conclusion.get(detailId as number),
     enabled: detailOpen && !!detailId,
   })
 
-  const rows = data || []
+  const detail = detailError ? undefined : detailData
+  const rows = isError ? [] : data || []
   const pendingCount = rows.filter((c: any) => c.status === 'needs_review').length
   const detailMeta = getConclusionDraftMeta(detail)
   const detailMarkdown = getConclusionMarkdown(detail)
@@ -143,11 +169,14 @@ const ConclusionFactory: React.FC = () => {
 
   return (
     <div className="page-scrollable">
+      {!canWrite && <Alert type="info" message="只读账号可查看结论，不能生成或复核" />}
+      {isError && <Alert type="error" message="结论列表读取失败，请稍后重试" />}
+      {detailError && <Alert type="error" message="结论详情读取失败或当前账号无权访问" />}
 
       {/* ── 页面标题 ── */}
       <div className="page-title">
-        <h1>结论工厂</h1>
-        <span className="sub">低人力模式 · AI 自动生成与审核</span>
+        <h1>历史结论与人工确认</h1>
+        <span className="sub">复用案件成果，按需形成草稿；不自动审核或发布</span>
       </div>
 
       {/* ── 统计行 ── */}
@@ -155,14 +184,14 @@ const ConclusionFactory: React.FC = () => {
         <div className="kpill">
           <div className="lbl">待审核结论</div>
           <div className="val" style={{ color: pendingCount > 0 ? 'var(--warn)' : 'var(--accent)' }}>
-            {pendingCount}
+            {isError ? '待确认' : isFetching && !data ? '读取中' : pendingCount}
           </div>
           <div className="sub">需要人工确认</div>
         </div>
         <div className="kpill">
-          <div className="lbl">结论总数</div>
-          <div className="val">{rows.length}</div>
-          <div className="sub">全部记录</div>
+          <div className="lbl">当前列表</div>
+          <div className="val">{isError ? '待确认' : isFetching && !data ? '读取中' : rows.length}</div>
+          <div className="sub">当前筛选返回记录</div>
         </div>
       </div>
 
@@ -170,36 +199,39 @@ const ConclusionFactory: React.FC = () => {
       <div className="card cf-generate-card">
         <div className="card-head">
           <span className="ico">⚡</span>
-          <span className="ti">生成结论</span>
+          <span className="ti">按需形成结论</span>
         </div>
         <div className="card-body pad">
           <div className="cf-generate-row">
             <InputNumber
               placeholder="案件 ID"
+              min={1}
+              precision={0}
               value={caseId ?? undefined}
-              onChange={(value) => setCaseId(value as number)}
+              aria-label="当前案件 ID"
+              onChange={(value) => setCaseId(value === null ? null : Number(value))}
               style={{ width: 130 }}
             />
             <button
               className="btn-primary"
-              disabled={generateMutation.isPending}
+              disabled={!canWrite || !caseId || !resultReady || generateMutation.isPending}
               onClick={() => {
                 if (!caseId) { message.warning('请先输入案件 ID'); return }
                 generateMutation.mutate(caseId)
               }}
             >
-              {generateMutation.isPending ? '生成中…' : '从案件生成'}
+              {generateMutation.isPending ? '正在复用…' : '使用已有成果形成结论'}
             </button>
-            <button
+            {user?.role === 'admin' && <button
               className="btn-ghost"
-              disabled={draftMutation.isPending}
+              disabled={!canWrite || draftMutation.isPending}
               onClick={() => {
                 if (!caseId) { message.warning('请先输入案件 ID'); return }
                 draftMutation.mutate(caseId)
               }}
             >
-              {draftMutation.isPending ? '草拟中…' : '草稿预览'}
-            </button>
+              {draftMutation.isPending ? '草拟中…' : '旧版草稿预览（管理员）'}
+            </button>}
 
             <span className="cf-divider">OR</span>
 
@@ -211,7 +243,7 @@ const ConclusionFactory: React.FC = () => {
             />
             <button
               className="btn-primary"
-              disabled={generateFromMeetingMutation.isPending}
+              disabled={!canWrite || generateFromMeetingMutation.isPending}
               onClick={() => {
                 if (!meetingId.trim()) { message.warning('请先输入会议 ID'); return }
                 generateFromMeetingMutation.mutate(meetingId.trim())
@@ -221,8 +253,12 @@ const ConclusionFactory: React.FC = () => {
               {generateFromMeetingMutation.isPending ? '生成中…' : '从会议生成'}
             </button>
           </div>
+          <p>案件成果尚未形成或正在更新时，请等待后台处理；无需先生成经验卡或报告。会议来源继续保留原有记录与确认流程。</p>
+          {caseId && <button className="btn-ghost" onClick={() => navigate(`/cases?caseId=${caseId}`)}>返回当前案件</button>}
         </div>
       </div>
+
+      {caseId && <LatestCaseResult key={caseId} caseId={caseId} />}
 
       {/* ── 过滤面板 ── */}
       <div className="card cf-filter-card">
@@ -288,9 +324,9 @@ const ConclusionFactory: React.FC = () => {
       <div className="card">
         <div className="card-head">
           <FileTextOutlined className="ico" />
-          <span className="ti">结论列表</span>
+          <span className="ti">{caseId ? `当前案件 #${caseId} 的结论` : '结论列表'}</span>
           <span className="spacer" />
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
             {rows.length} 条记录
           </span>
         </div>
@@ -299,7 +335,7 @@ const ConclusionFactory: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
               <Spin />
             </div>
-          ) : rows.length === 0 ? (
+          ) : isError ? null : rows.length === 0 ? (
             <div className="empty-state">
               <span className="icon"><FileTextOutlined /></span>
               暂无结论记录
@@ -330,7 +366,7 @@ const ConclusionFactory: React.FC = () => {
 
                     {/* 结论 ID */}
                     <td>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                         {record.id}
                       </span>
                     </td>
@@ -349,7 +385,7 @@ const ConclusionFactory: React.FC = () => {
                           </button>
                         </Tooltip>
                       ) : (
-                        <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-3)', fontSize: 11 }}>—</span>
+                        <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink-3)', fontSize: 12 }}>—</span>
                       )}
                     </td>
 
@@ -365,19 +401,19 @@ const ConclusionFactory: React.FC = () => {
                       <div className="cf-confidence">
                         <span
                           className="cf-confidence__num"
-                          style={{ color: confidenceColor(record.confidence) }}
+                          style={{ color: confidenceColor(conclusionConfidence(record)) }}
                         >
-                          {record.confidence != null ? (record.confidence * 100).toFixed(0) : '—'}%
+                          {conclusionConfidenceLabel(record)}
                         </span>
-                        <div className="cf-confidence__bar">
+                        {conclusionConfidence(record) !== null && <div className="cf-confidence__bar">
                           <div
                             className="cf-confidence__fill"
                             style={{
-                              width: `${(record.confidence || 0) * 100}%`,
-                              background: confidenceColor(record.confidence),
+                              width: `${conclusionConfidence(record)! * 100}%`,
+                              background: confidenceColor(conclusionConfidence(record)),
                             }}
                           />
-                        </div>
+                        </div>}
                       </div>
                     </td>
 
@@ -410,18 +446,21 @@ const ConclusionFactory: React.FC = () => {
                         </button>
                         <button
                           className="cf-action-btn cf-action-btn--approve"
+                          disabled={!canWrite || reviewMutation.isPending}
                           onClick={() => reviewMutation.mutate({ id: record.id, action: 'approve' })}
                         >
                           <CheckOutlined style={{ marginRight: 3 }} />通过
                         </button>
                         <button
                           className="cf-action-btn cf-action-btn--reject"
+                          disabled={!canWrite || reviewMutation.isPending}
                           onClick={() => reviewMutation.mutate({ id: record.id, action: 'reject' })}
                         >
                           <CloseOutlined style={{ marginRight: 3 }} />退回
                         </button>
                         <button
                           className="cf-action-btn cf-action-btn--flag"
+                          disabled={!canWrite || reviewMutation.isPending}
                           onClick={() => reviewMutation.mutate({ id: record.id, action: 'flag' })}
                         >
                           <FlagOutlined style={{ marginRight: 3 }} />标记
@@ -479,7 +518,7 @@ const ConclusionFactory: React.FC = () => {
                 { label: '草稿状态', value: detailMeta.draftStatus },
                 { label: '复核状态', value: detailMeta.reviewStatus },
                 { label: '模型状态', value: detailMeta.modelStatus },
-                { label: '置信度',   value: detail.confidence != null ? `${(detail.confidence * 100).toFixed(1)}%` : '—', mono: true },
+                { label: '置信度',   value: conclusionConfidenceLabel(detail), mono: true },
                 { label: '风险等级', value: detail.risk_level || '—' },
                 { label: '摘要',     value: detail.summary || '—' },
               ].map(({ label, value, mono }) => (
@@ -509,6 +548,14 @@ const ConclusionFactory: React.FC = () => {
                   </div>
                 </div>
               )}
+              {detail.evidence?.source_result && <div className="cf-drawer-row">
+                <span className="cf-drawer-row__label">复用成果</span>
+                <div className="cf-drawer-row__value">
+                  <button className="btn-ghost-sm" onClick={() => navigate(`/reports?resultId=${encodeURIComponent(detail.evidence!.source_result!.result_id)}`)}>查看来源版本</button>
+                  <p>{detail.evidence.source_result.result_id}</p>
+                  <p>此记录未提供准确概率；人工确认不会把规则支持度转换为概率。</p>
+                </div>
+              </div>}
             </div>
 
             {/* 标准化草稿 */}
@@ -545,7 +592,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'key',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       关键证据 ({detail.evidence?.key_evidence?.length || 0})
                     </span>
                   ),
@@ -568,7 +615,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'case',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       案件详情
                     </span>
                   ),
@@ -590,7 +637,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'similar',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       相似案件 ({detail.evidence?.raw?.similar_cases?.length || 0})
                     </span>
                   ),
@@ -602,13 +649,13 @@ const ConclusionFactory: React.FC = () => {
                       renderItem={(item: any) => (
                         <List.Item style={{ borderColor: 'var(--line-soft)' }}>
                           <Space>
-                            <span className="tag" style={{ fontFamily: 'var(--mono)', fontSize: 10 }}>
+                            <span className="tag" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
                               #{item.case_id}
                             </span>
-                            <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
                               相似度 {item.similarity}
                             </span>
-                            <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+                            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
                               {item.metadata?.case_type || ''}
                             </span>
                             <button
@@ -626,7 +673,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'meetings',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       关联会议 ({detail.evidence?.raw?.related_meetings?.length || 0})
                     </span>
                   ),
@@ -638,7 +685,7 @@ const ConclusionFactory: React.FC = () => {
                       renderItem={(item: any) => (
                         <List.Item style={{ borderColor: 'var(--line-soft)' }}>
                           <Space>
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)' }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)' }}>
                               {item.meeting_id}
                             </span>
                             <span className={STATUS_TAG_CLASS[item.status] || 'tag'}>
@@ -659,7 +706,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'reports',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       关联报告 ({detail.evidence?.raw?.related_reports?.length || 0})
                     </span>
                   ),
@@ -671,10 +718,10 @@ const ConclusionFactory: React.FC = () => {
                       renderItem={(item: any) => (
                         <List.Item style={{ borderColor: 'var(--line-soft)' }}>
                           <Space>
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                               #{item.report_id}
                             </span>
-                            <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>{item.report_type}</span>
+                            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>{item.report_type}</span>
                             <button
                               className="btn-ghost-sm"
                               onClick={() => navigate(`/meetings?meetingId=${item.meeting_id}`)}
@@ -690,7 +737,7 @@ const ConclusionFactory: React.FC = () => {
                 {
                   key: 'raw',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                       原始证据
                     </span>
                   ),
@@ -714,7 +761,7 @@ const ConclusionFactory: React.FC = () => {
 
       <Drawer
         title="结论草稿预览"
-        open={!!draftPreview}
+        open={!!draftPreview && draftPreview.case_id === caseId}
         onClose={() => setDraftPreview(null)}
         width={620}
       >

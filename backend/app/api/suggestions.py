@@ -1,7 +1,9 @@
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -12,9 +14,13 @@ from app.models.conclusion import Conclusion
 from app.models.event import Event
 from app.models.meeting import Meeting
 from app.models.patrol import AreaRiskAssessment
+from app.models.report import Report
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_processing_card_service import CaseProcessingCardService
+from app.services.case_profile_service import CaseProfileService
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_result_access import CaseResultAccessError
+from app.services.conclusion_factory_service import ConclusionFactoryService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -35,13 +41,27 @@ def _existing_experience_card(case: Case) -> dict:
     return card
 
 
-def _has_experience_card_inputs(case: Case) -> bool:
-    return bool(
-        (case.description and len(case.description.strip()) >= 10)
-        or case.location
-        or case.case_type
-        or case.features
-    )
+SuggestionWorkflow = Literal[
+    "all", "coordinate_gap", "data_quality", "processing_card", "bonus_metric_gap",
+    "bonus_material_gap", "alert", "conclusion_review", "report_followup", "experience",
+    "event_review", "area_reference",
+]
+
+
+def _workflow(item_id: str, item_type: str, action: str) -> str:
+    if item_id.startswith("case-geo-"):
+        return "coordinate_gap"
+    return {
+        "review_processing_card": "processing_card",
+        "review_bonus_data": "bonus_metric_gap",
+        "review_bonus_materials": "bonus_material_gap",
+        "review_conclusion": "conclusion_review",
+        "review_experience_card": "experience",
+        "open_analysis_package": "report_followup",
+        "convert_event_to_case": "event_review",
+        "open_alert_triage_pack": "alert",
+        "review_prevention_reference": "area_reference",
+    }.get(action, item_type if item_type in {"experience", "data_quality"} else "data_quality")
 
 
 def _derive_bonus_data_gaps_from_items(bonus_items) -> list[dict]:
@@ -70,11 +90,13 @@ def _bonus_calculation_gaps(bonus: dict) -> list:
 
 @router.get("/")
 def get_suggestions(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     status: str = "open",
+    offset: int = Query(0, ge=0),
+    workflow: SuggestionWorkflow = "all",
     db: Session = Depends(get_db),
 ):
-    """生成跨模块研判待办，统一收纳案件、告警、结论、报告和核算缺口。"""
+    """只收纳真实缺项及已有成果待判断项，先鉴权和统计，再筛选与分页。"""
     now = datetime.utcnow()
     suggestions = []
 
@@ -100,6 +122,7 @@ def get_suggestions(
             "target_type": target_type,
             "target_id": target_id,
             "action": action,
+            "workflow": _workflow(item_id, item_type, action),
             "status": "open",
             "created_at": _iso(created_at, now),
             "meta": meta or {},
@@ -108,8 +131,7 @@ def get_suggestions(
     for case in (
         db.query(Case)
         .filter(Case.status.in_(["pending", "processing"]))
-        .order_by(Case.created_at.desc())
-        .limit(20)
+        .order_by(Case.created_at.desc(), Case.id.desc())
         .all()
     ):
         try:
@@ -121,7 +143,7 @@ def get_suggestions(
                     item_type="processing_card",
                     priority=processing_card.get("priority") or "medium",
                     title=f"处理案件缺口卡：{case.case_number}",
-                    description="同案质量、奖金、经验卡和报告缺口已归并，请按处理卡统一复核。",
+                    description="已归并真实资料缺项及已有成果待判断事项；不要求每案生成经验卡或报告。",
                     target_type="case",
                     target_id=case.id,
                     action="review_processing_card",
@@ -150,21 +172,9 @@ def get_suggestions(
                 action="open_case",
                 created_at=case.updated_at or case.created_at,
             )
-        if not case.features:
-            add_item(
-                item_id=f"case-preprocess-{case.id}",
-                item_type="analysis",
-                priority="medium",
-                title=f"执行案件预处理：{case.case_number}",
-                description="该案件尚未提取结构化特征，建议先预处理再进入串案、链条或圆桌研判。",
-                target_type="case",
-                target_id=case.id,
-                action="preprocess_case",
-                created_at=case.updated_at or case.created_at,
-            )
-
         quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
-        if quality.get("level") == "low" or (quality.get("score") or 100) < 70:
+        quality_score = quality.get("score")
+        if quality.get("level") == "low" or (quality_score is not None and quality_score < 70):
             add_item(
                 item_id=f"case-quality-{case.id}",
                 item_type="data_quality",
@@ -233,32 +243,18 @@ def get_suggestions(
 
         try:
             experience = _existing_experience_card(case)
-            if experience:
-                if experience.get("manual_review_status") != "confirmed":
-                    add_item(
-                        item_id=f"case-experience-{case.id}",
-                        item_type="experience",
-                        priority="medium",
-                        title=f"复核经验卡：{case.case_number}",
-                        description="该案件已生成经验卡，需人工确认事实、推断和建议边界后进入经验资产库。",
-                        target_type="case",
-                        target_id=case.id,
-                        action="review_experience_card",
-                        created_at=case.updated_at or case.created_at,
-                        meta={"manual_review_status": experience.get("manual_review_status")},
-                    )
-            elif _has_experience_card_inputs(case):
+            if CaseProfileService.experience_needs_review(experience):
                 add_item(
                     item_id=f"case-experience-{case.id}",
                     item_type="experience",
                     priority="medium",
-                    title=f"生成经验卡：{case.case_number}",
-                    description="该案件可沉淀作案条件、发现方式、防护短板、证据缺口和可复用建议，建议进入批处理或案件研判页生成。",
+                    title=f"复核已有经验卡：{case.case_number}",
+                    description="已有经验卡草稿可按需确认或归档；未经确认不能作为已核验经验复用。",
                     target_type="case",
                     target_id=case.id,
-                    action="generate_experience_card",
+                    action="review_experience_card",
                     created_at=case.updated_at or case.created_at,
-                    meta={"manual_review_status": "not_generated"},
+                    meta={"manual_review_status": experience.get("manual_review_status")},
                 )
         except Exception:
             db.rollback()
@@ -267,21 +263,24 @@ def get_suggestions(
                 item_id=f"case-experience-error-{case.id}",
                 item_type="experience",
                 priority="low",
-                title=f"生成经验卡失败：{case.case_number}",
-                description="经验卡待人工复核，请进入案件研判页重新生成或确认。",
+                title=f"经验卡状态暂不可用：{case.case_number}",
+                description="现有经验卡状态暂时无法读取，请稍后重试；无需重新生成。",
                 target_type="case",
                 target_id=case.id,
-                action="generate_experience_card",
+                action="review_experience_card",
                 created_at=case.updated_at or case.created_at,
             )
 
     for conclusion in (
         db.query(Conclusion)
-        .filter(Conclusion.status == "needs_review")
-        .order_by(Conclusion.created_at.desc())
-        .limit(20)
-        .all()
+        .filter(Conclusion.status.in_(["draft", "needs_review", "flagged"]))
+        .order_by(Conclusion.created_at.desc(), Conclusion.id.desc())
+        .yield_per(100)
     ):
+        try:
+            ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
+        except CaseResultAccessError:
+            continue
         high_risk = conclusion.risk_level == "high"
         add_item(
             item_id=f"conclusion-review-{conclusion.id}",
@@ -298,9 +297,8 @@ def get_suggestions(
     for event in (
         db.query(Event)
         .filter(Event.related_case_id.is_(None))
-        .order_by(Event.occurred_time.desc())
-        .limit(20)
-        .all()
+        .order_by(Event.occurred_time.desc(), Event.id.desc())
+        .yield_per(100)
     ):
         priority = "high" if event.risk_level in {"high", "critical"} else "medium"
         add_item(
@@ -318,9 +316,8 @@ def get_suggestions(
     for alert in (
         db.query(AutomationAlert)
         .filter(AutomationAlert.status.in_(["pending_review", "new", "open"]))
-        .order_by(AutomationAlert.occurred_time.desc())
-        .limit(20)
-        .all()
+        .order_by(AutomationAlert.occurred_time.desc(), AutomationAlert.id.desc())
+        .yield_per(100)
     ):
         priority = "high" if alert.risk_level in {"high", "critical"} or alert.level == "high" else "medium"
         add_item(
@@ -344,36 +341,38 @@ def get_suggestions(
     for meeting in (
         db.query(Meeting)
         .filter(Meeting.status == "completed", Meeting.completed_at >= recent_cutoff)
-        .order_by(Meeting.completed_at.desc())
-        .limit(10)
-        .all()
+        .filter(db.query(Report.id).filter(Report.meeting_id == Meeting.meeting_id).exists())
+        .order_by(Meeting.completed_at.desc(), Meeting.meeting_id.desc())
+        .yield_per(100)
     ):
-        has_conclusion = (
-            db.query(Conclusion)
-            .filter(Conclusion.meeting_id == meeting.meeting_id)
-            .first()
-            is not None
-        )
+        has_conclusion = False
+        for item in db.query(Conclusion).filter(Conclusion.meeting_id == meeting.meeting_id):
+            try:
+                ConclusionFactoryService.require_conclusion_result_access(db, item)
+            except CaseResultAccessError:
+                continue
+            has_conclusion = True
+            break
         if not has_conclusion:
             add_item(
                 item_id=f"meeting-conclusion-{meeting.meeting_id}",
                 item_type="report_quality",
                 priority="medium",
-                title=f"沉淀会议报告结论：{meeting.meeting_id}",
-                description="该会议已完成但尚未形成可引用结论，建议补充事实引用、分歧点和建议边界。",
+                title=f"查看已有会议报告：{meeting.meeting_id}",
+                description="会议报告已经形成，可核对事实引用、分歧点和建议边界；不要求再生成单独结论。",
                 target_type="meeting",
                 target_id=meeting.meeting_id,
                 action="open_analysis_package",
                 created_at=meeting.completed_at or meeting.created_at,
             )
 
-    for risk in (
+    # 旧区域评分没有授权辖区字段，不能把全域记录交给仅有部分辖区权限的用户。
+    risk_query = (
         db.query(AreaRiskAssessment)
         .filter(AreaRiskAssessment.risk_score >= 60)
-        .order_by(AreaRiskAssessment.risk_score.desc())
-        .limit(10)
-        .all()
-    ):
+        .order_by(AreaRiskAssessment.risk_score.desc(), AreaRiskAssessment.id.desc())
+    )
+    for risk in risk_query.yield_per(100) if db.info.get("authorized_area_ids") is None else []:
         add_item(
             item_id=f"area-reference-{risk.id}",
             item_type="workflow",
@@ -392,11 +391,24 @@ def get_suggestions(
         )
 
     priority_rank = {"high": 0, "medium": 1, "low": 2}
-    suggestions.sort(key=lambda item: (priority_rank.get(item["priority"], 9), item["created_at"]), reverse=False)
+    suggestions.sort(key=lambda item: (priority_rank.get(item["priority"], 9), item["created_at"], item["id"]))
 
     filtered = [item for item in suggestions if item["status"] == status] if status else suggestions
-    return {
-        "suggestions": filtered[:limit],
+    priorities = Counter(item["priority"] for item in filtered)
+    summary = {
         "total": len(filtered),
+        "priority": {name: priorities[name] for name in ("high", "medium", "low")},
+        "type": dict(Counter(item["type"] for item in filtered)),
+        "workflow": dict(Counter(item["workflow"] for item in filtered)),
+    }
+    if workflow != "all":
+        filtered = [item for item in filtered if item["workflow"] == workflow]
+    return {
+        "suggestions": filtered[offset:offset + limit],
+        "total": len(filtered),
+        "summary": summary,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < len(filtered),
         "generated_at": now.isoformat(),
     }

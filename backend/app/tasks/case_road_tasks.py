@@ -12,6 +12,7 @@ from app.services.case_road_triggers import REQUEST_TYPE, process_request
 from app.services.coverage_road_jobs import EVENT_TYPE as COVERAGE_EVENT_TYPE, process as process_coverage
 from app.services.road_evaluation_jobs import EVENT_TYPE as EVALUATION_EVENT_TYPE, process as process_evaluation
 from app.services.road_refresh_jobs import EVENT_TYPE as REFRESH_EVENT_TYPE, process as process_refresh
+from app.services.road_refresh_jobs import UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE, enqueue_algorithm_upgrade
 from app.tasks.celery_app import celery_app
 
 
@@ -22,7 +23,7 @@ def process_next_comparison():
     with SessionLocal() as db:
         now = datetime.now(timezone.utc)
         selected = db.execute(select(OutboxEvent.id, OutboxEvent.event_type).where(
-            OutboxEvent.event_type.in_((EVENT_TYPE, REQUEST_TYPE, COVERAGE_EVENT_TYPE, EVALUATION_EVENT_TYPE, REFRESH_EVENT_TYPE)),
+            OutboxEvent.event_type.in_((EVENT_TYPE, REQUEST_TYPE, COVERAGE_EVENT_TYPE, EVALUATION_EVENT_TYPE, REFRESH_EVENT_TYPE, UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE)),
             or_(and_(OutboxEvent.status.in_(('pending', 'retry')), OutboxEvent.available_at <= now),
                 and_(OutboxEvent.event_type == REQUEST_TYPE, OutboxEvent.status == 'waiting_dependency',
                      OutboxEvent.available_at <= now),
@@ -32,7 +33,7 @@ def process_next_comparison():
         if selected is None:
             return {'selected': 0}
         identifier, kind = selected
-        if kind == REFRESH_EVENT_TYPE:
+        if kind in (REFRESH_EVENT_TYPE, UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE):
             return {'selected': 1, **process_refresh(db, identifier)}
         if kind == REQUEST_TYPE:
             return {'selected': 1, **process_request(db, identifier)}
@@ -44,3 +45,11 @@ def process_next_comparison():
                 artifact_root=Path(settings.MAP_PACKAGE_ROOT) / 'road-graphs')}
         return {'selected': 1, **process_comparison(db, identifier,
             artifact_root=Path(settings.MAP_PACKAGE_ROOT) / 'road-graphs')}
+
+
+@celery_app.task(name='aicommander.case_roads.reconcile_algorithm', queue='road_analysis')
+def reconcile_algorithm():
+    with SessionLocal() as db:
+        identifier = enqueue_algorithm_upgrade(db)
+        db.commit()
+        return {'created': identifier is not None, 'event_id': identifier}

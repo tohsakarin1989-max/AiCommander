@@ -40,7 +40,7 @@ def automatic_comparison_status(db, result_id):
         if job.status != 'completed':
             return {**base, 'status': 'unavailable'}
     identifier = db.scalar(select(CaseRoadArtifact.id).where(
-        CaseRoadArtifact.case_result_id == result_id, CaseRoadArtifact.operation == 'comparison')
+        CaseRoadArtifact.case_result_id == result_id, CaseRoadArtifact.operation.in_(('comparison', 'facility')))
         .order_by(CaseRoadArtifact.created_at.desc(), CaseRoadArtifact.id.desc()).limit(1))
     if identifier is None:
         return {**base, 'status': 'not_available'}

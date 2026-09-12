@@ -1,5 +1,12 @@
 import api from './api'
 
+export interface RuntimeFeatures {
+  legacy_operations: boolean
+  bonus_accounting: boolean
+  agent_lab: boolean
+  showcase: boolean
+}
+
 export interface RuntimeStatus {
   status: 'ready' | 'degraded'
   database: 'sqlite' | 'postgresql' | string
@@ -8,6 +15,7 @@ export interface RuntimeStatus {
   map_provider: string
   map_configured: boolean
   version: string
+  features: RuntimeFeatures
 }
 
 export const runtimeApi = {

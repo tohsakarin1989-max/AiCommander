@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Iterable, Optional
 
 from fastapi import Request, WebSocket
@@ -40,6 +41,7 @@ ADMIN_PATH_PREFIXES = (
     "/api/agent-case-steward",
     "/api/agent-dual-domain",
     "/api/agents",
+    "/api/conclusions/draft",  # 历史重新分析预览；日常预览读取冻结 workspace。
     "/api/jurisdiction/assets/import",
     "/api/jurisdiction/assets/sync-public-map",
     # 旧巡逻、人员和重点部位表不属于 v3.x 生产树干；生产环境不挂载，
@@ -53,6 +55,9 @@ ADMIN_MUTATION_PATH_PREFIXES = (
     "/api/jurisdiction/assets",
     "/api/ws/broadcast",
     "/api/ws/meeting",
+)
+MANUAL_CASE_MAINTENANCE = re.compile(
+    r"^/api/cases/(?:[0-9]+/preprocess|preprocess/batch|batch-review)$"
 )
 
 
@@ -115,13 +120,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if path.startswith(ADMIN_PATH_PREFIXES) and principal.role != "admin":
             return JSONResponse(status_code=403, content={"detail": "当前账号无权访问该功能"})
+        if (request.method not in SAFE_METHODS
+                and MANUAL_CASE_MAINTENANCE.fullmatch(path)
+                and principal.role != "admin"):
+            return JSONResponse(status_code=403, content={"detail": "手动重建和批量预处理仅供管理员维护，正常录入后系统自动处理"})
         if (
             request.method not in SAFE_METHODS
             and path.startswith(ADMIN_MUTATION_PATH_PREFIXES)
             and principal.role != "admin"
         ):
             return JSONResponse(status_code=403, content={"detail": "当前账号无权修改地图或广播数据"})
-        if principal.role == "viewer" and request.method not in SAFE_METHODS:
+        is_logout = request.method == "POST" and path == "/api/auth/logout"
+        if principal.role == "viewer" and request.method not in SAFE_METHODS and not is_logout:
             return JSONResponse(status_code=403, content={"detail": "只读账号不能执行写操作"})
 
         if cookie_token and request.method not in SAFE_METHODS:

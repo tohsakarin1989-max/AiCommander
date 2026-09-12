@@ -14,7 +14,7 @@ from app.services.case_result_map import frozen_result_map_input
 from app.services.case_result_snapshot import RESULT_SCHEMA_VERSION, verify_snapshot
 
 
-DOCUMENT_SCHEMA = "case-result-document-4.1.0-1"
+DOCUMENT_SCHEMA = "case-result-document-5.1.0-1"
 FIELD_LABELS = {
     "occurred_time": "案发时间（存储值）", "location": "地点", "case_type": "案件类型",
     "oil_type": "油品", "oil_nature": "油品性质", "facility_type": "设施类型",
@@ -83,6 +83,43 @@ def _time_label(value: str, precision: str) -> str:
 
 def _semantic_details(semantics: dict) -> list[DocumentBlock]:
     blocks = []
+    model = semantics.get("model_extraction")
+    if model:
+        state = {"ready": "已返回", "partial": "部分结果", "unavailable": "暂不可用", "not_enabled": "未启用"}.get(model["status"], "状态待核")
+        blocks.append(DocumentBlock("heading", f"内网模型提取参考 · {state}"))
+        blocks.append(DocumentBlock("paragraph", model["boundary"]))
+        blocks.append(DocumentBlock("paragraph", "仅展示选取片段，不代表完整覆盖原文；规则画像继续可用。"))
+        if model["status"] == "partial":
+            blocks.append(DocumentBlock("paragraph", "部分引用不通过校验或达到处理上限，未采用内容保留未知。"))
+        for item in model["items"]:
+            blocks.append(DocumentBlock("paragraph", f'{item["value"]}（{ASSERTION_LABELS.get(item["kind"], "待核表述")}；模型判断待核对）'))
+            blocks.append(_source(item["reference"]))
+        blocks.append(DocumentBlock("paragraph", f'模型提取版本：{model["version"]}'))
+    events = semantics.get("event_fragments")
+    if events is not None:
+        blocks.append(DocumentBlock("heading", f'事件片段 {len(events["items"])} 项'))
+        blocks.append(DocumentBlock("paragraph", events["boundary"]))
+        if not model and events.get("deep_model_status") != "enabled":
+            blocks.append(DocumentBlock("paragraph", "深层模型理解未启用，当前使用本地规则。"))
+        if events["coverage"]["state"] == "partial":
+            blocks.append(DocumentBlock("paragraph", "片段或词项提取不完整，请结合原文查看未覆盖内容。"))
+        dimensions = {"action": "明确动作", "time": "时间条件", "facility": "设施", "oil": "油品",
+                      "place": "地点条件", "upstream": "来源", "downstream": "去向"}
+        assertions = semantics.get("assertions", [])
+        for index, fragment in enumerate(events["items"], 1):
+            actions = "；".join(f'{action["value"]}（{ASSERTION_LABELS.get(action["kind"], "类型待核")}）'
+                               for action in fragment["actions"]) or "动作尚未明确"
+            blocks.append(DocumentBlock("paragraph", f"片段 {index}：{actions}"))
+            conditions = [assertions[item] for item in fragment["assertion_indices"]
+                          if type(item) is int and 0 <= item < len(assertions)]
+            if conditions:
+                labels = "、".join(f'{item["value"]}（{ASSERTION_LABELS.get(item["kind"], "类型待核")}）'
+                                  for item in conditions)
+                blocks.append(DocumentBlock("paragraph", f"句内条件：{labels}"))
+            if fragment["missing_dimensions"]:
+                missing = "、".join(dimensions.get(item, "待核条件") for item in fragment["missing_dimensions"])
+                blocks.append(DocumentBlock("paragraph", f"本片段尚未明确：{missing}。不作为新增必填要求。"))
+            blocks.append(_source(fragment["reference"]))
     for index, interval in enumerate(semantics.get("time_intervals", []), 1):
         blocks.append(DocumentBlock("table", f"时间表达 {index}（不是正式案发时间）", (
             ("起始", _time_label(interval["start"], interval["start_precision"])),
@@ -197,5 +234,7 @@ def load_case_result_document(db: Session, result_id: str, road_artifact_id: str
 
         artifact = load_document_road(db, result_id, result['content_sha256'],
                                      result['content']['versions']['map_snapshot_id'], road_artifact_id)
-        document = attach_road_document(document, artifact)
+        from app.services.facility_document_map import resolve_facility_map_input
+        map_spec = resolve_facility_map_input(db, artifact, case_id=result['content']['case_id'])
+        document = attach_road_document(document, artifact, map_spec=map_spec)
     return document

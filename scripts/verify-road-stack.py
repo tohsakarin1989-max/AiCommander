@@ -4,8 +4,10 @@ Synthetic input only. Does not claim map publication or road-report acceptance.
 """
 import json
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import tempfile
@@ -14,6 +16,42 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
+
+
+def isolated_networks(cidr):
+    """Optional explicit private subnets for hosts with exhausted default pools."""
+    if not cidr:
+        return {}
+    network = ipaddress.ip_network(cidr)
+    private_ranges = [ipaddress.ip_network(value) for value in
+                      ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')]
+    if (network.version != 4 or network.prefixlen != 22
+            or not any(network.subnet_of(private) for private in private_ranges)):
+        raise ValueError('isolated_network_requires_private_ipv4_slash22')
+    return {name: {'ipam': {'config': [{'subnet': str(subnet)}]}}
+            for name, subnet in zip(('data', 'app', 'edge'), network.subnets(new_prefix=24))}
+
+
+def remove_owned_stack(project, run):
+    """Remove every profile in this disposable project and verify Docker state."""
+    if not re.fullmatch(r'aic-road-stack-[0-9a-f]{12}', project):
+        raise ValueError('invalid_disposable_stack_project')
+    run('--profile', '*', 'down', '--volumes', '--remove-orphans', timeout=120)
+    remaining = {}
+    for resource, command in (
+        ('containers', ['docker', 'ps', '--all', '--quiet']),
+        ('volumes', ['docker', 'volume', 'ls', '--quiet']),
+        ('networks', ['docker', 'network', 'ls', '--quiet']),
+    ):
+        result = subprocess.run(
+            [*command, '--filter', f'label=com.docker.compose.project={project}'],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        identifiers = result.stdout.split()
+        if identifiers:
+            remaining[resource] = identifiers
+    if remaining:
+        raise RuntimeError('owned_stack_resources_remaining: ' + json.dumps(remaining))
 
 
 def main():
@@ -35,7 +73,9 @@ def main():
         raise ValueError('test_worker_and_redis_outages_separately')
     if extended_showcase and (not with_maps or os.environ.get('AIC_STACK_CASE_JOURNEY') != '1'):
         raise ValueError('extended_showcase_requires_map_case_journey')
-    source_overlay = (coverage or road_evaluation or road_refresh) and os.environ.get('AIC_STACK_SOURCE_OVERLAY') != '0'
+    source_overlay = (os.environ.get('AIC_STACK_SOURCE_OVERLAY') == '1'
+                      or ((coverage or road_evaluation or road_refresh)
+                          and os.environ.get('AIC_STACK_SOURCE_OVERLAY') != '0'))
     if (road_evaluation or road_refresh) and not with_maps:
         raise ValueError('road_evaluation_requires_map_fixture')
     if with_maps and coverage:
@@ -96,13 +136,20 @@ def main():
         services['frontend'] = {'image': runtime, 'volumes': [
             f'{root / "frontend/dist"}:/usr/share/nginx/html:ro',
             f'{root / "frontend/nginx.conf"}:/etc/nginx/conf.d/default.conf:ro']}
-    override.write_text(json.dumps({'services': services}))
+    override_config = {'services': services}
+    network_cidr = os.environ.get('AIC_STACK_NETWORK_CIDR')
+    networks = isolated_networks(network_cidr)
+    if networks:
+        override_config['networks'] = networks
+    override.write_text(json.dumps(override_config))
     base = ['docker', 'compose', '-p', project, '--env-file', str(env_file),
             '-f', str(root / 'docker-compose.production.yml'), '-f', str(root / 'docker-compose.road-runtime.yml'),
             '-f', str(override), '--profile', 'road-analysis']
     report = {'passed': False, 'project': project, 'synthetic_only': True, 'source_overlay': source_overlay,
               'image': image, 'image_id': image_id, 'frontend_dist_mounted': not bool(frontend_image),
               'frontend_image_id': frontend_image_id, 'map_road_report_tested': False}
+    if network_cidr:
+        report['isolated_network_cidr'] = network_cidr
     if source_overlay:
         source_hash = hashlib.sha256()
         for folder in ('app', 'alembic'):
@@ -145,13 +192,13 @@ def main():
                 'networks': ['app', 'edge'], 'security_opt': ['no-new-privileges:true'],
                 'volumes': [f'{tls_dir}:/fixtures/tls:ro',
                     f'{root / "scripts/fixtures/loopback-tls.conf"}:/etc/nginx/conf.d/default.conf:ro']}
-            override.write_text(json.dumps({'services': services}))
+            override.write_text(json.dumps(override_config))
             run('up', '-d', '--no-deps', '--no-build', '--pull', 'never', 'browser-tls')
             tls_endpoint = run('port', 'browser-tls', '443').strip()
             assert tls_endpoint.startswith('127.0.0.1:')
             browser_base = 'https://' + tls_endpoint
             services['backend'].setdefault('environment', {})['CORS_ORIGINS'] = 'https://localhost,' + browser_base
-            override.write_text(json.dumps({'services': services}))
+            override.write_text(json.dumps(override_config))
             run('up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', 'backend')
             report['loopback_https_fixture'] = True
         report['stage'] = 'authenticated_case_pipeline'
@@ -403,9 +450,14 @@ def main():
         report['error'] = str(error)
         raise
     finally:
+        report['owned_stack_removed'] = False
         try:
-            run('down', '--volumes', '--remove-orphans', timeout=120)
+            remove_owned_stack(project, run)
             report['owned_stack_removed'] = True
+        except Exception as error:
+            report['passed'] = False
+            report['cleanup_error'] = str(error)
+            raise
         finally:
             (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
             print(json.dumps(report, ensure_ascii=False), flush=True)

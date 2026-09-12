@@ -23,7 +23,8 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { aiApi } from '../../services/ai'
 import { knowledgeApi } from '../../services/knowledge'
 import { reportApi } from '../../services/reports'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
 import dayjs from 'dayjs'
 import {
   buildReportPresentation,
@@ -37,14 +38,25 @@ import CaseResultsBrowser from './CaseResultsBrowser'
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const meetingId = params.get('meetingId') || ''
+  const { user } = useAuth()
+  const canReview = user?.role === 'admin' || user?.role === 'analyst'
   const [reviewResult, setReviewResult] = useState<ReportReviewResult | null>(null)
 
-  const { data: meetings, isLoading } = useQuery({
+  const { data: meetings, isLoading, isError: meetingsError, refetch: reloadMeetings } = useQuery({
     queryKey: ['meetings'],
     queryFn: () => aiApi.meeting.list(),
   })
 
-  const { data: storedReports, isLoading: storedReportsLoading } = useQuery({
+  const selectedMeeting = useQuery({
+    queryKey: ['report-meeting', meetingId],
+    queryFn: () => aiApi.meeting.get(meetingId),
+    enabled: !!meetingId,
+    retry: false,
+  })
+
+  const { data: storedReports, isLoading: storedReportsLoading, isError: storedReportsError } = useQuery({
     queryKey: ['stored-reports-for-review'],
     queryFn: () => reportApi.list({ limit: 20 }),
   })
@@ -55,9 +67,13 @@ const Reports: React.FC = () => {
       setReviewResult(result)
       message.success('报告审稿已完成，结果需人工复核')
     },
+    onError: () => message.error('报告审稿未完成，请稍后重试'),
   })
 
-  const completedMeetings = meetings?.filter((m) => m.status === 'completed') || []
+  const completedMeetings = meetingsError ? [] : meetings?.filter((m) => m.status === 'completed') || []
+  const displayedMeetings = meetingId
+    ? selectedMeeting.isError ? [] : selectedMeeting.data ? [selectedMeeting.data] : []
+    : completedMeetings
   const reviewPresentation = reviewResult ? buildReportReviewPresentation(reviewResult) : null
 
   const handleExportReport = (meetingId: string, report: any) => {
@@ -111,25 +127,22 @@ const Reports: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 过滤标签行 ── */}
-      <div className="rp-filter-row">
-        <span className="rp-filter-chip rp-filter-chip--active">全部</span>
-        <span className="rp-filter-chip">待审核</span>
-        <span className="rp-filter-chip">已完成</span>
-      </div>
-
       <div className="card rp-review-panel">
         <div className="card-head">
           <span className="ico"><FileTextOutlined /></span>
           <span>报告审稿官</span>
           <span className="tag" style={{ marginLeft: 6 }}>人工确认后生效</span>
           <span className="spacer" />
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
             {storedReportsLoading ? '加载中' : `${storedReports?.length || 0} 份可审稿`}
           </span>
         </div>
         <div className="card-body pad">
-          {storedReportsLoading ? (
+          {!canReview ? (
+            <span>只读账号可查看和导出报告，不能发起审稿。</span>
+          ) : storedReportsError ? (
+            <Alert type="error" showIcon message="待审稿报告列表读取失败，请稍后重试。" />
+          ) : storedReportsLoading ? (
             <div className="rp-review-loading"><Spin size="small" /> 正在读取报告底座…</div>
           ) : storedReports?.length ? (
             <div className="rp-review-report-list">
@@ -179,17 +192,27 @@ const Reports: React.FC = () => {
       </div>
 
       {/* ── 主内容 ── */}
-      {isLoading ? (
+      {meetingId && <Alert type="info" showIcon message={`当前会议：${meetingId}`} action={
+        <Button onClick={() => setParams(previous => {
+          const next = new URLSearchParams(previous)
+          next.delete('meetingId')
+          return next
+        })}>查看全部会议报告</Button>
+      } />}
+      {(meetingId ? selectedMeeting.isError : meetingsError) ? (
+        <Alert type="error" showIcon message={meetingId ? '目标会议读取失败，请确认会议存在且仍有访问权限。' : '会议报告列表读取失败，请重试。'}
+          action={<Button onClick={() => void (meetingId ? selectedMeeting.refetch() : reloadMeetings())}>重新读取</Button>} />
+      ) : (meetingId ? selectedMeeting.isPending : isLoading) ? (
         <div className="rp-skeleton-list">
           {[1, 2, 3].map((i) => (
             <div key={i} className="skeleton rp-skeleton-card" />
           ))}
         </div>
-      ) : completedMeetings.length === 0 ? (
+      ) : displayedMeetings.length === 0 ? (
         <div className="empty-state">
           <div className="icon"><FileTextOutlined /></div>
           <div>暂无分析报告</div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', textAlign: 'center', maxWidth: 280 }}>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', textAlign: 'center', maxWidth: 280 }}>
             请先创建并完成圆桌会议，完成后会在此显示研判结果
           </div>
           <button className="btn-primary" onClick={() => navigate('/meetings')}>
@@ -199,11 +222,12 @@ const Reports: React.FC = () => {
         </div>
       ) : (
         <div className="rp-list">
-          {completedMeetings.map((meeting) => (
+          {displayedMeetings.map((meeting) => (
             <ReportCard
               key={meeting.meeting_id}
               meetingId={meeting.meeting_id}
               meeting={meeting}
+              canReview={canReview}
               onExport={handleExportReport}
               onViewDetail={() => navigate(`/meetings?meetingId=${meeting.meeting_id}`)}
             />
@@ -218,14 +242,15 @@ const Reports: React.FC = () => {
 interface ReportCardProps {
   meetingId: string
   meeting?: any
+  canReview: boolean
   onExport: (meetingId: string, report: any) => void
   onViewDetail: () => void
 }
 
-const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, onViewDetail }) => {
+const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, canReview, onExport, onViewDetail }) => {
   const [detailModalVisible, setDetailModalVisible] = useState(false)
 
-  const { data: report, isLoading } = useQuery({
+  const { data: report, isLoading, isError, refetch } = useQuery({
     queryKey: ['report', meetingId],
     queryFn: () => aiApi.meeting.getReport(meetingId),
   })
@@ -248,8 +273,14 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
   const { data: citationAssist } = useQuery({
     queryKey: ['report-citation-assist', meetingId, summaryText],
     queryFn: () => knowledgeApi.citationAssist({ query: summaryText || meetingId }),
-    enabled: detailModalVisible && !!summaryText,
+    enabled: canReview && detailModalVisible && !!summaryText,
   })
+
+  if (isError) {
+    return <Alert type="error" showIcon message={`报告读取失败：${meetingId}`}
+      description="报告可能尚未生成，或当前无法读取；没有显示旧正文。"
+      action={<Button onClick={() => void refetch()}>重新读取报告</Button>} />
+  }
 
   if (isLoading) {
     return (
@@ -276,7 +307,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
       <div className="card rp-card">
         {/* 卡片头 */}
         <div className="card-head">
-          <span className="ico" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+          <span className="ico" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
             {meetingId.slice(0, 14)}…
           </span>
           <span className="tag t-d" style={{ marginLeft: 6 }}>已完成</span>
@@ -284,7 +315,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
           <span className="tag t-p" style={{ marginLeft: 6 }}>{reportMeta.reviewStatus}</span>
           <span className="tag t-o" style={{ marginLeft: 6 }}>{reportMeta.modelStatus}</span>
           <span className="spacer" />
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
             {displayDate}
           </span>
         </div>
@@ -339,7 +370,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               <div style={{ fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--accent)', fontWeight: 500 }}>
                 报告详情
               </div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)', letterSpacing: '0.06em', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.06em', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {meetingId}
               </div>
             </div>
@@ -383,7 +414,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             <div className="rp-modal-section__title">引用助手</div>
             {citationAssist.citations.slice(0, 4).map((item, index) => (
               <div key={`${item.source_type}-${item.source_id}-${index}`} className="rp-modal-list-item">
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)', flexShrink: 0 }}>
                   Q{index + 1}
                 </span>
                 <span>{item.snippet}</span>
@@ -400,7 +431,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             {
               key: 'consensus',
               label: (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' }}>
                   共识点 ({consensusCount})
                 </span>
               ),
@@ -421,7 +452,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             {
               key: 'disagreement',
               label: (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' }}>
                   分歧点 ({disagreementCount})
                 </span>
               ),
@@ -443,7 +474,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'insights',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--info)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--info)', textTransform: 'uppercase' as const }}>
                       关键洞察 ({presentation.keyInsights.length})
                     </span>
                   ),
@@ -464,7 +495,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'areaRisks',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--warn)', textTransform: 'uppercase' as const }}>
                       风险区域 ({presentation.areaRisks.length})
                     </span>
                   ),
@@ -473,7 +504,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                     <div>
                       {presentation.areaRisks.map((item, idx) => (
                         <div key={idx} className="rp-modal-list-item">
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--warn)', flexShrink: 0 }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--warn)', flexShrink: 0 }}>
                             R{idx + 1}
                           </span>
                           <span>{item}</span>
@@ -487,7 +518,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'correlations',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--accent)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--accent)', textTransform: 'uppercase' as const }}>
                       链条关系 ({presentation.chainCorrelations.length})
                     </span>
                   ),
@@ -496,7 +527,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                     <div>
                       {presentation.chainCorrelations.map((item, idx) => (
                         <div key={idx} className="rp-modal-list-item">
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0 }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)', flexShrink: 0 }}>
                             C{idx + 1}
                           </span>
                           <span>{item}</span>
@@ -509,7 +540,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
             {
               key: 'recommendations',
               label: (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                   建议 ({presentation.actionSuggestions.length})
                 </span>
               ),
@@ -518,7 +549,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                 <div>
                   {presentation.actionSuggestions.map((rec, idx) => (
                     <div key={idx} className="rp-modal-list-item">
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', flexShrink: 0 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', flexShrink: 0 }}>
                         {String(idx + 1).padStart(2, '0')}
                       </span>
                       <span>{rec}</span>
@@ -533,7 +564,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'experience',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ok)', textTransform: 'uppercase' as const }}>
                       经验沉淀 ({presentation.experienceCards.length})
                     </span>
                   ),
@@ -542,7 +573,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                     <div>
                       {presentation.experienceCards.map((item, idx) => (
                         <div key={idx} className="rp-modal-list-item">
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ok)', flexShrink: 0 }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ok)', flexShrink: 0 }}>
                             E{idx + 1}
                           </span>
                           <span>{item}</span>
@@ -556,7 +587,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'analyses',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
                       第一阶段分析 ({analyses.length})
                     </span>
                   ),
@@ -568,7 +599,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                       items={analyses.map((analysis: any, index: number) => ({
                         key: index,
                         label: (
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                             分析结果 {String(index + 1).padStart(2, '0')}
                           </span>
                         ),
@@ -589,7 +620,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'rankings',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
                       第二阶段排名 ({rankings.length})
                     </span>
                   ),
@@ -601,7 +632,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                       items={rankings.map((ranking: any, index: number) => ({
                         key: index,
                         label: (
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                             评价者 {String(index + 1).padStart(2, '0')}
                           </span>
                         ),
@@ -618,7 +649,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
               ? [{
                   key: 'contributions',
                   label: (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.18em', color: 'var(--ink-3)', textTransform: 'uppercase' as const }}>
                       各模型贡献 ({presentation.modelContributions.length})
                     </span>
                   ),
@@ -630,7 +661,7 @@ const ReportCard: React.FC<ReportCardProps> = ({ meetingId, meeting, onExport, o
                       renderItem={(item) => (
                         <List.Item style={{ borderColor: 'var(--line-soft)' }}>
                           <Space direction="vertical" style={{ width: '100%' }}>
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--accent)', letterSpacing: '0.06em' }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)', letterSpacing: '0.06em' }}>
                               {item.model}
                             </span>
                             <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{item.contribution}</span>

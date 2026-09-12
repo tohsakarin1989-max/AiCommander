@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { readRoadArtifact, roadArtifactHistory, type RoadArtifact, type RoadArtifactSummary } from '../../services/roadAnalysis'
 import { roadPolyline } from '../Map/roadPolyline'
 import CaseResultDownload from './CaseResultDownload'
+import CaseFacilityComparison from './CaseFacilityComparison'
 
 const Map = lazy(() => import('../Map/LeafletMap'))
 type Available = Extract<RoadArtifactSummary, { availability: 'available' }>
@@ -23,11 +24,13 @@ function SavedResult({ resultId, selected }: { resultId: string; selected: Avail
   if (failed) return <p role="status">历史成果暂不可用，权限或来源版本可能已变化。未重新计算，请刷新历史列表后重试。</p>
   if (!view) return <p role="status">正在读取已保存成果…</p>
   const content = view.artifact.content
-  const calculation = content.schema_version === 'case-road-route-4.2.0-1' ? content.route : content.matrix
+  const calculation = content.schema_version === 'case-road-route-4.2.0-1' ? content.route
+    : content.schema_version === 'case-facility-comparison-5.2-1' ? content.calculation : content.matrix
   return <section aria-label="已保存道路成果">
     <p>历史留存，不重新计算；不代表当前道路仍可通行。</p>
     <p>保存时间：{view.artifact.created_at}</p>
     <CaseResultDownload key={view.artifact.id} resultId={resultId} hash={content.content_sha256} road={view.artifact} />
+    {content.schema_version === 'case-facility-comparison-5.2-1' && <CaseFacilityComparison content={content} />}
     {content.schema_version === 'case-road-route-4.2.0-1' && view.points && <>
       <p>{content.target.name}附近道路参考路径，不是实际行驶轨迹。</p>
       <p>留存道路距离：{(content.route.distance_m / 1000).toFixed(2)} 公里</p>
@@ -79,7 +82,7 @@ function HistoryList({ resultId }: { resultId: string }) {
       <ul>{page.items.map(item => <li key={item.id}>{item.availability === 'unavailable'
         ? '此条历史成果当前不可访问或来源版本已变化。'
         : <button type="button" aria-pressed={selected?.id === item.id} onClick={() => setSelected(item)}>
-          {item.created_at} · {item.operation === 'route' ? '查看留存路径' : '查看留存距离比较'}
+          {item.created_at} · {item.operation === 'route' ? '查看留存路径' : item.operation === 'facility' ? '查看设施候选比较' : '查看留存距离比较'}
         </button>}</li>)}</ul>
       {page.next_before_id && <button type="button" onClick={() => { setPage(null); setSelected(null); setCursor(page.next_before_id!) }}>更早记录</button>}
       {selected && <SavedResult key={selected.id} resultId={resultId} selected={selected} />}

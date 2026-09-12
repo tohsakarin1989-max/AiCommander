@@ -13,6 +13,7 @@ import {
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
 import { caseApi } from '../../services/cases'
@@ -178,6 +179,7 @@ function ApprovalCard({
 const AgentCenter: React.FC = () => {
   const queryClient = useQueryClient()
   const { user } = useAuth()
+  const [searchParams] = useSearchParams()
   const [messageApi, messageContextHolder] = message.useMessage()
   const [modalApi, modalContextHolder] = Modal.useModal()
   const [taskType, setTaskType] = useState<AgentRunTaskType>('map_data_quality')
@@ -190,7 +192,12 @@ const AgentCenter: React.FC = () => {
   const [caseControlReason, setCaseControlReason] = useState('启动案件数据管家只读试用')
   const [dualPilotUserIds, setDualPilotUserIds] = useState<number[]>([])
   const [dualControlReason, setDualControlReason] = useState('启动双域融合只读试用')
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(() => searchParams.get('runId'))
+
+  useEffect(() => {
+    const runId = searchParams.get('runId')
+    if (runId) setSelectedRunId(runId)
+  }, [searchParams])
 
   const runsQuery = useQuery({
     queryKey: ['agent-runs'],

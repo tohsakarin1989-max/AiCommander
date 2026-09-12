@@ -184,7 +184,7 @@ def get_prevention_suggestions(
 def get_experience_card(case_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """获取案件复盘经验卡。"""
     try:
-        return CaseIntelligenceService.build_experience_card(db, case_id=case_id)
+        return CaseIntelligenceService.build_experience_card(db, case_id=case_id, persist=False)
     except ValueError as exc:
         _handle_service_error(exc)
 

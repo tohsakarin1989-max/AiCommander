@@ -6,6 +6,18 @@ vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 beforeEach(() => vi.resetAllMocks())
 
 describe('内部道路接口契约', () => {
+  it('设施归属必须显式确认，不随道路连接默认批准', async () => {
+    vi.mocked(api.post).mockResolvedValue({ data: {} })
+    const record = { id: 3, input_sha256: 'a'.repeat(64), entrance_checks: [{ entrance_id: 'entry',
+      road_import_id: 2, road_source_sha256: 'b'.repeat(64) }] } as RoadImport
+    const feature = { id: 'entry', properties: { kind: 'entrance', facility_asset_id: 13 } } as RoadFeature
+    await internalRoadsApi.review(1, record, feature, 'verified', '核验', '依据', 'connected')
+    expect(vi.mocked(api.post).mock.calls[0][1]).not.toHaveProperty('connection_evidence.facility_asset_id')
+    await internalRoadsApi.review(1, record, feature, 'verified', '核验', '依据', 'connected', undefined, true)
+    expect(vi.mocked(api.post).mock.calls[1][1]).toHaveProperty('connection_evidence.facility_asset_id', 13)
+    await expect(internalRoadsApi.review(1, record, feature, 'verified', '核验', '依据', 'unknown', undefined, true)).rejects.toThrow()
+    expect(api.post).toHaveBeenCalledTimes(2)
+  })
   it('新增道路连接只随已核验道路提交，保留固定批次与前次决定', async () => {
     vi.mocked(api.post).mockResolvedValue({ data: {} })
     const record = { id: 3, input_sha256: 'a'.repeat(64), feature_reviews: { r: { id: 2 } } } as unknown as RoadImport

@@ -103,6 +103,7 @@ class MeetingManager:
             for analyst in self.analysts
         ]
         results = await asyncio.gather(*tasks)
+        self._require_successful_results(results, "独立分析")
 
         # 通知阶段完成
         await self._notify_progress(
@@ -164,6 +165,7 @@ class MeetingManager:
             for i, analyst in enumerate(self.analysts)
         ]
         all_rankings = await asyncio.gather(*ranking_tasks)
+        self._require_successful_results(all_rankings, "匿名互评")
 
         # 通知阶段完成
         await self._notify_progress(
@@ -206,19 +208,22 @@ class MeetingManager:
             rankings,
             aggregated_rankings
         )
+        self._require_successful_results([report], "综合报告")
+        if not isinstance(report.get("summary"), str) or not report["summary"].strip():
+            raise RuntimeError("综合报告失败：缺少有效报告摘要")
 
-        # 通知阶段完成
-        await self._notify_progress(
-            stage=3,
-            stage_name="综合报告",
-            status="completed",
-            progress=100,
-            details={"report_generated": True}
-        )
-
-        logger.info(f"会议 {self.meeting_id} 第三阶段完成")
+        logger.info(f"会议 {self.meeting_id} 综合报告已生成，等待持久化")
         return report
     
+    @staticmethod
+    def _require_successful_results(results: List[Dict], stage: str) -> None:
+        if not results or any(
+            not isinstance(result, dict) or not result
+            or result.get("error") or result.get("parse_error")
+            for result in results
+        ):
+            raise RuntimeError(f"{stage}失败：模型未返回有效结果")
+
     def _aggregate_rankings(
         self,
         rankings: List[Dict],
@@ -283,4 +288,3 @@ class MeetingManager:
             "rankings": dict(sorted_aggregated),
             "summary": f"共 {len(rankings)} 个LLM参与排名，{len(aggregated)} 个分析结果被评价"
         }
-

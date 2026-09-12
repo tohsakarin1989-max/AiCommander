@@ -33,6 +33,23 @@ def test_job_enqueue_is_transactional_and_idempotent(artifact_input):
     assert db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_type == jobs.EVENT_TYPE)) is None
 
 
+def test_facility_rule_versions_change_job_identity_and_supersede_old_pending_job(artifact_input, monkeypatch, tmp_path):
+    db, content = artifact_input
+    kwargs = dict(result_id=content['result_id'], analysis_at=AT,
+        vehicle=VehicleAssumption(kind='auto', source='explicit_reference_assumption'),
+        engine_version='valhalla-test', include_facility_pool=True)
+    old = jobs.enqueue_comparison(db, **kwargs)
+    db.commit()
+    assert not jobs.enqueue_comparison(db, **kwargs)['created']
+    changed = {**jobs.current_versions(), 'production': 'fixture-new-production'}
+    monkeypatch.setattr(jobs, 'current_versions', lambda: changed)
+    new = jobs.enqueue_comparison(db, **kwargs)
+    db.commit()
+    assert new['created'] and old['event_id'] != new['event_id']
+    assert jobs.process_comparison(db, old['event_id'], artifact_root=tmp_path)['status'] == 'superseded'
+    assert db.query(CaseRoadArtifact).count() == 0
+
+
 @pytest.mark.parametrize('outcome', ['success', 'gap', 'failure', 'cancel', 'revoke', 'lease_lost'])
 def test_worker_atomic_outcomes_and_live_authority(artifact_input, monkeypatch, tmp_path, outcome):
     db, content = artifact_input

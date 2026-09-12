@@ -4,7 +4,7 @@
 .statistic-card {
   position: relative;
   padding: 20px;
-  border-radius: 12px;
+  border-radius: 4px;
   overflow: hidden;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
@@ -15,8 +15,8 @@
 
 /* 主题样式 */
 .statistic-card--light {
-  background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
 }
 
 .statistic-card--light:hover {
@@ -67,6 +67,7 @@
 
 /* 背景光效 */
 .statistic-card__glow {
+  display: none;
   position: absolute;
   top: -50%;
   right: -30%;
@@ -116,7 +117,7 @@
 
 .statistic-card__value {
   font-weight: 700;
-  font-family: 'DIN', 'Roboto Mono', monospace;
+  font-family: var(--sans);
   line-height: 1.2;
   letter-spacing: -0.5px;
 }
@@ -177,6 +178,7 @@
 
 /* 边框 */
 .statistic-card__border {
+  display: none;
   position: absolute;
   inset: 0;
   border-radius: 12px;
@@ -186,7 +188,7 @@
 
 /* 动画效果 */
 .statistic-card--animated .statistic-card__value {
-  animation: valueGlow 2s ease-in-out infinite alternate;
+  animation: none;
 }
 
 @keyframes valueGlow {

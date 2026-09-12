@@ -1,4 +1,4 @@
-import type { WorkSuggestion } from '../../services/suggestions'
+import type { SuggestionWorkflow, WorkSuggestion } from '../../services/suggestions'
 
 export const PRIORITY_META: Record<string, { label: string; cls: string }> = {
   high: { label: '高优先级', cls: 'high' },
@@ -8,7 +8,7 @@ export const PRIORITY_META: Record<string, { label: string; cls: string }> = {
 
 export const ACTION_LABELS: Record<string, string> = {
   open_case: '查看案件',
-  preprocess_case: '执行预处理',
+  preprocess_case: '查看后台分析状态',
   review_conclusion: '进入结论复核',
   convert_event_to_case: '转为案件',
   generate_conclusion_from_meeting: '打开研判包',
@@ -52,16 +52,19 @@ export type SuggestionTypeFilter = (typeof SUGGESTION_FILTERS)[number]['value']
 export const WORKFLOW_FILTERS = [
   { value: 'all', label: '全部待办' },
   { value: 'coordinate_gap', label: '坐标缺口' },
-  { value: 'preprocessing_gap', label: '预处理缺口' },
+  { value: 'data_quality', label: '资料与分析状态' },
+  { value: 'processing_card', label: '案件处理卡' },
   { value: 'bonus_metric_gap', label: '奖金核算指标缺口' },
   { value: 'bonus_material_gap', label: '佐证材料缺口' },
   { value: 'alert', label: '数智告警' },
   { value: 'conclusion_review', label: '结论复核' },
-  { value: 'report_followup', label: '报告沉淀' },
-  { value: 'experience', label: '经验卡生成' },
+  { value: 'report_followup', label: '已有报告事项' },
+  { value: 'experience', label: '经验卡确认' },
+  { value: 'event_review', label: '独立事件' },
+  { value: 'area_reference', label: '区域参考' },
 ] as const
 
-export type SuggestionWorkflowFilter = (typeof WORKFLOW_FILTERS)[number]['value']
+export type SuggestionWorkflowFilter = SuggestionWorkflow
 
 export interface SuggestionDetailPanel {
   targetLabel: string
@@ -105,16 +108,20 @@ function includesAny(text: string, words: string[]) {
 }
 
 export function getSuggestionWorkflowBucket(suggestion: WorkSuggestion): Exclude<SuggestionWorkflowFilter, 'all'> {
+  if (suggestion.workflow && WORKFLOW_FILTERS.some(item => item.value === suggestion.workflow)) return suggestion.workflow
+  if (suggestion.type === 'processing_card') return 'processing_card'
+  if (suggestion.target_type === 'event') return 'event_review'
+  if (suggestion.target_type === 'area') return 'area_reference'
   const text = `${suggestion.title} ${suggestion.description} ${suggestion.action} ${suggestion.type}`
   if (includesAny(text, ['坐标', '经纬度', '点位'])) return 'coordinate_gap'
-  if (suggestion.action === 'preprocess_case' || includesAny(text, ['预处理', '结构化', '清洗'])) return 'preprocessing_gap'
+  if (suggestion.action === 'preprocess_case' || includesAny(text, ['预处理', '结构化', '清洗'])) return 'data_quality'
   if (suggestion.type === 'bonus' && (suggestion.action === 'review_bonus_data' || includesAny(text, ['指标', '车辆考核', '人员处理', '核算字段']))) return 'bonus_metric_gap'
   if (suggestion.type === 'bonus' && (suggestion.action === 'review_bonus_materials' || includesAny(text, ['材料', '单据', '佐证', '凭证']))) return 'bonus_material_gap'
   if (suggestion.type === 'alert' || suggestion.action === 'open_alert_triage_pack') return 'alert'
   if (suggestion.action === 'review_conclusion' || suggestion.type === 'review') return 'conclusion_review'
   if (suggestion.type === 'report_quality' || includesAny(text, ['报告', '沉淀', '会议'])) return 'report_followup'
   if (suggestion.type === 'experience' || includesAny(text, ['经验卡'])) return 'experience'
-  return 'preprocessing_gap'
+  return 'data_quality'
 }
 
 export function filterSuggestionsByWorkflow(suggestions: WorkSuggestion[], filter: SuggestionWorkflowFilter) {
@@ -148,14 +155,14 @@ export function buildSuggestionDetail(suggestion: WorkSuggestion | null | undefi
       suggestion.description,
     ].filter(Boolean),
     inferences: [
-      `${priorityLabel}，说明该事项会影响研判闭环或后续复核效率。`,
+      `${priorityLabel}是待判断事项的排序提示，不代表案件严重程度或办结状态。`,
       suggestion.type === 'bonus'
         ? '奖金核算相关缺口只作为案件内业核算门禁，不进入指挥大屏明细展示。'
-        : '该待办需要人工确认后才能进入下一步沉淀或复核。',
+        : '这里只判断已有资料或成果；不要求每起案件都形成经验卡或报告。',
     ],
     suggestions: [
       `下一步安全动作：${actionLabel}`,
-      '补齐事实依据后再生成结论、报告或经验卡。',
+      '可先正常使用案件；仅在需要时补充资料、判断已有成果或导出报告。',
     ],
     boundary: '仅供人工复核，不自动认定，不自动派发执行任务。',
   }
@@ -165,6 +172,7 @@ export function getSuggestionRoute(suggestion: WorkSuggestion): string | null {
   const targetId = numericTargetId(suggestion)
   switch (suggestion.action) {
     case 'open_case':
+    case 'preprocess_case':
     case 'review_processing_card':
       return targetId ? `/cases?caseId=${targetId}` : '/cases'
     case 'review_bonus_data':
@@ -180,6 +188,7 @@ export function getSuggestionRoute(suggestion: WorkSuggestion): string | null {
     case 'open_alert_triage_pack':
       return targetId ? `/intelli-inspect?alertId=${targetId}` : '/intelli-inspect'
     case 'review_experience_card':
+      return targetId ? `/case-intelligence?caseId=${targetId}&tool=experience` : '/case-intelligence'
     case 'generate_experience_card':
       return targetId ? `/case-intelligence?caseId=${targetId}` : '/case-intelligence'
     case 'review_prevention_reference':

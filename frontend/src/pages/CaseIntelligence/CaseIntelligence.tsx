@@ -39,6 +39,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
 import { knowledgeApi } from '../../services/knowledge'
+import { useAuth } from '../../auth/AuthContext'
 import LatestCaseResult from '../../components/CaseResult/LatestCaseResult'
 import {
   AreaProfile,
@@ -273,7 +274,7 @@ const KnowledgeResultCard = ({
           <FileTextOutlined />
           <Text strong>{item.title}</Text>
           <Tag color="blue">{getKnowledgeSourceLabel(item.source_type)}</Tag>
-          <Tag>{Math.round(item.score)}</Tag>
+          <Tag>检索参考 · 非概率</Tag>
         </Space>
         <Button size="small" disabled={!route} onClick={() => route && onOpen(route)}>
           查看来源
@@ -426,44 +427,71 @@ const LlmContextPanel = ({
   )
 }
 
+export function intelligenceCaseId(params: URLSearchParams): number | undefined {
+  const value = params.get('caseId')
+  return value && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : undefined
+}
+
+const intelligenceError = (error: unknown) => {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  message.error(typeof detail === 'string' ? detail : '操作未完成，请刷新后重试。原始案件记录未因此改变。')
+}
+
 const CaseIntelligence: React.FC = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [searchParams] = useSearchParams()
-  const [selectedCaseId, setSelectedCaseId] = useState<number | undefined>()
-  const [globalMode, setGlobalMode] = useState(false)
+  const { user, sessionEpoch } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedCaseId = intelligenceCaseId(searchParams)
+  const globalMode = searchParams.get('scope') === 'global' && !selectedCaseId
+  const selectCase = (value?: number) => {
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous)
+      next.delete('tool')
+      if (value) { next.set('caseId', String(value)); next.delete('scope') }
+      else { next.delete('caseId'); next.set('scope', 'global') }
+      return next
+    }, { replace: true })
+  }
   const [days, setDays] = useState(365)
   const [limit, setLimit] = useState(8)
   const [knowledgeQuery, setKnowledgeQuery] = useState('')
   const [tagCurationResult, setTagCurationResult] = useState<TagCurationResult | null>(null)
   const [selectedExperienceAssetIds, setSelectedExperienceAssetIds] = useState<number[]>([])
-  const [legacyAnalysis, setLegacyAnalysis] = useState(false)
+  const [legacyAnalysis, setLegacyAnalysis] = useState(searchParams.get('tool') === 'experience')
 
   const casesQuery = useQuery({
-    queryKey: ['cases-for-intelligence'],
+    queryKey: ['cases-for-intelligence', user?.id, sessionEpoch],
     queryFn: () => caseApi.getCases({ limit: 200 }),
+    enabled: !selectedCaseId || legacyAnalysis,
   })
 
   useEffect(() => {
-    if (globalMode) return
-    const caseIdFromUrl = Number(searchParams.get('caseId'))
-    if (!selectedCaseId && Number.isFinite(caseIdFromUrl) && caseIdFromUrl > 0) {
-      setSelectedCaseId(caseIdFromUrl)
-      return
+    if (!globalMode && !searchParams.has('caseId') && !casesQuery.isError && casesQuery.data?.length) {
+      setSearchParams(previous => {
+        const next = new URLSearchParams(previous)
+        next.set('caseId', String(casesQuery.data![0].id))
+        return next
+      }, { replace: true })
     }
-    if (!selectedCaseId && casesQuery.data?.length) {
-      setSelectedCaseId(casesQuery.data[0].id)
-    }
-  }, [casesQuery.data, searchParams, selectedCaseId, globalMode])
+  }, [casesQuery.data, casesQuery.isError, searchParams, globalMode, setSearchParams])
+
+  const selectedCaseQuery = useQuery({
+    queryKey: ['case-intelligence-selected', selectedCaseId, user?.id, sessionEpoch],
+    queryFn: ({ signal }) => caseApi.getCase(selectedCaseId!, signal),
+    enabled: !!selectedCaseId,
+  })
 
   useEffect(() => {
     setSelectedExperienceAssetIds([])
-    setLegacyAnalysis(false)
+    setLegacyAnalysis(searchParams.get('tool') === 'experience')
     setTagCurationResult(null)
-  }, [selectedCaseId])
+    setKnowledgeQuery('')
+  }, [selectedCaseId, searchParams])
 
   const workbenchQuery = useQuery({
-    queryKey: ['case-intelligence-workbench', selectedCaseId, days, limit],
+    queryKey: ['case-intelligence-workbench', selectedCaseId, days, limit, user?.id, sessionEpoch],
     queryFn: () => caseIntelligenceApi.getWorkbench({
       case_id: selectedCaseId,
       days,
@@ -474,7 +502,7 @@ const CaseIntelligence: React.FC = () => {
   })
 
   const contextPackQuery = useQuery({
-    queryKey: ['case-intelligence-llm-context', selectedCaseId, days, limit],
+    queryKey: ['case-intelligence-llm-context', selectedCaseId, days, limit, user?.id, sessionEpoch],
     queryFn: () => caseIntelligenceApi.getLlmContext({
       case_id: selectedCaseId,
       days,
@@ -485,19 +513,19 @@ const CaseIntelligence: React.FC = () => {
   })
 
   const diagramQuery = useQuery({
-    queryKey: ['case-diagram', selectedCaseId],
+    queryKey: ['case-diagram', selectedCaseId, user?.id, sessionEpoch],
     queryFn: () => caseApi.getCaseDiagram(selectedCaseId as number),
-    enabled: !!selectedCaseId,
+    enabled: !!selectedCaseId && legacyAnalysis,
   })
 
   const knowledgeSearchQuery = useQuery({
-    queryKey: ['case-knowledge-search', knowledgeQuery, selectedCaseId],
+    queryKey: ['case-knowledge-search', knowledgeQuery, selectedCaseId, user?.id, sessionEpoch],
     queryFn: () => knowledgeApi.search({
       q: knowledgeQuery,
       case_id: selectedCaseId,
       limit: 8,
     }),
-    enabled: knowledgeQuery.trim().length > 0,
+    enabled: (globalMode || legacyAnalysis) && knowledgeQuery.trim().length > 0,
   })
 
   const tagCurationMutation = useMutation({
@@ -511,29 +539,32 @@ const CaseIntelligence: React.FC = () => {
       )
       queryClient.invalidateQueries({ queryKey: ['case-intelligence-workbench'] })
     },
+    onError: intelligenceError,
   })
 
-  const workbench = workbenchQuery.data
-  const contextPack = contextPackQuery.data
-  const cases = casesQuery.data || []
-  const selectedCase = cases.find((item: Case) => item.id === selectedCaseId)
+  const workbench = workbenchQuery.isError ? undefined : workbenchQuery.data
+  const contextPack = contextPackQuery.isError ? undefined : contextPackQuery.data
+  const selectedCase = selectedCaseQuery.isError ? undefined : selectedCaseQuery.data
+  const loadedCases = casesQuery.isError ? [] : casesQuery.data || []
+  const cases: Case[] = selectedCase && !loadedCases.some(item => item.id === selectedCase.id)
+    ? [selectedCase, ...loadedCases] : loadedCases
 
   const knowledgeAssetsQuery = useQuery({
-    queryKey: ['knowledge-assets', selectedCaseId],
+    queryKey: ['knowledge-assets', selectedCaseId, user?.id, sessionEpoch],
     queryFn: () => knowledgeApi.listAssets({ case_id: selectedCaseId, limit: 50 }),
-    enabled: !!selectedCaseId,
+    enabled: !!selectedCaseId && legacyAnalysis,
   })
 
   const reuseRecommendationsQuery = useQuery({
-    queryKey: ['experience-reuse-recommendations', selectedCaseId, days],
+    queryKey: ['experience-reuse-recommendations', selectedCaseId, days, user?.id, sessionEpoch],
     queryFn: () => knowledgeApi.getReuseRecommendations(selectedCaseId as number, { days: Math.max(days, 730), limit: 8 }),
-    enabled: !!selectedCaseId,
+    enabled: !!selectedCaseId && legacyAnalysis,
   })
 
   const reuseRecordsQuery = useQuery({
-    queryKey: ['knowledge-reuse-records', selectedCaseId],
+    queryKey: ['knowledge-reuse-records', selectedCaseId, user?.id, sessionEpoch],
     queryFn: () => knowledgeApi.listReuseRecords(selectedCaseId as number, 50),
-    enabled: !!selectedCaseId,
+    enabled: !!selectedCaseId && legacyAnalysis,
   })
 
   const refreshKnowledgeAssets = () => {
@@ -550,6 +581,7 @@ const CaseIntelligence: React.FC = () => {
       refreshKnowledgeAssets()
       queryClient.invalidateQueries({ queryKey: ['case-intelligence-workbench'] })
     },
+    onError: intelligenceError,
   })
 
   const reviewAssetMutation = useMutation({
@@ -563,6 +595,7 @@ const CaseIntelligence: React.FC = () => {
       message.success(asset.status === 'confirmed' ? `v${asset.version} 已确认` : `v${asset.version} 已归档`)
       refreshKnowledgeAssets()
     },
+    onError: intelligenceError,
   })
 
   const reuseDecisionMutation = useMutation({
@@ -587,6 +620,7 @@ const CaseIntelligence: React.FC = () => {
       }
       refreshKnowledgeAssets()
     },
+    onError: intelligenceError,
   })
 
   const reportSnapshotMutation = useMutation({
@@ -600,6 +634,7 @@ const CaseIntelligence: React.FC = () => {
       setSelectedExperienceAssetIds([])
       refreshKnowledgeAssets()
     },
+    onError: intelligenceError,
   })
 
   const tags = workbench?.feature_tags.tags || []
@@ -608,7 +643,7 @@ const CaseIntelligence: React.FC = () => {
   const reportMarkdown = getReportMarkdown(workbench?.report)
   const reportMeta = getReportDraftMeta(workbench?.report)
   const experienceStatus = getExperienceStatusMeta(workbench?.experience_card?.manual_review_status)
-  const knowledgeAssets = knowledgeAssetsQuery.data?.items || []
+  const knowledgeAssets = knowledgeAssetsQuery.isError ? [] : knowledgeAssetsQuery.data?.items || []
   const experienceAssetVersions = knowledgeAssets.filter(item => item.asset_type === 'experience_card')
   const reportSnapshots = knowledgeAssets.filter(item => item.asset_type === 'case_report')
 
@@ -626,6 +661,9 @@ const CaseIntelligence: React.FC = () => {
 
   return (
     <div className="page-scrollable intelligence-page">
+      {searchParams.has('caseId') && !selectedCaseId && <Alert type="error" message="案件编号无效，请从案件列表打开。" />}
+      {selectedCaseQuery.isError && <Alert type="error" message="案件信息暂不可用或当前账号无权访问，不自动切换到其他案件。" />}
+      {casesQuery.isError && !selectedCaseId && <Alert type="error" message="案件列表读取失败，请刷新后重试。" />}
       <section className="intel-hero">
         <div>
           <div className="intel-eyebrow">CASE INTELLIGENCE WORKBENCH</div>
@@ -649,7 +687,7 @@ const CaseIntelligence: React.FC = () => {
               allowClear
               placeholder="选择案件；清空后查看全局规律"
               value={selectedCaseId}
-              onChange={(value?: number) => { setGlobalMode(!value); setSelectedCaseId(value) }}
+              onChange={selectCase}
               optionFilterProp="label"
               style={{ width: '100%' }}
               loading={casesQuery.isLoading}
@@ -684,7 +722,7 @@ const CaseIntelligence: React.FC = () => {
           </Col>
           <Col xs={24} lg={5}>
             <Space wrap>
-              <Button icon={<ApartmentOutlined />} onClick={() => { setGlobalMode(true); setSelectedCaseId(undefined) }}>
+              <Button icon={<ApartmentOutlined />} onClick={() => selectCase(undefined)}>
                 全局研判
               </Button>
               <Button
@@ -698,7 +736,7 @@ const CaseIntelligence: React.FC = () => {
               </Button>
               <Button
                 icon={<TagsOutlined />}
-                disabled={!selectedCaseId || !legacyAnalysis}
+                disabled={!canWrite || !selectedCaseId || !legacyAnalysis}
                 loading={tagCurationMutation.isPending}
                 onClick={() => tagCurationMutation.mutate(false)}
               >
@@ -729,16 +767,23 @@ const CaseIntelligence: React.FC = () => {
           {legacyAnalysis ? '收起旧版分析工具' : '打开旧版分析工具（兼容）'}
         </Button>
         {legacyAnalysis && <Alert type="warning" showIcon message="旧版动态分析与历史经验工具"
-          description="下方内容按旧接口即时计算，不是上方冻结成果；时间窗及条数仅作用于旧版工具，不改变统一成果或其版本。" />}
+          description="按需使用：下方内容按旧接口即时计算，不是上方冻结成果；不要求每起案件保存经验卡或报告。时间窗仅作用于旧版工具。" />}
       </>}
+      {(globalMode || legacyAnalysis) && contextPackQuery.isError && <Alert type="error" message="旧版模型上下文读取失败，不能据此判断证据完整。" />}
 
-      {knowledgeQuery && (
+      {knowledgeQuery && (globalMode || legacyAnalysis) && (
         <Card
           className="intel-panel-card"
           title={`研判知识检索：${knowledgeQuery}`}
           extra={<Tag>{knowledgeSearchQuery.data?.total ?? 0} 条</Tag>}
         >
-          {knowledgeSearchQuery.isLoading ? (
+          {!knowledgeSearchQuery.isError && knowledgeSearchQuery.data?.state === 'partial' &&
+            <Alert type="warning" message="检索尚未完成全部范围，以下是部分结果，不能据此判断没有其他关联。" />}
+          {!knowledgeSearchQuery.isError && knowledgeSearchQuery.data?.history?.semantic_index_state === 'unavailable' &&
+            <Alert type="warning" message="本地语义模型暂不可用，保留结构条件与词项检索。" />}
+          {!knowledgeSearchQuery.isError && knowledgeSearchQuery.data?.history?.semantic_index_state === 'not_enabled' &&
+            <Alert type="info" message="当前使用结构条件与词项检索，本地语义模型未启用。" />}
+          {knowledgeSearchQuery.isError ? <Alert type="error" message="检索暂不可用，不能据此判断没有相关资料。" /> : knowledgeSearchQuery.isLoading ? (
             <div className="intel-loading intel-loading--small"><Spin /> 正在检索案件底座…</div>
           ) : knowledgeSearchQuery.data?.items.length ? (
             <div className="intel-card-stack">
@@ -751,7 +796,9 @@ const CaseIntelligence: React.FC = () => {
               ))}
             </div>
           ) : (
-            <Empty description="资料不足，未检索到可引用来源" />
+            <Empty description={knowledgeSearchQuery.data?.state === 'partial'
+              ? '当前部分结果尚无可引用来源，请稍后重试'
+              : '本次条件未找到可引用来源，历史材料检索范围见下方说明'} />
           )}
           {knowledgeSearchQuery.data?.boundary && (
             <Alert type="info" showIcon className="intel-boundary" message={knowledgeSearchQuery.data.boundary} />
@@ -772,7 +819,7 @@ const CaseIntelligence: React.FC = () => {
                 <Button
                   size="small"
                   type="primary"
-                  disabled={!selectedCaseId}
+                  disabled={!canWrite || !selectedCaseId}
                   loading={tagCurationMutation.isPending}
                   onClick={() => tagCurationMutation.mutate(true)}
                 >
@@ -819,7 +866,7 @@ const CaseIntelligence: React.FC = () => {
         </Card>
       )}
 
-      {selectedCaseId && !legacyAnalysis ? null : workbenchQuery.isLoading ? (
+      {selectedCaseId && !legacyAnalysis ? null : workbenchQuery.isError ? <Alert type="error" message="旧版分析暂不可用，原有统一成果仍可单独查看。" /> : workbenchQuery.isLoading ? (
         <div className="intel-loading"><Spin /> 正在汇聚案件、地图参考与油区业务资产…</div>
       ) : !workbench ? (
         <Empty description="暂无研判数据" />
@@ -873,7 +920,9 @@ const CaseIntelligence: React.FC = () => {
           />
 
           <Tabs
+            key={`${selectedCaseId ?? 'global'}:${searchParams.get('tool') || 'overview'}`}
             className="intel-tabs"
+            defaultActiveKey={searchParams.get('tool') === 'experience' ? 'report' : 'overview'}
             items={[
               {
                 key: 'overview',
@@ -1074,7 +1123,7 @@ const CaseIntelligence: React.FC = () => {
                               <Button
                                 size="small"
                                 icon={<CheckCircleOutlined />}
-                                disabled={!selectedCaseId}
+                                disabled={!canWrite || !selectedCaseId}
                                 loading={generateExperienceAssetMutation.isPending}
                                 onClick={() => generateExperienceAssetMutation.mutate()}
                               >
@@ -1100,7 +1149,7 @@ const CaseIntelligence: React.FC = () => {
                               renderItem={item => <List.Item>{item}</List.Item>}
                             />
                             <div className="intel-section-mini">版本记录</div>
-                            {knowledgeAssetsQuery.isLoading ? (
+                            {knowledgeAssetsQuery.isError ? <Alert type="error" message="经验版本读取失败，不能确认当前是否有待确认内容。" /> : knowledgeAssetsQuery.isLoading ? (
                               <div className="intel-loading intel-loading--small"><Spin /> 正在读取版本…</div>
                             ) : experienceAssetVersions.length ? (
                               <List
@@ -1115,6 +1164,7 @@ const CaseIntelligence: React.FC = () => {
                                           <Button
                                             key="confirm"
                                             size="small"
+                                            disabled={!canWrite}
                                             loading={reviewAssetMutation.isPending && reviewAssetMutation.variables?.assetId === asset.id}
                                             onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'confirmed' })}
                                           >
@@ -1125,6 +1175,7 @@ const CaseIntelligence: React.FC = () => {
                                           <Button
                                             key="archive"
                                             size="small"
+                                            disabled={!canWrite}
                                             onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'archived' })}
                                           >
                                             归档
@@ -1152,7 +1203,7 @@ const CaseIntelligence: React.FC = () => {
                         {reuseRecommendationsQuery.data?.boundary && (
                           <Alert type="warning" showIcon message={reuseRecommendationsQuery.data.boundary} />
                         )}
-                        {reuseRecommendationsQuery.isLoading ? (
+                        {reuseRecommendationsQuery.isError ? <Alert type="error" message="历史经验查询暂不可用，不等于没有相关经验。" /> : reuseRecommendationsQuery.isLoading ? (
                           <div className="intel-loading intel-loading--small"><Spin /> 正在召回经验资产…</div>
                         ) : reuseRecommendationsQuery.data?.items.length ? (
                           <List
@@ -1166,7 +1217,7 @@ const CaseIntelligence: React.FC = () => {
                                     size="small"
                                     type={selectedExperienceAssetIds.includes(item.asset_id) ? 'primary' : 'default'}
                                     disabled={
-                                      !canSelectExperienceRecommendation(item)
+                                      !canWrite || !canSelectExperienceRecommendation(item)
                                       || selectedExperienceAssetIds.includes(item.asset_id)
                                     }
                                     loading={reuseDecisionMutation.isPending && reuseDecisionMutation.variables?.assetId === item.asset_id}
@@ -1181,7 +1232,7 @@ const CaseIntelligence: React.FC = () => {
                                   <Button
                                     key="reject"
                                     size="small"
-                                    disabled={item.already_reused}
+                                    disabled={!canWrite || item.already_reused}
                                     onClick={() => reuseDecisionMutation.mutate({ assetId: item.asset_id, decision: 'rejected' })}
                                   >不适用</Button>,
                                   <Button key="source" size="small" onClick={() => navigate(`/case-intelligence?caseId=${item.source_case_id}`)}>来源</Button>,
@@ -1224,7 +1275,7 @@ const CaseIntelligence: React.FC = () => {
                             <Button
                               size="small"
                               type="primary"
-                              disabled={!selectedCaseId}
+                              disabled={!canWrite || !selectedCaseId}
                               loading={reportSnapshotMutation.isPending}
                               onClick={() => reportSnapshotMutation.mutate()}
                             >
@@ -1252,6 +1303,7 @@ const CaseIntelligence: React.FC = () => {
                                   <Button
                                     key="confirm-report"
                                     size="small"
+                                    disabled={!canWrite}
                                     onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'confirmed' })}
                                   >人工确认</Button>,
                                 ] : []}
@@ -1265,9 +1317,10 @@ const CaseIntelligence: React.FC = () => {
                           }}
                         />
                         <div className="intel-section-mini">经验复用轨迹</div>
+                        {reuseRecordsQuery.isError && <Alert type="error" message="经验复用轨迹读取失败，当前不能确认历史操作状态。" />}
                         <List
                           size="small"
-                          dataSource={reuseRecordsQuery.data?.items || []}
+                          dataSource={reuseRecordsQuery.isError ? [] : reuseRecordsQuery.data?.items || []}
                           locale={{ emptyText: '尚无采纳、排除或报告引用记录' }}
                           renderItem={item => (
                             <List.Item>

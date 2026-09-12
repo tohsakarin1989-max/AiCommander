@@ -45,8 +45,6 @@
   overflow: hidden;
   border-color: var(--accent-line);
   background:
-    linear-gradient(90deg, oklch(0.78 0.14 var(--accent-hue) / 0.22), transparent 68%),
-    linear-gradient(135deg, oklch(0.78 0.11 220 / 0.10), transparent 48%),
     var(--bg-1);
 }
 
@@ -63,8 +61,8 @@
   margin: 6px 0 0;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -83,7 +81,7 @@
   border: 1px solid var(--line-soft);
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -98,14 +96,12 @@
   padding: 10px 11px;
   border-color: oklch(0.32 0.014 250 / 0.76);
   background:
-    radial-gradient(circle at 18% 50%, oklch(0.78 0.14 var(--accent-hue) / 0.15), transparent 42%),
-    linear-gradient(180deg, oklch(0.18 0.018 250 / 0.92), oklch(0.11 0.012 250 / 0.88));
+    var(--bg-1);
 }
 
 :root[data-theme="light"] .db-command-kpi {
   background:
-    radial-gradient(circle at 18% 50%, oklch(0.72 0.13 var(--accent-hue) / 0.13), transparent 42%),
-    linear-gradient(180deg, oklch(0.99 0.006 250 / 0.98), oklch(0.94 0.012 250 / 0.92));
+    var(--bg-1);
   border-color: oklch(0.70 0.018 250 / 0.86);
 }
 
@@ -184,7 +180,7 @@
   margin-top: 0;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 12px;
   line-height: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -193,7 +189,7 @@
 
 .db-command-kpi .val {
   flex: 0 0 auto;
-  font-size: clamp(22px, 2vw, 28px);
+  font-size: 20px;
   line-height: 1;
   margin-top: 0;
 }
@@ -232,8 +228,8 @@
 .db-head-meta {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
   white-space: nowrap;
 }
 
@@ -277,7 +273,7 @@
   align-content: space-between;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
 }
 
 .db-trend-bar-wrap {
@@ -309,7 +305,7 @@
 .db-trend-bar-wrap span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -333,12 +329,12 @@
 
 .db-auto-list::before {
   top: 0;
-  background: linear-gradient(to bottom, var(--bg-1), transparent);
+  background: var(--bg-1);
 }
 
 .db-auto-list::after {
   bottom: 0;
-  background: linear-gradient(to top, var(--bg-1), transparent);
+  background: var(--bg-1);
 }
 
 .db-auto-track {
@@ -365,7 +361,7 @@
   gap: 4px;
   padding: 9px 10px;
   border: 1px solid var(--line-soft);
-  background: oklch(0.12 0.012 250 / 0.5);
+  background: var(--bg-2);
 }
 
 :root[data-theme="light"] .db-list-item {
@@ -384,7 +380,7 @@
 
 .db-list-item span {
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -396,7 +392,7 @@
   justify-self: start;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   text-decoration: none;
   border-bottom: 1px solid var(--accent-line);
 }
@@ -518,7 +514,7 @@
   border: 1px solid var(--line-soft);
   background: color-mix(in oklch, var(--bg-1) 88%, transparent) !important;
   color: var(--ink-2);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .db-dashboard-leaflet .leaflet-control-attribution a {
@@ -547,7 +543,7 @@
   color: var(--ink-0) !important;
   box-shadow: 0 5px 16px oklch(0.06 0.01 250 / 0.38) !important;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .db-map-native-controls {
@@ -595,7 +591,7 @@
   max-width: min(420px, calc(100% - 280px));
   padding: 6px 10px;
   color: var(--warn);
-  font-size: 10px;
+  font-size: 12px;
   transform: translateX(-50%);
 }
 
@@ -617,7 +613,7 @@
 
 .db-map-real-empty span {
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -629,7 +625,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(72px, 1fr));
   border: 1px solid var(--line);
-  background: oklch(0.10 0.012 250 / 0.92);
+  background: var(--bg-2);
   backdrop-filter: blur(10px);
 }
 
@@ -645,7 +641,7 @@
   border-right: 1px solid var(--line-soft);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -829,7 +825,7 @@
 .db-map-case-label text {
   fill: var(--ink-2);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   paint-order: stroke;
   stroke: oklch(0.12 0.012 250 / 0.84);
   stroke-width: 4px;
@@ -875,7 +871,7 @@
 
 .db-map-infra-point text {
   fill: var(--ink-2);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 :root[data-theme="light"] .db-map-infra-point text {
@@ -935,7 +931,7 @@
 
 .db-map-case-label text {
   fill: var(--ink-1);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .db-map-case-label:nth-child(n+7) {
@@ -1012,7 +1008,7 @@
 
 .db-well-label .db-well-label-score {
   fill: var(--well-color);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 :root[data-theme="light"] .db-well-marker {
@@ -1105,7 +1101,7 @@
   background: var(--bg-1);
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .db-map-controls button:hover {
@@ -1126,11 +1122,11 @@
   width: 136px;
   padding: 10px 10px;
   border: 1px solid var(--line);
-  background: oklch(0.10 0.012 250 / 0.88);
+  background: var(--bg-2);
   backdrop-filter: blur(10px);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
 }
 
 :root[data-theme="light"] .db-map-legend {
@@ -1175,7 +1171,7 @@
   gap: 5px;
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   text-shadow: 0 1px 4px oklch(0.08 0.01 250);
 }
 
@@ -1202,7 +1198,7 @@
   z-index: 5;
   display: grid;
   border: 1px solid var(--line);
-  background: oklch(0.10 0.012 250 / 0.88);
+  background: var(--bg-2);
   backdrop-filter: blur(10px);
 }
 
@@ -1242,10 +1238,10 @@
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--line);
-  background: oklch(0.10 0.012 250 / 0.88);
+  background: var(--bg-2);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   backdrop-filter: blur(10px);
 }
 
@@ -1268,10 +1264,10 @@
   gap: 8px;
   padding: 8px 9px;
   border: 1px solid var(--accent-line);
-  background: oklch(0.10 0.012 250 / 0.9);
+  background: var(--bg-2);
   backdrop-filter: blur(10px);
   color: var(--ink-2);
-  font-size: 9.5px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -1284,7 +1280,7 @@
 
 .db-map-source strong {
   color: var(--ink-0);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 :root[data-theme="light"] .db-map-source strong {
@@ -1306,9 +1302,9 @@
   min-width: 0;
   padding: 5px 9px;
   border-left: 2px solid var(--warn);
-  background: oklch(0.10 0.012 250 / 0.88);
+  background: var(--bg-2);
   color: var(--ink-2);
-  font-size: 9.5px;
+  font-size: 12px;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
@@ -1337,7 +1333,7 @@
   justify-content: center;
   padding: 6px 8px;
   border: 1px solid var(--line-soft);
-  background: oklch(0.12 0.012 250 / 0.5);
+  background: var(--bg-2);
 }
 
 :root[data-theme="light"] .db-focus-card {
@@ -1349,8 +1345,8 @@
 .db-focus-card span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.07em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 :root[data-theme="light"] .db-focus-card span {
@@ -1388,7 +1384,7 @@
   gap: 12px;
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .db-quality-meter-row strong {
@@ -1421,7 +1417,7 @@
   min-width: 0;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   overflow: hidden;
 }
 

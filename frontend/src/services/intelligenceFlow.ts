@@ -19,6 +19,23 @@ export type CaseSemantics = {
   }
   potential_conflicts?: Array<{ category: string; value: string; status: string }>
   information_gaps?: Array<{ code: string; field?: string; reference?: SemanticReference }>
+  model_extraction?: {
+    status: string; version: string; adapter_version: string; model_id: number | null
+    items: Array<{ category: string; value: string; kind: string; reference: SemanticReference; is_official_fact: false }>
+    rejected_items: number; boundary: string
+  }
+  event_fragments?: {
+    schema_version: string
+    items: Array<{
+      id: string; reference: SemanticReference
+      actions: Array<{ value: string; kind: string; reference: SemanticReference; is_official_fact: false }>
+      assertion_indices: number[]; time_interval_indices: number[]; missing_dimensions: string[]
+      relation_status: string; is_official_fact: false
+    }>
+    coverage: { state: string; limit: number; omitted_fragments: number; input_assertions_partial?: boolean }
+    deep_model_status: string
+    boundary: string
+  }
   boundary?: string[]
 }
 

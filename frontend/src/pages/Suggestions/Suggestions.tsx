@@ -3,7 +3,7 @@ import { message } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import { caseApi } from '../../services/cases'
+import { useAuth } from '../../auth/AuthContext'
 import { eventApi } from '../../services/events'
 import { suggestionsApi, type WorkSuggestion } from '../../services/suggestions'
 import {
@@ -11,8 +11,6 @@ import {
   PRIORITY_META,
   WORKFLOW_FILTERS,
   buildSuggestionDetail,
-  buildSuggestionStats,
-  filterSuggestionsByWorkflow,
   getSuggestionRoute,
   getSuggestionWorkflowBucket,
   numericTargetId,
@@ -22,27 +20,18 @@ import './Suggestions.css'
 
 const Suggestions: React.FC = () => {
   const navigate = useNavigate()
+  const { user, sessionEpoch } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const queryClient = useQueryClient()
   const [workflowFilter, setWorkflowFilter] = useState<SuggestionWorkflowFilter>('all')
+  const [offset, setOffset] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<'facts' | 'inferences' | 'suggestions'>('facts')
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['suggestions'],
-    queryFn: () => suggestionsApi.list({ limit: 80, status: 'open' }),
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['suggestions', user?.id, sessionEpoch, workflowFilter, offset],
+    queryFn: () => suggestionsApi.list({ limit: 20, offset, status: 'open', workflow: workflowFilter }),
     refetchInterval: 60_000,
-  })
-
-  const preprocessMutation = useMutation({
-    mutationFn: (caseId: number) => caseApi.preprocessCase(caseId),
-    onSuccess: async (result) => {
-      message.success(result.message || '预处理任务已提交')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['suggestions'] }),
-        queryClient.invalidateQueries({ queryKey: ['cases'] }),
-      ])
-    },
-    onError: (error: Error) => message.error(`预处理失败：${error.message}`),
   })
 
   const convertEventMutation = useMutation({
@@ -59,14 +48,12 @@ const Suggestions: React.FC = () => {
     onError: (error: Error) => message.error(`转案件失败：${error.message}`),
   })
 
-  const suggestions = data?.suggestions ?? []
-  const visibleSuggestions = useMemo(() => filterSuggestionsByWorkflow(suggestions, workflowFilter), [suggestions, workflowFilter])
-  const stats = useMemo(() => buildSuggestionStats(suggestions), [suggestions])
+  const suggestions = isError ? [] : data?.suggestions ?? []
+  const visibleSuggestions = suggestions
+  const stats = isError ? undefined : data?.summary
   const selectedSuggestion = visibleSuggestions.find(item => item.id === selectedId) ?? visibleSuggestions[0] ?? null
   const selectedDetail = useMemo(() => buildSuggestionDetail(selectedSuggestion), [selectedSuggestion])
-  const completedCount = Math.max(0, (data?.total ?? suggestions.length) - suggestions.length)
-  const reviewedToday = Math.min(suggestions.length, stats.priority.medium + stats.priority.low)
-  const batchProgress = suggestions.length > 0 ? Math.round((reviewedToday / Math.max(suggestions.length, 1)) * 100) : 0
+  const highPriorityShare = stats ? (stats.total > 0 ? Math.round((stats.priority.high / stats.total) * 100) : 0) : null
   const detailTabItems = [
     { key: 'facts' as const, label: '事实', items: selectedDetail.facts },
     { key: 'inferences' as const, label: '推断', items: selectedDetail.inferences },
@@ -77,11 +64,8 @@ const Suggestions: React.FC = () => {
   const handleAction = (suggestion: WorkSuggestion) => {
     const targetId = numericTargetId(suggestion)
     switch (suggestion.action) {
-      case 'preprocess_case':
-        if (targetId) preprocessMutation.mutate(targetId)
-        break
       case 'convert_event_to_case':
-        if (targetId) convertEventMutation.mutate(targetId)
+        if (canWrite && targetId) convertEventMutation.mutate(targetId)
         break
       default:
         {
@@ -95,23 +79,23 @@ const Suggestions: React.FC = () => {
     }
   }
 
-  const actionBusy = preprocessMutation.isPending || convertEventMutation.isPending
+  const actionBusy = convertEventMutation.isPending
 
   return (
     <div className="page suggestions-page sg-redesign">
       <section className="sg-hero">
         <div className="sg-hero-title">
-          <h1>闭环研判工厂 <span>/</span> 研判待办中心</h1>
-          <p>统一编排事实要素、推断结论、材料佐证和奖金核算，确保闭环合规、可追溯、可复用</p>
+          <h1>待判断事项</h1>
+          <p>处理必要资料补充和已有成果确认，不以经验卡或报告是否生成为每案必办条件。</p>
         </div>
 
         <div className="sg-notice">
-          案件录入阶段可先提示、不强制保存；关键核算指标缺失时整案暂不测算。
+          案件可以正常保存和使用。奖金核算的材料门槛只作用于核算，不阻塞案件主流程。
         </div>
 
         <div className="sg-title-actions">
+          <button className="btn-ghost-sm" onClick={() => navigate('/workbench')}>返回日常工作</button>
           <button className="btn-ghost-sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['suggestions'] })}>刷新</button>
-          <button className="btn-ghost-sm">按最新</button>
         </div>
       </section>
 
@@ -123,15 +107,14 @@ const Suggestions: React.FC = () => {
           </div>
           <div className="sg-rail-list">
             {WORKFLOW_FILTERS.map(filter => {
-              const count = filter.value === 'all'
-                ? suggestions.length
-                : filterSuggestionsByWorkflow(suggestions, filter.value).length
+              const count = stats ? (filter.value === 'all' ? stats.total : stats.workflow[filter.value] ?? 0) : '待确认'
               return (
                 <button
                   key={filter.value}
                   className={`sg-rail-item${workflowFilter === filter.value ? ' on' : ''}`}
                   onClick={() => {
                     setWorkflowFilter(filter.value)
+                    setOffset(0)
                     setSelectedId(null)
                   }}
                 >
@@ -145,59 +128,51 @@ const Suggestions: React.FC = () => {
             <span>生成时间</span>
             <strong>{data ? dayjs(data.generated_at).format('HH:mm:ss') : '自动刷新'}</strong>
           </div>
-          <div className="sg-quick-filter">
-            <h3>快速筛选</h3>
-            <label>
-              <span>案件来源</span>
-              <select value="all" onChange={() => undefined}>
-                <option value="all">全部来源</option>
-              </select>
-            </label>
-            <label>
-              <span>风险区域</span>
-              <select value="all" onChange={() => undefined}>
-                <option value="all">全部风险区域</option>
-              </select>
-            </label>
-            <button className="btn-ghost-sm" type="button" onClick={() => setWorkflowFilter('all')}>重置筛选</button>
+          <div className="sg-filter-actions">
+            <button className="btn-ghost-sm" type="button" onClick={() => { setWorkflowFilter('all'); setOffset(0); setSelectedId(null) }}>重置筛选</button>
           </div>
         </aside>
 
         <main className="card sg-queue">
           <div className="card-head">
             <span className="ico">◆</span>
-            <span className="ti">闭环研判队列</span>
+            <span className="ti">待判断队列</span>
             <span className="spacer" />
             <span className="chip accent">{visibleSuggestions.length} 项</span>
           </div>
           <div className="sg-status-tabs">
-            <button className="on"><span>全部</span><b>{stats.total}</b></button>
-            <button className="danger"><span>阻塞中</span><b>{stats.priority.high}</b></button>
-            <button className="info"><span>进行中</span><b>{stats.priority.medium}</b></button>
-            <button className="warn"><span>待处理</span><b>{stats.priority.low}</b></button>
-            <button className="done"><span>已完成</span><b>{completedCount}</b></button>
+            <div className="sg-status-stat on"><span>全队列</span><b>{stats?.total ?? '待确认'}</b></div>
+            <div className="sg-status-stat danger"><span>高优先级</span><b>{stats?.priority.high ?? '待确认'}</b></div>
+            <div className="sg-status-stat info"><span>中优先级</span><b>{stats?.priority.medium ?? '待确认'}</b></div>
+            <div className="sg-status-stat warn"><span>低优先级</span><b>{stats?.priority.low ?? '待确认'}</b></div>
+            <div className="sg-status-stat done"><span>当前筛选</span><b>{!isError && data ? data.total : '待确认'}</b></div>
           </div>
           <div className="sg-table-head">
             <span>优先级</span>
             <span>目标 / 案件编号</span>
             <span>待办类型</span>
-            <span>阻塞原因 / 关键缺口</span>
-            <span>当前阻塞点</span>
+            <span>事项依据 / 关键缺口</span>
+            <span>事项分类</span>
             <span>下一步安全动作</span>
             <span>状态</span>
             <span>更新时间</span>
           </div>
           <div className="card-body">
-            {isLoading ? (
+            {isError ? (
+              <div className="empty-state" role="alert" style={{ height: 300 }}>
+                <div>待办读取失败，请刷新重试。</div>
+                <span>当前不能确认待办数量和处理状态。</span>
+              </div>
+            ) : isLoading ? (
               <div className="empty-state" style={{ height: 300 }}>
                 <div className="icon">⌛</div>
-                <div>正在生成待办</div>
+                <div>正在读取待判断事项</div>
               </div>
             ) : visibleSuggestions.length === 0 ? (
               <div className="empty-state" style={{ height: 300 }}>
                 <div className="icon">✓</div>
                 <div>当前没有待处理待办</div>
-                <span>案件、告警、会议、结论和报告质量均未触发当前分类待办。</span>
+                <span>当前页未返回待判断事项，不代表案件办结或资料全部齐备。</span>
               </div>
             ) : (
               <div className="sg-list">
@@ -227,21 +202,26 @@ const Suggestions: React.FC = () => {
               </div>
             )}
           </div>
+          <div className="sg-filter-actions">
+            <span>本页 {suggestions.length} 项 / 当前筛选 {!isError && data ? data.total : '待确认'} 项</span>
+            <button className="btn-ghost-sm" disabled={offset === 0 || isLoading} onClick={() => { setOffset(Math.max(0, offset - 20)); setSelectedId(null) }}>上一页</button>
+            <button className="btn-ghost-sm" disabled={isError || isLoading || !data?.has_more} onClick={() => { setOffset(offset + 20); setSelectedId(null) }}>下一页</button>
+          </div>
         </main>
 
         <aside className="card sg-detail">
           <div className="sg-detail-header">
             <div>
-              <strong>{selectedSuggestion?.target_type === 'case' ? `AI${String(selectedSuggestion.target_id).padStart(4, '0')}` : selectedDetail.targetLabel}</strong>
+              <strong>{selectedDetail.targetLabel}</strong>
               <span>{selectedDetail.targetLabel}</span>
             </div>
             <b>{selectedSuggestion ? (PRIORITY_META[selectedSuggestion.priority]?.label ?? selectedSuggestion.priority) : '未选择'}</b>
           </div>
           <div className="sg-detail-body">
             <div className="sg-blocker">
-              <span>关键核算/研判阻塞</span>
+              <span>当前事项</span>
               <strong>{selectedDetail.blocker}</strong>
-              <small>请补齐事实依据或人工确认后再进入下一步。</small>
+              <small>按实际需要补充资料或判断已有成果，不自动改变案件办结状态。</small>
             </div>
             <div className="sg-detail-tabbar">
               {detailTabItems.map(item => (
@@ -271,7 +251,7 @@ const Suggestions: React.FC = () => {
             <div className="sg-boundary">{selectedDetail.boundary}</div>
             <button
               className="btn-primary sg-detail-action"
-              disabled={!selectedSuggestion || actionBusy}
+              disabled={!selectedSuggestion || actionBusy || (!canWrite && selectedSuggestion.action === 'convert_event_to_case')}
               onClick={() => selectedSuggestion && handleAction(selectedSuggestion)}
             >
               {selectedSuggestion ? (ACTION_LABELS[selectedSuggestion.action] ?? '处理') : '选择待办'}
@@ -282,23 +262,21 @@ const Suggestions: React.FC = () => {
 
       <section className="sg-bottom-status">
         <div className="sg-batch-progress">
-          <h3>批量研判进度</h3>
-          <span>今日已审 {reviewedToday} / {Math.max(suggestions.length, 1)}</span>
-          <div className="sg-progress"><i style={{ width: `${batchProgress}%` }} /></div>
-          <b>{batchProgress}%</b>
+          <h3>全队列优先级分布</h3>
+          <span>高优先级 {stats?.priority.high ?? '待确认'} / {stats?.total ?? '待确认'}</span>
+          <div className="sg-progress"><i style={{ width: `${highPriorityShare ?? 0}%` }} /></div>
+          <b>{highPriorityShare === null ? '待确认' : `${highPriorityShare}%`}</b>
         </div>
         <div className="sg-skip-reasons">
-          <h3>失败 / 跳过原因（近 7 日）</h3>
-          <span>材料缺失 {stats.type.bonus || 0}</span>
-          <span>指标缺失 {filterSuggestionsByWorkflow(suggestions, 'bonus_metric_gap').length}</span>
-          <span>坐标缺失 {filterSuggestionsByWorkflow(suggestions, 'coordinate_gap').length}</span>
-          <span>其他 {stats.type.workflow || 0}</span>
+          <h3>全队列资料缺口</h3>
+          <span>材料缺失 {stats ? stats.workflow.bonus_material_gap ?? 0 : '待确认'}</span>
+          <span>指标缺失 {stats ? stats.workflow.bonus_metric_gap ?? 0 : '待确认'}</span>
+          <span>坐标缺失 {stats ? stats.workflow.coordinate_gap ?? 0 : '待确认'}</span>
         </div>
         <div className="sg-fallback-state">
-          <h3>确定性兜底与回退状态</h3>
-          <span>规则引擎 <b>正常</b></span>
-          <span>ML 推理降级 <b>可用</b></span>
-          <span>人工复核兜底 <b>已启用</b></span>
+          <h3>统计口径</h3>
+          <span>分类与优先级统计来自服务端全授权未处理队列，列表按当前分类分页。</span>
+          <span>不包含完成量、今日复核量及运行健康状态。</span>
         </div>
       </section>
     </div>

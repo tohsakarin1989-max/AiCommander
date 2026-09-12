@@ -21,8 +21,7 @@
   overflow: hidden;
   color: var(--ink-1);
   background:
-    linear-gradient(90deg, var(--accent-soft), transparent 18%),
-    transparent;
+    var(--bg-1);
 }
 
 .crc-page button {
@@ -79,7 +78,7 @@
   color: var(--crc-faint);
   background: var(--crc-subtle);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -113,7 +112,7 @@
   overflow: hidden;
   color: var(--crc-faint);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -141,7 +140,7 @@
   overflow: hidden;
   color: var(--crc-faint);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -201,7 +200,7 @@
   margin: 4px 0 0;
   color: var(--crc-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.2;
 }
 
@@ -215,7 +214,7 @@
   background: transparent;
   color: var(--crc-muted);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1;
   font-style: normal;
   font-weight: 600;
@@ -269,7 +268,7 @@
   border-right: 1px solid var(--crc-line);
   color: var(--crc-faint);
   background: transparent;
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .crc-tabs button:last-child {
@@ -341,7 +340,7 @@
 .crc-case-desc {
   overflow: hidden;
   color: var(--crc-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -363,13 +362,13 @@
 .crc-progress b {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--crc-red), var(--crc-amber));
+  background: var(--accent);
 }
 
 .crc-progress small {
   color: var(--crc-faint);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -377,14 +376,14 @@
   margin: 0 14px 14px;
   padding: 11px;
   border: 1px solid var(--accent-line);
-  background: linear-gradient(135deg, var(--accent-soft), transparent 72%);
+  background: var(--bg-1);
 }
 
 .crc-ai-title {
   margin-bottom: 8px;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -408,7 +407,7 @@
 
 .crc-ai-intake dt {
   color: var(--crc-faint);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .crc-ai-intake dd {
@@ -416,7 +415,7 @@
   max-width: 140px;
   overflow: hidden;
   color: var(--crc-ink);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -466,7 +465,7 @@
   display: block;
   color: var(--crc-faint);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .crc-fact strong {
@@ -486,7 +485,7 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 9px;
   border: 1px solid var(--accent-line);
-  background: linear-gradient(145deg, var(--accent-soft), transparent 78%);
+  background: var(--bg-1);
 }
 
 .crc-ai-card-head {
@@ -520,7 +519,7 @@
   border: 1px solid var(--accent-line);
   background: transparent;
   color: var(--accent);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .crc-actions button:hover {
@@ -556,7 +555,7 @@
   color: var(--crc-muted);
   background: transparent;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .crc-evidence-tabs span:last-child {
@@ -596,7 +595,7 @@
   color: var(--crc-amber);
   background: oklch(0.80 0.16 75 / 0.10);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -621,7 +620,7 @@
   margin-top: 2px;
   overflow: hidden;
   color: var(--crc-faint);
-  font-size: 10.5px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -631,7 +630,7 @@
   text-align: center;
   color: var(--crc-amber);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 600;
 }
@@ -669,7 +668,7 @@
   color: var(--crc-ink);
   background: var(--crc-subtle);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -693,7 +692,7 @@
   border-left: 2px solid var(--crc-amber);
   color: var(--crc-muted);
   background: oklch(0.80 0.16 75 / 0.07);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -737,7 +736,7 @@
   padding-left: 9px;
   border-left: 2px solid var(--crc-blue);
   color: var(--crc-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -754,7 +753,7 @@
   padding-left: 9px;
   border-left: 2px solid var(--crc-faint);
   color: var(--crc-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -778,7 +777,7 @@
   gap: 8px;
   padding: 7px 0;
   border-top: 1px solid var(--crc-line-soft);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .crc-draft div:first-child {

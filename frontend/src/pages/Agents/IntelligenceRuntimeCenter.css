@@ -1,22 +1,22 @@
 .runtime-center { display: grid; gap: 14px; padding: 18px; }
 .runtime-center__hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px; border: 1px solid var(--line); background: var(--bg-1); }
-.runtime-center__hero span { color: var(--accent); font: 9px var(--mono); letter-spacing: .14em; }
+.runtime-center__hero span { color: var(--accent); font: 12px var(--mono); letter-spacing: 0; }
 .runtime-center__hero h1 { margin: 7px 0; color: var(--ink-0); font-size: 25px; }
 .runtime-center__hero p { margin: 0; color: var(--ink-2); font-size: 12px; }
 .runtime-center__agents { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .runtime-center__agent b { color: var(--accent); font: 18px var(--mono); }
 .runtime-center__agent h2 { margin: 13px 0 7px; color: var(--ink-0); font-size: 14px; }
-.runtime-center__agent p { min-height: 48px; color: var(--ink-2); font-size: 11px; line-height: 1.55; }
+.runtime-center__agent p { min-height: 48px; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
 .runtime-center__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .runtime-center__versions, .runtime-center__evaluation { display: grid; gap: 7px; }
 .runtime-center__versions > div { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 8px; border-bottom: 1px solid var(--line-soft); }
-.runtime-center__versions span, .runtime-center__versions code { color: var(--ink-3); font: 9px var(--mono); }
-.runtime-center__versions strong { color: var(--ink-1); font: 10px var(--mono); }
+.runtime-center__versions span, .runtime-center__versions code { color: var(--ink-3); font: 12px var(--mono); }
+.runtime-center__versions strong { color: var(--ink-1); font: 12px var(--mono); }
 .runtime-center__evaluation > strong { color: var(--accent); font: 22px var(--mono); }
-.runtime-center__evaluation > span { display: flex; justify-content: space-between; color: var(--ink-2); font-size: 10px; }
+.runtime-center__evaluation > span { display: flex; justify-content: space-between; color: var(--ink-2); font-size: 12px; }
 .runtime-center__evaluation b { color: var(--ink-0); font-family: var(--mono); }
 .runtime-center__boundary { display: flex; flex-wrap: wrap; gap: 10px; padding: 11px; border: 1px solid var(--line); }
-.runtime-center__boundary span { color: var(--ink-3); font-size: 10px; }
+.runtime-center__boundary span { color: var(--ink-3); font-size: 12px; }
 @media (max-width: 1100px) { .runtime-center__agents { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 720px) { .runtime-center__agents, .runtime-center__grid { grid-template-columns: 1fr; } }
 .fixed-evaluations { padding: 20px; background: var(--bg-1); border: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; font-size: 14px; }

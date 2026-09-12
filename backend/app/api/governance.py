@@ -72,7 +72,7 @@ class FrozenDatasetRequest(BaseModel):
 
 
 class FixedRunRequest(EvaluationRunRequest):
-    scorer_policy: Literal['captured', 'current_candidate'] = 'captured'
+    scorer_policy: Literal['captured', 'current_candidate', 'facility_captured', 'facility_candidate'] = 'captured'
 
 
 class LabelRevisionRequest(BaseModel):
@@ -98,6 +98,11 @@ class RoadDatasetRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     version: str = Field(min_length=1, max_length=80)
     artifact_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class FacilityDatasetRequest(RoadDatasetRequest):
+    ground_truth: dict[int, list[GroundTruthLabel]] = Field(default_factory=dict)
+    negative_case_ids: list[StrictInt] = Field(default_factory=list, max_length=10)
 
 
 class ResultArchiveRequest(BaseModel):
@@ -236,6 +241,26 @@ def run_fixed_evaluation(payload: FixedRunRequest, request: Request, db: Session
         raise HTTPException(status_code=404, detail='当前无权访问完整评测来源') from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail='固定评测集不存在或完整性校验失败') from exc
+
+
+@router.post('/admin/evaluations/facility-datasets', status_code=201)
+def create_facility_dataset(payload: FacilityDatasetRequest, request: Request, db: Session = Depends(get_db)):
+    principal = _require_admin(request)
+    try:
+        dataset = frozen_evaluation_service.create_dataset(db, name=payload.name, version=payload.version,
+            inputs=[], facility_artifact_ids=payload.artifact_ids,
+            ground_truth={str(key): [label.model_dump() for label in labels] for key, labels in payload.ground_truth.items()},
+            negative_case_ids=payload.negative_case_ids, created_by=_user_id(principal))
+        return {'id': dataset.id, 'name': dataset.name, 'version': dataset.version,
+                'classification': dataset.classification, 'checksum': dataset.checksum,
+                'case_count': len(dataset.case_ids), 'evaluation_family': 'facility_source',
+                'frozen_input_exported': False}
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail='设施评测来源不存在或不在当前权限范围') from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail='附件未留存完整评分输入，或来源、标签及版本不一致') from exc
 
 
 @router.post('/admin/evaluations/result-archives', status_code=201)
@@ -449,6 +474,7 @@ def list_fixed_datasets(request: Request, before_id: int | None = Query(default=
             (frozen_road_dataset.read_dataset if road else frozen_evaluation_service.read_dataset)(db, row.id)
             items.append({'id': row.id, 'name': row.name, 'version': row.version,
                 'kind': 'road' if road else 'case', 'checksum': row.checksum,
+                'evaluation_family': row.manifest.get('evaluation_family', 'all'),
                 'sample_count': len(row.manifest['entries']), 'created_at': row.created_at})
         except (PermissionError, ValueError):
             continue

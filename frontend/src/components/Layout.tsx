@@ -1,276 +1,57 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { LogoutOutlined } from '@ant-design/icons'
-import { Tooltip } from 'antd'
-import { runtimeApi } from '../services/runtime'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { ApartmentOutlined, DesktopOutlined, FileTextOutlined, FolderOpenOutlined, HomeOutlined, LogoutOutlined, MenuOutlined, RobotOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
+import { Avatar, Breadcrumb, Button, Drawer, Select } from 'antd'
 import { useAuth } from '../auth/AuthContext'
-import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../config/features'
-import type { ThemeMode } from '../theme/themeMode'
+import { useRuntimeFeatures } from '../config/useRuntimeFeatures'
+import { navigation, visibleNavigation } from '../config/navigation'
 import ActiveWorkSessionBar from './ActiveWorkSessionBar'
 import './Layout.css'
+import { MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { useThemeMode } from '../theme/ThemeContext'
+import { caseContextPath } from '../services/caseContext'
 
-interface LayoutProps {
-  children: React.ReactNode
-  themeMode: ThemeMode
-  onToggleTheme: () => void
-}
+const icons = [HomeOutlined, DesktopOutlined, FolderOpenOutlined, ApartmentOutlined, ApartmentOutlined, FileTextOutlined, RobotOutlined, SettingOutlined]
 
-const NAV_ITEMS = [
-  { label: '总览', num: '01', paths: ['/workbench', '/dashboard', '/'] },
-  { label: '案件', num: '02', paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial', '/graphs/evidence'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial', '/graphs/evidence'] },
-  { label: '研判', num: '03', paths: ['/situation', '/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'] },
-  { label: '数智', num: '04', paths: ['/intelli-inspect'] },
-  { label: '助手', num: '05', paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'] },
-  { label: '展示', num: '06', paths: ['/showcase'], analystOnly: true },
-  { label: '设置', num: '07', paths: ['/settings', '/settings/users'], adminOnly: true },
-]
-
-type SubNavItem = { label: string; path: string }
-
-const SUB_NAVS: { paths: string[]; items: SubNavItem[] }[] = [
-  {
-    paths: ['/workbench', '/dashboard', '/'],
-    items: [
-      { label: '今日工作', path: '/workbench' },
-      { label: '指挥大屏', path: '/dashboard' },
-      { label: '系统首页', path: '/' },
-    ],
-  },
-  {
-    paths: agentLabEnabled ? ['/assistant', '/agents'] : ['/assistant'],
-    items: [
-      { label: '研判助手', path: '/assistant' },
-      ...(agentLabEnabled ? [{ label: '智能运行运维', path: '/agents' }] : []),
-    ],
-  },
-  {
-    paths: bonusAccountingEnabled ? ['/cases', '/cases/map', '/cases/spacetime', '/cases/bonus', '/cases/features', '/graphs/serial', '/graphs/evidence'] : ['/cases', '/cases/map', '/cases/spacetime', '/cases/features', '/graphs/serial', '/graphs/evidence'],
-    items: [
-      { label: '案件列表', path: '/cases' },
-      { label: '地图视图', path: '/cases/map' },
-      { label: '时空研判', path: '/cases/spacetime' },
-      ...(bonusAccountingEnabled ? [{ label: '奖金核算', path: '/cases/bonus' }] : []),
-      { label: '特征提取', path: '/cases/features' },
-      { label: '关系图谱', path: '/graphs/serial' },
-      { label: '证据图谱', path: '/graphs/evidence' },
-    ],
-  },
-  {
-    paths: ['/situation', '/case-review', '/suggestions', '/case-intelligence', '/area-analysis', '/jurisdiction', '/reports', '/conclusions'],
-    items: [
-      { label: '态势研判', path: '/situation' },
-      { label: '闭环工作台', path: '/case-review' },
-      { label: '待办中心', path: '/suggestions' },
-      { label: '案件研判', path: '/case-intelligence' },
-      { label: '时空区域', path: '/area-analysis' },
-      { label: '辖区底座', path: '/jurisdiction' },
-      { label: '分析报告', path: '/reports' },
-      { label: '情报结论', path: '/conclusions' },
-    ],
-  },
-  {
-    paths: ['/settings', '/settings/users'],
-    items: [
-      { label: '系统配置', path: '/settings' },
-      { label: '用户与权限', path: '/settings/users' },
-    ],
-  },
-]
-
-function Clock() {
-  const [time, setTime] = useState(new Date())
-  useEffect(() => {
-    const id = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const days = ['日', '一', '二', '三', '四', '五', '六']
-  return (
-    <div className="topbar-clock">
-      <div className="t">
-        <span>{pad(time.getHours())}</span>
-        <span className="sep">:</span>
-        <span>{pad(time.getMinutes())}</span>
-        <span className="sep">:</span>
-        <span>{pad(time.getSeconds())}</span>
-      </div>
-      <div className="d">
-        {time.getFullYear()}-{pad(time.getMonth() + 1)}-{pad(time.getDate())}
-        {' · '}星期{days[time.getDay()]}
-      </div>
-    </div>
-  )
-}
-
-const Layout: React.FC<LayoutProps> = ({ children, themeMode, onToggleTheme }) => {
-  const navigate = useNavigate()
-  const location = useLocation()
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const { mode, toggle } = useThemeMode()
   const { user, logout } = useAuth()
-
-  // ── 真实后端状态 ──────────────────────────────────────────────
-  const { data: runtime, isSuccess: backendOk, isError: backendErr } = useQuery({
-    queryKey: ['runtime-status'],
-    queryFn: runtimeApi.status,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    retry: 1,
-  })
-
-  const modelDisplay = runtime
-    ? `${runtime.active_model_count} 个可用模型`
-    : backendErr ? '未连接' : '加载中...'
-  const mcpActive = runtime?.map_configured ?? false
-
-  // DB/后端状态
-  const dbStatus = backendErr ? 'err' : backendOk ? 'ok' : 'loading'
-
-  // ── 子导航计算 ────────────────────────────────────────────────
-  const rawSubNav = SUB_NAVS.find(n => n.paths.includes(location.pathname)) ?? null
-  const subNav = rawSubNav
-    ? {
-        ...rawSubNav,
-        items: rawSubNav.items.filter(item => item.path !== '/agents' || canAccessAgentLab(user?.role)),
-      }
-    : null
-  const isDashboard = location.pathname === '/dashboard'
-
-  const visibleNavItems = NAV_ITEMS.filter(item => (!item.adminOnly || user?.role === 'admin') &&
-    (!item.analystOnly || user?.role === 'admin' || user?.role === 'analyst'))
-
-  const isActive = (item: typeof NAV_ITEMS[number]) =>
-    item.paths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'))
-
-  const goto = (e: React.MouseEvent, path: string) => {
-    e.preventDefault()
-    navigate(path)
-  }
-
-  return (
-    <div className="app-shell">
-
-      {/* ── Topbar ── */}
-      <header className="topbar">
-        {/* Brand */}
-        <a className="brand" href="/dashboard" onClick={e => goto(e, '/dashboard')}>
-          <div className="mark">AiC</div>
-          <div className="wordmark">
-            <div className="n">{isDashboard ? 'AiCommander 指挥大屏' : '涉油案件指挥系统'}</div>
-            <div className="s">
-              {isDashboard ? '涉油案件 · 数智化研判与防控支撑系统 · ' : 'AiCommander · '}
-              <span className="pulse">● 实时</span>
-            </div>
-          </div>
-        </a>
-
-        {/* Tab navigation */}
-        <nav className="top-nav">
-          {visibleNavItems.map(item => (
-            <a
-              key={item.num}
-              href={item.paths[0]}
-              className={isActive(item) ? 'active' : ''}
-              onClick={e => goto(e, item.paths[0])}
-            >
-              {item.label} <span className="num">{item.num}</span>
-            </a>
-          ))}
-        </nav>
-
-        {/* Clock */}
-        <Clock />
-
-        {/* System chips */}
-        <div className="sys-chips">
-          <span className={`chip${dbStatus === 'ok' ? ' live' : dbStatus === 'err' ? ' err' : ''}`}>
-            <span className="dot" style={dbStatus === 'err' ? { background: 'var(--err)' } : {}} />
-            {dbStatus === 'err' ? '服务离线' : '实时连接'}
-          </span>
-          <span className="chip accent">
-            <span className="dot" style={{ background: 'var(--accent)' }} />
-            {runtime ? runtime.active_model_count > 0 ? '模型已配置' : '未配置模型' : '模型状态待确认'}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={onToggleTheme}
-          title={themeMode === 'dark' ? '切换为明亮主题' : '切换为暗色主题'}
-        >
-          <span className="theme-toggle-k">主题</span>
-          <span className="theme-toggle-v">{themeMode === 'dark' ? '暗' : '明'}</span>
-        </button>
-
-        {/* User */}
-        <div className="user-badge">
-          <div className="a">{user?.display_name.slice(0, 1) || '用'}</div>
-          <div>
-            <div className="n">{user?.display_name}</div>
-            <div className="r">{user?.role === 'admin' ? '系统管理员' : user?.role === 'analyst' ? '研判人员' : '只读查看'}</div>
-          </div>
-          <Tooltip title="退出登录">
-            <button type="button" className="user-logout" aria-label="退出登录" onClick={() => void logout()}>
-              <LogoutOutlined />
-            </button>
-          </Tooltip>
-        </div>
-      </header>
-
-      {/* ── Sub-nav（案件/研判 模块内页签）── */}
-      {subNav && (
-        <nav className="sub-nav">
-          {subNav.items.map(item => (
-            <a
-              key={item.path}
-              href={item.path}
-              className={location.pathname === item.path ? 'active' : ''}
-              onClick={e => goto(e, item.path)}
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
-      )}
-
-      <ActiveWorkSessionBar />
-
-      {/* ── Main content ── */}
-      <main className="app-main">
-        {children}
-      </main>
-
-      {/* ── Status bar ── */}
-      <footer className="statusbar">
-        <span>
-          <span className="k">数据库</span>
-          <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
-            {dbStatus === 'err' ? '× 未连接' : `● ${runtime?.database === 'postgresql' ? 'PostgreSQL' : 'SQLite'}`}
-          </span>
-        </span>
-        <span>
-          <span className="k">缓存</span>
-          <span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>
-            {runtime?.redis === 'ok' ? '● Redis' : '× Redis'}
-          </span>
-        </span>
-        <span>
-          <span className="k">模型</span>
-          <span className={`v${(runtime?.active_model_count || 0) > 0 ? ' accent' : ''}`}>{modelDisplay}</span>
-        </span>
-        <span>
-          <span className="k">地图 MCP</span>
-          <span className={`v${mcpActive ? ' ok' : ''}`}>
-            {mcpActive ? `${runtime?.map_provider || '地图'} 已配置` : '未配置'}
-          </span>
-        </span>
-        <div className="statusbar-right">
-          <span><span className="k">后端</span><span className={`v${dbStatus === 'ok' ? ' ok' : dbStatus === 'err' ? ' err' : ''}`}>{dbStatus === 'ok' ? '在线' : dbStatus === 'err' ? '离线' : '...'}</span></span>
-          <span><span className="k">版本</span><span className="v">v{runtime?.version || '4.5.0-stable'}</span></span>
-        </div>
-      </footer>
+  const { availability, query: { data: runtime } } = useRuntimeFeatures()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  useEffect(() => setOpen(false), [location.pathname])
+  const groups = visibleNavigation(user?.role || 'viewer', feature => availability[feature] === 'enabled')
+  const current = groups.find(group => group.pages.some(page => page.path === location.pathname))
+  const page = current?.pages.find(item => item.path === location.pathname)
+  const secondary = current && current.pages.length > 1
+  const contextPath = (path: string) => ['/cases', '/cases/map', '/case-intelligence', '/graphs/evidence', '/graphs/serial', '/assistant', '/reports', '/conclusions'].includes(path)
+    ? caseContextPath(path, new URLSearchParams(location.search)) : path
+  const sidebar = <>
+    <Link className="workspace-brand" to="/workbench"><strong>AiCommander</strong><span>涉油案件研判</span></Link>
+    <nav className="primary-navigation" aria-label="一级功能菜单">
+      {groups.map(group => {
+        const Icon = icons[navigation.findIndex(item => item.label === group.label)]
+        return <Link key={group.label} className={`${current?.label === group.label ? 'selected' : ''} ${group.label === '系统设置' ? 'settings-entry' : ''}`} to={contextPath(group.pages[0].path)} aria-current={current?.label === group.label ? 'page' : undefined}><Icon /><span>{group.label}</span></Link>
+      })}
+    </nav>
+    <div className="workspace-account">
+      <button className="workspace-theme-toggle" type="button" role="switch" aria-checked={mode === 'dark'} aria-label="深色主题" onClick={toggle}>{mode === 'dark' ? <MoonOutlined /> : <SunOutlined />}<span>{mode === 'dark' ? '深色主题' : '浅色主题'}</span><span className="theme-switch-track" aria-hidden="true" /></button>
+      <div className="account-identity"><Avatar icon={<UserOutlined />} /><div><strong>{user?.display_name}</strong><span>{user?.role === 'admin' ? '系统管理员' : user?.role === 'analyst' ? '研判人员' : '只读查看'}</span></div></div>
+      <small className="workspace-version">运行版本 {runtime?.version || '5.2.0-stable'}</small>
+      <button type="button" onClick={() => void logout()}><LogoutOutlined />退出登录</button>
     </div>
-  )
+  </>
+  return <div className={`app-shell workspace-shell ${secondary ? 'with-secondary' : ''}`}>
+    <aside className="workspace-sidebar">{sidebar}</aside>
+    <Drawer className="workspace-nav-drawer" title="功能导航" placement="left" width={260} open={open} onClose={() => setOpen(false)}>{sidebar}</Drawer>
+    {secondary && <aside className="workspace-secondary"><h2>{current.label}</h2><nav aria-label="二级功能菜单">{current.pages.map(item => <Link key={item.path} to={contextPath(item.path)} className={item.path === location.pathname ? 'selected' : ''} aria-current={item.path === location.pathname ? 'page' : undefined}>{item.label}</Link>)}</nav></aside>}
+    <div className="workspace-body">
+      <header className="workspace-header"><Button className="mobile-nav-trigger" icon={<MenuOutlined />} aria-label="打开导航" onClick={() => setOpen(true)} /><Breadcrumb items={[{ title: current?.label || 'AiCommander' }, { title: page?.label || '页面未找到' }]} />
+        {secondary && <Select aria-label="当前功能页面" className="compact-secondary" value={location.pathname} onChange={(path: string) => navigate(contextPath(path))} options={current.pages.map(item => ({ label: item.label, value: item.path }))} />}
+      </header>
+      {location.pathname === '/legacy-home' && <ActiveWorkSessionBar />}
+      <main className="app-main" data-page={location.pathname}>{children}</main>
+    </div>
+  </div>
 }
-
-export default Layout

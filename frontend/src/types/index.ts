@@ -267,6 +267,12 @@ export interface KnowledgeSearchResponse {
   total: number
   insufficient_evidence?: boolean
   boundary?: string
+  state?: 'ready' | 'partial'
+  history?: {
+    state: 'ready' | 'partial'
+    semantic_index_state: 'not_enabled' | 'unavailable' | 'partial' | 'ready'
+    coverage: { authorized_cases: number; scanned_cases: number; complete: boolean }
+  }
 }
 
 export interface EvidenceQaResponse {
@@ -601,6 +607,7 @@ export interface CaseFeatures {
 }
 
 export interface Case {
+  updated_at?: string | null
   id: number
   operational_area_id?: number | null
   case_number: string
@@ -830,6 +837,8 @@ export interface StructuredAiEvidenceRef {
 }
 
 export interface StructuredAiOutput {
+  confidence_available?: boolean
+  source_result?: ConclusionSourceResult
   title: string
   output_type: string
   draft_status: 'draft' | string
@@ -1333,6 +1342,13 @@ export interface MeetingInfo {
   created_at?: string
 }
 
+export interface ConclusionSourceResult {
+  result_id: string
+  content_sha256: string
+  schema_version: string
+  versions: Record<string, unknown>
+}
+
 export interface Conclusion {
   id: number
   case_id: number
@@ -1344,9 +1360,12 @@ export interface Conclusion {
   model_status?: string
   ai_output?: StructuredAiOutput
   confidence: number
+  confidence_available?: boolean
   risk_level: string
   summary?: string
   evidence?: {
+    confidence_available?: boolean
+    source_result?: ConclusionSourceResult
     key_evidence?: string[]
     recommendations?: string[]
     ai_output?: StructuredAiOutput
@@ -1370,6 +1389,7 @@ export interface Conclusion {
 }
 
 export interface ConclusionFilters {
+  case_id?: number
   status?: string
   meeting_id?: string
   risk_level?: string

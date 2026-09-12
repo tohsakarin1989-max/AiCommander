@@ -12,7 +12,7 @@ command -v openssl >/dev/null 2>&1 || {
 if [ ! -f "$ENV_FILE" ]; then
     cp "$ROOT_DIR/.env.production.example" "$ENV_FILE"
     chmod 0600 "$ENV_FILE"
-    echo "已创建 ${ENV_FILE}，请修改 APP_DOMAIN 后再部署"
+    echo "已创建 ${ENV_FILE}，请配置 APP_DOMAIN 和含 PostGIS/pgvector 的 POSTGIS_IMAGE 后再部署"
 fi
 
 configured_secrets_dir="$(sed -n 's/^SECRETS_DIR=//p' "$ENV_FILE" | tail -1)"

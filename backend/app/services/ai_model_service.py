@@ -61,7 +61,9 @@ class AIModelService:
             return None
         
         for key, value in kwargs.items():
-            if key == "api_key" and value:
+            if key == "api_key":
+                if not value:
+                    continue  # 编辑表单留空表示保留已保存的凭据。
                 value = encrypt_api_key(value)
             if value is not None:
                 setattr(model, key, value)
@@ -116,4 +118,3 @@ class AIModelService:
     def get_decrypted_api_key(model: AIModel) -> str:
         """获取解密后的API密钥"""
         return decrypt_api_key(model.api_key)
-

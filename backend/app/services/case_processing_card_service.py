@@ -56,7 +56,7 @@ class CaseProcessingCardService:
             groups.append(bonus_group)
 
         experience = profile.get("experience_card") or {}
-        if experience.get("manual_review_status") not in {"confirmed", "approved"}:
+        if CaseProfileService.experience_needs_review(experience):
             groups.append({
                 "key": "experience",
                 "label": "经验卡待确认",

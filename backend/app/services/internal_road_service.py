@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import AreaWriteAccessError, require_area_write_access
 from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
 from app.models.map_foundation import MapSource
+from app.models.jurisdiction import JurisdictionAsset
 from app.services.internal_road_import import preview_internal_roads
 
 
@@ -86,6 +87,9 @@ def read_import(db, source_id, import_id):
         evidence = review.connection_evidence if review and review.decision == "verified" else None
         item["recorded_connection_evidence"] = evidence
         item["connection_review_id"] = review.id if evidence else None
+        item["facility_link_verified"] = bool(evidence and evidence.get("status") == "connected"
+            and evidence.get("facility_asset_id") == item["facility_asset_id"]
+            and item["facility_link_status"] == "declared_pending_verification")
         # 来源核验证据与路网构建结果分开，不把记录当作已经生成了可通行连接。
     return result
 
@@ -107,6 +111,13 @@ def entrance_checks(db, record):
         InternalRoadImport.source_id == record.source_id,
         InternalRoadImport.id.in_({item.import_id for item in versions})).all()}
     output = []
+    asset_ids = {feature["properties"].get("facility_asset_id") for feature in entrances
+                 if type(feature["properties"].get("facility_asset_id")) is int}
+    # A declared ID is not ownership evidence. Resolve only current visible
+    # assets in the same source area; never fetch names from another area.
+    visible_assets = {asset.id for asset in db.query(JurisdictionAsset).filter(
+        JurisdictionAsset.id.in_(asset_ids), JurisdictionAsset.operational_area_id == record.operational_area_id,
+        JurisdictionAsset.status == "active").all()} if asset_ids else set()
     for entrance in entrances:
         identifier = entrance["properties"]["road_id"]
         target_version = by_id.get(identifier)
@@ -124,6 +135,12 @@ def entrance_checks(db, record):
                 else "coincident_vertex_pending_verification" if any(point in line for line in lines)\
                 else "connection_geometry_pending_verification"
         output.append({"entrance_id": entrance["id"], "declared_road_id": identifier,
+                       "facility_asset_id": entrance["properties"].get("facility_asset_id"),
+                       "facility_link_status": ("not_recorded" if "facility_asset_id" not in entrance["properties"] else
+                           "declared_pending_verification" if type(entrance["properties"]["facility_asset_id"]) is int
+                           and entrance["properties"]["facility_asset_id"] in visible_assets else
+                           "unavailable"),
+                       "facility_link_verified": False,
                        "road_import_id": batch.id if batch else None,
                        "road_source_sha256": batch.input_sha256 if batch else None,
                        "status": status, "connected": None, "routing_available": False,
@@ -271,6 +288,10 @@ def review_feature(db, source_id, import_id, feature_id, data, actor_id):
         if (connection["road_import_id"] != check["road_import_id"]
                 or connection["road_source_sha256"] != check["road_source_sha256"]):
             raise RoadReviewConflict("道路来源版本不匹配，请重新核对入口")
+        if connection.get("facility_asset_id") is not None and (
+                connection["facility_asset_id"] != check["facility_asset_id"]
+                or check["facility_link_status"] != "declared_pending_verification"):
+            raise RoadReviewConflict("设施编号与入口来源声明不一致或当前不可访问")
     query = db.query(InternalRoadReview).filter_by(import_id=import_id, feature_id=feature_id)
     repeated = query.filter_by(request_key=data["request_key"]).first()
     if repeated:

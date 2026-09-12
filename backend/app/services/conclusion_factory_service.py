@@ -1,11 +1,15 @@
 import json
 from typing import Dict, Any, Optional, List
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+from app.database import require_area_write_access
 from app.models.conclusion import Conclusion
+from app.models.case_result import CaseResultSnapshot
 from app.models.ai_model import AIModel
 from app.ai.model_factory import ModelFactory
-from app.services.case_service import CaseService
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_result_access import CaseResultAccessError
+from app.services.case_result_service import CaseResultService
 from app.services.vector_db_service import VectorDBService
 from app.models.meeting import Meeting, AnalysisResult, Ranking
 from app.models.report import Report
@@ -14,7 +18,23 @@ from app.utils.logger import logger
 from app.config import settings
 
 
+class ConclusionResultPendingError(ValueError):
+    """不再为缺失或过期成果同步重跑分析。"""
+
+    def __init__(self):
+        super().__init__("当前案件成果尚未就绪，请等待后台成果更新后再生成草稿。")
+
+
 class ConclusionFactoryService:
+    @staticmethod
+    def _meeting_report_summary(report: Optional[Report]) -> str:
+        content = report.content if report else None
+        if isinstance(content, dict):
+            content = content.get("summary") or json.dumps(content, ensure_ascii=False, default=str)
+        if not isinstance(content, str):
+            content = ""
+        return content[:500] or "基于圆桌会议研判生成的综合结论"
+
     @staticmethod
     def _json_safe(value: Any) -> Any:
         """将研判证据转成数据库 JSON 字段可存储的结构。"""
@@ -51,12 +71,13 @@ class ConclusionFactoryService:
         if settings.ENABLE_VECTOR_DB and case_dict.get("description"):
             try:
                 vector_db = VectorDBService()
-                if vector_db.is_available():
+                if vector_db.is_available(db):
                     results = vector_db.search_similar_cases(
                         case_dict.get("description", ""),
                         top_k=5,
                         min_similarity=0.6,
                         operational_area_ids=[case_dict["operational_area_id"]],
+                        db=db,
                     )
                     evidence["similar_cases"] = results
             except Exception as e:
@@ -167,103 +188,129 @@ class ConclusionFactoryService:
         )
 
     @staticmethod
-    async def generate_conclusion(db: Session, case_id: int) -> Conclusion:
-        case = CaseService.get_case(db, case_id)
-        if not case:
-            raise ValueError("案件不存在")
+    def require_conclusion_result_access(db: Session, conclusion: Conclusion) -> None:
+        """新结论的每次交付/复核都验证冻结来源；旧会议结论保持既有契约。"""
+        evidence = conclusion.evidence if isinstance(conclusion.evidence, dict) else {}
+        if "source_result" not in evidence:
+            return
+        source = evidence["source_result"]
+        if not isinstance(source, dict) or not isinstance(source.get("result_id"), str):
+            raise CaseResultAccessError()
+        result = CaseResultService.read(db, source["result_id"])
+        if (result["content"]["case_id"] != conclusion.case_id
+                or result["content_sha256"] != source.get("content_sha256")
+                or result["content"]["schema_version"] != source.get("schema_version")
+                or result["content"]["versions"] != source.get("versions")):
+            raise CaseResultAccessError()
 
-        case_dict = {
-            "case_id": case.id,
-            "case_number": case.case_number,
-            "occurred_time": str(case.occurred_time),
-            "location": case.location,
-            "case_type": case.case_type,
-            "description": case.description,
-            "loss_amount": case.loss_amount,
-            "modus_operandi": case.modus_operandi,
-            "features": case.features,
-            "operational_area_id": case.operational_area_id,
+    @staticmethod
+    def _result_text(value: Any) -> str:
+        if isinstance(value, dict):
+            return str(value.get("label") or value.get("message") or value.get("summary")
+                       or value.get("claim") or json.dumps(value, ensure_ascii=False, sort_keys=True))
+        return str(value)
+
+    @staticmethod
+    def _result_draft(result: dict) -> dict:
+        """只重新排版冻结内容，不抽取原文、不检索、不推理或生成新建议。"""
+        content = result["content"]
+        labels = {
+            "occurred_time": "发生时间", "location": "地点", "case_type": "案件类型",
+            "oil_type": "油品类型", "oil_nature": "油品性质", "facility_type": "设施类型",
+            "modus_operandi": "作案手法", "report_unit": "报告单位", "source_type": "线索来源",
         }
-        evidence = ConclusionFactoryService._build_evidence(db, case_dict)
-
-        llm = ConclusionFactoryService._get_llm(db)
-        payload: Dict[str, Any]
-        if llm:
-            model_status = "llm_success"
-            prompt = f"""你是涉油案件研判结论助手，请基于案件、证据链和结构化研判依据输出结论。
-要求：
-1. 只输出 JSON；
-2. 必须区分事实依据、模式推断和防控参考；
-3. 不做犯罪预测，不写成已派发任务，不编造未掌握的人车链条；
-4. confidence 为 0-1，依据不足时降低置信度。
-
-JSON字段：
-- summary: 300字以内综合结论
-- confidence: 0-1
-- risk_level: low|medium|high|unknown
-- key_evidence: 字符串数组，只写事实依据
-- inference_notes: 字符串数组，只写需要人工复核的推断
-- recommendations: 字符串数组，只写防控参考或信息补齐建议
-
-案件：{json.dumps(case_dict, ensure_ascii=False, default=str)}
-证据链：{json.dumps(evidence, ensure_ascii=False, default=str)}
-"""
-            try:
-                response = await llm.ainvoke(prompt)
-                content = response.content if hasattr(response, "content") else str(response)
-                payload = json.loads(content)
-            except Exception as e:
-                logger.warning(f"结论生成解析失败，使用降级方案: {e}")
-                payload = ConclusionFactoryService._fallback_summary(case_dict)
-                model_status = "llm_failed"
-        else:
-            payload = ConclusionFactoryService._fallback_summary(case_dict)
-            model_status = "deterministic_fallback"
-
-        safe_evidence = ConclusionFactoryService._json_safe(evidence)
-        confidence = float(payload.get("confidence", 0.0))
-        risk_level = payload.get("risk_level", "unknown")
-        status = "needs_review"
-        information_gaps = []
-        case_intel = safe_evidence.get("case_intelligence") if isinstance(safe_evidence, dict) else None
-        if isinstance(case_intel, dict):
-            report_ai = (case_intel.get("report") or {}).get("ai_output") or {}
-            information_gaps.extend(report_ai.get("information_gaps") or [])
-        ai_output = ConclusionFactoryService._build_conclusion_ai_output(
-            title=f"{case.case_number or case_id} 情报结论草稿",
+        facts = [content["facts_summary"]["label"]]
+        for key, value in content["facts_summary"]["recorded_fields"].items():
+            if value is not None and value != "":
+                facts.append(f"{labels.get(key, key)}：{ConclusionFactoryService._result_text(value)}")
+        candidates = content["candidates"]
+        gaps = [ConclusionFactoryService._result_text(item)
+                for items in content["information_gaps"].values() for item in items]
+        evidence_ids = list(content["facts_summary"]["evidence_refs"])
+        for candidate in candidates:
+            evidence_ids.extend(candidate["evidence_refs"])
+            gaps.extend(f"{candidate['title']}：{ConclusionFactoryService._result_text(item)}"
+                        for item in candidate["information_gaps"])
+            gaps.extend(f"{candidate['title']}（反向依据）：{ConclusionFactoryService._result_text(item)}"
+                        for item in candidate["counter_evidence"])
+        evidence_refs = [{"id": ref, "kind": ref.split(":", 1)[0], "summary": ref, "basis": []}
+                         for ref in dict.fromkeys(evidence_ids)]
+        source = {
+            "result_id": result["id"], "content_sha256": result["content_sha256"],
+            "schema_version": content["schema_version"], "versions": content["versions"],
+        }
+        ai_output = CaseIntelligenceService.build_structured_ai_output(
+            title=f"案件 #{content['case_id']} 既有成果结论草稿",
             output_type="conclusion_draft",
-            facts=[
-                f"案件编号：{case.case_number or case_id}",
-                f"发生时间：{case_dict.get('occurred_time') or '未填写'}",
-                f"地点：{case_dict.get('location') or '未填写'}",
-                f"案件类型：{case_dict.get('case_type') or '未填写'}",
-            ],
-            payload=payload,
-            information_gaps=information_gaps,
-            evidence_refs=[
-                {
-                    "id": f"case:{case.case_number or case_id}",
-                    "kind": "case",
-                    "summary": f"案件 {case.case_number or case_id}",
-                    "basis": payload.get("key_evidence") or [],
-                }
-            ],
-            model_status=model_status,
+            facts=facts,
+            inferences=[{"claim": item["claim"], "basis": item["supporting_evidence"],
+                         "confidence": "未校准（规则支持度不是概率）"} for item in candidates],
+            recommendations=[],
+            information_gaps=list(dict.fromkeys(gaps)),
+            evidence_refs=evidence_refs,
+            boundary=[*content["boundary"], "仅复用既有成果形成草稿，不替代人工审核，不自动发布。"],
+            model_status="reused_case_result",
         )
+        # 兼容旧展示结构，同时完整保留每项候选的反向证据与版本，不把规则分数变成概率。
+        for inference, candidate in zip(ai_output["inferences"], candidates):
+            inference.update({key: candidate[key] for key in (
+                "id", "evidence_refs", "counter_evidence", "information_gaps", "boundary",
+                "score", "score_kind", "is_official_fact",
+            )})
+        ai_output["source_result"] = source
+        ai_output["confidence_available"] = False
+        summary = "\n".join([
+            "复用已冻结的案件成果，以下内容为待人工判断草稿。",
+            *facts,
+            *[f"候选（非正式事实）：{item['claim']}" for item in candidates],
+            *([] if candidates else ["当前成果未提供候选，不补造推断。"]),
+            *[f"信息缺口：{item}" for item in dict.fromkeys(gaps)],
+        ])
+        return {
+            "summary": summary,
+            "evidence": ConclusionFactoryService._json_safe({
+                "source_result": source, "key_evidence": facts,
+                "inference_notes": [item["claim"] for item in candidates],
+                "recommendations": [], "information_gaps": list(dict.fromkeys(gaps)),
+                "confidence_available": False, "ai_output": ai_output,
+                "raw": {"case_result": content},
+            }),
+        }
 
+    @staticmethod
+    async def generate_conclusion(db: Session, case_id: int) -> Conclusion:
+        # PostgreSQL按案件串行化同成果请求；只取行锁，不更新任何案件字段。
+        case = db.scalar(select(Case).where(Case.id == case_id).with_for_update()
+                         .execution_options(populate_existing=True))
+        if case is None:
+            raise ValueError("案件不存在")
+        if "authorized_area_ids" not in db.info:
+            raise CaseResultAccessError()
+        require_area_write_access(db, case.operational_area_id)
+        if db.scalar(select(CaseResultSnapshot.id).where(CaseResultSnapshot.case_id == case_id)
+                     .limit(1)) is None:
+            raise ConclusionResultPendingError()
+        result = CaseResultService.latest(db, case_id)
+        if result.get("freshness") != "current":
+            raise ConclusionResultPendingError()
+
+        existing = db.scalar(select(Conclusion).where(
+            Conclusion.case_id == case_id,
+            Conclusion.evidence["source_result"]["result_id"].as_string() == result["id"],
+        ).order_by(Conclusion.id.desc()).limit(1).execution_options(populate_existing=True))
+        if existing is not None:
+            ConclusionFactoryService.require_conclusion_result_access(db, existing)
+            # 包括已发布/驳回/标记记录：重复生成不能抹掉或绕过人工判断。
+            return existing
+
+        draft = ConclusionFactoryService._result_draft(result)
         conclusion = Conclusion(
             case_id=case_id,
-            status=status,
-            confidence=confidence,
-            risk_level=risk_level,
-            summary=payload.get("summary"),
-            evidence={
-                "key_evidence": payload.get("key_evidence", []),
-                "inference_notes": payload.get("inference_notes", []),
-                "recommendations": payload.get("recommendations", []),
-                "ai_output": ai_output,
-                "raw": safe_evidence,
-            },
+            status="needs_review",
+            confidence=0.0,  # 旧数值字段兼容占位；confidence_available=false，非概率或评分。
+            risk_level="unknown",
+            summary=draft["summary"],
+            evidence=draft["evidence"],
         )
         db.add(conclusion)
         db.commit()
@@ -391,7 +438,7 @@ JSON字段：
             except Exception as e:
                 logger.warning(f"从会议生成结论解析失败，使用降级方案: {e}")
                 payload = {
-                    "summary": report.content[:500] if report and report.content else "基于圆桌会议研判生成的综合结论",
+                    "summary": ConclusionFactoryService._meeting_report_summary(report),
                     "confidence": 0.6,
                     "risk_level": "medium",
                     "key_evidence": ["圆桌会议研判结果", f"关联案件 {len(case_ids)} 起"],
@@ -400,7 +447,7 @@ JSON字段：
                 model_status = "llm_failed"
         else:
             payload = {
-                "summary": report.content[:500] if report and report.content else "基于圆桌会议研判生成的综合结论",
+                "summary": ConclusionFactoryService._meeting_report_summary(report),
                 "confidence": 0.5,
                 "risk_level": "medium",
                 "key_evidence": ["圆桌会议研判结果"],

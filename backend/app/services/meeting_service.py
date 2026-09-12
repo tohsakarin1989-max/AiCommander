@@ -27,6 +27,25 @@ async def _default_progress_callback(meeting_id: str, stage: int, stage_name: st
 class MeetingService:
 
     @staticmethod
+    def validate_models(db: Session, moderator_model_id: int, analyst_model_ids: List[int]) -> None:
+        from app.models.ai_model import AIModel
+
+        moderator = db.query(AIModel).filter(
+            AIModel.id == moderator_model_id, AIModel.is_active.is_(True),
+            AIModel.role == "moderator",
+        ).first()
+        if not moderator:
+            raise ValueError("请选择有效且启用的主持人模型")
+        if not analyst_model_ids or len(set(analyst_model_ids)) != len(analyst_model_ids):
+            raise ValueError("请选择不重复的分析员模型")
+        count = db.query(AIModel).filter(
+            AIModel.id.in_(analyst_model_ids), AIModel.is_active.is_(True),
+            AIModel.role == "analyst",
+        ).count()
+        if count != len(analyst_model_ids):
+            raise ValueError("请选择有效且启用的分析员模型")
+
+    @staticmethod
     def bind_existing_meeting_scope(
         db: Session,
         meeting_id: str,
@@ -77,6 +96,7 @@ class MeetingService:
         if existing_meeting_id:
             MeetingService.bind_existing_meeting_scope(db, existing_meeting_id, case_ids)
         operational_area_id = MeetingService.resolve_meeting_area(db, case_ids)
+        MeetingService.validate_models(db, moderator_model_id, analyst_model_ids)
         # 检查圆桌会议配置
         meeting_provider = SystemConfigService.get_config_value(db, "meeting_api_provider", "direct")
         if meeting_provider == "openrouter":
@@ -346,9 +366,8 @@ class MeetingService:
             meeting.final_report_id = report.id
             from datetime import datetime
             meeting.completed_at = datetime.utcnow()
-            db.commit()
             
-            # 记录主持人总结
+            # 报告、排名、总结与完成状态一次提交，失败时整体回滚。
             conv = MeetingConversation(
                 meeting_id=meeting_id,
                 round_number=3,
@@ -358,6 +377,10 @@ class MeetingService:
             )
             db.add(conv)
             db.commit()
+            await manager._notify_progress(
+                stage=3, stage_name="综合报告", status="completed", progress=100,
+                details={"report_generated": True},
+            )
             
             logger.info(f"会议 {meeting_id} 完成（三阶段流程）")
             
@@ -369,6 +392,7 @@ class MeetingService:
             
         except Exception as e:
             logger.error(f"会议 {meeting_id} 执行失败: {str(e)}")
+            db.rollback()
             meeting.status = "failed"
             db.commit()
             raise

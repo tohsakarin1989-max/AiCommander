@@ -21,10 +21,13 @@ class CaseSearchService:
         end_date: datetime | None = None,
         has_geo: bool | None = None,
         operational_area_id: int | None = None,
+        case_id: int | None = None,
         include_categories: bool = True,
     ):
         # 使用 ORM 保持 database.py 对查询、分类聚合和计数的一致范围控制。
         query = db.query(Case)
+        if case_id is not None:
+            query = query.filter(Case.id == case_id)
         if operational_area_id is not None:
             query = query.filter(Case.operational_area_id == operational_area_id)
         if keyword and keyword.strip():
@@ -50,9 +53,9 @@ class CaseSearchService:
     @staticmethod
     def page(db: Session, *, page: int, page_size: int, keyword=None, statuses=None,
              case_types=None, oil_types=None, start_date=None, end_date=None,
-             has_geo=None, operational_area_id=None) -> dict:
+             has_geo=None, operational_area_id=None, case_id=None) -> dict:
         query = CaseSearchService.filtered_query(db, keyword=keyword, start_date=start_date,
-            end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id,
+            end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id, case_id=case_id,
             include_categories=False)
 
         # 分类计数基于授权 + 关键词 + 日期 + 坐标条件，故多选后仍可发现其他分类。

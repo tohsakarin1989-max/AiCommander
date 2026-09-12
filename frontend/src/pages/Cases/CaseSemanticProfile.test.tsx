@@ -10,6 +10,21 @@ const payload: CaseSemantics = {
 }
 
 describe('案件语义画像展示', () => {
+  it('模型片段与规则分开显示，部分、故障、未知不冒充完整事实', () => {
+    for (const [status, label] of [['partial', '部分结果'], ['unavailable', '暂不可用'], ['ready', '已返回']]) {
+      const html = renderToStaticMarkup(<CaseSemanticProfile semantics={{ ...payload,
+        model_extraction: { status, adapter_version: 'test', version: 'model-v1', model_id: 1,
+          items: status === 'unavailable' ? [] : payload.assertions,
+          rejected_items: status === 'partial' ? 1 : 0, boundary: '引用通过不代表模型判断正确。' },
+      }} />)
+      expect(html).toContain(label)
+      expect(html).toContain('不代表完整覆盖原文')
+      expect(html).toContain('规则画像继续可用')
+      expect(html).toContain('model-v1')
+      if (status === 'unavailable') expect(html).toContain('不表示没有线索')
+      else expect(html).toContain('模型判断待核对')
+    }
+  })
   it('保留否定类型和原文出处，不称为已核实事实', () => {
     const html = renderToStaticMarkup(<CaseSemanticProfile semantics={payload} />)
     expect(html).toContain('原文否定')
@@ -40,5 +55,20 @@ describe('案件语义画像展示', () => {
   it('小时精度不显示成原文明示的分钟', () => {
     expect(semanticTimeLabel('2026-09-11T02:00', 'hour')).toBe('2026-09-11 02时')
     expect(semanticTimeLabel('2026-09-11T02:15', 'minute')).toBe('2026-09-11 02:15')
+  })
+  it('片段保留动作否定、缺口和模型未启用状态，不扩大为事实或必填任务', () => {
+    const html = renderToStaticMarkup(<CaseSemanticProfile semantics={{ ...payload, event_fragments: {
+      schema_version: 'event-fragments-5.1-1', deep_model_status: 'not_enabled',
+      boundary: '句内共现不证明实际轨迹。', coverage: { state: 'partial', limit: 100, omitted_fragments: 1 },
+      items: [{ id: 'one', reference: payload.assertions[0].reference,
+        actions: [{ value: '转运', kind: 'negated', reference: payload.assertions[0].reference, is_official_fact: false }],
+        assertion_indices: [0, 999], time_interval_indices: [], missing_dimensions: ['upstream'],
+        relation_status: 'sentence_cooccurrence_only', is_official_fact: false }],
+    } }} />)
+    expect(html).toContain('转运（原文否定）')
+    expect(html).toContain('罐车（原文否定）')
+    expect(html).toContain('提取不完整')
+    expect(html).toContain('深层模型理解未启用')
+    expect(html).toContain('不作为新增必填要求')
   })
 })

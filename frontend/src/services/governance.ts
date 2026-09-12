@@ -1,6 +1,7 @@
 import api from './api'
 
-export type FixedDataset = { id: number; name: string; version: string; kind: 'case' | 'road'; checksum: string; sample_count: number }
+export type FixedScorerPolicy = 'captured' | 'current_candidate' | 'facility_captured' | 'facility_candidate'
+export type FixedDataset = { id: number; name: string; version: string; kind: 'case' | 'road'; checksum: string; sample_count: number; evaluation_family?: 'all' | 'facility_source' }
 export type EvaluationRecord = {
   id: string; dataset_id: number; status: string; started_at: string
   algorithm_manifest: { evaluation_schema?: string; scorer_policy?: string }
@@ -9,6 +10,7 @@ export type EvaluationRecord = {
 export type EvaluationComparison = {
   mode: 'repeatability' | 'algorithm_comparison'; counts: Record<string, number>
   baseline_failed_cases: number; candidate_failed_cases: number; boundary: string
+  baseline_top1_hit_rate?: number | null; candidate_top1_hit_rate?: number | null; evaluation_family?: string
 }
 export type RoadEvaluationJob = {
   event_id: string; status: string; result_status: string | null
@@ -57,10 +59,12 @@ export const governanceApi = {
     (await api.post(`/admin/evaluations/fixed-datasets/${id}/label-versions`, value)).data,
   archiveResult: async (resultId: string, hash: string, name: string, version: string): Promise<{ id: number; name: string; version: string }> =>
     (await api.post('/admin/evaluations/result-archives', { result_id: resultId, expected_checksum: hash, name, version })).data,
+  archiveFacility: async (artifactId: string, name: string, version: string): Promise<{ id: number }> =>
+    (await api.post('/admin/evaluations/facility-datasets', { artifact_ids: [artifactId], name, version })).data,
   getDatasets: async (beforeId?: number): Promise<{ items: FixedDataset[]; next_before_id: number | null }> =>
     (await api.get('/admin/evaluations/fixed-datasets', { params: { before_id: beforeId } })).data,
   getEvaluations: async (): Promise<EvaluationRecord[]> => (await api.get('/admin/evaluations/runs', { params: { limit: 100 } })).data,
-  runFixed: async (datasetId: number, policy: 'captured' | 'current_candidate'): Promise<EvaluationRecord> =>
+  runFixed: async (datasetId: number, policy: FixedScorerPolicy): Promise<EvaluationRecord> =>
     (await api.post('/admin/evaluations/fixed-run', { dataset_id: datasetId, scorer_policy: policy })).data,
   compareFixed: async (baseline: string, candidate: string): Promise<EvaluationComparison> =>
     (await api.post('/admin/evaluations/fixed-compare', { baseline_run_id: baseline, candidate_run_id: candidate })).data,

@@ -48,6 +48,8 @@ export function roadDetourLabel(value?: RoadDetourReference): string {
 export interface CaseRoadRoute {
   schema_version: 'case-road-route-4.2.0-1'; result_id: string; content_sha256: string
   map_snapshot_id: string; target: { asset_id: number; name: string }; boundary: string
+  facility_comparison?: { id: string; content_sha256: string }
+  artifact?: { id: string; content_sha256: string }
   route: { shape_polyline6: string; network_id: string; graph_sha256: string; distance_m: number; analysis_at: string
     detour_reference?: RoadDetourReference
     alternatives?: Array<{ shape_polyline6: string; distance_m: number; reference_time_seconds: number; way_ids: number[]; detour_reference?: RoadDetourReference }>
@@ -56,16 +58,34 @@ export interface CaseRoadRoute {
 }
 
 export type RoadArtifactSummary = { id: string; availability: 'unavailable' } | {
-  id: string; availability: 'available'; operation: 'comparison' | 'route'; created_at: string; content_sha256: string
+  id: string; availability: 'available'; operation: 'comparison' | 'route' | 'facility'; created_at: string; content_sha256: string
+}
+export interface CaseFacilityComparison {
+  schema_version: 'case-facility-comparison-5.2-1'; result_id: string; content_sha256: string; map_snapshot_id: string
+  boundary: string
+  calculation: { network_id: string; graph_sha256: string; policy_revision: number; analysis_at: string; vehicle: RoadVehicle }
+  pool: { input_sha256: string; coverage: { radius_m: number; selected: number; scan_complete: boolean }
+    origin?: { latitude: number; longitude: number }
+    entrances?: Record<string, Array<{ latitude: number; longitude: number }>> }
+  result: {
+    algorithm_version: string
+    scoring_evidence?: unknown[]
+    scorer_checksum?: string
+    coverage: { recalled: number; compared: number; unresolved: number; complete: boolean }
+    candidates: Array<{ asset_id: number; name: string; rank: number; score: number; road_distance_m: number; selected_entry_index?: number;
+      rank_change_from_distance: number; supporting_evidence: string[]; counter_evidence: string[];
+      information_gaps: string[]; evidence_refs: string[] }>
+    unresolved: Array<{ asset_id: number; state: string; score: null }>
+  }
 }
 export interface RoadArtifact {
-  id: string; created_at: string; content_sha256: string; content: CaseRoadComparison | CaseRoadRoute
+  id: string; created_at: string; content_sha256: string; content: CaseRoadComparison | CaseRoadRoute | CaseFacilityComparison
 }
 
 export interface AutomaticRoadComparison {
   result_id: string; content_sha256: string
   status: 'processing' | 'waiting_network' | 'completed' | 'information_missing' | 'unavailable' | 'not_available'
-  artifact: (RoadArtifact & { content: CaseRoadComparison }) | null
+  artifact: (RoadArtifact & { content: CaseRoadComparison | CaseFacilityComparison }) | null
 }
 
 export type RoadBudget = { metric: 'distance'; distance_m: number } | { metric: 'time'; seconds: number }
@@ -128,11 +148,13 @@ export async function readAutomaticRoadComparison(resultId: string, hash: string
     const content = data.artifact?.content
     if (!data.artifact || typeof data.artifact.id !== 'string' || !data.artifact.id.trim()
         || typeof data.artifact.content_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.artifact.content_sha256)
-        || !content || content.schema_version !== 'case-road-comparison-4.2.0-1'
-        || content.result_id !== resultId || content.content_sha256 !== hash || !content.matrix
-        || !Array.isArray(content.targets) || content.targets.length > 3 || !Array.isArray(content.information_gaps)) {
+        || !content || content.result_id !== resultId || content.content_sha256 !== hash) {
       throw new Error('自动道路成果内容不完整')
     }
+    if (content.schema_version === 'case-facility-comparison-5.2-1') validateFacilityComparison(content)
+    else if (content.schema_version !== 'case-road-comparison-4.2.0-1' || !content.matrix
+      || !Array.isArray(content.targets) || content.targets.length > 3 || !Array.isArray(content.information_gaps))
+      throw new Error('自动道路成果内容不完整')
   } else if (data.artifact !== null) {
     throw new Error('未完成任务不能携带道路成果')
   }
@@ -151,10 +173,39 @@ export async function roadArtifactHistory(resultId: string, signal: AbortSignal,
 export async function readRoadArtifact(id: string, resultId: string, hash: string, signal: AbortSignal): Promise<RoadArtifact> {
   const { data } = await api.get<RoadArtifact>(`/road-analysis/artifacts/${encodeURIComponent(id)}`, { signal })
   if (data.id !== id || data.content_sha256 !== hash || data.content.result_id !== resultId
-      || !['case-road-comparison-4.2.0-1', 'case-road-route-4.2.0-1'].includes(data.content.schema_version)) {
+      || !['case-road-comparison-4.2.0-1', 'case-road-route-4.2.0-1', 'case-facility-comparison-5.2-1'].includes(data.content.schema_version)) {
     throw new Error('历史道路成果引用不一致，请重新读取列表')
   }
+  if (data.content.schema_version === 'case-facility-comparison-5.2-1') validateFacilityComparison(data.content)
   return data
+}
+
+export function validateFacilityComparison(value: CaseFacilityComparison): void {
+  const result = value.result
+  const nonnegative = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  const count = (v: unknown) => nonnegative(v) && Number.isInteger(v)
+  const validStates = ['entrance_unknown', 'permission_unknown', 'restricted', 'no_path_found',
+    'network_missing', 'calculation_failed', 'not_calculated']
+  if (!value.calculation?.network_id || !value.map_snapshot_id || !value.pool?.input_sha256
+    || !result?.coverage || !count(result.coverage.recalled) || !count(result.coverage.compared)
+    || !count(result.coverage.unresolved) || result.coverage.recalled > 100
+    || result.coverage.compared + result.coverage.unresolved !== result.coverage.recalled
+    || result.coverage.compared > result.coverage.recalled || typeof result.coverage.complete !== 'boolean'
+    || !Array.isArray(result.candidates) || result.candidates.length > 3 || !Array.isArray(result.unresolved)
+    || result.candidates.length !== Math.min(3, result.coverage.compared)
+    || result.unresolved.length !== result.coverage.unresolved
+    || (result.coverage.complete && result.unresolved.length > 0)
+    || new Set([...result.candidates, ...result.unresolved].map(item => item.asset_id)).size
+      !== result.candidates.length + result.unresolved.length
+    || result.unresolved.some(item => !Number.isInteger(item.asset_id) || item.asset_id <= 0
+      || item.score !== null || !validStates.includes(item.state))
+    || result.candidates.some((item, index) => !Number.isInteger(item.asset_id) || item.asset_id <= 0
+      || item.rank !== index + 1 || typeof item.name !== 'string' || !nonnegative(item.road_distance_m)
+      || !nonnegative(item.score) || !Number.isInteger(item.rank_change_from_distance)
+      || ![item.supporting_evidence, item.counter_evidence, item.information_gaps, item.evidence_refs]
+        .every(values => Array.isArray(values) && values.every(text => typeof text === 'string'))
+      || !item.evidence_refs.length || !item.counter_evidence.length))
+    throw new Error('设施候选比较内容不完整')
 }
 
 export async function expandCaseRoad(comparison: CaseRoadComparison, assetId: number, signal: AbortSignal): Promise<CaseRoadRoute> {
@@ -168,6 +219,25 @@ export async function expandCaseRoad(comparison: CaseRoadComparison, assetId: nu
       || data.content_sha256 !== comparison.content_sha256 || data.target.asset_id !== assetId
       || data.map_snapshot_id !== comparison.map_snapshot_id || data.route.network_id !== matrix.network_id
       || data.route.graph_sha256 !== matrix.graph_sha256 || data.route.analysis_at !== matrix.analysis_at) throw new Error('路径版本发生变化，请重新比较')
+  return data
+}
+
+export async function expandFacilityRoad(comparison: CaseFacilityComparison,
+  artifact: { id: string; content_sha256: string }, assetId: number, signal: AbortSignal): Promise<CaseRoadRoute> {
+  if (!artifact.id || !comparison.result.candidates.some(item => item.asset_id === assetId))
+    throw new Error('缺少已保存设施候选依据')
+  const { data } = await api.post<CaseRoadRoute>(
+    `/road-analysis/artifacts/${encodeURIComponent(artifact.id)}/facilities/${assetId}/routes`,
+    { content_sha256: artifact.content_sha256 }, { signal })
+  if (data.schema_version !== 'case-road-route-4.2.0-1' || data.result_id !== comparison.result_id
+      || data.content_sha256 !== comparison.content_sha256 || data.target.asset_id !== assetId
+      || data.map_snapshot_id !== comparison.map_snapshot_id
+      || data.facility_comparison?.id !== artifact.id || data.facility_comparison.content_sha256 !== artifact.content_sha256
+      || data.route.network_id !== comparison.calculation.network_id
+      || data.route.graph_sha256 !== comparison.calculation.graph_sha256
+      || data.route.analysis_at !== comparison.calculation.analysis_at
+      || !data.artifact?.id || !/^[a-f0-9]{64}$/.test(data.artifact.content_sha256))
+    throw new Error('设施参考路径版本不一致，请刷新结果')
   return data
 }
 

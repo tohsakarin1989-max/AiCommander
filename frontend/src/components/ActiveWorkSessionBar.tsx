@@ -1,15 +1,13 @@
-import { useEffect } from 'react'
 import { App as AntdApp } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { workbenchApi } from '../services/workbench'
-import { STAGE_LABELS, shouldRecordPageTransition } from '../pages/Workbench/workbenchPresentation'
+import { STAGE_LABELS } from '../pages/Workbench/workbenchPresentation'
 
 
 export default function ActiveWorkSessionBar() {
   const { user } = useAuth()
-  const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { message } = AntdApp.useApp()
@@ -35,13 +33,6 @@ export default function ActiveWorkSessionBar() {
     },
     onError: (error: Error) => message.error(`任务状态更新失败：${error.message}`),
   })
-
-  useEffect(() => {
-    if (!active || !shouldRecordPageTransition(active.last_path, location.pathname)) return
-    void workbenchApi.recordEvent(active.id, 'page_view', location.pathname)
-      .then(() => queryClient.invalidateQueries({ queryKey: ['workbench-active-session'] }))
-      .catch(() => undefined)
-  }, [active?.id, active?.last_path, location.pathname, queryClient])
 
   if (!canTrack || !active) return null
 

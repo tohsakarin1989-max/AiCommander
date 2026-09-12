@@ -7,7 +7,7 @@ import { existingLabel, labelPayload, type LabelDraft } from './evaluationLabels
 const TYPES = [{ value: 'possible_source', label: '盗取来源' }, { value: 'storage_area', label: '囤储区域' },
   { value: 'activity_area', label: '活动区域' }, { value: 'transfer_route', label: '转运方向或路径' }]
 
-export default function EvaluationLabelEditor({ datasetId }: { datasetId: number }) {
+export default function EvaluationLabelEditor({ datasetId, sourceOnly = false }: { datasetId: number; sourceOnly?: boolean }) {
   const cache = useQueryClient()
   const [caseId, setCaseId] = useState<number>()
   const [drafts, setDrafts] = useState<Record<number, LabelDraft>>({})
@@ -45,14 +45,14 @@ export default function EvaluationLabelEditor({ datasetId }: { datasetId: number
       onChange={state => change({ state, labels: state === 'positive' ? [{ hypothesis_type: 'possible_source', expected_asset_ids: [] }] : [] })} /></label>
     {draft.state === 'positive' && <>
       {draft.labels.map((label, index) => <div className="evaluation-label-editor__target" key={index}>
-        <label>目标类型<Select aria-label={`目标类型${index + 1}`} value={label.hypothesis_type} options={TYPES} disabled={locked}
+        <label>目标类型<Select aria-label={`目标类型${index + 1}`} value={label.hypothesis_type} options={sourceOnly ? TYPES.slice(0, 1) : TYPES} disabled={locked}
           onChange={hypothesis_type => editLabel(index, { hypothesis_type })} /></label>
         <label>核验设施<Select mode="multiple" aria-label={`核验设施${index + 1}`} value={label.expected_asset_ids} options={options}
           filterOption={false} showSearch onSearch={setSearch} loading={assets.isFetching} disabled={locked || assets.isError}
           placeholder="按名称查找，仅列该样本辖区设施" onChange={expected_asset_ids => editLabel(index, { expected_asset_ids })} maxCount={20} /></label>
-        <label>核验网格（没有对应设施时填写）<Input aria-label={`核验网格${index + 1}`} value={label.expected_region_grid || ''}
+        {!sourceOnly && <label>核验网格（没有对应设施时填写）<Input aria-label={`核验网格${index + 1}`} value={label.expected_region_grid || ''}
           maxLength={32} disabled={locked} placeholder="纬度:经度，例如 47.00:125.00"
-          onChange={event => editLabel(index, { expected_region_grid: event.target.value || null })} /></label>
+          onChange={event => editLabel(index, { expected_region_grid: event.target.value || null })} /></label>}
         <Button size="small" disabled={locked} onClick={() => change({ ...draft, labels: draft.labels.filter((_, at) => at !== index) })}>移除此目标</Button>
       </div>)}
       {assets.isError && <Alert type="warning" message="设施查询失败，请重试；不使用未授权或缓存中的查找结果。" />}

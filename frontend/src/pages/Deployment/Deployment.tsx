@@ -97,7 +97,7 @@ function DeploymentRouteMap({ routes }: { routes: PatrolRoute[] }) {
 
   return (
     <div style={{ marginBottom: 16, border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
-      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-3)', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ color: 'var(--accent)' }}>⊕</span>
         巡逻路线可视化 · 地理分布
         <span style={{ marginLeft: 'auto', color: 'var(--info)' }}>悬停查看覆盖范围</span>
@@ -225,7 +225,7 @@ function DeploymentRouteMap({ routes }: { routes: PatrolRoute[] }) {
         </g>
       </svg>
       {validRoutes.length === 0 && (
-        <div style={{ padding: '12px 16px', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', textAlign: 'center' }}>
+        <div style={{ padding: '12px 16px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
           生成研判报告后将在此显示巡逻路线地理分布
         </div>
       )}
@@ -688,7 +688,7 @@ const Deployment: React.FC = () => {
                                   关联案件：<span>{route.case_count} 起</span>
                                 </div>
                               </div>
-                              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 6 }}>
+                              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.1em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 6 }}>
                                 建议巡逻时段
                               </div>
                               <div className="dep-route-card__times">
@@ -751,7 +751,7 @@ const Deployment: React.FC = () => {
                                 <span style={{ fontWeight: 600, color: 'var(--ink-0)', fontSize: 13 }}>
                                   {item.type}
                                 </span>
-                                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                                   {item.count} 个/组
                                 </span>
                               </div>

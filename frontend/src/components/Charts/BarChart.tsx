@@ -1,3 +1,4 @@
+import { useThemeMode } from '../../theme/ThemeContext'
 /**
  * 柱状图组件
  * 展示区域分布、热点排名等数据
@@ -35,7 +36,6 @@ export interface BarChartProps {
 const BarChart: React.FC<BarChartProps> = ({
   data,
   height = 300,
-  theme = 'light',
   title,
   horizontal = false,
   showLabel = true,
@@ -43,6 +43,7 @@ const BarChart: React.FC<BarChartProps> = ({
   color,
   maxItems = 10,
 }) => {
+  const { mode: theme } = useThemeMode()
   const displayData = useMemo(() => {
     const sorted = [...data].sort((a, b) => b.value - a.value)
     return sorted.slice(0, maxItems)
@@ -50,10 +51,10 @@ const BarChart: React.FC<BarChartProps> = ({
 
   const colors = useMemo(
     () => ({
-      text: theme === 'dark' ? '#b0b0b0' : '#666',
-      grid: theme === 'dark' ? '#2d2d4a' : '#e8e8e8',
-      primary: color || (theme === 'dark' ? '#00d4ff' : '#1890ff'),
-      secondary: theme === 'dark' ? '#6366f1' : '#722ed1',
+      text: (theme === 'dark' ? '#a9b8b5' : '#606c70'),
+      grid: (theme === 'dark' ? '#303b3e' : '#e8edef'),
+      primary: color || ((theme === 'dark' ? '#69c9ad' : '#126759')),
+      secondary: (theme === 'dark' ? '#84baf1' : '#246da5'),
     }),
     [theme, color]
   )
@@ -98,8 +99,8 @@ const BarChart: React.FC<BarChartProps> = ({
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        backgroundColor: theme === 'dark' ? 'rgba(30,30,50,0.95)' : 'rgba(255,255,255,0.95)',
-        borderColor: theme === 'dark' ? '#444' : '#ddd',
+        backgroundColor: (theme === 'dark' ? '#272f31' : '#ffffff'),
+        borderColor: (theme === 'dark' ? '#435053' : '#d8e0e2'),
         textStyle: { color: colors.text },
       },
       grid: {

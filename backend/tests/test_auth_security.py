@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401
 from app.api import auth
 from app.database import Base, get_db
-from app.models.user import AuditLog, User
+from app.models.user import AuditLog, User, UserSession
 from app.models.map_foundation import OperationalArea, UserAreaScope
 from app.security import AuthMiddleware
 
@@ -229,7 +229,7 @@ def test_login_lockout_logout_and_session_revocation():
 
 
 def test_admin_can_create_viewer_and_viewer_is_read_only():
-    client, _ = _build_client()
+    client, session_factory = _build_client()
     assert _bootstrap_admin(client).status_code == 201
 
     created = client.post(
@@ -253,6 +253,28 @@ def test_admin_can_create_viewer_and_viewer_is_read_only():
     assert client.get("/api/protected").status_code == 200
     assert client.post("/api/protected").status_code == 403
     assert client.get("/api/auth/users").status_code == 403
+
+    token = client.cookies.get("aicommander_session")
+    untrusted = client.post("/api/auth/logout", headers={"Origin": "https://untrusted.example"})
+    assert untrusted.status_code == 403
+    assert client.get("/api/auth/me").status_code == 200
+    assert client.delete("/api/auth/logout").status_code == 403
+
+    logged_out = client.post("/api/auth/logout", headers={"Origin": "http://testserver"})
+    assert logged_out.status_code == 204
+    assert "Max-Age=0" in logged_out.headers["set-cookie"]
+    assert client.cookies.get("aicommander_session") is None
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.get("/api/protected", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    with session_factory() as db:
+        session = db.query(UserSession).filter(UserSession.user_id == created.json()["id"]).one()
+        assert session.revoked_at is not None
+        assert db.query(AuditLog).filter(
+            AuditLog.user_id == created.json()["id"],
+            AuditLog.action == "api.mutation",
+            AuditLog.path == "/api/auth/logout",
+            AuditLog.status_code == 204,
+        ).count() == 1
 
 
 def test_analyst_can_submit_recommendation_feedback_but_not_legacy_deployment():

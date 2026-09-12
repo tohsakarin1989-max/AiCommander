@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
-import { intelligentQueriesApi } from '../../services/intelligentQueries'
+import { intelligentQueriesApi, queryEntryContext } from '../../services/intelligentQueries'
+import type { InitialQueryContext } from '../../services/intelligentQueries'
 import { activeQuery, canFollowup, conditionLines, conditionNames, conditionValue, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
 import { QueryResult } from './QueryResult'
 import './IntelligentQuery.css'
@@ -13,6 +14,12 @@ export default function Assistant() {
   const { user, sessionEpoch } = useAuth()
   const [params, setParams] = useSearchParams()
   const runId = params.get('query') || ''
+  const entry = queryEntryContext(params)
+  const entryConditions = entry.initialContext ? conditionLines({
+    case_filters: { ...entry.initialContext.filters,
+      ...(entry.initialContext.source_case_id ? { case_id: entry.initialContext.source_case_id } : {}) },
+    area: entry.initialContext.filters.operational_area_id ?? null, tool_defaults: {},
+  }) : []
   const [question, setQuestion] = useState('')
   const [exportState, setExportState] = useState('')
   const exportAbort = useRef<AbortController | null>(null)
@@ -23,6 +30,9 @@ export default function Assistant() {
   const live = useRef(true)
   const selection = useRef(runId)
   selection.current = runId
+  const createSource = `${user?.id}:${sessionEpoch}:${params.toString()}`
+  const createSelection = useRef(createSource)
+  createSelection.current = createSource
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const key = ['intelligent-query', user?.id, sessionEpoch, runId]
   const task = useQuery({
@@ -31,9 +41,11 @@ export default function Assistant() {
     refetchInterval: query => !query.state.error && activeQuery(query.state.data?.status) ? 1500 : false,
   })
   const create = useMutation({
-    mutationFn: ({ text, parentId }: { text: string; sourceId: string; parentId?: string }) => intelligentQueriesApi.create(text, parentId),
+    mutationFn: ({ text, parentId, initialContext }: {
+      text: string; sourceId: string; parentId?: string; initialContext?: InitialQueryContext
+    }) => intelligentQueriesApi.create(text, parentId, initialContext),
     onSuccess: (data, variables) => {
-      if (!live.current || selection.current !== variables.sourceId) return
+      if (!live.current || createSelection.current !== variables.sourceId) return
       setQuestion('')
       setParams({ query: data.id })
     },
@@ -50,7 +62,8 @@ export default function Assistant() {
   const busy = create.isPending || activeQuery(current?.status)
   const canQuery = user?.role === 'admin' || user?.role === 'analyst'
   const followup = canFollowup(current)
-  const conditions = conditionLines(current?.result.query_conditions ?? current?.followup_context?.conditions)
+  const conditions = conditionLines(current?.result.query_conditions ?? current?.followup_context?.conditions ?? current?.initial_context?.conditions)
+  const sourceCase = current?.initial_context?.source_case ?? current?.followup_context?.source_case
   async function download(format: 'docx' | 'pdf') {
     if (!current || !followup || exportAbort.current) return
     const id = current.id
@@ -74,24 +87,30 @@ export default function Assistant() {
     }
   }
   function submit() {
-    if (!canQuery || busy || !question.trim() || (runId && !current)) return
+    if (!canQuery || busy || !question.trim() || entry.error || (runId && !current)) return
     cancel.reset()
-    create.mutate({ text: question.trim(), sourceId: runId, parentId: followup ? runId : undefined })
+    create.mutate({ text: question.trim(), sourceId: createSource, parentId: followup ? runId : undefined,
+      initialContext: !runId ? entry.initialContext : undefined })
   }
   return <main className="page-scrollable intelligent-query">
     <header className="page-title"><h1>智能助手</h1><span className="sub">案件与地图查询</span></header>
     <p className="query-intro">输入要查的问题。系统在当前授权范围内调用只读工具，结果不自动变成案件结论或执行任务。</p>
+    {!!entryConditions.length && <section className="query-history-note" aria-label="带入的案件与筛选条件">
+      <strong>已带入当前案件与筛选条件</strong><ul>{entryConditions.map(line => <li key={line}>{line}</li>)}</ul>
+      <p>这些条件只限定查询，不授予数据权限；提交时将核对当前案件及版本。未提交前不会运行分析。</p>
+    </section>}
+    {entry.error && <p role="alert">{entry.error}</p>}
     <form onSubmit={event => { event.preventDefault(); submit() }} className="query-form">
       <label htmlFor="query-question">{followup ? '继续追问' : '查询问题'}</label>
       {followup && <p className="query-history-note">将继承当前查询条件。改变条件请在问题中说明；不继承时选择“新查询”。</p>}
       <textarea id="query-question" value={question} onChange={event => setQuestion(event.target.value)}
         maxLength={2000} rows={3} placeholder="例如：比较 2026年8月 与上一个等长周期的盗油案件数量。"
         disabled={!canQuery || create.isPending} />
-      <div className="query-actions"><button className="btn-primary" type="submit" disabled={!canQuery || busy || !question.trim() || Boolean(runId && !current)}>
+      <div className="query-actions"><button className="btn-primary" type="submit" disabled={!canQuery || busy || !question.trim() || Boolean(entry.error) || Boolean(runId && !current)}>
         {create.isPending ? '正在提交' : followup ? '继续追问' : '提交查询'}</button>
         {activeQuery(current?.status) && <button className="btn-ghost" type="button" disabled={cancel.isPending}
           onClick={() => cancel.mutate(runId)}>{cancel.isPending ? '正在取消' : '取消本次查询'}</button>}
-        {runId && <button className="btn-ghost" type="button" disabled={busy} onClick={() => {
+        {(runId || entry.initialContext || entry.error) && <button className="btn-ghost" type="button" disabled={busy} onClick={() => {
           setParams({}); create.reset(); cancel.reset()
         }}>新查询</button>}
       </div>
@@ -110,6 +129,7 @@ export default function Assistant() {
       <div className="query-status" role="status"><strong>{statusNames[current.status] || '状态未知'}</strong>
         <button className="btn-ghost" disabled={task.isFetching} onClick={() => void task.refetch()}>刷新状态</button></div>
       <p className="query-original">{current.query}</p>
+      {sourceCase && <p className="query-history-note">来源案件 ID：{sourceCase.case_id}。此查询绑定提交时的案件版本。</p>}
       {followup && <div className="query-actions">
         <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('docx')}>导出 Word</button>
         <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('pdf')}>导出 PDF</button>

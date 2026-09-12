@@ -140,3 +140,4 @@ from .internal_roads import InternalRoadImport, InternalRoadReview, InternalRoad
 from .road_network import RoadAccessGroup, RoadAccessMembership, RoadAccessGrant, RoadNetworkVersion
 from .road_public_alias import RoadPublicAlias
 from .case_road_artifact import CaseRoadArtifact
+from .case_history_index import CaseHistoryIndex, CaseHistoryIndexCursor, CaseHistoryEmbedding

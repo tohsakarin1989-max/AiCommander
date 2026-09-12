@@ -44,8 +44,9 @@ class ConnectionManager:
         message_str = json.dumps(message, ensure_ascii=False, default=str)
         disconnected = []
 
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
             try:
+                await _ensure_connection_access(connection)
                 await connection.send_text(message_str)
             except Exception as e:
                 logger.error(f"发送WebSocket消息失败: {e}")
@@ -58,8 +59,11 @@ class ConnectionManager:
     async def send_personal_message(self, message: Dict, websocket: WebSocket):
         """向特定客户端发送消息"""
         try:
+            await _ensure_connection_access(websocket)
             message_str = json.dumps(message, ensure_ascii=False, default=str)
             await websocket.send_text(message_str)
+        except WebSocketDisconnect:
+            raise
         except Exception as e:
             logger.error(f"发送个人消息失败: {e}")
 
@@ -73,6 +77,7 @@ class MeetingConnectionManager:
 
     async def connect(self, websocket: WebSocket, meeting_id: str):
         """接受新的会议WebSocket连接"""
+        websocket.state.meeting_id = meeting_id
         await websocket.accept()
         if meeting_id not in self.meeting_connections:
             self.meeting_connections[meeting_id] = []
@@ -96,8 +101,9 @@ class MeetingConnectionManager:
         message_str = json.dumps(message, ensure_ascii=False, default=str)
         disconnected = []
 
-        for connection in self.meeting_connections[meeting_id]:
+        for connection in list(self.meeting_connections[meeting_id]):
             try:
+                await _ensure_connection_access(connection, meeting_id=meeting_id)
                 await connection.send_text(message_str)
             except Exception as e:
                 logger.error(f"发送会议消息失败: {e}")
@@ -110,8 +116,11 @@ class MeetingConnectionManager:
     async def send_personal_message(self, message: Dict, websocket: WebSocket):
         """向特定客户端发送消息"""
         try:
+            await _ensure_connection_access(websocket)
             message_str = json.dumps(message, ensure_ascii=False, default=str)
             await websocket.send_text(message_str)
+        except WebSocketDisconnect:
+            raise
         except Exception as e:
             logger.error(f"发送个人消息失败: {e}")
 
@@ -124,7 +133,7 @@ manager = ConnectionManager()
 meeting_manager = MeetingConnectionManager()
 
 
-def _dashboard_area_id(websocket: WebSocket) -> int | None:
+def _dashboard_area_id(websocket: WebSocket, *, area_id: int | None = None) -> int | None:
     db = SessionLocal()
     try:
         bind_principal_scope(
@@ -132,14 +141,15 @@ def _dashboard_area_id(websocket: WebSocket) -> int | None:
             getattr(websocket.state, "principal", None),
             method="GET",
         )
-        raw = websocket.query_params.get("operational_area_id")
-        if raw is not None:
-            try:
-                area_id = int(raw)
-            except ValueError:
-                return None
-        else:
-            area_id = db.info.get("default_operational_area_id")
+        if area_id is None:
+            raw = websocket.query_params.get("operational_area_id")
+            if raw is not None:
+                try:
+                    area_id = int(raw)
+                except ValueError:
+                    return None
+            else:
+                area_id = db.info.get("default_operational_area_id")
         if area_id is None:
             return None
         allowed = db.info.get("authorized_area_ids")
@@ -152,6 +162,22 @@ def _dashboard_area_id(websocket: WebSocket) -> int | None:
         return area_id if exists else None
     finally:
         db.close()
+
+
+async def _ensure_connection_access(websocket: WebSocket, *, meeting_id: str | None = None):
+    """Refresh the session principal and scope before reading or sending live data."""
+    if not authenticate_websocket(websocket):
+        await websocket.close(code=4401, reason="authentication required")
+        raise WebSocketDisconnect(code=4401)
+    meeting_id = meeting_id or getattr(websocket.state, "meeting_id", None)
+    if meeting_id is not None:
+        allowed = _can_access_meeting(websocket, meeting_id)
+    else:
+        area_id = getattr(websocket.state, "operational_area_id", None)
+        allowed = area_id is not None and _dashboard_area_id(websocket, area_id=area_id) == area_id
+    if not allowed:
+        await websocket.close(code=4403, reason="resource out of scope")
+        raise WebSocketDisconnect(code=4403)
 
 
 async def broadcast_meeting_progress(meeting_id: str, stage: int, stage_name: str,
@@ -213,14 +239,16 @@ async def websocket_dashboard(websocket: WebSocket):
             await send_dashboard_update(websocket)
             
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
     except Exception as e:
         logger.error(f"WebSocket错误: {e}")
+    finally:
         manager.disconnect(websocket)
 
 
 async def send_initial_data(websocket: WebSocket):
     """发送初始数据"""
+    await _ensure_connection_access(websocket)
     db = SessionLocal()
     try:
         bind_principal_scope(
@@ -275,6 +303,7 @@ async def send_initial_data(websocket: WebSocket):
 
 async def send_dashboard_update(websocket: WebSocket):
     """发送数据更新"""
+    await _ensure_connection_access(websocket)
     db = SessionLocal()
     try:
         bind_principal_scope(
@@ -361,14 +390,16 @@ async def websocket_meeting(websocket: WebSocket, meeting_id: str):
                 break
 
     except WebSocketDisconnect:
-        meeting_manager.disconnect(websocket, meeting_id)
+        pass
     except Exception as e:
         logger.error(f"会议WebSocket错误: {e}")
+    finally:
         meeting_manager.disconnect(websocket, meeting_id)
 
 
 async def send_meeting_status(websocket: WebSocket, meeting_id: str):
     """发送会议当前状态"""
+    await _ensure_connection_access(websocket, meeting_id=meeting_id)
     db = SessionLocal()
     try:
         bind_principal_scope(

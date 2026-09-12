@@ -41,6 +41,7 @@ import {
 } from '../../services'
 import JurisdictionAssetMap from './JurisdictionAssetMap'
 import MapDataGovernance from './MapDataGovernance'
+import { useAuth } from '../../auth/AuthContext'
 import { authApi } from '../../services/auth'
 import './Jurisdiction.css'
 
@@ -258,6 +259,9 @@ const assetColumns: ColumnsType<JurisdictionAsset> = [
 ]
 
 export default function Jurisdiction() {
+  const { user } = useAuth()
+  const canManageAssets = user?.role === 'admin'
+  const canWrite = canManageAssets || user?.role === 'analyst'
   const [form] = Form.useForm<AssetFormValues>()
   const [editForm] = Form.useForm<AssetFormValues>()
   const queryClient = useQueryClient()
@@ -344,7 +348,7 @@ export default function Jurisdiction() {
   const patrolPlanQuery = useQuery<PatrolPlan>({
     queryKey: ['jurisdiction-patrol-plan', activeCaseId],
     queryFn: () => jurisdictionApi.createPatrolPlan({ case_id: activeCaseId as number, limit: 6 }),
-    enabled: activeCaseId != null,
+    enabled: canWrite && activeCaseId != null,
   })
 
   const briefingQuery = useQuery({
@@ -477,6 +481,7 @@ export default function Jurisdiction() {
 
   const openEditAsset = (asset: JurisdictionAsset) => {
     setSelectedAssetId(asset.id)
+    if (!canManageAssets) return
     setEditingAsset(asset)
     editForm.setFieldsValue({
       external_id: asset.external_id ?? undefined,
@@ -523,6 +528,7 @@ export default function Jurisdiction() {
       </section>
 
       <MapDataGovernance />
+      {!canManageAssets && <Alert type="info" message="地图资产由管理员维护，当前账号可查看授权范围内的资产与研判" />}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
@@ -628,7 +634,7 @@ export default function Jurisdiction() {
               type="primary"
               style={{ marginTop: 12 }}
               loading={geoJsonImportMutation.isPending}
-              disabled={!geoJsonInput.trim() || activeAreaId == null}
+              disabled={!canManageAssets || !geoJsonInput.trim() || activeAreaId == null}
               onClick={() => geoJsonImportMutation.mutate()}
             >
               导入并去重更新
@@ -730,7 +736,7 @@ export default function Jurisdiction() {
                 type="primary"
                 htmlType="submit"
                 loading={createAssetMutation.isPending}
-                disabled={activeAreaId == null}
+                disabled={!canManageAssets || activeAreaId == null}
               >
                 录入业务资产
               </Button>
@@ -880,6 +886,7 @@ export default function Jurisdiction() {
 
         <Col xs={24} lg={8}>
           <Card title="阶段4 · 防控参考草案" className="jurisdiction-card">
+            {!canWrite && <Alert type="info" message="只读账号不触发部署参考生成，可查看其他已生成的研判依据" />}
             {patrolPlanQuery.isFetching && <Spin />}
             {patrolPlanQuery.data ? (
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
@@ -985,7 +992,7 @@ export default function Jurisdiction() {
                     type="primary"
                     htmlType="submit"
                     loading={feedbackMutation.isPending}
-                    disabled={!activeCaseId}
+                    disabled={!canWrite || !activeCaseId}
                   >
                     回流反馈
                   </Button>
@@ -1066,14 +1073,14 @@ export default function Jurisdiction() {
             </Col>
           </Row>
           <Space>
-            <Button type="primary" htmlType="submit" loading={updateAssetMutation.isPending}>
+            <Button type="primary" htmlType="submit" disabled={!canManageAssets} loading={updateAssetMutation.isPending}>
               保存
             </Button>
             <Button onClick={() => setEditingAsset(null)}>取消</Button>
             <Button
               danger
               loading={deactivateAssetMutation.isPending}
-              disabled={!editingAsset}
+              disabled={!canManageAssets || !editingAsset}
               onClick={() => editingAsset && deactivateAssetMutation.mutate(editingAsset.id)}
             >
               停用要素

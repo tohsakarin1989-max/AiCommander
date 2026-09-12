@@ -189,7 +189,7 @@ const RiskGauge: React.FC<RiskGaugeProps> = ({ score, level }) => {
         <span style={{ fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 600, color: hex, display: 'block', lineHeight: 1 }}>
           {score}
         </span>
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--ink-3)', marginTop: 4, letterSpacing: '0.08em', display: 'block' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginTop: 4, letterSpacing: '0.08em', display: 'block' }}>
           {RISK_LABELS[level] || level}
         </span>
       </div>
@@ -395,7 +395,7 @@ const AreaAnalysis: React.FC = () => {
       key: 'event_number',
       width: 140,
       render: (v: string) => (
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-2)' }}>{v}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{v}</span>
       ),
     },
     {
@@ -415,7 +415,7 @@ const AreaAnalysis: React.FC = () => {
       key: 'occurred_time',
       width: 160,
       render: (time: string) => (
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
           {new Date(time).toLocaleString('zh-CN')}
         </span>
       ),
@@ -518,7 +518,7 @@ const AreaAnalysis: React.FC = () => {
           <div className="aa-empty">
             <span className="icon">◉</span>
             <span>暂无热点区域数据</span>
-            <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>请先加载事件数据</span>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>请先加载事件数据</span>
           </div>
         )}
       </div>
@@ -592,7 +592,7 @@ const AreaAnalysis: React.FC = () => {
               level={analysisResult.risk_assessment.level}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>
                 风险因素
               </div>
               {analysisResult.risk_assessment.factors.map((factor, idx) => (
@@ -738,7 +738,7 @@ const AreaAnalysis: React.FC = () => {
             <div style={{ flex: 1, height: 3, background: 'var(--bg-3)', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${Math.min(score, 100)}%`, background: color }} />
             </div>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', width: 28 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', width: 28 }}>
               {score.toFixed(0)}
             </span>
           </div>
@@ -819,7 +819,7 @@ const AreaAnalysis: React.FC = () => {
           onKeyDown={e => e.key === 'Enter' && handleAnalyze()}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>RADIUS</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>RADIUS</span>
           <InputNumber
             value={radiusKm}
             onChange={v => setRadiusKm(v || 5)}
@@ -830,7 +830,7 @@ const AreaAnalysis: React.FC = () => {
           />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>PERIOD</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>PERIOD</span>
           <Select value={daysBack} onChange={setDaysBack} size="small" style={{ width: 110 }}>
             {PERIOD_OPTIONS.map(opt => (
               <Option key={opt.value} value={opt.value}>{opt.label}</Option>
@@ -901,7 +901,7 @@ const AreaAnalysis: React.FC = () => {
                             <div className="rec-head" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                               <span className="aa-tag info">{relationLabel}</span>
                               {confidence !== undefined && (
-                                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)' }}>
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                                   置信度 {(confidence * 100).toFixed(0)}%
                                 </span>
                               )}
@@ -938,7 +938,7 @@ const AreaAnalysis: React.FC = () => {
                           <EnvironmentOutlined style={{ marginRight: 6 }} />
                           {suggestion.location}
                           {suggestion.timing && (
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', marginLeft: 8 }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginLeft: 8 }}>
                               <ClockCircleOutlined style={{ marginRight: 3 }} />
                               {suggestion.timing}
                             </span>
@@ -987,7 +987,7 @@ const AreaAnalysis: React.FC = () => {
             <span className="ico">▤</span>
             <span className="ti">区域档案库</span>
             <span className="spacer" />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
               {areaProfiles.length} 条记录
             </span>
           </div>

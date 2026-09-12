@@ -78,7 +78,7 @@ const RealTimeCounter: React.FC<RealTimeCounterProps> = ({
     useGrouping,
   })
 
-  const defaultColor = theme === 'dark' ? '#00d4ff' : '#1890ff'
+  const defaultColor = '#126759'
   const displayColor = color || defaultColor
 
   return (

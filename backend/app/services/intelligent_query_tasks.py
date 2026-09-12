@@ -23,6 +23,8 @@ from app.models.user import User
 from app.models.query_scope_revision import QueryScopeRevision
 from app.services.intelligent_query_context import freeze_context, result_hash
 from app.services.intelligent_query_roads import validate_road_query_evidence
+from app.services.intelligent_query_history import validate_history_query_evidence
+from app.services.intelligent_query_initial_context import freeze_initial_context, require_source_case_version
 
 
 TASK_TYPE = 'intelligent_query'
@@ -81,11 +83,16 @@ def _view(row):
     return {'id': row.id, 'status': row.status, 'query': row.query,
             'created_at': row.created_at, 'completed_at': row.completed_at,
             'result': row.result_summary, 'result_kind': 'historical_query_snapshot',
-            'followup_context': (row.input_payload or {}).get('followup_context')}
+            'followup_context': (row.input_payload or {}).get('followup_context'),
+            'initial_context': (row.input_payload or {}).get('initial_context')}
 
 
 def _validate_context(db, row, user):
     context = (row.input_payload or {}).get('followup_context')
+    initial = (row.input_payload or {}).get('initial_context')
+    if context is not None and initial is not None:
+        raise PermissionError('query_context_changed')
+    require_source_case_version(db, context or initial)
     if context:
         parent = db.query(AgentRun).filter_by(id=context['parent_query_id'], task_type=TASK_TYPE,
             created_by=user.id).populate_existing().first()
@@ -95,13 +102,17 @@ def _validate_context(db, row, user):
                 or result_hash(parent.result_summary) != context['parent_result_hash']):
             raise PermissionError('query_context_changed')
         validate_road_query_evidence(db, parent.result_summary)
+        validate_history_query_evidence(db, parent.result_summary)
     return context
 
 
-def create_query(db, question, parent_query_id=None):
+def create_query(db, question, parent_query_id=None, initial_context=None):
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise ValueError('invalid_query_question')
     user = _identity(db)
+    if parent_query_id is not None and initial_context is not None:
+        raise ValueError('query_context_conflict')
+    initial = freeze_initial_context(db, initial_context) if initial_context is not None else None
     context = None
     if parent_query_id is not None:
         parent, user = _owned(db, parent_query_id)
@@ -109,6 +120,7 @@ def create_query(db, question, parent_query_id=None):
             raise PermissionError('query_scope_changed')
         _validate_context(db, parent, user)
         validate_road_query_evidence(db, parent.result_summary)
+        validate_history_query_evidence(db, parent.result_summary)
         context = freeze_context(parent)
     # Serialize each owner's admission before checking pending capacity. A no-op
     # UPDATE obtains the same lock on SQLite and PostgreSQL without broker I/O.
@@ -121,7 +133,8 @@ def create_query(db, question, parent_query_id=None):
     row = AgentRun(id=str(uuid4()), task_type=TASK_TYPE, query=question.strip(),
         case_ids=[], asset_ids=[], mode='shadow', status='queued', created_by=user.id,
         data_version=_stamp(db, user, 'membership-v2'), input_payload={'scope_contract': 'membership-v2',
-            **({'followup_context': context} if context else {})},
+            **({'followup_context': context} if context else {}),
+            **({'initial_context': initial} if initial else {})},
         runtime_state={}, result_summary={})
     db.add(row)
     db.flush()
@@ -136,6 +149,7 @@ def read_query(db, run_id):
         raise PermissionError('query_scope_changed')
     _validate_context(db, row, user)
     validate_road_query_evidence(db, row.result_summary)
+    validate_history_query_evidence(db, row.result_summary)
     return _view(row)
 
 
@@ -176,6 +190,7 @@ def finish_query(db, run_id, attempt, result):
         return False
     _validate_context(db, row, user)
     validate_road_query_evidence(db, result)
+    validate_history_query_evidence(db, result)
     if result.get('status') not in FINAL_RUN_STATUSES:
         raise ValueError('invalid_query_result_status')
     now = datetime.now(timezone.utc)
@@ -230,7 +245,7 @@ async def execute_query(db, run_id, *, model=None):
                   'error_code': 'query_model_unavailable'}
     else:
         result = await run_query(db, question, selected_model, cancelled=cancelled,
-                                 context=request['followup_context'])
+                                 context=request['followup_context'] or request['initial_context'])
     if result['status'] == 'cancelled':
         # The worker has already claimed this attempt. Revoked/disabled users
         # must not prevent a system-only terminal transition (no data returned).

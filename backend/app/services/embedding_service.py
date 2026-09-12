@@ -1,6 +1,5 @@
 """
-语义嵌入服务 - 用于生成案件描述的向量表示
-支持多种embedding模型：OpenAI、本地sentence-transformers等
+兼容旧调用的内网嵌入入口；只加载已校验的本地模型包。
 """
 from typing import List, Optional, Dict
 from app.utils.logger import logger
@@ -16,17 +15,10 @@ class EmbeddingService:
     
     def _init_provider(self):
         """初始化embedding提供者"""
-        # 案件原文不得发送外部嵌入服务，统一使用内网本地模型。
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.provider = "local"
-            # 使用中文优化的模型
-            self.model_name = "paraphrase-multilingual-MiniLM-L12-v2"  # 支持中文
-            self._local_model = SentenceTransformer(self.model_name)
-            logger.info(f"使用本地embedding模型: {self.model_name}")
-        except Exception as e:
-            logger.error(f"无法加载本地embedding模型: {e}")
-            self.provider = None
+        from app.services.local_embedding_service import get_local_embedder
+        self._local_model = get_local_embedder()
+        self.provider = "local" if self._local_model.state == "ready" else None
+        self.model_name = self._local_model.model_version
     
     def generate_embedding(self, text: str) -> Optional[List[float]]:
         """
@@ -36,20 +28,19 @@ class EmbeddingService:
             text: 输入文本
             
         Returns:
-            embedding向量（384维或1536维，取决于模型）
+            维度与已校验模型清单一致的向量，未配置或失败时为 None
         """
         if not text or not text.strip():
             return None
         
         try:
             if self.provider == "local":
-                embedding = self._local_model.encode(text, convert_to_numpy=False)
-                return embedding.tolist()
+                return self._local_model.encode(text)
             else:
                 logger.error("未配置embedding提供者")
                 return None
-        except Exception as e:
-            logger.error(f"生成embedding失败: {e}")
+        except Exception:
+            logger.warning("本地嵌入暂不可用，保留词项检索")
             return None
     
     def generate_embeddings_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
@@ -67,17 +58,11 @@ class EmbeddingService:
         
         try:
             if self.provider == "local":
-                # sentence-transformers也支持批量
-                embeddings = self._local_model.encode(
-                    texts,
-                    convert_to_numpy=False,
-                    show_progress_bar=False
-                )
-                return [emb.tolist() for emb in embeddings]
+                return [self.generate_embedding(text) for text in texts]
             else:
                 return [None] * len(texts)
-        except Exception as e:
-            logger.error(f"批量生成embedding失败: {e}")
+        except Exception:
+            logger.warning("本地批量嵌入暂不可用，保留词项检索")
             return [None] * len(texts)
     
     def build_case_text(self, case: Dict) -> str:

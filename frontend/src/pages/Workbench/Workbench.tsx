@@ -1,205 +1,136 @@
-import { useMemo, useState } from 'react'
-import { App as AntdApp } from 'antd'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import dayjs from 'dayjs'
 import { useAuth } from '../../auth/AuthContext'
-import { workbenchApi, type WorkbenchTask } from '../../services/workbench'
-import {
-  STAGE_LABELS,
-  buildPipelineProgress,
-  formatDuration,
-  getTaskActionLabel,
-  sortWorkbenchTasks,
-} from './workbenchPresentation'
+import { workbenchApi, type DailyWorkbenchCase } from '../../services/workbench'
+import DailyReviewPreview from './DailyReviewPreview'
 import './Workbench.css'
 
+const PAGE_SIZE = 20
+
+export function dailyProfileStatus(item: DailyWorkbenchCase): string {
+  if (item.profile_ready) return '画像可查看'
+  switch (item.pipeline_status) {
+    case 'queued': case 'pending': return '等待后台处理'
+    case 'running': case 'processing': return '后台处理中'
+    case 'failed': return '处理异常，案件记录已保留'
+    case 'disabled': case 'off': return '自动分析未启用'
+    case 'degraded': return '分析降级，画像待形成'
+    case 'cancelled': return '处理已取消，案件记录已保留'
+    default: return '画像尚未形成'
+  }
+}
+
+const formatTime = (value: string | null) => value && dayjs(value).isValid()
+  ? dayjs(value).format('YYYY-MM-DD HH:mm') : '未记录'
+
+export function formatDailyOccurredTime(value: string | null): string {
+  if (!value || !dayjs(value).isValid()) return '未记录'
+  const formatted = formatTime(value)
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())
+    ? formatted : `${formatted}（存储时刻，未注明时区）`
+}
 
 const Workbench: React.FC = () => {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { message } = AntdApp.useApp()
-  const { user } = useAuth()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-
-  const todayQuery = useQuery({
-    queryKey: ['workbench-today'],
-    queryFn: workbenchApi.today,
+  const { user, sessionEpoch } = useAuth()
+  const [offset, setOffset] = useState(0)
+  const query = useQuery({
+    queryKey: ['workbench-daily', user?.id, user?.role, sessionEpoch, offset],
+    queryFn: () => workbenchApi.daily({ limit: PAGE_SIZE, offset }),
     refetchInterval: 60_000,
   })
-  const metricsQuery = useQuery({
-    queryKey: ['workbench-metrics', user?.role],
-    queryFn: () => workbenchApi.metrics(30),
-    enabled: user?.role === 'admin' || user?.role === 'analyst',
-  })
-  const startMutation = useMutation({
-    mutationFn: workbenchApi.startSession,
-    onSuccess: async ({ created }, task) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workbench-active-session'] }),
-        queryClient.invalidateQueries({ queryKey: ['workbench-today'] }),
-      ])
-      message.success(created ? '任务计时已开始' : '已继续当前任务')
-      navigate(task.target_path)
-    },
-    onError: (error: Error) => message.error(`无法开始任务：${error.message}`),
-  })
 
-  const data = todayQuery.data
-  const tasks = useMemo(() => sortWorkbenchTasks(data?.tasks ?? []), [data?.tasks])
-  const selected = tasks.find(item => item.id === selectedId) ?? tasks[0] ?? null
-  const progress = buildPipelineProgress({
-    total_cases: data?.summary.total_cases ?? 0,
-    completed: data?.summary.completed ?? 0,
-  })
-  const metrics = metricsQuery.data
-
-  const openTask = (task: WorkbenchTask) => {
-    if (user?.role === 'viewer') {
-      navigate(task.target_path)
-      return
-    }
-    startMutation.mutate(task)
-  }
-
-  if (todayQuery.isLoading) {
-    return <div className="empty-state" style={{ height: '70vh' }}><span className="icon">⌛</span>正在整理今日研判任务</div>
-  }
-
-  if (todayQuery.isError || !data) {
-    return (
-      <div className="empty-state" style={{ height: '70vh' }}>
-        <span className="icon">!</span>
-        <span>今日工作台暂不可用，案件主流程不受影响</span>
-        <button className="btn-ghost" onClick={() => todayQuery.refetch()}>重新读取</button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="page-scrollable workbench-page">
-      <section className="wb-hero">
-        <div className="wb-hero-main">
-          <span className="wb-kicker">v2.8 · DAILY ANALYSIS DESK</span>
-          <h1>今日研判工作台</h1>
-          <p>每起案件只给一个明确下一步，把数据核验、经验沉淀和报告复核串成可完成、可度量的日常流程。</p>
-        </div>
-        <div className="wb-progress-block" aria-label="当前闭环完成度">
-          <div className="wb-progress-copy"><span>当前闭环完成度</span><strong>{progress.percent}%</strong></div>
-          <div className="wb-progress-track"><i style={{ width: `${progress.percent}%` }} /></div>
-          <small>{progress.label}</small>
-        </div>
-        <button className="btn-ghost" onClick={() => void todayQuery.refetch()}>刷新任务</button>
-      </section>
-
-      <section className="wb-kpis" aria-label="今日工作量">
-        <div className="wb-kpi wb-kpi--urgent"><span>需处理</span><strong>{data.summary.actionable_cases}</strong><small>起案件</small></div>
-        <div className="wb-kpi"><span>数据核验</span><strong>{data.summary.data_review}</strong><small>先补研判底座</small></div>
-        <div className="wb-kpi"><span>经验沉淀</span><strong>{data.summary.experience_review}</strong><small>生成或复核</small></div>
-        <div className="wb-kpi"><span>报告复核</span><strong>{data.summary.report_review}</strong><small>生成或确认</small></div>
-        <div className="wb-kpi wb-kpi--done"><span>当前闭环</span><strong>{data.summary.completed}</strong><small>事实已人工确认</small></div>
-        <div className="wb-kpi"><span>Agent 审批</span><strong>{data.summary.pending_approvals}</strong><small>不阻塞主流程</small></div>
-      </section>
-
-      <section className="wb-pipeline" aria-label="案件研判流程">
-        {data.pipeline.map((item, index) => (
-          <div key={item.stage} className={`wb-pipeline-node${item.stage === 'completed' ? ' done' : ''}`}>
-            <span>{String(index + 1).padStart(2, '0')}</span>
-            <strong>{item.label}</strong>
-            <b>{item.count}</b>
-          </div>
-        ))}
-      </section>
-
-      <section className="wb-main-grid">
-        <section className="wb-queue card">
-          <div className="card-head">
-            <span className="ico">◆</span><span className="ti">优先任务队列</span>
-            <span className="spacer" /><span className="chip accent">{tasks.length} 项</span>
-          </div>
-          <div className="wb-list-head"><span>优先级</span><span>案件</span><span>当前节点</span><span>任务</span><span>影响</span></div>
-          <div className="wb-task-list">
-            {tasks.length === 0 ? (
-              <div className="empty-state"><span className="icon">✓</span><span>当前案件均已完成本轮闭环</span></div>
-            ) : tasks.map(task => (
-              <button
-                key={task.id}
-                className={`wb-task-row wb-task-row--${task.priority}${selected?.id === task.id ? ' on' : ''}`}
-                onClick={() => setSelectedId(task.id)}
-              >
-                <span className="wb-priority">{task.priority === 'high' ? '优先' : '常规'}</span>
-                <span className="wb-case-no">{task.case_number}</span>
-                <span className="wb-stage">{STAGE_LABELS[task.stage]}</span>
-                <span className="wb-task-title"><strong>{task.title}</strong><small>{task.why}</small></span>
-                <span className="wb-impact">{task.impact}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <aside className="wb-detail card">
-          <div className="card-head"><span className="ico">▤</span><span className="ti">下一步行动卡</span></div>
-          {selected ? (
-            <div className="wb-detail-body">
-              <div className="wb-detail-label">{selected.case_number} · {STAGE_LABELS[selected.stage]}</div>
-              <h2>{selected.title}</h2>
-              <dl>
-                <div><dt>事实状态</dt><dd>{selected.why}</dd></div>
-                <div><dt>业务影响</dt><dd>{selected.impact}</dd></div>
-                <div><dt>下一步</dt><dd>{selected.next_action}</dd></div>
-              </dl>
-              <div className="wb-evidence">
-                <span>依据引用</span>
-                {selected.evidence_refs.map(ref => <code key={ref}>{ref}</code>)}
-              </div>
-              <button
-                className="btn-primary wb-start"
-                disabled={startMutation.isPending}
-                onClick={() => openTask(selected)}
-              >
-                {startMutation.isPending ? '正在建立任务…' : getTaskActionLabel(user!.role, selected)}
-              </button>
-              <button
-                className="btn-ghost wb-evidence-link"
-                onClick={() => navigate(`/graphs/evidence?caseId=${selected.source_id}`)}
-              >
-                查看本案证据图谱
-              </button>
-              <small className="wb-detail-boundary">进入任务不会自动修改案件、经验卡或报告；完成状态由操作人主动确认。</small>
-            </div>
-          ) : <div className="empty-state"><span className="icon">✓</span>暂无待处理任务</div>}
-        </aside>
-      </section>
-
-      <section className="wb-metrics card">
-        <div className="card-head">
-          <span className="ico">⌁</span><span className="ti">30 日实用性度量</span>
-          <span className="spacer" />
-          <span className={`chip${metrics?.business_acceptance_status === 'measurable' ? ' live' : ' warn'}`}>
-            {metrics?.business_acceptance_status === 'measurable' ? '样本可评估' : `需累计 ${metrics?.sample_threshold ?? 20} 次`}
-          </span>
-        </div>
-        {user?.role === 'viewer' ? (
-          <div className="wb-metrics-boundary">只读账号可查看任务依据，不采集个人处理会话。</div>
-        ) : metricsQuery.isLoading ? (
-          <div className="wb-metrics-boundary">正在读取非敏感效率指标…</div>
-        ) : metricsQuery.isError ? (
-          <div className="wb-metrics-boundary">效率指标暂不可用，不影响任务处理。</div>
-        ) : (
-          <div className="wb-metrics-body">
-            <div><span>统计范围</span><strong>{metrics?.scope === 'team' ? '全组' : '本人'}</strong></div>
-            <div><span>已开始</span><strong>{metrics?.totals.started ?? 0}</strong></div>
-            <div><span>已完成</span><strong>{metrics?.totals.completed ?? 0}</strong></div>
-            <div><span>完成率</span><strong>{Math.round((metrics?.totals.completion_rate ?? 0) * 100)}%</strong></div>
-            <div><span>平均耗时</span><strong>{formatDuration(metrics?.totals.avg_duration_seconds ?? null)}</strong></div>
-            <div><span>平均跨页</span><strong>{metrics?.totals.avg_page_transitions ?? '待积累'}</strong></div>
-            <p>{metrics?.measurement_boundary ?? '效率度量不采集敏感业务正文。'}</p>
-          </div>
-        )}
-      </section>
-
-      <div className="wb-boundary"><strong>人工复核边界</strong><span>{data.boundary}</span></div>
+  if (query.isPending) {
+    return <div className="page-scrollable daily-workbench" aria-busy="true">
+      <h1>日常工作</h1>
+      <div className="daily-loading" role="status">正在读取日常工作</div>
+      <div className="daily-placeholder" aria-hidden="true" />
+      <DailyReviewPreview />
     </div>
-  )
+  }
+
+  const data = query.isError ? undefined : query.data
+  if (!data) {
+    return <div className="page-scrollable daily-workbench">
+      <h1>日常工作</h1>
+      <section className="daily-message" role="alert">
+        <h2>工作台暂不可用</h2>
+        <p>当前无法确认案件数量和分析状态，可以直接进入案件页面。</p>
+        <div className="daily-actions">
+          <button className="btn-ghost" onClick={() => void query.refetch()}>重新读取</button>
+          <Link className="btn-primary" to="/cases">进入案件</Link>
+          <Link className="btn-ghost" to="/suggestions">待判断事项</Link>
+        </div>
+      </section>
+      <DailyReviewPreview />
+    </div>
+  }
+
+  const { summary, pagination } = data
+  const page = Math.floor(pagination.offset / pagination.limit) + 1
+  const pages = Math.max(1, Math.ceil(pagination.total / pagination.limit))
+
+  return <div className="page-scrollable daily-workbench">
+    <header className="daily-heading">
+      <div>
+        <h1>日常工作</h1>
+        <p>查看近期案件、关键补充与已有分析；经验沉淀和报告按需使用。</p>
+      </div>
+      <div className="daily-actions">
+        <Link className="btn-primary" to="/cases">进入案件</Link>
+        <Link className="btn-ghost" to="/suggestions">待判断事项</Link>
+        <button className="btn-ghost" disabled={query.isFetching} onClick={() => void query.refetch()}>
+          {query.isFetching ? '正在刷新' : '刷新'}
+        </button>
+      </div>
+    </header>
+
+    <section aria-label="案件与分析状态" className="daily-summary">
+      <dl>
+        <div><dt>授权案件</dt><dd>{summary.total_cases}</dd></div>
+        <div><dt>关键资料待补充</dt><dd>{summary.needs_information}</dd></div>
+        <div><dt>画像待形成</dt><dd>{summary.analysis_pending}</dd></div>
+        <div><dt>画像可查看</dt><dd>{summary.analysis_ready}</dd></div>
+      </dl>
+      <p>口径：授权范围内全部案件。资料缺项与画像待形成可以重叠，画像可查看不代表案件办结。</p>
+    </section>
+
+    <DailyReviewPreview />
+
+    <section className="daily-cases" aria-labelledby="daily-cases-title">
+      <div className="daily-section-heading">
+        <h2 id="daily-cases-title">近期案件</h2>
+        <span>统计时刻：{formatTime(data.generated_at)}</span>
+      </div>
+      {data.cases.length === 0 ? <div className="daily-message">
+        <h3>当前没有可展示的案件</h3>
+        <p>可进入案件列表查看授权数据，或正常录入案件。这里不会生成示例记录。</p>
+      </div> : <div className="daily-table-scroll">
+        <table>
+          <thead><tr><th scope="col">案件与时间</th><th scope="col">地点</th><th scope="col">关键补充</th><th scope="col">自动画像</th><th scope="col">操作</th></tr></thead>
+          <tbody>{data.cases.map(item => <tr key={item.id}>
+            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyOccurredTime(item.occurred_time)}</small></th>
+            <td>{item.location || '地点未记录'}</td>
+            <td>{item.information_gaps.length > 0
+              ? <ul>{item.information_gaps.slice(0, 3).map((gap, index) => <li key={`${index}:${gap}`}>{gap}</li>)}</ul>
+              : <span className="daily-muted">当前未提示关键缺项</span>}</td>
+            <td><span className={`daily-state ${item.profile_ready ? 'ready' : ''}`}>{dailyProfileStatus(item)}</span></td>
+            <td><Link className="daily-case-link" to={`/cases?caseId=${item.id}`} aria-label={`查看案件 ${item.case_number}`}>查看案件</Link></td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+      <div className="daily-pagination">
+        <span>本页 {pagination.returned} 起 / 共 {pagination.total} 起</span>
+        <div className="daily-actions">
+          <button className="btn-ghost" disabled={pagination.offset === 0 || query.isFetching} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>上一页</button>
+          <span>第 {page} / {pages} 页</span>
+          <button className="btn-ghost" disabled={pagination.offset + pagination.limit >= pagination.total || query.isFetching} onClick={() => setOffset(offset + PAGE_SIZE)}>下一页</button>
+        </div>
+      </div>
+    </section>
+    <p className="daily-boundary">自动画像在后台形成；原始记录与人工判断分开保存。无需先生成经验卡或报告才能继续使用案件。</p>
+  </div>
 }
 
 export default Workbench

@@ -2,14 +2,19 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Any, List, Optional
 from pydantic import BaseModel
-from app.database import get_db
+from app.database import AreaWriteAccessError, get_db, require_area_write_access
+from app.models.case import Case
 from app.models.conclusion import Conclusion
 from app.models.conclusion_review import ConclusionReview
 from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_knowledge_service import CaseKnowledgeService
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from app.services.case_result_access import CaseResultAccessError
+from app.services.conclusion_factory_service import (
+    ConclusionFactoryService,
+    ConclusionResultPendingError,
+)
 
 router = APIRouter()
 
@@ -37,6 +42,37 @@ def _review_status(status: str) -> str:
     if status == "flagged":
         return "flagged"
     return "pending_review"
+
+
+def _source_result_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail="结论不存在或来源成果不可访问",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _require_source_result_access(db: Session, conclusion: Conclusion, *, write=False) -> None:
+    """只对新增冻结来源进行再授权；历史会议结论保留原有契约。"""
+    try:
+        ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
+        evidence = conclusion.evidence if isinstance(conclusion.evidence, dict) else {}
+        if write and "source_result" in evidence:
+            case = db.query(Case).filter(Case.id == conclusion.case_id).first()
+            if case is None:
+                raise CaseResultAccessError()
+            require_area_write_access(db, case.operational_area_id)
+    except CaseResultAccessError:
+        raise _source_result_unavailable() from None
+    except AreaWriteAccessError:
+        raise HTTPException(status_code=403, detail="没有目标辖区写权限") from None
+
+
+def _confidence_available(conclusion: Conclusion) -> bool:
+    evidence = conclusion.evidence if isinstance(conclusion.evidence, dict) else {}
+    if "source_result" in evidence or evidence.get("confidence_available") is False:
+        return False
+    return conclusion.confidence is not None
 
 
 def _as_text_list(value: Any) -> List[str]:
@@ -133,6 +169,7 @@ def _serialize_conclusion(
         "review_status": _review_status(conclusion.status),
         "model_status": ai_output.get("model_status") if ai_output else "deterministic_fallback",
         "confidence": conclusion.confidence,
+        "confidence_available": _confidence_available(conclusion),
         "risk_level": conclusion.risk_level,
         "summary": conclusion.summary,
         "evidence": conclusion.evidence,
@@ -164,11 +201,18 @@ async def generate_conclusion(
 
     try:
         conclusion = await ConclusionFactoryService.generate_conclusion(db, resolved_case_id)
+        ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
         return _serialize_conclusion(conclusion)
+    except ConclusionResultPendingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except CaseResultAccessError:
+        raise _source_result_unavailable() from None
+    except AreaWriteAccessError:
+        raise HTTPException(status_code=403, detail="没有目标辖区写权限") from None
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"生成结论失败: {e}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="生成结论失败，请稍后重试") from None
 
 
 @router.post("/from-meeting/{meeting_id}")
@@ -204,6 +248,8 @@ def link_to_meeting(
     conclusion = db.query(Conclusion).filter(Conclusion.id == conclusion_id).first()
     if not conclusion:
         raise HTTPException(status_code=404, detail="结论不存在")
+
+    _require_source_result_access(db, conclusion, write=True)
 
     meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
     if not meeting:
@@ -247,6 +293,18 @@ def list_conclusions(
         query = query.filter(Conclusion.confidence <= max_confidence)
     rows = query.order_by(Conclusion.created_at.desc()).offset(skip).limit(limit).all()
 
+    accessible_rows = []
+    for row in rows:
+        try:
+            ConclusionFactoryService.require_conclusion_result_access(db, row)
+        except CaseResultAccessError:
+            # 不返回撤权来源的摘要、引用、数量或错误详情。
+            continue
+        if (min_confidence is not None or max_confidence is not None) and not _confidence_available(row):
+            continue
+        accessible_rows.append(row)
+    rows = accessible_rows
+
     # 获取关联会议信息
     meeting_ids = [c.meeting_id for c in rows if c.meeting_id]
     meeting_map = {}
@@ -257,7 +315,11 @@ def list_conclusions(
     return [
         {
             **_serialize_conclusion(c, meeting_info=meeting_map.get(c.meeting_id) if c.meeting_id else None),
-            "review_reason": "高风险" if c.risk_level == "high" else ("低置信度" if (c.confidence or 0) < 0.7 else None),
+            "review_reason": (
+                "高风险" if c.risk_level == "high" else (
+                    "低置信度" if _confidence_available(c) and c.confidence < 0.7 else None
+                )
+            ),
         }
         for c in rows
     ]
@@ -268,6 +330,7 @@ def get_conclusion(conclusion_id: int, db: Session = Depends(get_db)):
     conclusion = db.query(Conclusion).filter(Conclusion.id == conclusion_id).first()
     if not conclusion:
         raise HTTPException(status_code=404, detail="结论不存在")
+    _require_source_result_access(db, conclusion)
     reviews = (
         db.query(ConclusionReview)
         .filter(ConclusionReview.conclusion_id == conclusion_id)
@@ -301,6 +364,8 @@ def review_conclusion(
     conclusion = db.query(Conclusion).filter(Conclusion.id == conclusion_id).first()
     if not conclusion:
         raise HTTPException(status_code=404, detail="结论不存在")
+
+    _require_source_result_access(db, conclusion, write=True)
 
     resolved_action = action
     resolved_note = note

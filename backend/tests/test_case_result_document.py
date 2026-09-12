@@ -53,6 +53,22 @@ def test_empty_analysis_remains_empty_and_no_fabricated_map():
     assert map_input["candidates"] == []
 
 
+def test_model_excerpts_export_same_quotes_status_and_versions_without_fact_promotion():
+    from app.services.case_semantic_service import build_semantic_profile
+    profile, _, _ = inputs()
+    semantics = build_semantic_profile({"description": "未发现罐车"})
+    profile.payload["semantics"] = semantics
+    semantics["model_extraction"] = {"status": "partial", "version": "test-model-v1",
+        "items": semantics["assertions"], "boundary": "模型提取候选，不是正式事实。"}
+    original = copy.deepcopy(profile.payload)
+    document = build_case_result_document({"id": "model-excerpts", **assemble_case_result(profile, None, [])})
+    text = "\n".join(block.text for block in document.blocks)
+    assert "内网模型提取参考 · 部分结果" in text
+    assert "未发现罐车" in text and "test-model-v1" in text
+    assert "模型判断待核对" in text and "未采用内容保留未知" in text
+    assert original == profile.payload
+
+
 def test_map_input_uses_frozen_analysis_coordinates_and_candidate_legend():
     profile, run, candidate = inputs()
     profile.payload["analysis_facts"] = {"latitude": 46.6, "longitude": 125.1}
@@ -141,3 +157,20 @@ def test_unknown_semantic_gap_remains_visible_and_duplicate_gap_is_not_repeated(
     document = build_case_result_document({"id": "unknown-gap", **assemble_case_result(profile, None, [])})
     messages = [block.text for block in document.blocks if "future_gap" in block.text]
     assert len(messages) == 1 and "本项信息待核对（车辆信息）" in messages[0]
+
+
+def test_event_fragments_share_frozen_source_and_polarity_with_page():
+    from app.services.case_semantic_service import build_semantic_profile
+    profile, _, _ = inputs()
+    profile.payload["semantics"] = build_semantic_profile({"description": "未转运原油。次日在村屯存放。"})
+    frozen = {"id": "event-fragments", **assemble_case_result(profile, None, [])}
+    original = copy.deepcopy(frozen)
+    document = build_case_result_document(frozen)
+    text = "\n".join(block.text for block in document.blocks)
+    assert document.schema == "case-result-document-5.1.0-1"
+    assert "转运（原文否定）" in text
+    assert "共现不证明" in text and "深层模型理解未启用" in text
+    for item in profile.payload["semantics"]["event_fragments"]["items"]:
+        assert item["reference"]["quote"] in text
+    assert "不作为新增必填要求" in text
+    assert frozen == original

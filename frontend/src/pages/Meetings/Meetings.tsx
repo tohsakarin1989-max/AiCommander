@@ -10,11 +10,12 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { aiApi } from '../../services/ai'
+import { useAuth } from '../../auth/AuthContext'
+import { aiApi, type MeetingModelOption } from '../../services/ai'
 import { configApi } from '../../services/config'
 import { caseApi } from '../../services/cases'
 import { useMeetingProgress } from '../../services/websocket'
-import type { Meeting, MeetingCreate, MeetingTemplate, AIModel } from '../../types'
+import type { Meeting, MeetingCreate, MeetingTemplate } from '../../types'
 import dayjs from 'dayjs'
 import { useSearchParams } from 'react-router-dom'
 import './Meetings.css'
@@ -189,45 +190,59 @@ type FilterType = 'all' | 'live' | 'done'
 
 // ——— Main Component ———
 const Meetings: React.FC = () => {
+  const { user } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
+  const [searchParams] = useSearchParams()
   const [form] = Form.useForm()
   const [templateForm] = Form.useForm()
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [templateModalVisible, setTemplateModalVisible] = useState(false)
-  const [selectedMeeting, setSelectedMeeting] = useState<string | null>(null)
+  const [selectedMeeting, setSelectedMeeting] = useState<string | null>(() => searchParams.get('meetingId'))
   // 详情视图弹窗（modal）
   const [viewModalVisible, setViewModalVisible] = useState(false)
-  const [_processingMeetingId, setProcessingMeetingId] = useState<string | null>(null)
   const [filterType, setFilterType] = useState<FilterType>('all')
-  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
 
   // ——— Queries ———
-  const { data: meetings, isLoading } = useQuery({
+  const { data: meetings, isLoading, isError: meetingsError } = useQuery({
     queryKey: ['meetings'],
     queryFn: () => aiApi.meeting.list(),
+    refetchInterval: query => query.state.data?.some(m => ACTIVE_STATUSES.includes(m.status)) ? 5000 : false,
   })
 
   useEffect(() => {
     const meetingId = searchParams.get('meetingId')
-    if (!meetingId || !meetings) return
-    const exists = meetings.some((m: Meeting) => m.meeting_id === meetingId)
-    if (exists) {
-      setSelectedMeeting(meetingId)
-      setViewModalVisible(true)
-    }
-  }, [searchParams, meetings])
+    if (!meetingId) return
+    setSelectedMeeting(meetingId)
+    setViewModalVisible(true)
+  }, [searchParams])
 
-  const { data: models } = useQuery({ queryKey: ['models'], queryFn: () => configApi.models.list() })
-  const { data: cases }  = useQuery({ queryKey: ['cases'],  queryFn: () => caseApi.getCases() })
+  const selectedQuery = useQuery({
+    queryKey: ['meeting', selectedMeeting],
+    queryFn: () => aiApi.meeting.get(selectedMeeting!),
+    enabled: !!selectedMeeting,
+    refetchInterval: query => query.state.data && ACTIVE_STATUSES.includes(query.state.data.status) ? 5000 : false,
+  })
+  const selectedData = selectedQuery.isError ? undefined : selectedQuery.data
+  const selectedStatus = selectedData?.status || 'pending'
+  const isSelProcessing = ACTIVE_STATUSES.includes(selectedStatus)
+  const isSelDone = selectedStatus === 'completed'
+
+  const { data: models, isError: modelsError } = useQuery({
+    queryKey: ['meeting-model-options'], queryFn: aiApi.meeting.modelOptions,
+  })
+  const { data: cases }  = useQuery({ queryKey: ['cases'],  queryFn: () => caseApi.getCases(), enabled: canWrite && isModalVisible })
 
   const { data: templates } = useQuery({
     queryKey: ['meetingTemplates'],
     queryFn: () => aiApi.template.list(),
+    enabled: canWrite && isModalVisible,
   })
 
   const { data: meetingConfigRaw } = useQuery({
     queryKey: ['meetingConfig'],
     queryFn: () => configApi.system.getMeetingConfig(),
+    enabled: user?.role === 'admin',
   })
 
   const meetingConfig = meetingConfigRaw as
@@ -236,24 +251,26 @@ const Meetings: React.FC = () => {
 
   // 详情数据
   const { data: conversations } = useQuery({
-    queryKey: ['conversations', selectedMeeting],
+    queryKey: ['conversations', selectedMeeting, selectedStatus],
     queryFn: () => aiApi.meeting.getConversations(selectedMeeting!),
-    enabled: !!selectedMeeting,
+    enabled: !!selectedData,
+    refetchInterval: isSelProcessing ? 5000 : false,
   })
-  const { data: report } = useQuery({
+  const { data: reportData, isError: reportError } = useQuery({
     queryKey: ['report', selectedMeeting],
     queryFn: () => aiApi.meeting.getReport(selectedMeeting!),
-    enabled: !!selectedMeeting,
+    enabled: isSelDone,
   })
+  const report = reportError ? undefined : reportData
   const { data: analyses } = useQuery({
-    queryKey: ['analyses', selectedMeeting],
+    queryKey: ['analyses', selectedMeeting, selectedStatus],
     queryFn: () => aiApi.meeting.getAnalyses(selectedMeeting!),
-    enabled: !!selectedMeeting,
+    enabled: !!selectedData,
   })
   const { data: rankings } = useQuery({
-    queryKey: ['rankings', selectedMeeting],
+    queryKey: ['rankings', selectedMeeting, selectedStatus],
     queryFn: () => aiApi.meeting.getRankings(selectedMeeting!),
-    enabled: !!selectedMeeting,
+    enabled: !!selectedData,
   })
 
   // ——— Mutations ———
@@ -292,28 +309,8 @@ const Meetings: React.FC = () => {
       form.resetFields()
       queryClient.invalidateQueries({ queryKey: ['meetings'] })
 
-      if (data.status === 'processing' && data.meeting_id) {
-        setProcessingMeetingId(data.meeting_id)
-        // 创建后自动选中新会议
-        setSelectedMeeting(data.meeting_id)
+      setSelectedMeeting(data.meeting_id)
 
-        const poll = setInterval(() => {
-          queryClient.invalidateQueries({ queryKey: ['meetings'] })
-          queryClient.fetchQuery({
-            queryKey: ['meeting', data.meeting_id],
-            queryFn: () => aiApi.meeting.get(data.meeting_id),
-          }).then((m: Meeting) => {
-            if (m.status === 'completed' || m.status === 'failed') {
-              clearInterval(poll)
-              setProcessingMeetingId(null)
-              if (m.status === 'completed') message.success('会议分析完成！')
-              else message.error('会议分析失败')
-              queryClient.invalidateQueries({ queryKey: ['meetings'] })
-            }
-          }).catch(() => {})
-        }, 5000)
-        setTimeout(() => { clearInterval(poll); setProcessingMeetingId(null) }, 300000)
-      }
     },
     onError: (err: any) => message.error(`创建失败: ${err.response?.data?.detail || err.message}`),
   })
@@ -335,8 +332,8 @@ const Meetings: React.FC = () => {
     try { createMutation.mutate(await form.validateFields() as MeetingCreate) } catch {}
   }
 
-  const moderatorModels = models?.filter((m: AIModel) => m.role === 'moderator') || []
-  const analystModels   = models?.filter((m: AIModel) => m.role === 'analyst')   || []
+  const moderatorModels = models?.filter((m: MeetingModelOption) => m.is_active && m.role === 'moderator') || []
+  const analystModels   = models?.filter((m: MeetingModelOption) => m.is_active && m.role === 'analyst')   || []
 
   const totalMeetings     = meetings?.length || 0
   const liveMeetings      = meetings?.filter((m: Meeting) => ACTIVE_STATUSES.includes(m.status)) || []
@@ -344,21 +341,14 @@ const Meetings: React.FC = () => {
   const activeMeetingsCount  = liveMeetings.length
   const completedMeetingsCount = doneMeetings.length
 
-  // 筛选后的会议列表（反转为最新在前）
-  const reversedMeetings = meetings ? [...meetings].reverse() : []
-  const filteredMeetings = reversedMeetings.filter((m: Meeting) => {
+  // 服务端已按创建时间倒序返回。
+  const filteredMeetings = (meetingsError ? [] : meetings ?? []).filter((m: Meeting) => {
     if (filterType === 'live') return ACTIVE_STATUSES.includes(m.status)
     if (filterType === 'done') return m.status === 'completed'
     return true
   })
 
-  // 当前选中会议数据
-  const selectedData    = meetings?.find((m: Meeting) => m.meeting_id === selectedMeeting)
-  const selectedStatus  = selectedData?.status || 'pending'
-  const isSelProcessing = ACTIVE_STATUSES.includes(selectedStatus)
-  const isSelDone       = selectedStatus === 'completed'
-
-  const getModelName = (id: number) => models?.find((m: AIModel) => m.id === id)?.name || `Model-${id}`
+  const getModelName = (id: number) => models?.find((m: MeetingModelOption) => m.id === id)?.name || `Model-${id}`
   const moderatorName  = selectedData ? getModelName(selectedData.moderator_model_id) : '主持人'
   const analystNames   = selectedData?.analyst_model_ids.map(getModelName) || []
 
@@ -377,6 +367,10 @@ const Meetings: React.FC = () => {
 
   return (
     <div className="page page-roundtable">
+      {!canWrite && <Alert type="info" message="只读账号可查看会议记录，不能发起会议或生成结论" />}
+      {modelsError && <Alert type="error" message="可用会议模型读取失败，请稍后重试" />}
+      {selectedQuery.isError && <Alert type="error" message="会议详情读取失败或当前账号无权访问" />}
+      {reportError && <Alert type="error" message="综合报告读取失败，请稍后重试" />}
       <div className="rt-layout">
 
         {/* ===== LEFT: 会议列表 ===== */}
@@ -386,10 +380,11 @@ const Meetings: React.FC = () => {
           <div className="rt-list-head">
             <div className="page-title" style={{ border: 0, padding: 0, margin: 0, display: 'block' }}>
               <h1>圆桌会议</h1>
-              <div className="sub">MULTI-AGENT COUNCIL · 本月 {totalMeetings} 场</div>
+              <div className="sub">MULTI-AGENT COUNCIL · 本页 {totalMeetings} 场</div>
             </div>
             <button
               className="btn-accent"
+              disabled={!canWrite || modelsError}
               style={{ marginTop: 12, width: '100%' }}
               onClick={() => { form.resetFields(); setIsModalVisible(true) }}
             >
@@ -429,7 +424,7 @@ const Meetings: React.FC = () => {
                 <div className="rt-card-skeleton" />
                 <div className="rt-card-skeleton" />
               </>
-            ) : filteredMeetings.length > 0 ? (
+            ) : meetingsError ? <Alert type="error" message="会议列表读取失败" /> : filteredMeetings.length > 0 ? (
               filteredMeetings.map((meeting: Meeting) => (
                 <RtCard
                   key={meeting.meeting_id}
@@ -497,7 +492,7 @@ const Meetings: React.FC = () => {
                 {analyses && analyses.length > 0 ? (
                   analyses.map((analysis: any, idx: number) => {
                     const modelId = analysis.analyst_model_id
-                    const modelObj = models?.find((m: AIModel) => m.id === modelId)
+                    const modelObj = models?.find((m: MeetingModelOption) => m.id === modelId)
                     const modelName = modelObj?.name || `分析员 ${idx + 1}`
                     const initial = modelName.charAt(0).toUpperCase()
                     // 循环选色
@@ -543,7 +538,7 @@ const Meetings: React.FC = () => {
                               <span className="ph">阶段 1 · 独立分析</span>
                               <span className="t">{dayjs(selectedData.created_at).format('HH:mm')}</span>
                             </div>
-                            <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 180, overflow: 'hidden', fontSize: 11 }}>
+                            <p style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 180, overflow: 'hidden', fontSize: 12 }}>
                               {contentStr.length > 400 ? contentStr.slice(0, 400) + '…' : contentStr}
                             </p>
                           </div>
@@ -554,7 +549,7 @@ const Meetings: React.FC = () => {
                                 <span className="ph" style={{ color: 'var(--info)' }}>阶段 2 · 互评</span>
                                 <span className="t">{myRankings[0].ranking_data?.rankings?.length || 0} 项评分</span>
                               </div>
-                              <p style={{ fontSize: 11 }}>
+                              <p style={{ fontSize: 12 }}>
                                 {myRankings[0].ranking_data?.overall_comment || '已提交评分'}
                               </p>
                             </div>
@@ -566,7 +561,7 @@ const Meetings: React.FC = () => {
                                 <span className="ph" style={{ color: 'var(--accent)' }}>阶段 3 · 综合</span>
                                 <span className="t">已完成</span>
                               </div>
-                              <p style={{ fontSize: 11 }}>
+                              <p style={{ fontSize: 12 }}>
                                 {rc?.summary || report.summary || '综合报告已生成'}
                               </p>
                             </div>
@@ -578,7 +573,7 @@ const Meetings: React.FC = () => {
                                 <span className="ph" style={{ color: 'var(--accent)' }}>阶段 3 · 综合</span>
                                 <span className="t">生成中</span>
                               </div>
-                              <p className="typing" style={{ fontSize: 11 }}>
+                              <p className="typing" style={{ fontSize: 12 }}>
                                 正在汇总各方分析，生成最终研判报告<span className="caret">▊</span>
                               </p>
                             </div>
@@ -651,7 +646,7 @@ const Meetings: React.FC = () => {
                     <button
                       className="btn-accent-sm"
                       onClick={() => selectedMeeting && generateConclusionMutation.mutate(selectedMeeting)}
-                      disabled={generateConclusionMutation.isPending}
+                      disabled={!canWrite || generateConclusionMutation.isPending}
                     >
                       {generateConclusionMutation.isPending ? '生成中…' : '生成结论'}
                     </button>
@@ -721,6 +716,7 @@ const Meetings: React.FC = () => {
                 <div className="rt-no-sel-sub">或发起新的圆桌会议</div>
                 <button
                   className="btn-accent"
+                  disabled={!canWrite || modelsError}
                   style={{ marginTop: 20 }}
                   onClick={() => { form.resetFields(); setIsModalVisible(true) }}
                 >
@@ -761,7 +757,7 @@ const Meetings: React.FC = () => {
       >
         <Form form={form} layout="vertical">
           {templates && templates.length > 0 && (
-            <Form.Item label={<span style={{ color: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--mono)', letterSpacing: '0.08em' }}>快速选择模板</span>}>
+            <Form.Item label={<span style={{ color: 'var(--ink-3)', fontSize: 12, fontFamily: 'var(--mono)', letterSpacing: '0.08em' }}>快速选择模板</span>}>
               <Space wrap>
                 {templates.map((t: MeetingTemplate) => (
                   <Button key={t.id} icon={<ThunderboltOutlined />} size="small"
@@ -778,7 +774,7 @@ const Meetings: React.FC = () => {
           )}
 
           <Form.Item name="case_ids"
-            label={<span style={{ color: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--mono)' }}>关联案件</span>}
+            label={<span style={{ color: 'var(--ink-3)', fontSize: 12, fontFamily: 'var(--mono)' }}>关联案件</span>}
             rules={[{ required: true, message: '请选择至少一个案件' }]}
           >
             <Select mode="multiple" placeholder="选择参与分析的案件">
@@ -789,23 +785,23 @@ const Meetings: React.FC = () => {
           </Form.Item>
 
           <Form.Item name="moderator_model_id"
-            label={<span style={{ color: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--mono)' }}>主持人模型（综合报告生成者）</span>}
+            label={<span style={{ color: 'var(--ink-3)', fontSize: 12, fontFamily: 'var(--mono)' }}>主持人模型（综合报告生成者）</span>}
             rules={[{ required: true, message: '请选择主持人模型' }]}
           >
             <Select placeholder="选择主持人">
-              {moderatorModels.map((m: AIModel) => (
-                <Option key={m.id} value={m.id}>{m.name} ({m.model_name})</Option>
+              {moderatorModels.map((m: MeetingModelOption) => (
+                <Option key={m.id} value={m.id}>{m.name}</Option>
               ))}
             </Select>
           </Form.Item>
 
           <Form.Item name="analyst_model_ids"
-            label={<span style={{ color: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--mono)' }}>分析员模型（建议 3-5 名）</span>}
+            label={<span style={{ color: 'var(--ink-3)', fontSize: 12, fontFamily: 'var(--mono)' }}>分析员模型（建议 3-5 名）</span>}
             rules={[{ required: true, message: '请选择至少一个分析员' }]}
           >
             <Select mode="multiple" placeholder="选择分析员">
-              {analystModels.map((m: AIModel) => (
-                <Option key={m.id} value={m.id}>{m.name} ({m.model_name})</Option>
+              {analystModels.map((m: MeetingModelOption) => (
+                <Option key={m.id} value={m.id}>{m.name}</Option>
               ))}
             </Select>
           </Form.Item>
@@ -892,7 +888,7 @@ const Meetings: React.FC = () => {
                     {analyses && analyses.length > 0 ? (
                       <Tabs type="card" size="small" items={
                         analyses.map((analysis: any, idx: number) => {
-                          const model = models?.find((m: AIModel) => m.id === analysis.analyst_model_id)
+                          const model = models?.find((m: MeetingModelOption) => m.id === analysis.analyst_model_id)
                           const content = typeof analysis.result_content === 'string'
                             ? analysis.result_content
                             : JSON.stringify(analysis.result_content, null, 2)
@@ -925,7 +921,7 @@ const Meetings: React.FC = () => {
                     </div>
 
                     {rankings?.filter((r: any) => r.stage === 'review').map((ranking: any, idx: number) => {
-                      const model = models?.find((m: AIModel) => m.id === ranking.evaluator_model_id)
+                      const model = models?.find((m: MeetingModelOption) => m.id === ranking.evaluator_model_id)
                       return (
                         <div key={idx} className="report-section" style={{ marginBottom: 12 }}>
                           <div className="report-section-title">{model?.name || '评审员'} 的评分</div>
@@ -941,9 +937,9 @@ const Meetings: React.FC = () => {
                                     <div>
                                       <Text strong style={{ color: 'var(--ink-1)', fontSize: 12 }}>匿名ID: {item.anonymous_id}</Text>
                                       <br />
-                                      <Text style={{ color: 'var(--ink-3)', fontSize: 11 }}>得分: {item.score}/10</Text>
+                                      <Text style={{ color: 'var(--ink-3)', fontSize: 12 }}>得分: {item.score}/10</Text>
                                       <br />
-                                      <Text style={{ color: 'var(--ink-3)', fontSize: 11 }}>{item.reasoning}</Text>
+                                      <Text style={{ color: 'var(--ink-3)', fontSize: 12 }}>{item.reasoning}</Text>
                                     </div>
                                   </Space>
                                 </List.Item>
@@ -1095,9 +1091,10 @@ const Meetings: React.FC = () => {
                           <Button
                             icon={<FileAddOutlined />}
                             onClick={() => selectedMeeting && generateConclusionMutation.mutate(selectedMeeting)}
+                            disabled={!canWrite}
                             loading={generateConclusionMutation.isPending}
                             style={{
-                              background: 'linear-gradient(135deg, #a07520, #e8b84b)',
+                              background: "var(--accent)",
                               border: 'none',
                               color: '#060c1a',
                               fontWeight: 600,
@@ -1126,7 +1123,7 @@ const Meetings: React.FC = () => {
                 children: conversations && conversations.length > 0 ? (
                   <Timeline>
                     {conversations.map((conv: any) => {
-                      const model = models?.find((m: AIModel) => m.id === conv.speaker_model_id)
+                      const model = models?.find((m: MeetingModelOption) => m.id === conv.speaker_model_id)
                       const stageNames: Record<number, string> = {
                         0: '案件信息',
                         1: '第一阶段 · 独立分析',
@@ -1140,7 +1137,7 @@ const Meetings: React.FC = () => {
                             <Text strong style={{ color: 'var(--ink-1)', fontSize: 12 }}>
                               {stageNames[conv.round_number] || `轮次 ${conv.round_number}`}
                             </Text>
-                            <Text style={{ color: 'var(--ink-3)', fontSize: 11, marginLeft: 10, fontFamily: 'var(--mono)' }}>
+                            <Text style={{ color: 'var(--ink-3)', fontSize: 12, marginLeft: 10, fontFamily: 'var(--mono)' }}>
                               {model?.name || '系统'} · {conv.message_type}
                             </Text>
                           </div>

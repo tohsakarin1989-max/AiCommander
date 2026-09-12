@@ -25,12 +25,12 @@
 /* 步骤 tag */
 .agent-step-tag {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
   color: var(--ink-3);
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 2px 7px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   display: inline-block;
 }
 
@@ -43,15 +43,15 @@
 }
 .agent-result-label {
   font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 6px;
 }
 .agent-result-text {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-1);
   line-height: 1.65;
   white-space: pre-wrap;
@@ -77,7 +77,7 @@
   margin-top: 8px;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .agent-case-select {
@@ -186,7 +186,7 @@
 }
 .agent-metric-grid span {
   color: var(--ink-3);
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 3px;
 }
 .agent-operations-metrics {
@@ -208,7 +208,7 @@
   border-bottom: 1px solid var(--line-soft);
   padding: 8px 0;
   color: var(--ink-2);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 .agent-provider-row > div strong,
 .agent-provider-row > div span { display: block; }
@@ -241,7 +241,7 @@
   display: block;
   margin-top: 5px;
   color: var(--ink-3);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -278,12 +278,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-run-performance strong { color: var(--accent); font-family: var(--mono); font-size: 11px; }
-.agent-run-performance span { color: var(--ink-3); font-size: 9px; margin-top: 3px; }
+.agent-run-performance strong { color: var(--accent); font-family: var(--mono); font-size: 12px; }
+.agent-run-performance span { color: var(--ink-3); font-size: 12px; margin-top: 3px; }
 .agent-section-head {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-2);
   margin-bottom: 10px;
 }
@@ -315,7 +315,7 @@
   margin-top: 8px;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
 }
 .agent-list-value,
 .agent-patch {
@@ -323,7 +323,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--ink-1);
 }
@@ -341,7 +341,7 @@
 }
 .agent-execution-note {
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 8px;
 }
 .agent-event-list { border-left: 1px solid var(--line); margin-left: 10px; }
@@ -351,7 +351,7 @@
   gap: 8px;
   padding: 7px 0 7px 10px;
   color: var(--ink-1);
-  font-size: 11px;
+  font-size: 12px;
 }
 .agent-event-seq {
   font-family: var(--mono);

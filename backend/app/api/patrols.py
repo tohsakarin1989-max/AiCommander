@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.database import get_db
-from app.services.patrol_service import PatrolService
+from app.services.patrol_service import PatrolService, PatrolStateError
 from app.services.deployment_service import DeploymentService
 from app.services.geo_analysis_service import GeoAnalysisService
 
@@ -133,6 +133,8 @@ def start_patrol(patrol_id: int, db: Session = Depends(get_db)):
     """开始巡逻"""
     try:
         return PatrolService.start_patrol(db, patrol_id)
+    except PatrolStateError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -156,6 +158,8 @@ def complete_patrol(
             effectiveness_score=data.effectiveness_score,
             feedback_notes=data.feedback_notes,
         )
+    except PatrolStateError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -166,6 +170,9 @@ def cancel_patrol(patrol_id: int, db: Session = Depends(get_db)):
     patrol = PatrolService.get_patrol(db, patrol_id)
     if not patrol:
         raise HTTPException(status_code=404, detail="巡逻记录不存在")
+
+    if patrol.status not in {"planned", "in_progress"}:
+        raise HTTPException(status_code=409, detail="仅待执行或执行中的巡逻记录可以取消")
 
     patrol.status = "cancelled"
     db.commit()

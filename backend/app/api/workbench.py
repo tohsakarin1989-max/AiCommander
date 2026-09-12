@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.services.daily_workbench_service import DailyWorkbenchService
 from app.services.workbench_service import WorkbenchError, WorkbenchService
 
 
@@ -65,6 +66,18 @@ def _raise_workbench_error(exc: WorkbenchError) -> None:
     if str(exc) == "invalid_internal_path":
         raise HTTPException(status_code=422, detail="只能记录系统内部页面，且不会保存查询参数")
     raise HTTPException(status_code=422, detail="工作会话操作不合法")
+
+
+@router.get("/daily")
+def get_daily_workbench(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """全量授权统计；缺项与分析状态可重叠，分析就绪不代表案件办结。"""
+    _identity(request)
+    return DailyWorkbenchService.daily(db, limit=limit, offset=offset)
 
 
 @router.get("/today")

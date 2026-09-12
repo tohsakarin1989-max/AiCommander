@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from app.database import get_db
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
@@ -11,8 +12,8 @@ router = APIRouter()
 
 
 class CitationAssistRequest(BaseModel):
-    query: str
-    case_id: Optional[int] = None
+    query: str = Field(..., min_length=1, max_length=2000)
+    case_id: Optional[int] = Field(None, gt=0)
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -111,7 +112,14 @@ def citation_assist(payload: CitationAssistRequest, db: Session = Depends(get_db
     """报告引用助手：返回可回溯案件/经验卡/结论引用。"""
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="检索内容不能为空")
-    return CaseKnowledgeService.citation_assist(db, payload.query, case_id=payload.case_id)
+    try:
+        return CaseKnowledgeService.citation_assist(db, payload.query, case_id=payload.case_id)
+    except PermissionError:
+        raise HTTPException(404, '检索范围不可访问') from None
+    except ValueError:
+        raise HTTPException(422, '请提供有效查询条件') from None
+    except SQLAlchemyError:
+        raise HTTPException(503, '检索暂不可用，不能据此判断没有相关资料') from None
 
 
 @router.post("/{report_id:int}/review")

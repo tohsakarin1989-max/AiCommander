@@ -4,7 +4,7 @@ export interface RoadFeature {
   type: 'Feature'
   id: string
   geometry: { type: string; coordinates: unknown }
-  properties: { name: string; kind: 'road' | 'entrance'; road_id?: string; conditions?: Record<string, unknown> }
+  properties: { name: string; kind: 'road' | 'entrance'; road_id?: string; facility_asset_id?: number; conditions?: Record<string, unknown> }
 }
 export interface NewRoadGeometryEvidence {
   kind: 'new_road'
@@ -100,18 +100,21 @@ export const internalRoadsApi = {
   read: async (source: number, id: number, signal?: AbortSignal) =>
     (await api.get<RoadImport>(`${root(source)}/imports/${id}`, { signal })).data,
   review: async (source: number, record: RoadImport, feature: RoadFeature, decision: RoadReview['decision'], note: string, evidence: string,
-    connectionStatus?: 'connected' | 'disconnected' | 'unknown', newRoad?: NewRoadGeometryEvidence) => {
+    connectionStatus?: 'connected' | 'disconnected' | 'unknown', newRoad?: NewRoadGeometryEvidence, confirmFacility = false) => {
     if (newRoad && (decision !== 'verified' || feature.properties.kind !== 'road' || connectionStatus))
       throw new Error('新增道路连接记录只用于已核验道路，不能同时填写入口连接记录')
     const check = record.entrance_checks?.find(item => item.entrance_id === feature.id)
     if (connectionStatus && (decision !== 'verified' || !check?.road_import_id || !check.road_source_sha256))
       throw new Error('入口连接记录缺少已核验决定或绑定道路版本')
+    if (confirmFacility && (connectionStatus !== 'connected' || !Number.isInteger(feature.properties.facility_asset_id)
+        || feature.properties.facility_asset_id! <= 0)) throw new Error('确认设施归属需要已连接记录和稳定设施编号')
     return (await api.post<RoadReview>(`${root(source)}/imports/${record.id}/features/${encodeURIComponent(feature.id)}/reviews`, {
       input_sha256: record.input_sha256, request_key: crypto.randomUUID(),
       previous_review_id: record.feature_reviews?.[feature.id]?.id ?? null,
       decision, note, evidence_reference: evidence,
       ...(connectionStatus ? { connection_evidence: { road_import_id: check!.road_import_id,
-        road_source_sha256: check!.road_source_sha256, status: connectionStatus } } : {}),
+        road_source_sha256: check!.road_source_sha256, status: connectionStatus,
+        ...(confirmFacility ? { facility_asset_id: feature.properties.facility_asset_id } : {}) } } : {}),
       ...(newRoad ? { connection_evidence: newRoad } : {}),
     })).data
   },

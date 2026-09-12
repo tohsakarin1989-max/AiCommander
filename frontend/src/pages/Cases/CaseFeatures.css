@@ -21,7 +21,7 @@
   border-left: 3px solid var(--info);
   padding: 9px 16px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
   margin-bottom: var(--gap);
 }
@@ -58,10 +58,10 @@
 /* 预处理状态 badge */
 .cf-badge {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
   padding: 2px 7px;
   display: inline-block;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   border: 1px solid var(--line);
 }
 .cf-badge--done    { color: var(--ok);   border-color: oklch(0.78 0.14 155 / 0.4); background: oklch(0.78 0.14 155 / 0.1); }
@@ -110,7 +110,7 @@
 
 /* Descriptions 覆写 */
 .cf-detail-card .ant-descriptions-item-label {
-  font-size: 11.5px !important;
+  font-size: 12px !important;
   color: var(--ink-3) !important;
   background: var(--bg-2) !important;
   border-color: var(--line-soft) !important;

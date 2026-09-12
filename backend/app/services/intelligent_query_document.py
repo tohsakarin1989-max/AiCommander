@@ -9,8 +9,14 @@ from app.services.intelligent_query_tasks import read_query
 SCHEMA = 'intelligent-query-document-4.3-1'
 TOOLS = {'find_cases': '案件查找', 'find_places': '地点与设施', 'count_cases': '条件统计',
          'compare_periods': '时间段比较', 'summarize_results': '已有研判成果',
-         'find_road_results': '历史道路成果', 'find_case_profiles': '案件语义画像'}
-LABELS = {'assertions': '原文表述', 'batch_patterns': '本批表述分布（非全库规律）',
+         'find_road_results': '历史道路成果', 'find_case_profiles': '案件语义画像',
+         'find_history': '历史案件与经验参考'}
+LABELS = {'coverage': '实际检索覆盖', 'authorized_cases': '候选范围案件数', 'scanned_cases': '已检查案件数',
+          'matched_sources': '匹配资料来源数（非案件总数）', 'complete': '是否完成全部候选范围',
+          'shared_conditions': '相似条件', 'different_conditions': '不同表述',
+          'unmatched_query_conditions': '尚未匹配条件', 'snippet': '原文摘录',
+          'score': '检索支持度（不是准确概率）', 'versions': '来源版本',
+          'assertions': '原文表述', 'batch_patterns': '本批表述分布（非全库规律）',
           'kind': '表述性质（stated明述、negated否定、uncertain不确定、inferred推断）',
           'reference': '原文引用', 'quote': '原句', 'category': '语义类别', 'value': '标准词项',
           'case_count': '本批去重案件数', 'count': '匹配案件数', 'current_count': '本期案件数', 'previous_count': '上一等长周期案件数',

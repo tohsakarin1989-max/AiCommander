@@ -174,7 +174,7 @@ export function RoadReviewForm({ source, record, feature, refresh }: {
       newConnections: previousGeometry?.connections.map(item => ({ segment: item.component + 1,
         endpoint: item.endpoint, node: String(item.osm_node_id) })) ?? [{ segment: 1, endpoint: 'start', node: '' }] }}
       onFinish={async (values: { decision: RoadReview['decision']; note: string; evidence: string;
-      connection?: 'connected' | 'disconnected' | 'unknown'; newRoadEnabled?: boolean;
+      connection?: 'connected' | 'disconnected' | 'unknown'; newRoadEnabled?: boolean; confirmFacility?: boolean;
       publicSourceHash?: string; newConnections?: NewRoadConnectionRow[] }) => {
       let geometry
       try {
@@ -184,7 +184,7 @@ export function RoadReviewForm({ source, record, feature, refresh }: {
         }
       } catch (error) { setError(error instanceof Error ? error.message : '连接依据格式有误'); return }
       setBusy(true); setError('')
-      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence, values.connection, geometry); refresh() }
+      try { await internalRoadsApi.review(source, record, feature, values.decision, values.note, values.evidence, values.connection, geometry, values.confirmFacility); refresh() }
       catch { setError('核验未确认成功。请刷新批次后查看当前决定，再提交；不覆盖他人的核验。') }
       finally { setBusy(false) }
     }}>
@@ -205,6 +205,11 @@ export function RoadReviewForm({ source, record, feature, refresh }: {
         ]} />
       </Form.Item>}
       <Form.Item label="核验依据（台账、核查记录等）" name="evidence" rules={[{ required: true, whitespace: true }]}><Input maxLength={500} /></Form.Item>
+      {feature.properties.kind === 'entrance' && feature.properties.facility_asset_id && <Form.Item
+        label={`入口所属设施编号：${feature.properties.facility_asset_id}`} name="confirmFacility"
+        extra="仅在依据明确支持该入口属于该编号设施且连接已核验时确认。不授予道路通行许可。">
+        <Select options={[{ value: false, label: '设施归属尚未核验' }, { value: true, label: '本次依据同时确认该设施归属' }]} />
+      </Form.Item>}
       <Form.Item label="核验说明" name="note" rules={[{ required: true, whitespace: true }]}><Input.TextArea maxLength={2000} rows={3} /></Form.Item>
       <Button htmlType="submit" type="primary" loading={busy}>记录核验决定</Button>
     </Form>

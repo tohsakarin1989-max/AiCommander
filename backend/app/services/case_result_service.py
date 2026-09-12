@@ -136,8 +136,9 @@ class CaseResultService:
             raise CaseResultAccessError()
         result = CaseResultService.read(db, result_id)
         from app.services.case_pipeline_service import (
-            CASE_DICTIONARY_VERSION, CASE_PROFILE_SCHEMA_VERSION, CasePipelineService,
+            CASE_PROFILE_SCHEMA_VERSION, CasePipelineService,
         )
+        from app.services.case_local_semantic_model import resolve_model_plan
 
         case = db.scalar(select(Case).where(Case.id == case_id).execution_options(populate_existing=True))
         if case is None:
@@ -146,7 +147,7 @@ class CaseResultService:
         versions = result["content"]["versions"]
         current = (CasePipelineService.source_hash(db, case) == versions["case_source_hash"]
                    and versions["profile_schema"] == CASE_PROFILE_SCHEMA_VERSION
-                   and versions["dictionary_version"] == CASE_DICTIONARY_VERSION)
+                   and versions["dictionary_version"] == resolve_model_plan(db).version)
         result["freshness"] = "current" if current else "pending_update"
         return result
 

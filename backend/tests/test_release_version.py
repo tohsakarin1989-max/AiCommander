@@ -65,3 +65,14 @@ def test_backend_ci_installs_real_map_style_validator_before_tests():
     assert any(step.get('working-directory') == 'backend/document-renderer'
                and 'npm ci --omit=dev --ignore-scripts' in step.get('run', '')
                for step in prerequisites)
+
+
+def test_static_deployment_ci_supplies_explicit_non_runtime_image_fixture():
+    import yaml
+
+    workflow = yaml.safe_load((REPOSITORY_ROOT / '.github/workflows/release-quality.yml').read_text())
+    job = workflow['jobs']['deployment-static']
+    assert job['env']['POSTGIS_IMAGE'] == 'aicommander-postgis-vector@sha256:' + '0' * 64
+    checks = [step['run'] for step in job['steps'] if 'run' in step]
+    assert all('config --quiet' in command for command in checks if command.startswith('docker compose'))
+    assert any('sh -n scripts/check-postgres-image.sh' in command for command in checks)

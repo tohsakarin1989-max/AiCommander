@@ -100,7 +100,7 @@ def test_result_to_registered_worker_does_not_implicitly_elevate(artifact_input,
         output['map_snapshot_id'] = result_data[1].map_snapshot_id
         output['matrix']['analysis_at'] = kwargs['analysis_at'].isoformat()
         return output
-    monkeypatch.setattr(jobs, 'compare_result_roads', calculate)
+    monkeypatch.setattr('app.services.case_facility_comparison.compare_case_facilities', calculate)
     first = case_road_tasks.process_next_comparison.run()
     assert first['status'] == ('waiting_dependency' if revoked else 'completed')
     if revoked:
@@ -124,11 +124,13 @@ def test_capture_uses_copied_server_scope_without_role_assertions(db_session):
 @pytest.mark.skipif(os.environ.get('AIC_BUILD_ROAD_CONDITIONS') != '1', reason='optional real compiler')
 @pytest.mark.parametrize('closed', [False, True])
 @pytest.mark.parametrize('truck', [False, True])
-def test_automatic_handoff_through_actual_native_matrix_and_persistence(
+def test_legacy_explicit_job_through_actual_native_matrix_and_persistence(
         ready, result_data, monkeypatch, tmp_path, closed, truck):
-    """Real PBF/graph/isolated engine, DB evidence, queue task and result storage.
+    """Retained legacy job: real PBF/graph, matrix, queue task and storage.
 
     Calls the registered task directly; does not claim a Redis/broker deployment.
+    v5.2 automatic facility governance is tested by verify-v52-native-workflow.py;
+    this fixture deliberately has no verified facility entrances.
     """
     osmium = pytest.importorskip('osmium')
     from app.models.map_foundation import MapSnapshotFeature
@@ -172,37 +174,15 @@ def test_automatic_handoff_through_actual_native_matrix_and_persistence(
     feature = db.scalar(select(MapSnapshotFeature).where(MapSnapshotFeature.asset_id == 1))
     feature.latitude, feature.longitude = 46., 125.0025
     db.commit()
-    source_event(db, profile)
     result_id, _ = CaseResultService.freeze_completed_inputs(db, profile, run)
     db.commit()
     frozen_source = deepcopy(CaseResultService.read(db, result_id)['content'])
+    from app.services.case_road_vehicle import frozen_road_vehicle
+    jobs.enqueue_comparison(db, result_id=result_id, analysis_at=datetime.now(timezone.utc),
+        vehicle=frozen_road_vehicle(frozen_source), engine_version='3.8.3')
+    db.commit()
     monkeypatch.setattr(case_road_tasks, 'SessionLocal', sessionmaker(bind=db.bind, autoflush=False))
     monkeypatch.setattr(case_road_tasks.settings, 'MAP_PACKAGE_ROOT', str(tmp_path))
-    if closed:
-        graph.status = 'building'
-        db.commit()
-        request_id = db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_type == triggers.REQUEST_TYPE))
-        for _ in range(4):
-            waiting = case_road_tasks.process_next_comparison.run()
-            assert waiting['event_id'] == request_id and waiting['status'] == 'waiting_dependency'
-            assert db.query(OutboxEvent).filter_by(event_type=jobs.EVENT_TYPE).count() == 0
-            assert case_road_tasks.process_next_comparison.run() == {'selected': 0}
-            request = db.get(OutboxEvent, request_id, populate_existing=True)
-            request.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-            db.commit()
-        from app.models.user import User
-        user = db.get(User, 1)
-        user.is_active = False
-        db.commit()
-        assert case_road_tasks.process_next_comparison.run()['status'] == 'retry'
-        request = db.get(OutboxEvent, request_id, populate_existing=True)
-        assert request.payload['ordinary_failures'] == 1
-        request.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-        db.get(User, 1, populate_existing=True).is_active = True
-        graph = db.get(RoadNetworkVersion, 'graph-1', populate_existing=True)
-        graph.status = 'ready'
-        db.commit()
-    assert case_road_tasks.process_next_comparison.run()['status'] == 'completed'
     if closed:
         # The original durable job survives a missing installed graph; retry
         # after restoration must not require another user action or new event.

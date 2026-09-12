@@ -52,10 +52,14 @@ def frozen_result_map_input(content: dict) -> dict:
     }, ensure_ascii=False, allow_nan=False))
 
 
-def load_result_map_context(db: Session, result_id: str) -> dict:
+def load_result_map_context(db: Session, result_id: str, *, map_spec: dict | None = None) -> dict:
     """按当前权限重读成果，取其固定底图清单和仅被引用的生产图层。"""
     result = CaseResultService.read(db, result_id)
-    spec = frozen_result_map_input(result["content"])
+    spec = map_spec if map_spec is not None else frozen_result_map_input(result["content"])
+    if map_spec is not None and (spec.get("schema") != "case-facility-map-5.2-1"
+            or spec.get("map_snapshot_id") != result["content"]["versions"]["map_snapshot_id"]
+            or spec.get("case_marker", {}).get("case_id") != result["content"]["case_id"]):
+        raise ValueError("result_map_version_mismatch")
     context = {"result_id": result_id, "content_sha256": result["content_sha256"], "map": spec,
                "basemap": None, "production": None}
     snapshot_id = spec["map_snapshot_id"]

@@ -10,6 +10,7 @@ from sqlalchemy import func, and_, or_
 
 from app.models.event import Event, EventRelation, AreaProfile, RELATION_TYPES
 from app.models.case import Case
+from app.database import require_area_write_access
 from app.utils.geo import haversine_km, bounding_box
 
 
@@ -415,7 +416,7 @@ class RelationAnalysisService:
         return suggestions
 
     @staticmethod
-    def save_relations(db: Session, event_id: int, relations: List[Dict]) -> int:
+    def save_relations(db: Session, event_id: int, relations: List[Dict], *, commit: bool = True) -> int:
         """
         将分析出的关联关系保存到数据库
 
@@ -424,22 +425,22 @@ class RelationAnalysisService:
         """
         saved_count = 0
         for rel in relations:
-            # 检查是否已存在
-            existing = db.query(EventRelation).filter(
-                or_(
-                    and_(
-                        EventRelation.event_a_id == event_id,
-                        EventRelation.event_b_id == rel["event_id"]
+            related_ids = {event_id, rel["event_id"]}
+            related_events = db.query(Event).filter(Event.id.in_(related_ids)).all()
+            if len(related_events) != len(related_ids):
+                raise ValueError("关联事件不存在或不在授权范围")
+            for event in related_events:
+                require_area_write_access(db, event.operational_area_id)
+            for rel_type in rel.get("relation_types", [rel.get("relation_type")]):
+                # 保留同一事件对的不同关系类型以及已有人工确认结果。
+                existing = db.query(EventRelation).filter(
+                    EventRelation.relation_type == rel_type,
+                    or_(
+                        and_(EventRelation.event_a_id == event_id, EventRelation.event_b_id == rel["event_id"]),
+                        and_(EventRelation.event_a_id == rel["event_id"], EventRelation.event_b_id == event_id),
                     ),
-                    and_(
-                        EventRelation.event_a_id == rel["event_id"],
-                        EventRelation.event_b_id == event_id
-                    )
-                )
-            ).first()
-
-            if not existing:
-                for rel_type in rel.get("relation_types", [rel.get("relation_type")]):
+                ).first()
+                if not existing:
                     relation = EventRelation(
                         event_a_id=event_id,
                         event_b_id=rel["event_id"],
@@ -451,7 +452,9 @@ class RelationAnalysisService:
                         is_system_generated=True
                     )
                     db.add(relation)
+                    db.flush()
                     saved_count += 1
 
-        db.commit()
+        if commit:
+            db.commit()
         return saved_count

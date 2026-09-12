@@ -1,4 +1,17 @@
 .case-results-browser { margin-bottom: 32px; color: var(--ink-1); min-width: 0; font-size: 14px; line-height: 1.6; }
+.results-workspace.is-reading { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; }
+.results-directory { min-width: 0; }
+.is-reading .results-directory { border-right: 1px solid var(--line); padding-right: 16px; }
+.is-reading .case-results-browser__selected { border-top: 0; padding-top: 0; min-width: 0; }
+.results-directory-list { max-height: 60vh; overflow: auto; }
+.results-directory-list button { display: grid; gap: 6px; width: 100%; padding: 16px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: normal; }
+.results-directory-list button[aria-current='true'] { border-left: 3px solid var(--accent); background: var(--accent-soft); }
+.results-directory-list span, .results-directory-list small { font-size: 12px; color: var(--ink-2); }
+@container workspace (max-width: 1000px) {
+  .results-workspace.is-reading { grid-template-columns: minmax(0, 1fr); }
+  .is-reading .results-directory { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--line); }
+  .results-directory-list { max-height: 200px; }
+}
 .case-results-browser h2 { margin: 0 0 8px; font-size: 20px; }
 .case-results-browser > p { max-width: 72ch; color: var(--ink-2); }
 .case-results-browser__search { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 18px 0; }
@@ -13,7 +26,7 @@
 .case-results-browser__pages { display: flex; gap: 12px; align-items: center; margin: 16px 0; }
 .case-results-browser__selected { border-top: 1px solid var(--line); padding-top: 20px; }
 .case-results-browser__selected > p { color: var(--warn); }
-.case-results-browser__selected .case-result { max-width: 960px; }
+.case-results-browser__selected .case-result { max-width: none; }
 .case-results-browser button:disabled { opacity: .5; cursor: not-allowed; }
 .case-results-browser button { white-space: nowrap; }
 @media (max-width: 600px) { .case-results-browser th, .case-results-browser td { padding: 10px 6px; } }

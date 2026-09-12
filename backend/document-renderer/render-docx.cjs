@@ -44,6 +44,10 @@ function frozenMapImage(input, map) {
   if (!image) throw new Error('frozen_map_renderer_required')
   if (!input.result_id || !input.content_sha256 || image.result_id !== input.result_id
       || image.content_sha256 !== input.content_sha256 || image.map_snapshot_id !== map.map_snapshot_id
+      || (input.road_artifact_id && (image.road_artifact_id !== input.road_artifact_id
+        || image.road_artifact_sha256 !== input.road_artifact_sha256))
+      || (map.schema === 'case-facility-map-5.2-1' && (map.road_artifact_id !== input.road_artifact_id
+        || map.road_artifact_sha256 !== input.road_artifact_sha256))
       || typeof image.png_base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.png_base64)) {
     throw new Error('invalid_frozen_map_image')
   }
@@ -64,7 +68,7 @@ function frozenMapImage(input, map) {
 }
 
 async function render(input) {
-  if (!['case-result-document-4.1.0-1', 'intelligent-query-document-4.3-1'].includes(input.schema) || !Array.isArray(input.blocks)) {
+  if (!['case-result-document-4.1.0-1', 'case-result-document-5.1.0-1', 'intelligent-query-document-4.3-1'].includes(input.schema) || !Array.isArray(input.blocks)) {
     throw new Error('unsupported_document_schema')
   }
   const children = []
@@ -85,10 +89,12 @@ async function render(input) {
       const map = JSON.parse(block.text)
       if (map.map_snapshot_id || map.candidates?.length || map.case_marker) {
         const image = frozenMapImage(input, map)
-        children.push(...paragraphs('冻结版本地图', { heading: HeadingLevel.HEADING_1,
+        children.push(...paragraphs(map.schema === 'case-facility-map-5.2-1' ? '道路候选冻结入口图' : '冻结版本地图', { heading: HeadingLevel.HEADING_1,
           pageBreakBefore: true, keepNext: true }))
         children.push(image)
-        children.push(...paragraphs(`地图快照：${map.map_snapshot_id}。候选范围仅供核验，不代表实际路线或已确认事实。`))
+        children.push(...paragraphs(`地图快照：${map.map_snapshot_id}。${map.schema === 'case-facility-map-5.2-1'
+          ? '编号与道路候选一致，位置为选定可信入口，不是设施中心或已确认来源。'
+          : '候选范围仅供核验，不代表实际路线或已确认事实。'}`))
       } else children.push(...paragraphs('地图：本成果尚未结合地图，不生成或推测地图位置。'))
     } else throw new Error('unsupported_document_block')
   }

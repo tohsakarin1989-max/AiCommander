@@ -5,7 +5,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "4.5.0-stable"
+    APP_VERSION: str = "5.2.0-stable"
     ALEMBIC_TARGET: str = "head"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: str = "localhost,127.0.0.1,testserver"
     ENABLE_API_DOCS: bool = False
     ENABLE_VECTOR_DB: bool = False
+    LOCAL_EMBEDDING_BUNDLE: str = ""
+    LOCAL_EMBEDDING_MANIFEST_SHA256: str = ""
+    CASE_SEMANTIC_MODEL_ID: Optional[int] = None
     ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
     ENABLE_AGENT_LAB: bool = False
@@ -67,7 +70,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
 
-    @field_validator("AGENT_MODEL_ID", mode="before")
+    @field_validator("AGENT_MODEL_ID", "CASE_SEMANTIC_MODEL_ID", mode="before")
     @classmethod
     def empty_agent_model_id_is_unset(cls, value):
         return None if value == "" else value

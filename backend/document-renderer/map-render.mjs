@@ -1,4 +1,4 @@
-import { Map, setWorkerUrl, setWorkerCount } from '/static/maplibre-gl.mjs';
+import { Map, Marker, setWorkerUrl, setWorkerCount } from '/static/maplibre-gl.mjs';
 
 setWorkerUrl('/static/maplibre-gl-worker.mjs');
 setWorkerCount(1);
@@ -14,6 +14,12 @@ window.renderFrozenMap = async (input) => {
     else if (Array.isArray(value)) value.forEach(collect);
   };
   features.forEach(f => collect(f.geometry?.coordinates));
+  const entrances = spec.reference_points ?? [];
+  if (!Array.isArray(entrances) || entrances.length > 3
+      || entrances.some((p, i) => !coordinate([p.longitude, p.latitude]) || p.rank !== i + 1 || typeof p.title !== 'string')) {
+    throw new Error('facility_map_entrances_invalid');
+  }
+  for (const point of entrances) positions.push([point.longitude, point.latitude]);
   if (input.reference_path !== undefined) {
     if (!Array.isArray(input.reference_path) || input.reference_path.length < 2
         || input.reference_path.length > 100000 || !input.reference_path.every(coordinate)) {
@@ -83,6 +89,19 @@ window.renderFrozenMap = async (input) => {
   map.addLayer({ id: 'report-point', source: 'report', type: 'circle', filter: ['==', '$type', 'Point'],
     paint: { 'circle-radius': 7, 'circle-color': ['case', ['==', ['get', 'report_kind'], 'case'], '#dc2626', '#0369a1'],
       'circle-stroke-width': 2, 'circle-stroke-color': '#fff' } });
+  const entranceLabels = new globalThis.Map();
+  for (const point of entrances) {
+    const key = `${point.longitude},${point.latitude}`;
+    const group = entranceLabels.get(key) ?? { point, ranks: [] };
+    group.ranks.push(point.rank);
+    entranceLabels.set(key, group);
+  }
+  for (const { point, ranks } of entranceLabels.values()) {
+    const element = document.createElement('div');
+    element.textContent = ranks.join(',');
+    element.style.cssText = 'font:700 18px/24px sans-serif;color:#14532d;background:#f0fdf4;border:2px solid #15803d;border-radius:16px;min-width:24px;text-align:center';
+    new Marker({ element, anchor: 'bottom' }).setLngLat([point.longitude, point.latitude]).addTo(map);
+  }
   if (alternatives.length) {
     map.addSource('saved-road-alternatives', { type: 'geojson', data: { type: 'Feature', properties: {},
       geometry: { type: 'MultiLineString', coordinates: alternatives } } });
@@ -95,7 +114,8 @@ window.renderFrozenMap = async (input) => {
     map.addLayer({ id: 'saved-road', source: 'saved-road', type: 'line',
       paint: { 'line-color': '#0369a1', 'line-width': 4 } });
   }
-  const notes = [`地图版本：${basemap.version}；红点：案件记录位置；蓝点：引用设施；橙色：待核验候选范围。`,
+  const notes = [`地图版本：${basemap.version}；红点：案件记录位置；蓝点：引用设施；${spec.schema === 'case-facility-map-5.2-1' ? '绿色编号：本轮选定的可信入口。' : '橙色：待核验候选范围。'}`,
+    ...entrances.map(p => p.title),
     ...spec.candidates.map(c => `${c.rank}. ${c.title}（待核验）`), ...spec.warnings,
     `来源：${basemap.attribution || '见成果来源记录'}。范围不代表实际路线或已确认事实。`];
   if (input.reference_path) notes.push('蓝色实线：历史留存道路参考路径，不是实际行驶轨迹，不代表当前仍可通行。');

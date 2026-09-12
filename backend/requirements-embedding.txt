@@ -1,0 +1,3 @@
+# Optional local CPU embedding runtime. Ship dependencies and model bundle offline.
+-r requirements.txt
+sentence-transformers==5.1.2

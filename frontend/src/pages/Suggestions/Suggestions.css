@@ -52,8 +52,7 @@
   padding: 11px 14px;
   border: 1px solid var(--accent-line);
   background:
-    linear-gradient(90deg, oklch(0.78 0.14 var(--accent-hue) / 0.16), transparent 78%),
-    var(--accent-soft);
+    var(--bg-1);
   color: var(--ink-1);
   font-size: 12.5px;
   line-height: 1.45;
@@ -92,7 +91,7 @@
   min-height: 34px;
   padding: 0 9px;
   border: 1px solid var(--line-soft);
-  background: oklch(0.12 0.012 250 / 0.34);
+  background: var(--bg-2);
   color: var(--ink-2);
   text-align: left;
 }
@@ -121,7 +120,7 @@
   border: 1px solid var(--line-soft);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .sg-rail-item.on b {
@@ -136,7 +135,7 @@
   display: grid;
   gap: 4px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sg-rail-foot strong {
@@ -145,41 +144,17 @@
   font-weight: 500;
 }
 
-.sg-quick-filter {
+.sg-filter-actions {
   margin: 10px;
-  padding: 12px;
-  border: 1px solid var(--line-soft);
   display: grid;
-  gap: 10px;
   align-content: start;
 }
 
-.sg-quick-filter h3,
 .sg-bottom-status h3 {
   margin: 0;
   color: var(--ink-1);
   font-size: 13px;
   font-weight: 600;
-}
-
-.sg-quick-filter label {
-  display: grid;
-  gap: 5px;
-}
-
-.sg-quick-filter label span {
-  color: var(--ink-3);
-  font-family: var(--mono);
-  font-size: 10px;
-}
-
-.sg-quick-filter select {
-  height: 30px;
-  border: 1px solid var(--line-soft);
-  background: var(--bg-2);
-  color: var(--ink-2);
-  padding: 0 8px;
-  font-size: 12px;
 }
 
 .sg-status-tabs {
@@ -191,7 +166,7 @@
   border-bottom: 1px solid var(--line-soft);
 }
 
-.sg-status-tabs button {
+.sg-status-stat {
   min-width: 86px;
   height: 34px;
   display: inline-flex;
@@ -202,19 +177,19 @@
   background: var(--bg-2);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
-.sg-status-tabs button.on {
+.sg-status-stat.on {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.sg-status-tabs button.danger { color: var(--err); }
-.sg-status-tabs button.info { color: var(--info); }
-.sg-status-tabs button.warn { color: var(--warn); }
-.sg-status-tabs button.done { color: var(--ok); }
+.sg-status-stat.danger { color: var(--err); }
+.sg-status-stat.info { color: var(--info); }
+.sg-status-stat.warn { color: var(--warn); }
+.sg-status-stat.done { color: var(--ok); }
 
 .sg-status-tabs b {
   font-size: 14px;
@@ -233,11 +208,11 @@
   min-height: 34px;
   padding: 0 14px;
   border-bottom: 1px solid var(--line-soft);
-  background: oklch(0.10 0.012 250 / 0.42);
+  background: var(--bg-2);
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 :root[data-theme="light"] .sg-table-head {
@@ -300,7 +275,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .sg-priority {
@@ -336,7 +311,7 @@
 
 .sg-row-main small {
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -403,7 +378,7 @@
   border: 1px solid oklch(0.70 0.20 25 / 0.38);
   padding: 3px 7px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sg-detail-body {
@@ -426,8 +401,8 @@
 .sg-blocker span {
   color: var(--err);
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .sg-blocker strong {
@@ -465,7 +440,7 @@
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--line-soft);
-  background: oklch(0.12 0.012 250 / 0.28);
+  background: var(--bg-2);
   padding: 11px 12px;
 }
 
@@ -511,13 +486,13 @@
 .sg-evidence-row span {
   color: var(--info);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sg-evidence-row strong {
   min-width: 0;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
 }
@@ -527,7 +502,7 @@
   border: 1px solid var(--line-soft);
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 

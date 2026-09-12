@@ -1,6 +1,25 @@
 import api from './api'
 
+export interface DashboardActivity {
+  id: string
+  kind: 'case_created' | 'case_updated' | 'task' | 'analysis' | 'result'
+  title: string
+  recorded_at: string
+  case_id: number
+  case_number: string
+  latitude: number | null
+  longitude: number | null
+  result_id?: string
+  status?: string
+  detail?: string
+}
+
 export interface DashboardSummary {
+  activities?: DashboardActivity[]
+  activity_limit?: number
+  processing?: Record<'pending' | 'processing' | 'retry' | 'failed', number>
+  recent_results?: DashboardActivity[]
+  completion?: { completed: number; degraded: number }
   schema_version: number
   operational_area_id: number | null
   as_of: string
@@ -23,8 +42,8 @@ export interface DashboardSummary {
   }
 }
 
-export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal): Promise<DashboardSummary> {
+export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal, activityLimit = 20): Promise<DashboardSummary> {
   return (await api.get<DashboardSummary>('/cases/dashboard-summary', {
-    params: { operational_area_id: areaId, days }, signal,
+    params: { operational_area_id: areaId, days, activity_limit: activityLimit }, signal,
   })).data
 }

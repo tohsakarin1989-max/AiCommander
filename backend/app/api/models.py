@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import BaseModel
 from app.database import get_db
@@ -42,16 +43,20 @@ class ModelResponse(BaseModel):
 @router.post("/", response_model=ModelResponse)
 def create_model(model: ModelCreate, db: Session = Depends(get_db)):
     """创建AI模型配置"""
-    ai_model = AIModelService.create_model(
-        db=db,
-        name=model.name,
-        provider=model.provider,
-        model_name=model.model_name,
-        api_key=model.api_key,
-        role=model.role,
-        config=model.config,
-        description=model.description
-    )
+    try:
+        ai_model = AIModelService.create_model(
+            db=db,
+            name=model.name,
+            provider=model.provider,
+            model_name=model.model_name,
+            api_key=model.api_key,
+            role=model.role,
+            config=model.config,
+            description=model.description
+        )
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="模型名称已被使用（含历史停用配置），请使用其他名称") from None
     return ai_model
 
 @router.get("/", response_model=List[ModelResponse])
@@ -76,7 +81,11 @@ def update_model(
 ):
     """更新模型配置"""
     update_data = model_update.dict(exclude_unset=True)
-    model = AIModelService.update_model(db, model_id, **update_data)
+    try:
+        model = AIModelService.update_model(db, model_id, **update_data)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="模型名称已被使用（含历史停用配置），请使用其他名称") from None
     if not model:
         raise HTTPException(status_code=404, detail="模型不存在")
     return model

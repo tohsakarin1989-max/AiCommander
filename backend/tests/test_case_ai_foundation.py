@@ -38,6 +38,8 @@ def _client(db_session: Session) -> TestClient:
     app.include_router(suggestions.router, prefix="/api/suggestions")
 
     def override_get_db():
+        # Explicit unrestricted scope for this isolated legacy API fixture only.
+        db_session.info.setdefault('authorized_area_ids', None)
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
@@ -305,7 +307,8 @@ def test_evidence_qa_search_citation_report_review_and_conclusion_draft_are_sour
 
     citation = client.post("/api/reports/citation-assist", json={"query": "夜间井场异常停留", "case_id": case.id})
     assert citation.status_code == 200
-    assert citation.json()["citations"][0]["route"] == f"/cases?caseId={case.id}"
+    # Unified history ranking may put the more relevant confirmed experience first.
+    assert f"/cases?caseId={case.id}" in {item['route'] for item in citation.json()['citations']}
 
     review = client.post(f"/api/reports/{report.id}/review")
     assert review.status_code == 200
@@ -318,6 +321,36 @@ def test_evidence_qa_search_citation_report_review_and_conclusion_draft_are_sour
     assert draft_payload["status"] == "draft"
     assert draft_payload["not_published"] is True
     assert draft_payload["evidence_refs"]
+
+
+def test_case_filtered_search_does_not_mix_other_meeting_reports():
+    db = _session()
+    client = _client(db)
+    first = _seed_case(db, case_number='FIRST')
+    second = _seed_case(db, case_number='SECOND')
+    report = db.query(Report).filter(Report.meeting_id == 'MEET-SECOND').one()
+    report.content = {'summary': 'OtherMeetingOnlyToken'}
+    db.commit()
+    response = client.get('/api/knowledge/search', params={'q': 'OtherMeetingOnlyToken', 'case_id': first.id})
+    assert response.status_code == 200
+    assert not response.json()['items']
+    selected = client.get('/api/knowledge/search', params={'q': 'OtherMeetingOnlyToken', 'case_id': second.id})
+    assert any(item['source_id'] == report.id and item['source_type'] == 'report' for item in selected.json()['items'])
+
+
+def test_legacy_qa_and_citation_failures_are_explicit(monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+    from app.services.case_history_retrieval import CaseHistoryRetrieval
+    db = _session()
+    client = _client(db)
+    def fail(*args, **kwargs):
+        raise SQLAlchemyError('private details')
+    monkeypatch.setattr(CaseHistoryRetrieval, 'search', fail)
+    for route in ('/api/assistant/evidence-qa', '/api/reports/citation-assist'):
+        response = client.post(route, json={'query': '软管'})
+        assert response.status_code == 503
+        assert 'private' not in response.text
+        assert client.post(route, json={'query': '长' * 2001}).status_code == 422
 
 
 def test_case_diagram_and_tag_curation_are_confirmable_outputs():

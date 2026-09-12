@@ -13,6 +13,10 @@ from app.models.case import Case
 from app.utils.logger import logger
 
 
+class PatrolStateError(ValueError):
+    """当前记录状态不允许执行请求的操作。"""
+
+
 class PatrolService:
     """巡逻服务类"""
 
@@ -63,6 +67,8 @@ class PatrolService:
         patrol = db.query(PatrolRecord).filter(PatrolRecord.id == patrol_id).first()
         if not patrol:
             raise ValueError(f"巡逻记录 {patrol_id} 不存在")
+        if patrol.status != "planned":
+            raise PatrolStateError("仅待执行的巡逻记录可以开始")
 
         patrol.status = "in_progress"
         patrol.start_time = datetime.utcnow()
@@ -86,6 +92,8 @@ class PatrolService:
         patrol = db.query(PatrolRecord).filter(PatrolRecord.id == patrol_id).first()
         if not patrol:
             raise ValueError(f"巡逻记录 {patrol_id} 不存在")
+        if patrol.status != "in_progress":
+            raise PatrolStateError("仅执行中的巡逻记录可以完成")
 
         patrol.status = "completed"
         patrol.end_time = datetime.utcnow()
@@ -277,7 +285,7 @@ class PatrolService:
         risk_data = PatrolService.calculate_area_risk_score(db, area_name, area_coordinates)
 
         # 根据巡逻效果进一步调整
-        effectiveness = patrol.effectiveness_score or 70
+        effectiveness = patrol.effectiveness_score if patrol.effectiveness_score is not None else 70
         if effectiveness >= 80:
             adjustment = -5  # 高效巡逻降低风险
         elif effectiveness < 50:
@@ -289,7 +297,10 @@ class PatrolService:
 
         # 更新记录
         area_risk.risk_score = new_score
-        area_risk.risk_level = risk_data["risk_level"]
+        area_risk.risk_level = (
+            "critical" if new_score >= 80 else "high" if new_score >= 60
+            else "medium" if new_score >= 40 else "low"
+        )
         area_risk.case_count_30d = risk_data["case_count_30d"]
         area_risk.case_count_7d = risk_data["case_count_7d"]
         area_risk.patrol_count_30d = risk_data["patrol_count_30d"]

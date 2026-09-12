@@ -78,7 +78,7 @@ def _add_event(
     return event
 
 
-def test_generate_conclusion_accepts_json_body(api_db_session: Session):
+def test_generate_conclusion_accepts_json_body_and_waits_for_current_result(api_db_session: Session):
     client = _build_client(api_db_session)
     case = CaseService.create_case(
         db=api_db_session,
@@ -86,14 +86,13 @@ def test_generate_conclusion_accepts_json_body(api_db_session: Session):
         occurred_time=datetime(2025, 1, 1, 10, 0, 0),
         description="用于接口契约测试的案件",
     )
+    api_db_session.info["authorized_area_ids"] = None
 
     response = client.post("/api/conclusions/generate", json={"case_id": case.id})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["case_id"] == case.id
-    assert payload["status"] in {"published", "needs_review"}
-    assert payload["evidence"]["raw"]["case_intelligence"]["experience_card"]["case_id"] == case.id
+    assert response.status_code == 409
+    assert "等待后台" in response.json()["detail"]
+    assert api_db_session.query(Conclusion).count() == 0
 
 
 def test_case_create_accepts_initial_vehicle_and_person_drafts(api_db_session: Session):

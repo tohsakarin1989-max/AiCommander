@@ -146,6 +146,9 @@ def observe_stack(base, cookie, output, credentials=None):
             if os.environ.get('AIC_STACK_PERIOD_BRIEF') == '1':
                 from road_stack_showcase import period_brief_journey
                 extended['period_brief'] = period_brief_journey(page, base, output)
+            if os.environ.get('AIC_STACK_ALL_ROUTES') == '1':
+                from road_stack_route_audit import audit_routes
+                extended['route_audit'] = audit_routes(context, base, output)
             (output / 'browser-errors.json').write_text(json.dumps(errors, ensure_ascii=False, indent=2))
             assert not errors, errors
             assert not external, external

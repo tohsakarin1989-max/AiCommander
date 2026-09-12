@@ -102,7 +102,7 @@ def process_request(db, event_id):
         job = enqueue_comparison(db, result_id=payload['result_id'],
             analysis_at=datetime.now(timezone.utc),
             vehicle=vehicle,
-            engine_version=ENGINE_VERSION)
+            engine_version=ENGINE_VERSION, include_facility_pool=True)
         OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='completed')
         db.commit()
         return {'event_id': event_id, 'status': 'completed', 'job': job}

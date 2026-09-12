@@ -333,11 +333,11 @@ const IntelliInspect: React.FC = () => {
                 <span style={{ fontSize: 20 }}>{item.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="ii-card-name" style={{ fontSize: 12, marginBottom: 1 }}>{item.name}</div>
-                  <div className="ii-card-sub" style={{ fontSize: 10, marginBottom: 0 }}>
+                  <div className="ii-card-sub" style={{ fontSize: 12, marginBottom: 0 }}>
                     {item.sub.split('\n').join(' · ')}
                   </div>
                 </div>
-                <div className="ii-card-status" style={{ fontSize: 9.5, padding: '2px 7px' }}>
+                <div className="ii-card-status" style={{ fontSize: 12, padding: '2px 7px' }}>
                   <span className="ii-status-dot" />
                   {item.statusText}
                 </div>
@@ -422,7 +422,7 @@ const IntelliInspect: React.FC = () => {
             ) : (
               <Empty description="暂无数智自动化告警" />
             )}
-            <div style={{ marginTop: 8, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', textAlign: 'center' }}>
+            <div style={{ marginTop: 8, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
               模拟告警会写入事件中心；转案件会复用事件转案件接口并回写关联，不直接创建外勤或跨部门任务。
             </div>
           </div>
