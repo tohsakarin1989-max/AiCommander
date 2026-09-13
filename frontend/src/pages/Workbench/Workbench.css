@@ -3,6 +3,63 @@
   gap: 12px;
 }
 
+/* v5.0 uses the shared theme; historical session styles remain compatible. */
+.daily-workbench { display: flex; flex-direction: column; gap: 20px; }
+.daily-workbench h1 { margin: 0; color: var(--ink-0); font: 600 28px/1.3 var(--sans); }
+.daily-workbench h2 { margin: 0; color: var(--ink-0); font-size: 18px; }
+.daily-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
+.daily-heading p { max-width: 70ch; margin: 8px 0 0; color: var(--ink-2); line-height: 1.6; }
+.daily-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.daily-summary { background: var(--bg-1); border: 1px solid var(--line); }
+.daily-summary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.daily-summary dl > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 18px; }
+.daily-summary dt { color: var(--ink-2); font-size: 14px; }
+.daily-summary dd { margin: 0; color: var(--ink-0); font: 600 20px var(--mono); }
+.daily-summary p { margin: 0; padding: 12px 18px; border-top: 1px solid var(--line-soft); color: var(--ink-3); font-size: 13px; line-height: 1.6; }
+.daily-cases { min-width: 0; background: var(--bg-1); border: 1px solid var(--line); }
+.daily-review { min-width: 0; background: var(--bg-1); border: 1px solid var(--line); }
+.daily-review-list { padding: 0; margin: 0; list-style: none; }
+.daily-review-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding: 14px 18px; border-top: 1px solid var(--line-soft); }
+.daily-review-list li > div { min-width: 0; }
+.daily-review-list h3 { margin: 0; color: var(--ink-1); font-size: 15px; font-weight: 600; }
+.daily-review-list p { margin: 6px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.daily-review-list a { flex-shrink: 0; font-size: 14px; }
+.daily-review-message { margin: 0; padding: 14px 18px; color: var(--ink-2); line-height: 1.6; }
+.daily-review-message p { margin: 0 0 10px; }
+.daily-review-footer { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--line-soft); font-size: 13px; color: var(--ink-3); }
+.daily-review-footer a { color: var(--accent); }
+.daily-section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 18px; }
+.daily-section-heading > span, .daily-muted { color: var(--ink-3); font-size: 13px; }
+.daily-table-scroll { overflow-x: auto; }
+.daily-cases table { width: 100%; min-width: 740px; border-collapse: collapse; text-align: left; }
+.daily-cases th, .daily-cases td { padding: 14px 18px; border-top: 1px solid var(--line-soft); vertical-align: top; font-size: 14px; line-height: 1.6; }
+.daily-cases thead th { background: var(--bg-2); color: var(--ink-2); font-weight: 500; }
+.daily-cases tbody th { min-width: 170px; font-weight: 500; }
+.daily-cases tbody td { color: var(--ink-1); }
+.daily-cases th a, .daily-case-link { color: var(--accent); }
+.daily-cases a:hover { text-decoration: underline; }
+.daily-cases small { display: block; color: var(--ink-3); font-size: 12px; font-weight: 400; margin-top: 4px; }
+.daily-cases ul { margin: 0; padding-left: 18px; }
+.daily-state { display: inline-block; padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; }
+.daily-state.ready { color: var(--ok); }
+.daily-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13px; }
+.daily-message { padding: 26px 18px; }
+.daily-message h3 { color: var(--ink-1); font-size: 16px; margin: 0 0 8px; }
+.daily-message p { color: var(--ink-2); line-height: 1.6; max-width: 70ch; }
+.daily-boundary { margin: 0; color: var(--ink-3); line-height: 1.6; font-size: 13px; }
+.daily-loading { color: var(--ink-2); }
+.daily-placeholder { min-height: 260px; background: var(--bg-2); border: 1px solid var(--line); }
+.daily-workbench a:focus-visible, .daily-workbench button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 1100px) {
+  .daily-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .daily-summary dl { grid-template-columns: 1fr; }
+  .daily-summary dl > div { padding: 12px 18px; }
+  .daily-workbench h1 { font-size: 24px; }
+  .daily-review-list li { flex-direction: column; gap: 10px; }
+}
+
 .wb-hero {
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(300px, 480px) auto;
@@ -12,14 +69,13 @@
   padding: 20px 22px;
   border: 1px solid var(--line);
   background:
-    linear-gradient(90deg, var(--accent-soft), transparent 46%),
-    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    var(--bg-1);
 }
 
 .wb-kicker {
   color: var(--accent);
-  font: 10px var(--mono);
-  letter-spacing: .16em;
+  font: 12px var(--mono);
+  letter-spacing: 0;
 }
 
 .wb-hero h1 {
@@ -36,7 +92,7 @@
 
 .wb-progress-block { display: grid; gap: 7px; }
 .wb-progress-copy { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.wb-progress-copy span, .wb-progress-block small { color: var(--ink-3); font: 10px var(--mono); letter-spacing: .06em; }
+.wb-progress-copy span, .wb-progress-block small { color: var(--ink-3); font: 12px var(--mono); letter-spacing: 0; }
 .wb-progress-copy strong { color: var(--accent); font: 26px var(--mono); }
 .wb-progress-track { height: 5px; overflow: hidden; background: var(--bg-3); }
 .wb-progress-track i { display: block; height: 100%; background: var(--accent); }
@@ -57,7 +113,7 @@
 }
 .wb-kpi--urgent { border-top-color: var(--err); }
 .wb-kpi--done { border-top-color: var(--ok); }
-.wb-kpi span, .wb-kpi small { color: var(--ink-3); font: 10px var(--mono); letter-spacing: .05em; }
+.wb-kpi span, .wb-kpi small { color: var(--ink-3); font: 12px var(--mono); letter-spacing: 0; }
 .wb-kpi strong { color: var(--ink-0); font: 24px var(--mono); }
 
 .wb-pipeline {
@@ -90,7 +146,7 @@
   z-index: 1;
 }
 .wb-pipeline-node:last-child::after { display: none; }
-.wb-pipeline-node span { color: var(--accent); font: 10px var(--mono); }
+.wb-pipeline-node span { color: var(--accent); font: 12px var(--mono); }
 .wb-pipeline-node strong { color: var(--ink-1); font-size: 13px; }
 .wb-pipeline-node b { color: var(--ink-0); font: 19px var(--mono); }
 .wb-pipeline-node.done b { color: var(--ok); }
@@ -113,8 +169,8 @@
   padding: 7px 13px;
   border-bottom: 1px solid var(--line);
   color: var(--ink-3);
-  font: 9px var(--mono);
-  letter-spacing: .08em;
+  font: 12px var(--mono);
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -136,27 +192,27 @@
   padding: 2px 6px;
   border: 1px solid var(--line);
   color: var(--ink-2);
-  font: 10px var(--mono);
+  font: 12px var(--mono);
 }
 .wb-task-row--high .wb-priority { border-color: color-mix(in oklab, var(--warn) 55%, var(--line)); color: var(--warn); }
-.wb-case-no { color: var(--accent); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; }
+.wb-case-no { color: var(--accent); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; }
 .wb-task-title { display: grid; gap: 3px; min-width: 0; }
 .wb-task-title strong { color: var(--ink-0); font-size: 13px; }
-.wb-task-title small, .wb-impact { color: var(--ink-3); font-size: 11px; line-height: 1.4; }
+.wb-task-title small, .wb-impact { color: var(--ink-3); font-size: 12px; line-height: 1.4; }
 
 .wb-detail-body { display: grid; gap: 14px; padding: 18px; }
-.wb-detail-label { color: var(--accent); font: 10px var(--mono); letter-spacing: .08em; }
+.wb-detail-label { color: var(--accent); font: 12px var(--mono); letter-spacing: 0; }
 .wb-detail h2 { margin: -2px 0 0; color: var(--ink-0); font: 500 24px/1.2 var(--serif); }
 .wb-detail dl { display: grid; gap: 10px; margin: 0; }
 .wb-detail dl > div { padding: 11px; border: 1px solid var(--line-soft); background: var(--bg-2); }
-.wb-detail dt { margin-bottom: 4px; color: var(--ink-3); font: 9px var(--mono); letter-spacing: .1em; }
+.wb-detail dt { margin-bottom: 4px; color: var(--ink-3); font: 12px var(--mono); letter-spacing: 0; }
 .wb-detail dd { margin: 0; color: var(--ink-1); font-size: 12px; line-height: 1.55; }
 .wb-evidence { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.wb-evidence span { width: 100%; color: var(--ink-3); font: 9px var(--mono); }
-.wb-evidence code { padding: 3px 6px; border: 1px solid var(--line); color: var(--info); font: 10px var(--mono); }
+.wb-evidence span { width: 100%; color: var(--ink-3); font: 12px var(--mono); }
+.wb-evidence code { padding: 3px 6px; border: 1px solid var(--line); color: var(--info); font: 12px var(--mono); }
 .wb-start { width: 100%; }
 .wb-evidence-link { width: 100%; }
-.wb-detail-boundary { color: var(--ink-3); font-size: 10.5px; line-height: 1.5; }
+.wb-detail-boundary { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
 
 .wb-metrics-body {
   display: grid;
@@ -164,10 +220,10 @@
   align-items: stretch;
 }
 .wb-metrics-body > div { display: grid; gap: 4px; padding: 12px 14px; border-right: 1px solid var(--line-soft); }
-.wb-metrics-body span { color: var(--ink-3); font: 9px var(--mono); letter-spacing: .08em; }
+.wb-metrics-body span { color: var(--ink-3); font: 12px var(--mono); letter-spacing: 0; }
 .wb-metrics-body strong { color: var(--ink-0); font: 17px var(--mono); }
-.wb-metrics-body p, .wb-metrics-boundary { margin: 0; padding: 12px 14px; color: var(--ink-3); font-size: 11px; line-height: 1.55; }
-.wb-boundary { display: flex; gap: 10px; padding: 9px 12px; border-left: 3px solid var(--warn); background: var(--bg-1); color: var(--ink-2); font-size: 11px; }
+.wb-metrics-body p, .wb-metrics-boundary { margin: 0; padding: 12px 14px; color: var(--ink-3); font-size: 12px; line-height: 1.55; }
+.wb-boundary { display: flex; gap: 10px; padding: 9px 12px; border-left: 3px solid var(--warn); background: var(--bg-1); color: var(--ink-2); font-size: 12px; }
 .wb-boundary strong { color: var(--warn); white-space: nowrap; }
 
 @media (max-width: 1200px) {

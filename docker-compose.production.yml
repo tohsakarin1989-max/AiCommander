@@ -7,7 +7,7 @@ x-logging: &default-logging
     max-file: "5"
 
 x-backend-environment: &backend-environment
-  APP_VERSION: "${APP_VERSION:-4.5.0-stable}"
+  APP_VERSION: "${APP_VERSION:-5.2.0-stable}"
   ALEMBIC_TARGET: "${ALEMBIC_TARGET:-head}"
   ENVIRONMENT: production
   AUTH_REQUIRED: "true"
@@ -67,7 +67,7 @@ x-backend-secrets: &backend-secrets
 
 services:
   postgres:
-    image: ${POSTGIS_IMAGE:-postgis/postgis:16-3.4-alpine@sha256:681931a625df344215e9b8998bf34daf146b6a395ceacee4439eb9c85869239f}
+    image: ${POSTGIS_IMAGE:?请配置已导入且同时包含PostGIS和pgvector的固定摘要镜像}
     environment:
       POSTGRES_DB: "${DB_NAME:-aicommander}"
       POSTGRES_USER: aicommander
@@ -110,7 +110,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-5.2.0-stable}
     build:
       context: ./backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
@@ -145,7 +145,7 @@ services:
     logging: *default-logging
 
   celery:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-5.2.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -172,7 +172,7 @@ services:
     logging: *default-logging
 
   celery-beat:
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-5.2.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -200,7 +200,7 @@ services:
 
   agent-worker:
     profiles: ["agent-lab"]
-    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-backend:${APP_VERSION:-5.2.0-stable}
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--queues=${AGENT_REDIS_QUEUE:-agent_lab}", "--hostname=agent@%h"]
     environment: *backend-environment
     secrets: *backend-secrets
@@ -228,7 +228,7 @@ services:
 
   road-worker:
     profiles: ["road-analysis"]
-    image: ${IMAGE_PREFIX:-aicommander}-road-worker:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-road-worker:${APP_VERSION:-5.2.0-stable}
     build:
       context: .
       dockerfile: deploy/road-worker/Dockerfile
@@ -265,7 +265,7 @@ services:
 
   map-worker:
     profiles: ["map-build"]
-    image: ${IMAGE_PREFIX:-aicommander}-map-worker:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-map-worker:${APP_VERSION:-5.2.0-stable}
     build:
       context: .
       dockerfile: deploy/map-worker/Dockerfile
@@ -298,7 +298,7 @@ services:
     logging: *default-logging
 
   frontend:
-    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-4.5.0-stable}
+    image: ${IMAGE_PREFIX:-aicommander}-frontend:${APP_VERSION:-5.2.0-stable}
     build:
       context: ./frontend
       args:

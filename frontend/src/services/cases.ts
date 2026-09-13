@@ -138,6 +138,10 @@ export const caseApi = {
     status?: string
     case_type?: string
     oil_type?: string
+    statuses?: string[]
+    case_types?: string[]
+    oil_types?: string[]
+    end_exclusive?: boolean
     source_type?: string
     report_unit?: string
     current_stage?: string
@@ -151,6 +155,7 @@ export const caseApi = {
     operational_area_id?: number
   }): Promise<Case[]> => {
     const response = await api.get<Case[]>('/cases', {
+      paramsSerializer: { indexes: null },
       params: {
         skip: params?.skip ?? 0,
         limit: params?.limit ?? 100,

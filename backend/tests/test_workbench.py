@@ -73,6 +73,7 @@ def _case(
     latitude: float | None = 46.61,
     longitude: float | None = 125.12,
     quality_score: float | None = 88,
+    description: str = "现场已完成结构化录入。",
 ) -> Case:
     record = Case(
         case_number=number,
@@ -81,7 +82,7 @@ def _case(
         latitude=latitude,
         longitude=longitude,
         case_type="涉油盗窃",
-        description="现场已完成结构化录入。",
+        description=description,
         status="processing",
         quality_score=quality_score,
         quality_issues={"missing_required": []},
@@ -112,7 +113,7 @@ def _asset(db: Session, case: Case, asset_type: str, status: str) -> KnowledgeAs
 
 def test_today_workbench_routes_cases_to_one_clear_next_action():
     db = _session()
-    quality_case = _case(db, "WB-QUALITY", latitude=None)
+    quality_case = _case(db, "WB-QUALITY", description="")
     experience_case = _case(db, "WB-EXPERIENCE")
     report_case = _case(db, "WB-REPORT")
     done_case = _case(db, "WB-DONE")
@@ -126,16 +127,16 @@ def test_today_workbench_routes_cases_to_one_clear_next_action():
 
     assert tasks_by_case[quality_case.id]["stage"] == "data_review"
     assert tasks_by_case[quality_case.id]["target_path"] == f"/cases?caseId={quality_case.id}"
-    assert tasks_by_case[experience_case.id]["stage"] == "experience_generate"
-    assert tasks_by_case[report_case.id]["stage"] == "report_generate"
+    assert experience_case.id not in tasks_by_case
+    assert report_case.id not in tasks_by_case
     assert done_case.id not in tasks_by_case
     assert payload["summary"] == {
         "total_cases": 4,
-        "actionable_cases": 3,
+        "actionable_cases": 1,
         "data_review": 1,
-        "experience_review": 1,
-        "report_review": 1,
-        "completed": 1,
+        "experience_review": 0,
+        "report_review": 0,
+        "completed": 3,
         "pending_approvals": 0,
     }
     assert all(item["why"] and item["next_action"] for item in payload["tasks"])
@@ -147,7 +148,7 @@ def test_draft_assets_route_to_human_review_instead_of_regeneration():
     experience = _case(db, "WB-EXP-DRAFT")
     report = _case(db, "WB-REPORT-DRAFT")
     _asset(db, experience, "experience_card", "draft")
-    _asset(db, report, "experience_card", "confirmed")
+    # A requested report draft can be reviewed without first creating experience.
     _asset(db, report, "case_report", "draft")
 
     tasks = _client(db).get("/api/workbench/today").json()["tasks"]
@@ -157,7 +158,34 @@ def test_draft_assets_route_to_human_review_instead_of_regeneration():
     assert stages[report.id] == "report_review"
 
 
-def test_archived_assets_route_to_new_generation_instead_of_dead_end_review():
+def test_optional_generation_is_not_a_new_required_task_but_old_sessions_remain_readable():
+    db = _session()
+    case = _case(db, "WB-OPTIONAL")
+    client = _client(db)
+    old_session = WorkbenchTaskSession(
+        user_id=9, task_type="experience_generate", source_type="case", source_id=case.id,
+        status="active", active_slot=1, entry_path="/case-intelligence",
+        last_path="/case-intelligence", page_transitions=0,
+        started_at=datetime.utcnow(), last_activity_at=datetime.utcnow(),
+    )
+    db.add(old_session)
+    db.commit()
+    assert client.get("/api/workbench/today").json()["tasks"] == []
+    assert client.get("/api/workbench/sessions/active").json()["id"] == old_session.id
+    stale = client.post("/api/workbench/sessions", json={
+        "task_type": "report_generate", "source_type": "case", "source_id": case.id,
+        "entry_path": "/case-intelligence",
+    })
+    assert stale.status_code == 409
+    completed = client.post(f"/api/workbench/sessions/{old_session.id}/events", json={
+        "event": "completed",
+    })
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert db.get(Case, case.id).status == "processing"
+
+
+def test_archived_assets_do_not_require_new_generation():
     db = _session()
     experience = _case(db, "WB-EXP-ARCHIVED")
     report = _case(db, "WB-REPORT-ARCHIVED")
@@ -168,15 +196,16 @@ def test_archived_assets_route_to_new_generation_instead_of_dead_end_review():
     tasks = _client(db).get("/api/workbench/today").json()["tasks"]
     stages = {item["source_id"]: item["stage"] for item in tasks}
 
-    assert stages[experience.id] == "experience_generate"
-    assert stages[report.id] == "report_generate"
+    assert experience.id not in stages
+    assert report.id not in stages
 
 
 def test_session_start_resumes_same_task_and_abandons_previous_active_task():
     db = _session()
     client = _client(db, user_id=12)
-    first_case = _case(db, "WB-SESSION-101", latitude=None)
+    first_case = _case(db, "WB-SESSION-101", description="")
     second_case = _case(db, "WB-SESSION-102")
+    _asset(db, second_case, "experience_card", "draft")
 
     first = client.post(
         "/api/workbench/sessions",
@@ -199,7 +228,7 @@ def test_session_start_resumes_same_task_and_abandons_previous_active_task():
     second = client.post(
         "/api/workbench/sessions",
         json={
-            "task_type": "experience_generate",
+            "task_type": "experience_review",
             "source_type": "case",
             "source_id": second_case.id,
             "entry_path": f"/case-intelligence?caseId={second_case.id}",
@@ -223,10 +252,11 @@ def test_session_progress_counts_page_transitions_and_completion_is_idempotent()
     db = _session()
     client = _client(db, user_id=18)
     case = _case(db, "WB-SESSION-PROGRESS")
+    _asset(db, case, "experience_card", "draft")
     created = client.post(
         "/api/workbench/sessions",
         json={
-            "task_type": "experience_generate",
+            "task_type": "experience_review",
             "source_type": "case",
             "source_id": case.id,
             "entry_path": f"/case-intelligence?caseId={case.id}",

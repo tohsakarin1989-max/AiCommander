@@ -59,8 +59,8 @@
 
 .filter-group .gh {
   font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 4px;
@@ -86,7 +86,7 @@
 
 .chk .ct {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
   background: var(--bg-2);
   padding: 1px 6px;
@@ -102,12 +102,12 @@
 .chip-sm {
   padding: 3px 9px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   border: 1px solid var(--c, var(--line));
   color: var(--c, var(--ink-2));
   background: color-mix(in oklab, var(--c, var(--line)) 8%, transparent);
   cursor: pointer;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   transition: background 0.15s;
 }
 
@@ -129,7 +129,7 @@
   border: 1px solid var(--line);
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   width: 100%;
   outline: none;
 }
@@ -223,7 +223,7 @@
 
 .search .kbd {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
   padding: 2px 6px;
   border: 1px solid var(--line-soft);
@@ -248,7 +248,7 @@
 .cases-automation-metrics span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .cases-automation-head b,
@@ -303,7 +303,7 @@
 .cases-automation-module span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .cases-automation-module b {
@@ -315,7 +315,7 @@
 .cases-automation-module small {
   overflow: hidden;
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -410,7 +410,7 @@
   align-items: flex-start;
   gap: 14px;
   flex-shrink: 0;
-  background: linear-gradient(to bottom, var(--accent-soft), transparent);
+  background: var(--bg-1);
 }
 
 .cno-big {
@@ -418,7 +418,7 @@
   font-size: 17px;
   color: var(--accent);
   font-weight: 500;
-  letter-spacing: 0.03em;
+  letter-spacing: 0;
 }
 
 .cno-sub {
@@ -442,7 +442,7 @@
   background: color-mix(in oklab, var(--chain-c) 11%, transparent);
   color: color-mix(in oklab, var(--chain-c) 80%, var(--ink-0));
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -464,8 +464,8 @@
 
 .ds-head {
   font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 9px;
@@ -537,7 +537,6 @@
   padding: 12px;
   border: 1px solid var(--accent-line);
   background:
-    linear-gradient(135deg, var(--accent-soft), transparent 46%),
     var(--bg-1);
 }
 
@@ -567,7 +566,7 @@
 .cases-ai-assistant__head small,
 .cases-ai-assistant__actions span {
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -578,7 +577,7 @@
   color: var(--accent);
   background: var(--bg-2);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -612,7 +611,7 @@
   margin-left: auto;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .cases-map-entry {
@@ -717,7 +716,7 @@
   overflow: hidden;
   color: var(--ink-0);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -727,7 +726,7 @@
   flex: 0 0 auto;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .cases-entry-readiness-item p,
@@ -735,7 +734,7 @@
 .cases-entry-precheck-note {
   margin: 0;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -779,7 +778,7 @@
 .cases-bonus-entry-hints b {
   color: var(--ink-0);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-bonus-entry-hints span,
@@ -829,7 +828,7 @@
   grid-area: desc;
   overflow: hidden;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -846,7 +845,7 @@
   gap: 8px;
   align-items: center;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-2);
 }
 
@@ -885,7 +884,7 @@
   gap: 8px;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .bonus-materials,
@@ -910,7 +909,7 @@
 .bonus-row b,
 .bonus-item b {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -930,7 +929,7 @@
 .bonus-item small {
   grid-column: 1 / -1;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .automation-456-list {
@@ -954,7 +953,7 @@
 
 .automation-456-list span {
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1003,7 +1002,7 @@
   flex: 0 0 auto;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .automation-review-list {
@@ -1012,7 +1011,7 @@
   margin: 0;
   padding-left: 15px;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1036,7 +1035,7 @@
 
 .automation-review-claims b {
   color: var(--ink-0);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
 }
@@ -1048,14 +1047,14 @@
 .automation-review-boundary {
   margin: 0;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
 .automation-review-claims small {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .automation-review-empty {
@@ -1078,7 +1077,7 @@
 .automation-review-columns > div > span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .automation-review-boundary {
@@ -1101,7 +1100,7 @@
 .chain-panel__boundary {
   margin: 0;
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -1113,7 +1112,7 @@
 .chain-panel__group > b {
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .chain-link-card {
@@ -1146,7 +1145,7 @@
 .chain-link-card__main p {
   margin: 0;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1165,7 +1164,7 @@
 .chain-link-card__side > span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .chain-link-card__side > div {
@@ -1199,7 +1198,7 @@
 .evidence-mini b {
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1231,7 +1230,7 @@
 .location-backfill__summary span {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .location-backfill__summary b {
@@ -1259,14 +1258,14 @@
 .location-backfill__item b {
   color: var(--ink-0);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .location-backfill__item span,
 .location-backfill__item small {
   overflow: hidden;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1292,7 +1291,7 @@
 .location-backfill__active span,
 .location-backfill__coord {
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .location-backfill__coord {
@@ -1321,7 +1320,7 @@
   background: var(--bg-1);
   color: var(--ink-2);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-import-preview {
@@ -1342,8 +1341,8 @@
   border: 1px solid var(--line-soft);
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .cases-import-summary b {
@@ -1382,14 +1381,14 @@
 
 .cases-import-row span {
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .cases-import-row b {
   margin-right: 4px;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 /* 创建案件时前置录入奖金核算指标 */
@@ -1412,13 +1411,13 @@
 .cases-bonus-draft-head span {
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .cases-bonus-draft-head small {
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-bonus-draft-row {
@@ -1458,12 +1457,12 @@
 .cases-ai-intake__head span {
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-ai-intake__head b {
   color: var(--warn);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1491,7 +1490,7 @@
 
 .cases-ai-intake__item span {
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-ai-intake__item b {
@@ -1505,7 +1504,7 @@
 .cases-ai-intake__item small {
   grid-column: 2;
   color: var(--ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .cases-ai-intake__chips {
@@ -1519,7 +1518,7 @@
   border: 1px solid var(--warn);
   color: var(--warn);
   background: color-mix(in oklab, var(--warn) 9%, transparent);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 @media (max-width: 760px) {
@@ -1562,17 +1561,22 @@
 }
 
 .case-auto-analysis { border-color: color-mix(in oklab, var(--accent) 35%, var(--line)); }
-.case-auto-analysis__version { color: var(--ink-3); font: 9px var(--mono); }
+.case-auto-analysis__version { color: var(--ink-3); font: 12px var(--mono); }
 .case-auto-analysis__gaps { display: grid; gap: 4px; margin-bottom: 9px; padding: 8px 10px; border-left: 2px solid var(--warn); background: color-mix(in oklab, var(--warn) 7%, transparent); }
-.case-auto-analysis__gaps b { color: var(--warn); font: 9px var(--mono); letter-spacing: .08em; }
-.case-auto-analysis__gaps span { color: var(--ink-1); font-size: 11px; }
+.case-auto-analysis__gaps b { color: var(--warn); font: 12px var(--mono); letter-spacing: 0; }
+.case-auto-analysis__gaps span { color: var(--ink-1); font-size: 12px; }
 .case-auto-analysis__list { display: grid; gap: 7px; }
 .case-auto-analysis__list article { padding: 9px 10px; border: 1px solid var(--line-soft); background: var(--bg-0); }
 .case-auto-analysis__list header { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 7px; }
-.case-auto-analysis__list header b { color: var(--accent); font: 10px var(--mono); }
-.case-auto-analysis__list header strong { color: var(--ink-1); font-size: 11px; font-weight: 600; }
-.case-auto-analysis__list header em { color: var(--accent); font: normal 10px var(--mono); }
-.case-auto-analysis__list p { margin: 7px 0; color: var(--ink-2); font-size: 11px; line-height: 1.55; }
-.case-auto-analysis__list small { display: block; margin-top: 3px; color: var(--ink-3); font-size: 10px; line-height: 1.45; }
+.case-auto-analysis__list header b { color: var(--accent); font: 12px var(--mono); }
+.case-auto-analysis__list header strong { color: var(--ink-1); font-size: 12px; font-weight: 600; }
+.case-auto-analysis__list header em { color: var(--accent); font: normal 12px var(--mono); }
+.case-auto-analysis__list p { margin: 7px 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
+.case-auto-analysis__list small { display: block; margin-top: 3px; color: var(--ink-3); font-size: 12px; line-height: 1.45; }
 .case-auto-analysis__list small.counter { color: var(--warn); }
-.case-auto-analysis__boundary { display: block; margin-top: 9px; color: var(--ink-3); font-size: 9px; line-height: 1.5; }
+.case-auto-analysis__boundary { display: block; margin-top: 9px; color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.case-context-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}

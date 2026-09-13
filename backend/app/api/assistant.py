@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.database import get_db
 from app.services.assistant_service import AssistantService
@@ -28,8 +29,8 @@ class ChatResponse(BaseModel):
 
 
 class EvidenceQaRequest(BaseModel):
-    query: str
-    case_id: Optional[int] = None
+    query: str = Field(..., min_length=1, max_length=2000)
+    case_id: Optional[int] = Field(None, gt=0)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -86,4 +87,11 @@ def evidence_qa(request: EvidenceQaRequest, db: Session = Depends(get_db)):
     """证据型研判问答：回答必须带引用，资料不足时明确返回不足。"""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
-    return CaseKnowledgeService.evidence_qa(db, request.query, case_id=request.case_id)
+    try:
+        return CaseKnowledgeService.evidence_qa(db, request.query, case_id=request.case_id)
+    except PermissionError:
+        raise HTTPException(404, '检索范围不可访问') from None
+    except ValueError:
+        raise HTTPException(422, '请提供有效查询条件') from None
+    except SQLAlchemyError:
+        raise HTTPException(503, '检索暂不可用，不能据此判断没有相关资料') from None

@@ -9,6 +9,7 @@ import {
   Modal,
   InputNumber,
   Popconfirm,
+  Alert,
 } from 'antd'
 import {
   SaveOutlined,
@@ -26,6 +27,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { configApi } from '../../services/config'
 import { personnelApi } from '../../services/personnel'
 import { keyLocationApi } from '../../services/key_locations'
+import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import type { AIModel, ModelCreate, SystemConfig, SecurityPersonnel, SecurityPersonnelCreate, KeyLocation, KeyLocationCreate } from '../../types'
 import './Settings.css'
 
@@ -60,6 +62,7 @@ const Settings: React.FC = () => {
   const [isLocationModalVisible, setIsLocationModalVisible] = useState(false)
   const [editingLocation, setEditingLocation] = useState<KeyLocation | null>(null)
   const queryClient = useQueryClient()
+  const { legacyOperationsEnabled, availability, query: runtimeQuery } = useRuntimeFeatures()
 
   // 获取配置
   const { data: mapConfigs } = useQuery({
@@ -147,6 +150,7 @@ const Settings: React.FC = () => {
   const { data: personnelList = [], isLoading: personnelLoading } = useQuery({
     queryKey: ['personnel'],
     queryFn: () => personnelApi.list(),
+    enabled: legacyOperationsEnabled,
   })
 
   const createPersonnelMutation = useMutation({
@@ -186,6 +190,7 @@ const Settings: React.FC = () => {
   const { data: locationList = [], isLoading: locationLoading } = useQuery({
     queryKey: ['key-locations'],
     queryFn: () => keyLocationApi.list(),
+    enabled: legacyOperationsEnabled,
   })
 
   const createLocationMutation = useMutation({
@@ -367,7 +372,7 @@ const Settings: React.FC = () => {
       dataIndex: 'model_name',
       key: 'model_name',
       render: (name: string) => (
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--ink-2)' }}>{name}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{name}</span>
       ),
     },
     {
@@ -434,13 +439,13 @@ const Settings: React.FC = () => {
     { title: '姓名', dataIndex: 'name', key: 'name',
       render: (v: string) => <span style={{ color: 'var(--ink-0)', fontSize: 13 }}>{v}</span> },
     { title: '工号', dataIndex: 'badge_number', key: 'badge_number',
-      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--ink-2)' }}>{v || '—'}</span> },
+      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{v || '—'}</span> },
     { title: '部门', dataIndex: 'department', key: 'department',
       render: (v: string) => <span style={{ color: 'var(--ink-2)' }}>{v || '—'}</span> },
     { title: '职务', dataIndex: 'position', key: 'position',
       render: (v: string) => <span style={{ color: 'var(--ink-2)' }}>{v || '—'}</span> },
     { title: '电话', dataIndex: 'phone', key: 'phone',
-      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--ink-3)' }}>{v || '—'}</span> },
+      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>{v || '—'}</span> },
     { title: '状态', dataIndex: 'status', key: 'status',
       render: (v: string) => (
         <span className={v === 'active' ? 'settings-badge settings-badge--active' : 'settings-badge settings-badge--inactive'}>
@@ -470,7 +475,7 @@ const Settings: React.FC = () => {
       render: (v: string) => <span className="settings-badge settings-badge--analyst">{LOCATION_TYPE_LABELS[v] ?? v}</span> },
     { title: '坐标', key: 'coord', render: (_: unknown, r: KeyLocation) =>
       r.latitude && r.longitude
-        ? <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>{r.latitude.toFixed(4)}, {r.longitude.toFixed(4)}</span>
+        ? <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>{r.latitude.toFixed(4)}, {r.longitude.toFixed(4)}</span>
         : <span style={{ color: 'var(--ink-4)' }}>—</span>
     },
     { title: '风险等级', dataIndex: 'risk_level', key: 'risk_level',
@@ -520,6 +525,17 @@ const Settings: React.FC = () => {
         </button>
       </div>
 
+      {availability.legacy_operations === 'unavailable' && <Alert type="warning" showIcon
+        message="历史模块状态暂不可用，尚不能确认人员及重要部位管理是否启用。"
+        action={<button className="btn-ghost" onClick={() => void runtimeQuery.refetch()}>重新读取功能状态</button>} />}
+      <section className="settings-runtime" aria-label="系统运行状态"><h2>系统运行状态</h2>
+        {runtimeQuery.isError ? <p role="alert">运行状态读取失败</p> : runtimeQuery.data ? <dl>
+          <div><dt>数据库</dt><dd>{runtimeQuery.data.database}</dd></div>
+          <div><dt>缓存</dt><dd>{runtimeQuery.data.redis === 'ok' ? 'Redis 在线' : 'Redis 未就绪'}</dd></div>
+          <div><dt>可用模型</dt><dd>{runtimeQuery.data.active_model_count} 个</dd></div>
+          <div><dt>地图服务</dt><dd>{runtimeQuery.data.map_configured ? runtimeQuery.data.map_provider : '未配置'}</dd></div>
+        </dl> : <p role="status">正在读取运行状态</p>}
+      </section>
       <Tabs
         className="settings-tabs"
         defaultActiveKey="models"
@@ -552,7 +568,7 @@ const Settings: React.FC = () => {
 
                 {/* 表格操作 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                     模型列表
                   </span>
                   <button className="btn-primary" onClick={handleCreateModel} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -590,6 +606,7 @@ const Settings: React.FC = () => {
                 >
                   <Form
                     form={modelForm}
+                    name="model-config"
                     layout="vertical"
                     className="settings-form"
                     initialValues={{ provider: 'openai', role: 'analyst', config: { temperature: 0.7, max_tokens: 8192 } }}
@@ -624,7 +641,7 @@ const Settings: React.FC = () => {
                       <Form.Item name={['config', 'max_tokens']} label="最大 Token 数" style={{ marginBottom: 8 }}>
                         <InputNumber min={100} max={131072} step={1000} style={{ width: '100%' }} placeholder="如：8192、32768、131072" />
                       </Form.Item>
-                      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '7px 11px', marginBottom: 8, fontSize: 11.5, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }}>
+                      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '7px 11px', marginBottom: 8, fontSize: 12, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }}>
                         GPT-4：8k/32k · Claude：100k · DeepSeek：128k
                       </div>
                       <Form.Item name={['config', 'api_base']} label="API Base URL（可选）">
@@ -760,7 +777,7 @@ const Settings: React.FC = () => {
             children: (
               <div style={{ paddingTop: 'var(--gap)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                     人员列表 · {personnelList.length} 人
                   </span>
                   <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 5 }}
@@ -789,7 +806,7 @@ const Settings: React.FC = () => {
                   confirmLoading={createPersonnelMutation.isPending || updatePersonnelMutation.isPending}
                   okButtonProps={{ className: 'btn-primary' }} cancelButtonProps={{ className: 'btn-ghost' }}
                 >
-                  <Form form={personnelForm} layout="vertical" className="settings-form">
+                  <Form name="personnel" form={personnelForm} layout="vertical" className="settings-form">
                     <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>
                       <Input placeholder="真实姓名" />
                     </Form.Item>
@@ -839,7 +856,7 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
                     部位列表 · {locationList.length} 处
                   </span>
                   <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 5 }}
@@ -868,7 +885,7 @@ const Settings: React.FC = () => {
                   confirmLoading={createLocationMutation.isPending || updateLocationMutation.isPending}
                   okButtonProps={{ className: 'btn-primary' }} cancelButtonProps={{ className: 'btn-ghost' }}
                 >
-                  <Form form={locationForm} layout="vertical" className="settings-form">
+                  <Form name="key-location" form={locationForm} layout="vertical" className="settings-form">
                     <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
                       <Input placeholder="如：让胡路原油储罐区" />
                     </Form.Item>
@@ -909,7 +926,7 @@ const Settings: React.FC = () => {
               </div>
             ),
           },
-        ]}
+        ].filter(item => legacyOperationsEnabled || !['personnel', 'key-locations'].includes(item.key))}
       />
     </div>
   )

@@ -1,3 +1,4 @@
+import { useThemeMode } from '../../theme/ThemeContext'
 /**
  * 趋势图组件
  * 展示案件数量随时间的变化趋势
@@ -31,18 +32,18 @@ export interface TrendChartProps {
 const TrendChart: React.FC<TrendChartProps> = ({
   data,
   height = 300,
-  theme = 'light',
   title,
   showArea = true,
   color,
   smooth = true,
 }) => {
+  const { mode: theme } = useThemeMode()
   const colors = useMemo(
     () => ({
       bg: theme === 'dark' ? 'transparent' : 'transparent',
-      text: theme === 'dark' ? '#b0b0b0' : '#666',
-      line: color || (theme === 'dark' ? '#00d4ff' : '#1890ff'),
-      grid: theme === 'dark' ? '#2d2d4a' : '#e8e8e8',
+      text: (theme === 'dark' ? '#a9b8b5' : '#606c70'),
+      line: color || ((theme === 'dark' ? '#69c9ad' : '#126759')),
+      grid: (theme === 'dark' ? '#303b3e' : '#e8edef'),
     }),
     [theme, color]
   )
@@ -63,8 +64,8 @@ const TrendChart: React.FC<TrendChartProps> = ({
         : undefined,
       tooltip: {
         trigger: 'axis',
-        backgroundColor: theme === 'dark' ? 'rgba(30,30,50,0.95)' : 'rgba(255,255,255,0.95)',
-        borderColor: theme === 'dark' ? '#444' : '#ddd',
+        backgroundColor: (theme === 'dark' ? '#272f31' : '#ffffff'),
+        borderColor: (theme === 'dark' ? '#435053' : '#d8e0e2'),
         textStyle: { color: colors.text },
         formatter: (params: any) => {
           const p = params[0]

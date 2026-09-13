@@ -28,6 +28,7 @@ export default function CaseResultsBrowser() {
   return <section className="case-results-browser" aria-label="案件成果版本">
     <h2>案件成果</h2>
     <p>系统自动形成的画像与研判版本。查看固定版本不会重新分析案件，也不改变正式记录。</p>
+    <div className={`results-workspace ${resultId ? 'is-reading' : ''}`}><div className="results-directory">
     <form className="case-results-browser__search" onSubmit={event => {
       event.preventDefault(); setQuery(draft.trim()); setOffset(0)
     }}>
@@ -38,6 +39,11 @@ export default function CaseResultsBrowser() {
     {catalog.isError ? <p role="status">成果目录暂时无法读取，已隐藏上次列表。</p>
       : catalog.isPending ? <p role="status">正在读取成果目录…</p>
         : !items.length ? <p role="status">当前检索范围暂无成果。后台生成后会自动出现，不需要启动智能体。</p>
+          : resultId ? <div className="results-directory-list">{items.map(item => <button key={item.id} type="button" aria-current={item.id === resultId ? 'true' : undefined}
+            disabled={item.availability !== 'available'} onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.set('resultId', item.id); return next })}>
+            <strong>{item.case_number}</strong><span>{resultCreatedTime(item.created_at)}</span>
+            <small>{item.availability !== 'available' ? '引用失效或权限受限' : `画像第 ${item.versions?.profile_version} 版`}</small>
+          </button>)}</div>
           : <div className="case-results-browser__table"><table>
             <caption>已授权案件的成果版本，按生成时间排列</caption>
             <thead><tr><th scope="col">案件</th><th scope="col">生成时间（北京时间）</th><th scope="col">内容</th><th scope="col">操作</th></tr></thead>
@@ -55,6 +61,7 @@ export default function CaseResultsBrowser() {
       <span>第 {Math.floor(offset / pageSize) + 1} 页</span>
       <button className="btn-ghost" disabled={catalog.isError || !catalog.data?.has_more || catalog.isFetching} onClick={() => setOffset(value => value + pageSize)}>下一页</button>
     </nav>
+    </div>
     {resultId && <div className="case-results-browser__selected">
       <p>正在查看固定历史版本。原始案件后续更新不会覆盖此内容。</p>
       <CaseResultPanel key={resultId} caseId={selected.data?.content.case_id ?? -1}
@@ -62,5 +69,6 @@ export default function CaseResultsBrowser() {
         errorStatus={(selected.error as { status?: number } | null)?.status}
         map={selected.data && <CaseResultMap result={selected.data} />} />
     </div>}
+    </div>
   </section>
 }

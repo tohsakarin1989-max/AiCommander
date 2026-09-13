@@ -4,6 +4,8 @@ import { DownloadOutlined, NodeIndexOutlined, SafetyCertificateOutlined } from '
 import { useQuery } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 import { useSearchParams } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
+import { parseCaseDeepLinkId } from '../Cases/caseSearch'
 
 import { caseApi } from '../../services/cases'
 import {
@@ -67,8 +69,8 @@ function detailLabel(key: string): string {
 const EvidenceGraph: React.FC = () => {
   const { message } = AntdApp.useApp()
   const [searchParams, setSearchParams] = useSearchParams()
-  const initialCaseId = Number(searchParams.get('caseId')) || undefined
-  const [caseId, setCaseId] = useState<number | undefined>(initialCaseId)
+  const { user, sessionEpoch } = useAuth()
+  const caseId = parseCaseDeepLinkId(searchParams.get('caseId')) ?? undefined
   const [wellRadiusKm, setWellRadiusKm] = useState(5)
   const [showContext, setShowContext] = useState(true)
   const [showInferred, setShowInferred] = useState(true)
@@ -78,25 +80,24 @@ const EvidenceGraph: React.FC = () => {
   const chartRef = useRef<ReactECharts | null>(null)
 
   const casesQuery = useQuery({
-    queryKey: ['cases', 'evidence-graph-recent'],
+    queryKey: ['cases', 'evidence-graph-recent', user?.id, sessionEpoch],
     queryFn: () => caseApi.getCases({ limit: 50 }),
     staleTime: 60_000,
   })
 
   useEffect(() => {
-    if (!caseId && casesQuery.data?.length) {
+    if (!searchParams.has('caseId') && !casesQuery.isError && casesQuery.data?.length) {
       const firstId = casesQuery.data[0].id
-      setCaseId(firstId)
       setSearchParams({ caseId: String(firstId) }, { replace: true })
     }
-  }, [caseId, casesQuery.data, setSearchParams])
+  }, [caseId, casesQuery.data, casesQuery.isError, setSearchParams, searchParams])
 
   const graphQuery = useQuery({
-    queryKey: ['evidence-graph', caseId, wellRadiusKm],
+    queryKey: ['evidence-graph', caseId, wellRadiusKm, user?.id, sessionEpoch],
     queryFn: () => evidenceGraphApi.getCaseGraph(caseId!, { wellRadiusKm }),
     enabled: Boolean(caseId),
   })
-  const graph = graphQuery.data
+  const graph = graphQuery.isError ? undefined : graphQuery.data
   const filtered = useMemo(() => (
     graph
       ? filterEvidenceGraph(graph, { showContext, showInferred, showGaps })
@@ -111,10 +112,9 @@ const EvidenceGraph: React.FC = () => {
   const health = graph ? getGraphHealthPresentation(graph.summary.graph_health) : null
 
   const chooseCase = (value: number) => {
-    setCaseId(value)
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
-    setSearchParams({ caseId: String(value) })
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.set('caseId', String(value)); return next })
   }
 
   const onChartClick = (params: { dataType?: string; data?: EvidenceGraphNode | EvidenceGraphEdge }) => {

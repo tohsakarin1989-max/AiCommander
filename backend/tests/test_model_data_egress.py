@@ -5,6 +5,7 @@ from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.models.ai_model import AIModel
 from app.services.vector_db_service import VectorDBService
+from tests.test_case_history_index import db, make_case  # noqa: F401
 
 
 def _model(*, provider: str = "openai", api_base: str | None = None) -> AIModel:
@@ -53,34 +54,29 @@ def test_openai_agents_adapter_respects_global_local_only_policy(monkeypatch):
     assert build_narrator() is None
 
 
-def test_vector_search_filters_by_area_and_never_returns_raw_document():
-    captured = {}
-
-    class FakeEmbeddingService:
-        @staticmethod
-        def generate_embedding(_text):
-            return [0.1, 0.2]
-
-    class FakeCollection:
-        @staticmethod
-        def query(**kwargs):
-            captured.update(kwargs)
-            return {
-                "ids": [["12"]],
-                "distances": [[0.1]],
-                "metadatas": [[{"case_id": 12, "operational_area_id": 7}]],
-                "documents": [["不得离开向量库的案件原文"]],
-            }
-
-    service = VectorDBService.__new__(VectorDBService)
-    service.client = object()
-    service.collection = FakeCollection()
-    service.embedding_service = FakeEmbeddingService()
-
-    results = service.search_similar_cases(
-        "脱敏查询",
-        operational_area_ids=[7],
-    )
-
-    assert captured["where"] == {"operational_area_id": 7}
-    assert "document" not in results[0]
+def test_vector_search_filters_by_area_and_never_returns_raw_document(db, monkeypatch):
+    from sqlalchemy import select
+    from app.models.case_history_index import CaseHistoryIndex
+    from app.services.case_history_index_service import CaseHistoryIndexService
+    from app.services.case_history_vector_service import store_embedding
+    from types import SimpleNamespace
+    first = make_case(db)
+    second = make_case(db, 'OUTSIDE', area=2)
+    CaseHistoryIndexService.reconcile_batch(db)
+    db.commit()
+    for row in db.scalars(select(CaseHistoryIndex)):
+        store_embedding(db, row, [1., 0.], 'scope-fixture')
+    db.commit()
+    monkeypatch.setattr('app.services.vector_db_service.get_local_embedder', lambda: SimpleNamespace(
+        state='ready', model_version='scope-fixture', encode=lambda _: [1., 0.]))
+    db.info['authorized_area_ids'] = (1,)
+    service = VectorDBService()
+    results = service.search_similar_cases('查询', operational_area_ids=[1, 2], db=db)
+    assert [item['case_id'] for item in results] == [first.id]
+    assert second.id not in [item['case_id'] for item in results]
+    assert 'document' not in results[0] and first.description not in str(results)
+    assert service.status['complete'] is True
+    db.info['authorized_area_ids'] = ()
+    assert service.search_similar_cases('查询', db=db) == []
+    with pytest.raises(PermissionError):
+        service.search_similar_cases('查询')

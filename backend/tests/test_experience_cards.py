@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import case_intelligence
+from app.api import case_intelligence, knowledge
 from app.database import Base, get_db
 from app.models.case import Case, CaseEvidence
 
@@ -26,6 +26,7 @@ def _session() -> Session:
 def _client(db_session: Session) -> TestClient:
     app = FastAPI()
     app.include_router(case_intelligence.router, prefix="/api/case-intelligence")
+    app.include_router(knowledge.router, prefix="/api/knowledge")
 
     def override_get_db():
         yield db_session
@@ -73,5 +74,12 @@ def test_experience_card_is_persisted_as_reviewable_case_asset():
     assert card["evidence_gaps"] is not None
     assert card["reusable_suggestions"] is not None
     assert "事实" in card["boundary"]
+    db.refresh(case)
+    assert case.features is None
+
+    saved = client.post(f"/api/knowledge/cases/{case.id}/experience-assets")
+    assert saved.status_code == 201
+    assert saved.json()["content"]["source_case_id"] == case.id
+    assert saved.json()["status"] == "draft"
     refreshed = db.query(Case).filter(Case.id == case.id).first()
     assert refreshed.features["intelligence"]["experience_card"]["source_case_id"] == case.id

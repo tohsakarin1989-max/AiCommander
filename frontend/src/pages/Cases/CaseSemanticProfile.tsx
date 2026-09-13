@@ -7,11 +7,16 @@ const fields: Record<string, string> = {
   upstream_source: '来源线索', downstream_destination: '去向线索',
 }
 const categories: Record<string, string> = {
+  action: '行为片段',
   vehicle: '车辆', oil: '油品', facility: '设施', tool: '工具', method: '手法',
   place_condition: '地点条件', time_condition: '时段', upstream_clue: '来源线索', downstream_clue: '去向线索',
 }
 const kinds: Record<string, string> = {
   stated: '原文陈述', negated: '原文否定', uncertain: '待核表述', inferred: '推断',
+}
+const dimensions: Record<string, string> = {
+  action: '明确动作', time: '时间条件', facility: '设施', oil: '油品', place: '地点条件',
+  upstream: '来源', downstream: '去向',
 }
 const gaps: Record<string, string> = {
   lineage_not_established: '来源或去向尚未明确', invalid_time_interval: '起止时间需核对',
@@ -43,6 +48,35 @@ export default function CaseSemanticProfile({ semantics, loading, error, updatin
       : <>
         <p className="case-semantics__note">本地规则整理的原文表述，不是核实结论。复杂语义仍需结合上下文判断。</p>
         {updating && <p role="status" className="case-semantics__warning">画像更新中，以下为上一次处理结果。</p>}
+        {semantics.event_fragments && <details>
+          <summary>事件片段 {semantics.event_fragments.items.length} 项</summary>
+          <p>{semantics.event_fragments.boundary}</p>
+          {!semantics.model_extraction && semantics.event_fragments.deep_model_status !== 'enabled' && <p>深层模型理解未启用，当前使用本地规则。</p>}
+          {semantics.event_fragments.coverage.state === 'partial' && <p className="case-semantics__warning">片段或词项提取不完整，请结合原文查看未覆盖内容。</p>}
+          {!semantics.event_fragments.items.length && <p>规则尚未提取到事件片段，不表示没有事件。</p>}
+          <ol>{semantics.event_fragments.items.map(item => <li key={item.id}>
+            <p>{item.actions.length ? item.actions.map(action => `${action.value}（${kinds[action.kind] || '类型待核'}）`).join('；') : '动作尚未明确'}</p>
+            {!!item.assertion_indices.length && <p>句内条件：{item.assertion_indices.flatMap(index => {
+              const condition = semantics.assertions[index]
+              return condition ? [`${condition.value}（${kinds[condition.kind] || '类型待核'}）`] : []
+            }).join('、')}</p>}
+            {!!item.missing_dimensions.length && <p>本片段尚未明确：{item.missing_dimensions.map(value => dimensions[value] || '待核条件').join('、')}。不作为新增必填要求。</p>}
+            <Reference value={item.reference} />
+          </li>)}</ol>
+        </details>}
+        {semantics.model_extraction && <details>
+          <summary>内网模型提取参考 · {({ ready: '已返回', partial: '部分结果', unavailable: '暂不可用', not_enabled: '未启用' } as Record<string, string>)[semantics.model_extraction.status] || '状态待核'}</summary>
+          <p>{semantics.model_extraction.boundary}</p>
+          <p>仅展示选取片段，不代表完整覆盖原文；下方规则画像继续可用。</p>
+          {semantics.model_extraction.status === 'partial' && <p className="case-semantics__warning">部分引用不通过校验或达到处理上限，未采用的内容保留未知。</p>}
+          {!semantics.model_extraction.items.length && <p>没有可展示的模型提取结果，不表示没有线索。</p>}
+          <ul>{semantics.model_extraction.items.map((item, index) => <li key={index}>
+            <p>{categories[item.category] || '片段'} · {kinds[item.kind] || '待核表述'} · 模型判断待核对</p>
+            <blockquote>{item.value}</blockquote>
+            <Reference value={item.reference} />
+          </li>)}</ul>
+          <small>提取版本：{semantics.model_extraction.version}</small>
+        </details>}
         <ul className="case-semantics__items">
           {semantics.assertions.slice(0, 6).map((item, index) => <li key={index}>
             <span className={item.kind === 'stated' ? 'case-semantics__kind' : 'case-semantics__warning'}>{kinds[item.kind] || '类型待核'}</span>

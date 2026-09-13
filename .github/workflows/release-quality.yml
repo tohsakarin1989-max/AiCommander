@@ -85,6 +85,10 @@ jobs:
   deployment-static:
     name: Deployment configuration
     runs-on: ubuntu-24.04
+    env:
+      # Format-only fixture: config --quiet never pulls or starts this image.
+      # Real deployment separately verifies an imported PostGIS/pgvector image.
+      POSTGIS_IMAGE: aicommander-postgis-vector@sha256:0000000000000000000000000000000000000000000000000000000000000000
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Check patch formatting
@@ -98,6 +102,7 @@ jobs:
       - name: Validate deployment scripts
         run: |
           sh -n scripts/preflight-production.sh
+          sh -n scripts/check-postgres-image.sh
           sh -n scripts/production-compose.sh
           sh -n scripts/backup-production.sh
           sh -n scripts/deploy-production.sh

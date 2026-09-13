@@ -1,0 +1,29 @@
+# Optional candidate overlay; does not download model weights or replace PostgreSQL.
+# Apply only after the dual-extension database migration and a verified model bundle.
+services:
+  backend:
+    image: ${IMAGE_PREFIX:-aicommander}-backend-embedding:${APP_VERSION:-5.2.0-stable}
+    build:
+      args:
+        INSTALL_LOCAL_EMBEDDING: "true"
+    environment: &embedding-environment
+      LOCAL_EMBEDDING_BUNDLE: /opt/aicommander/embedding
+      LOCAL_EMBEDDING_MANIFEST_SHA256: ${LOCAL_EMBEDDING_MANIFEST_SHA256:?set approved manifest sha256}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes: &embedding-volumes
+      - type: bind
+        source: ${LOCAL_EMBEDDING_HOST_DIR:?set approved absolute model directory}
+        target: /opt/aicommander/embedding
+        read_only: true
+        bind:
+          create_host_path: false
+  celery:
+    image: ${IMAGE_PREFIX:-aicommander}-backend-embedding:${APP_VERSION:-5.2.0-stable}
+    environment: *embedding-environment
+    volumes: *embedding-volumes
+  agent-worker:
+    image: ${IMAGE_PREFIX:-aicommander}-backend-embedding:${APP_VERSION:-5.2.0-stable}
+    environment: *embedding-environment
+    volumes: *embedding-volumes

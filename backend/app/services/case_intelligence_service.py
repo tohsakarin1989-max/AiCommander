@@ -96,7 +96,7 @@ class CaseIntelligenceService:
         selected_case = CaseIntelligenceService._get_case(db, case_id) if case_id else None
         quality = (
             selected_case.quality_issues
-            or CaseQualityService.refresh_case_quality(db, selected_case)
+            or CaseQualityService.evaluate_case(db, selected_case)
             if selected_case
             else None
         )
@@ -130,7 +130,7 @@ class CaseIntelligenceService:
             limit=limit,
         )
         experience_card = (
-            CaseIntelligenceService.build_experience_card(db, selected_case.id)
+            CaseIntelligenceService.build_experience_card(db, selected_case.id, persist=False)
             if selected_case
             else None
         )
@@ -597,7 +597,7 @@ class CaseIntelligenceService:
 
         if case_id is not None:
             case = CaseIntelligenceService._get_case(db, case_id)
-            quality = case.quality_issues or CaseQualityService.refresh_case_quality(db, case)
+            quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
             tags = CaseIntelligenceService.build_case_tags(db, case)["tags"]
             similar = CaseIntelligenceService.find_similar_cases(db, case_id, days=days, limit=limit)
             scene = CaseIntelligenceService.analyze_scene_factors(db, case_id, days=days)
@@ -692,7 +692,9 @@ class CaseIntelligenceService:
         }
 
     @staticmethod
-    def build_experience_card(db: Session, case_id: int) -> Dict[str, Any]:
+    def build_experience_card(
+        db: Session, case_id: int, *, persist: bool = True
+    ) -> Dict[str, Any]:
         case = CaseIntelligenceService._get_case(db, case_id)
         tags_payload = CaseIntelligenceService.build_case_tags(db, case)
         scene = CaseIntelligenceService.analyze_scene_factors(db, case_id)
@@ -701,7 +703,7 @@ class CaseIntelligenceService:
         vehicle_tools = [tag["label"] for tag in tags if tag["category"] in {"vehicle", "tool"}]
         weaknesses = [tag["label"] for tag in tags if tag["category"] == "defense"]
         capture_tags = [tag["label"] for tag in tags if tag["category"] == "capture"]
-        quality = case.quality_issues or CaseQualityService.refresh_case_quality(db, case)
+        quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
         missing_fields = [
             item.get("label")
             for item in quality.get("missing_required", [])
@@ -744,11 +746,12 @@ class CaseIntelligenceService:
                 "spatial_context": tags_payload.get("context"),
             },
         }
-        intelligence["experience_card"] = card
-        existing_features["intelligence"] = intelligence
-        case.features = CaseIntelligenceService._json_safe(existing_features)
-        db.commit()
-        db.refresh(case)
+        if persist:
+            intelligence["experience_card"] = card
+            existing_features["intelligence"] = intelligence
+            case.features = CaseIntelligenceService._json_safe(existing_features)
+            db.commit()
+            db.refresh(case)
         return card
 
     @staticmethod
@@ -779,10 +782,10 @@ class CaseIntelligenceService:
             ],
         })
         if selected_case:
-            experience = CaseIntelligenceService.build_experience_card(db, selected_case.id)
+            experience = CaseIntelligenceService.build_experience_card(db, selected_case.id, persist=False)
             tags_payload = CaseIntelligenceService.build_case_tags(db, selected_case)
             tag_labels = [tag["label"] for tag in tags_payload.get("tags", [])[:8]]
-            quality = selected_case.quality_issues or CaseQualityService.refresh_case_quality(db, selected_case)
+            quality = selected_case.quality_issues or CaseQualityService.evaluate_case(db, selected_case)
             missing_fields = [
                 item["label"]
                 for item in quality.get("missing_required", [])

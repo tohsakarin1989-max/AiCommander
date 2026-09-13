@@ -32,10 +32,25 @@ def _authorize_content(db, content):
         operation, calculation = 'comparison', content.get('matrix')
     elif schema == 'case-road-route-4.2.0-1':
         operation, calculation = 'route', content.get('route')
+    elif schema == 'case-facility-comparison-5.2-1':
+        from app.services.facility_candidate_pool import validate_pool_access
+        operation, calculation = 'facility', content.get('calculation')
+        validate_pool_access(db, content['pool'])
     else:
         raise ValueError('road_artifact_schema_invalid')
     if not isinstance(calculation, dict):
         raise ValueError('road_artifact_calculation_missing')
+    if operation == 'route' and 'facility_comparison' in content:
+        from app.services.facility_reference_route import read_facility_comparison, selected_entrance
+        reference = content['facility_comparison']
+        parent = read_facility_comparison(db, reference['id'], reference['content_sha256'])
+        candidate, entrance = selected_entrance(parent, content['target']['asset_id'])
+        if (any(content[key] != parent[key] for key in ('result_id', 'content_sha256', 'map_snapshot_id'))
+                or any(calculation[key] != parent['calculation'][key] for key in
+                       ('network_id', 'graph_sha256', 'policy_revision', 'analysis_at', 'vehicle'))
+                or content['target']['entrance'] != entrance or content['target']['name'] != candidate['name']
+                or content['target']['evidence_refs'] != candidate['evidence_refs']):
+            raise ValueError('facility_route_parent_changed')
     source = CaseResultService.read(db, content['result_id'])
     if (source['content_sha256'] != content['content_sha256']
             or source['content']['versions']['map_snapshot_id'] != content['map_snapshot_id']):
@@ -122,7 +137,8 @@ def road_artifact_history(db, result_id, *, limit=10, before_id=None):
         except (PermissionError, ValueError):
             items.append({'id': identifier, 'availability': 'unavailable'})
         else:
-            operation = 'comparison' if artifact['content']['schema_version'] == 'case-road-comparison-4.2.0-1' else 'route'
+            operation = {'case-road-comparison-4.2.0-1': 'comparison', 'case-facility-comparison-5.2-1': 'facility',
+                         'case-road-route-4.2.0-1': 'route'}[artifact['content']['schema_version']]
             items.append({'id': identifier, 'availability': 'available', 'operation': operation,
                           'created_at': artifact['created_at'], 'content_sha256': artifact['content_sha256']})
     return {'items': items, 'next_before_id': ids[limit - 1] if len(ids) > limit else None}

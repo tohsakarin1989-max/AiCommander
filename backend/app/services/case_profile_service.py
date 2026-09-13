@@ -12,6 +12,7 @@ from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_result_access import CaseResultAccessError
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -40,6 +41,13 @@ class CaseProfileService:
         if not case:
             raise ValueError("case_not_found")
         return case
+
+    @staticmethod
+    def experience_needs_review(experience_card: Dict[str, Any]) -> bool:
+        """仅已有待判断草稿需要复核；未创建、已确认或归档的经验不构成缺项。"""
+        return bool(experience_card) and experience_card.get("manual_review_status") in {
+            None, "draft", "pending", "needs_review", "flagged",
+        }
 
     @staticmethod
     def build_case_profile(db: Session, case_id: int, include_similar: bool = True) -> Dict[str, Any]:
@@ -84,9 +92,10 @@ class CaseProfileService:
                 "has_evidence": bool(related["evidence"]),
                 "has_ai_features": bool(features),
                 "has_quality": bool(case.quality_issues),
-                "has_confirmed_experience": experience_card.get("manual_review_status") == "confirmed",
+                "has_confirmed_experience": experience_card.get("manual_review_status") in {"confirmed", "approved"},
                 "needs_human_review": bool(quality.get("missing_required") if isinstance(quality, dict) else True)
-                or experience_card.get("manual_review_status") not in {"confirmed", "approved"},
+                or CaseProfileService.experience_needs_review(experience_card)
+                or any(item.get("status") in {"draft", "needs_review", "flagged"} for item in conclusions),
             },
             "source_map": {
                 "case": f"case:{case.id}",
@@ -232,17 +241,27 @@ class CaseProfileService:
 
     @staticmethod
     def _conclusions(db: Session, case_id: int) -> List[Dict[str, Any]]:
-        return [
-            {
+        # 在运行时引入生成服务，避免旧画像/知识服务的模块依赖形成循环。
+        from app.services.conclusion_factory_service import ConclusionFactoryService
+
+        items = []
+        for item in db.query(Conclusion).filter(Conclusion.case_id == case_id).order_by(Conclusion.id.desc()).limit(8):
+            try:
+                ConclusionFactoryService.require_conclusion_result_access(db, item)
+            except CaseResultAccessError:
+                # 不返回标题、状态、编号或隐藏数量；处理卡和source_map也只基于可读结果。
+                continue
+            evidence = _as_dict(item.evidence)
+            items.append({
                 "id": item.id,
                 "status": item.status,
                 "risk_level": item.risk_level,
                 "summary": item.summary,
-                "confidence": item.confidence,
+                "confidence": None if evidence.get("confidence_available") is False else item.confidence,
+                "confidence_available": evidence.get("confidence_available", item.confidence is not None),
                 "created_at": _iso(item.created_at),
-            }
-            for item in db.query(Conclusion).filter(Conclusion.case_id == case_id).order_by(Conclusion.id.desc()).limit(8).all()
-        ]
+            })
+        return items
 
     @staticmethod
     def _alerts(db: Session, case_id: int) -> List[Dict[str, Any]]:

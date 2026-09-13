@@ -11,12 +11,13 @@ from app.models.map_foundation import MapSnapshot
 from app.models.jurisdiction import JurisdictionAsset
 from app.utils.datetimes import utc_datetime
 from app.services.intelligent_query_results import result_content
+from app.services.dashboard_activity_service import dashboard_activity
 
 
 class DashboardSummaryService:
     @staticmethod
     def build(db: Session, *, operational_area_id: int | None, days: int,
-              as_of: datetime | None = None, map_limit: int = 500) -> dict:
+              as_of: datetime | None = None, map_limit: int = 500, activity_limit: int = 20) -> dict:
         end = utc_datetime(as_of or datetime.now(timezone.utc))
         start = end - timedelta(days=days)
         previous_start = start - timedelta(days=days)
@@ -119,9 +120,11 @@ class DashboardSummaryService:
         attention = insight_attention + attention[:3 - len(insight_attention)]
 
         well_count = wells.count()
+        activity = dashboard_activity(db, cases, analysis_query, start=start, end=end, limit=activity_limit)
         return {
+            **activity,
             "schema_version": 1, "operational_area_id": operational_area_id,
-            "as_of": end, "state": "ready" if current_count or well_count or analyses else "empty",
+            "as_of": end, "state": "ready" if current_count or well_count or analyses or activity["activities"] else "empty",
             "period": {"start": start, "end": end, "previous_start": previous_start,
                        "previous_end": start, "days": days, "timezone": "Asia/Shanghai"},
             "metrics": {"cases": current_count, "previous_cases": previous_count,
@@ -129,7 +132,7 @@ class DashboardSummaryService:
                         "analysis_results": analyses},
             "definitions": {"cases": "完整授权范围、按案发时间，含缺坐标案件；起止区间左闭右开",
                             "registered_wells": "查询时范围内状态为 active 的登记井数，非历史井数",
-                            "analysis_results": "本期完成或降级完成的双域研判运行份数，按完成时间，含历史案件重算",
+                            "analysis_results": "本期完成或降级完成的双域研判运行次数，按完成时间，含历史案件重算；不等同于已保存成果份数",
                             "trend": "按北京时间自然日归桶，首尾可能为不足一天的时段"},
             "trend": trend, "attention": attention,
             "attention_scan": {"limit": scan_limit, "truncated": len(run_window) > scan_limit,

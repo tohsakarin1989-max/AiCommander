@@ -8,26 +8,24 @@
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  padding: 26px;
-  border: 1px solid var(--line);
+  padding: 0 0 24px;
+  border-bottom: 1px solid var(--line);
   background:
-    radial-gradient(circle at 12% 12%, oklch(0.72 0.12 78 / 0.20), transparent 30%),
-    radial-gradient(circle at 86% 18%, oklch(0.55 0.08 190 / 0.12), transparent 34%),
-    linear-gradient(135deg, oklch(0.18 0.018 245), oklch(0.10 0.012 245));
+    var(--bg-1);
 }
 
 .intel-eyebrow {
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .intel-hero h1 {
   margin: 8px 0;
   color: var(--ink-0);
   font-family: var(--serif);
-  font-size: clamp(28px, 4vw, 44px);
+  font-size: 24px;
 }
 
 .intel-hero p {
@@ -40,8 +38,8 @@
 .intel-hero-card {
   min-width: 210px;
   padding: 18px;
-  border: 1px solid oklch(0.72 0.12 78 / 0.28);
-  background: oklch(0.13 0.015 245 / 0.78);
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
 }
 
 .intel-hero-card span,
@@ -49,7 +47,7 @@
   display: block;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .intel-hero-card b {
@@ -64,7 +62,7 @@
 .intel-panel-card,
 .intel-inner-card {
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--bg-1);
 }
 
 .intel-kpi-card span,
@@ -72,7 +70,7 @@
   display: block;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .intel-kpi-card b {
@@ -126,7 +124,7 @@
   margin-left: 6px;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .intel-card-stack {
@@ -159,8 +157,8 @@
   margin: 12px 0 6px;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .intel-counter-list {
@@ -214,7 +212,7 @@
 .intel-readiness-item span {
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .intel-readiness-item small {

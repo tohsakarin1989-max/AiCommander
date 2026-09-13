@@ -10,6 +10,7 @@ from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
 from app.services.case_result_export import CaseResultExportError, export_case_result_docx
 from app.services.case_result_pdf import export_case_result_pdf
+from app.services.case_workspace_service import CaseWorkspaceService
 
 router = APIRouter()
 
@@ -23,6 +24,19 @@ def _principal(request: Request):
 
 def _unavailable():
     return HTTPException(404, "成果尚未生成、不可访问或引用已失效", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/cases/{case_id}/workspace")
+def case_workspace(case_id: int, request: Request, response: Response, db: Session = Depends(get_db)):
+    _principal(request)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return CaseWorkspaceService.read(db, case_id)
+    except CaseResultAccessError:
+        raise _unavailable() from None
+    except SQLAlchemyError:
+        raise HTTPException(503, "案件工作资料暂不可用，请稍后重试",
+                            headers={"Cache-Control": "no-store"}) from None
 
 
 @router.get("/case-results")

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { DatePicker, Form, Input, InputNumber, Modal, Select, message } from 'antd'
+import { Alert, DatePicker, Form, Input, InputNumber, Modal, Select, message } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
+import { useAuth } from '../../auth/AuthContext'
 import { eventApi } from '../../services/events'
 import { jurisdictionApi } from '../../services/jurisdiction'
 import type { Event, EventCreateData } from '../../types'
@@ -31,6 +32,8 @@ const OBSERVATION_EVENT_TYPES = new Set([
 ])
 
 const EventCenter: React.FC = () => {
+  const { user } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [form] = Form.useForm()
   const [modalOpen, setModalOpen] = useState(false)
   const navigate = useNavigate()
@@ -38,7 +41,7 @@ const EventCenter: React.FC = () => {
   const selectedEventType = Form.useWatch('event_type', form)
   const isWellObservation = OBSERVATION_EVENT_TYPES.has(selectedEventType)
 
-  const { data: events, isLoading } = useQuery({
+  const { data: events, isLoading, isError } = useQuery({
     queryKey: ['events'],
     queryFn: () => eventApi.list({ limit: 100 }),
   })
@@ -51,6 +54,7 @@ const EventCenter: React.FC = () => {
   const { data: wells = [] } = useQuery({
     queryKey: ['jurisdiction-assets', 'well'],
     queryFn: () => jurisdictionApi.listAssets({ asset_type: 'well', limit: 500 }),
+    enabled: canWrite && modalOpen,
   })
 
   const createMutation = useMutation({
@@ -117,15 +121,16 @@ const EventCenter: React.FC = () => {
     })
   }
 
-  const rows = events ?? []
+  const rows = isError ? [] : events ?? []
 
   return (
     <div className="page event-page">
+      {!canWrite && <Alert type="info" message="只读账号可查看事件，不能录入或转案件" />}
       <div className="page-title">
         <h1>事件中心</h1>
         <span className="sub">事件录入 · 风险分流 · 一键转案件</span>
         <div style={{ marginLeft: 'auto' }}>
-          <button className="btn-primary" onClick={() => setModalOpen(true)}>＋ 录入事件</button>
+          <button className="btn-primary" disabled={!canWrite} onClick={() => setModalOpen(true)}>＋ 录入事件</button>
         </div>
       </div>
 
@@ -168,11 +173,11 @@ const EventCenter: React.FC = () => {
               <div className="icon">⌛</div>
               <div>正在加载事件</div>
             </div>
-          ) : rows.length === 0 ? (
+          ) : isError ? <Alert type="error" message="事件列表读取失败，请稍后重试" /> : rows.length === 0 ? (
             <div className="empty-state" style={{ height: 280 }}>
               <div className="icon">◇</div>
               <div>暂无事件</div>
-              <button className="btn-primary" onClick={() => setModalOpen(true)}>录入第一条事件</button>
+              <button className="btn-primary" disabled={!canWrite} onClick={() => setModalOpen(true)}>录入第一条事件</button>
             </div>
           ) : (
             <table className="data ev-table">
@@ -213,7 +218,7 @@ const EventCenter: React.FC = () => {
                       ) : (
                         <button
                           className="btn-primary"
-                          disabled={convertMutation.isPending}
+                          disabled={!canWrite || convertMutation.isPending}
                           onClick={() => convertMutation.mutate(event.id)}
                         >
                           转案件

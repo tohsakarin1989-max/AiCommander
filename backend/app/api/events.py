@@ -518,6 +518,8 @@ async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
         f"处置结果：{event.handling_result}" if event.handling_result else None,
         f"涉及车辆：{event.vehicles}" if event.vehicles else None,
         f"涉及设备：{', '.join(event.equipment)}" if event.equipment else None,
+        f"原始事件涉油数量：{event.oil_volume_liters:g}升（吨数待核定）"
+        if event.oil_volume_liters is not None else None,
     ]
     case = CaseService.create_case(
         db=db,
@@ -529,7 +531,7 @@ async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
         case_type=EVENT_TYPES.get(event.event_type, event.event_type),
         description="\n".join(part for part in description_parts if part),
         oil_type=event.oil_type,
-        oil_volume=event.oil_volume_liters,
+        oil_volume=None,  # 案件数量按吨使用，升数缺少密度依据时保留原文待核定。
         vehicle_info={"vehicles": event.vehicles} if event.vehicles else None,
         operational_area_id=event.operational_area_id,
     )
@@ -835,6 +837,14 @@ async def analyze_correlations(
         if key not in seen:
             seen.add(key)
             unique_relations.append(r)
+
+    # 将候选关系接入现有列表与人工确认流程，重复分析不重置复核结果。
+    for relation in unique_relations:
+        RelationAnalysisService.save_relations(
+            db, relation["event_a_id"],
+            [{**relation, "event_id": relation["event_b_id"]}], commit=False,
+        )
+    db.commit()
 
     return {
         "event_count": len(events),

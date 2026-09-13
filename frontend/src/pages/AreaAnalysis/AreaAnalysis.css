@@ -36,8 +36,8 @@
 
 .aa-kpill .lbl {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
+  font-size: 12px;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -48,13 +48,13 @@
   color: var(--accent);
   margin-top: 4px;
   font-weight: 500;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   line-height: 1;
 }
 
 .aa-kpill .sub {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
   margin-top: 4px;
 }
@@ -93,7 +93,7 @@
   font-size: 12px;
   padding: 0 10px;
   outline: none;
-  letter-spacing: 0.03em;
+  letter-spacing: 0;
   transition: border-color 0.15s;
 }
 .aa-input:focus { border-color: var(--accent-line); }
@@ -105,7 +105,7 @@
   border: 1px solid var(--line);
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   padding: 0 8px;
   outline: none;
   cursor: pointer;
@@ -135,10 +135,10 @@
 
 .an-kpi .l {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
   margin-top: 4px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 
 /* ── an-bullets ─────────────────────────────────────────── */
@@ -173,7 +173,7 @@
 
 .pattern-row .rnk {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent);
   border: 1px solid var(--accent-line);
   text-align: center;
@@ -185,7 +185,7 @@
 
 .pattern-row .sup {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-2);
 }
 
@@ -202,8 +202,8 @@
 
 .dep-rec .rec-head {
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-0);
   font-weight: 500;
   margin-bottom: 5px;
@@ -225,8 +225,8 @@
 }
 .aa-risk-table th {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ink-3);
   padding: 7px 10px;
@@ -283,14 +283,14 @@
 .aa-high-risk-item:hover { background: var(--bg-2); }
 
 .aa-high-risk-item .name { flex: 1; color: var(--ink-0); font-weight: 500; }
-.aa-high-risk-item .meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.aa-high-risk-item .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
 
 /* ── tag variants ────────────────────────────────────────── */
 .aa-tag {
   display: inline-block;
   padding: 2px 8px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   border: 1px solid var(--tag-c, var(--line));
   color: var(--tag-c, var(--ink-2));
   background: color-mix(in oklab, var(--tag-c, var(--line)) 12%, transparent);
@@ -309,9 +309,9 @@
   padding: 32px 16px;
   gap: 8px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }
 .aa-empty .icon { font-size: 24px; opacity: 0.3; }
 
@@ -326,10 +326,10 @@
 .aa-period-btn {
   padding: 5px 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-2);
   border-right: 1px solid var(--line);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   background: none;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;

@@ -6,7 +6,7 @@ import json
 from app.services.intelligent_query_tools import TOOLS, CaseFilters
 
 VERSION = 'query-context-4.3-1'
-CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles'}
+CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles', 'summarize_results', 'find_history'}
 PAGE_FIELDS = {'page', 'page_size', 'limit'}
 
 
@@ -41,6 +41,21 @@ def remember(conditions, tool, arguments):
 
 def inherit(tool, arguments, conditions, *, question, change_basis=None):
     fields = TOOLS[tool].model_fields
+    history = conditions['tool_defaults'].get('find_history', {})
+    if tool != 'find_history' and (history.get('query') or history.get('source_case_id') is not None):
+        # Similarity-ranked retrieval is not an equivalent ordinary case count.
+        raise ValueError('query_context_tool_cannot_preserve_filters')
+    if tool not in CASE_TOOLS and any(
+        key != 'operational_area_id' and value is not None
+        for key, value in conditions['case_filters'].items()
+    ):
+        # A place keyword is not an equivalent case keyword or source-case filter.
+        raise ValueError('query_context_tool_cannot_preserve_filters')
+    if tool in CASE_TOOLS - {'summarize_results'} and any(
+        conditions['tool_defaults'].get('summarize_results', {}).get(key) is not None
+        for key in ('completed_after', 'completed_before')
+    ):
+        raise ValueError('query_context_tool_cannot_preserve_filters')
     if (tool in CASE_TOOLS - {'find_road_results'}
             and conditions['tool_defaults'].get('find_road_results', {}).get('min_detour_ratio') is not None):
         # A case count cannot represent a road-result filter. Require a road
@@ -83,8 +98,11 @@ def freeze_context(parent):
     # Rebuild from the already validated inherited state and actual tool trace;
     # never accept context or prior answers from the HTTP client.
     previous = (parent.input_payload or {}).get('followup_context')
+    initial = (parent.input_payload or {}).get('initial_context')
     if previous:
         conditions = copy.deepcopy(previous['conditions'])
+    elif initial:
+        conditions = copy.deepcopy(initial['conditions'])
     for entry in result.get('trace', []):
         if entry.get('tool') in TOOLS and 'arguments' in entry and not entry.get('error_code'):
             conditions = remember(conditions, entry['tool'], entry['arguments'])
@@ -94,6 +112,9 @@ def freeze_context(parent):
                'previous_completed_at': parent.completed_at.isoformat() if parent.completed_at else None,
                'conditions': conditions,
                'boundary': '继承的是筛选条件，不是授权；旧结果是历史快照，新查询仍须调用业务工具。'}
+    source_case = (previous or initial or {}).get('source_case')
+    if source_case is not None:
+        context['source_case'] = copy.deepcopy(source_case)
     if len(json.dumps(context, ensure_ascii=False).encode()) > 32_768:
         raise ValueError('query_context_limit')
     return context

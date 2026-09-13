@@ -213,7 +213,7 @@ class ModeratorAgent(BaseAgent):
             response = await self.llm.ainvoke(prompt)
             return response.content
         except Exception as e:
-            return f"格式化事件信息时出错: {str(e)}"
+            raise RuntimeError("整理会议案件信息失败") from e
 
     # 保留旧方法以保持向后兼容
     async def format_case_information(

@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Alert, Button, Empty, Select, Space, Table, Tag } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { governanceApi } from '../../services/governance'
-import { evaluationStatus, evaluationMetric } from './evaluationPresentation'
+import { governanceApi, type FixedScorerPolicy } from '../../services/governance'
+import { evaluationStatus, evaluationMetric, evaluationPolicies, evaluationPolicyLabel } from './evaluationPresentation'
 import EvaluationLabelEditor from './EvaluationLabelEditor'
 import EvaluationDiagnosticsPanel from './EvaluationDiagnosticsPanel'
 
@@ -10,7 +10,7 @@ export default function FixedEvaluationPanel() {
   const cache = useQueryClient()
   const [before, setBefore] = useState<number>()
   const [datasetId, setDatasetId] = useState<number>()
-  const [policy, setPolicy] = useState<'captured' | 'current_candidate'>('captured')
+  const [policy, setPolicy] = useState<FixedScorerPolicy>('captured')
   const [baseline, setBaseline] = useState<string>()
   const [candidate, setCandidate] = useState<string>()
   const [jobId, setJobId] = useState<string>()
@@ -47,6 +47,7 @@ export default function FixedEvaluationPanel() {
     onSuccess: result => { void cache.invalidateQueries({ queryKey: ['road-evaluation', result.event_id] }); refresh() } })
   const comparison = useMutation({ mutationFn: () => governanceApi.compareFixed(baseline!, candidate!) })
   const changeDataset = (id?: number) => {
+    setPolicy('captured')
     setDatasetId(id); setBaseline(undefined); setCandidate(undefined); setJobId(undefined)
     setDiagnosticId(undefined)
     comparison.reset(); run.reset(); cancel.reset()
@@ -61,13 +62,14 @@ export default function FixedEvaluationPanel() {
     <div className="fixed-evaluations__toolbar">
       <label>已冻结的数据集<Select aria-label="已冻结的数据集" value={datasetId} loading={datasets.isFetching}
         disabled={busy || datasets.isError} placeholder="选择已有固定输入"
-        options={(datasets.data?.items || []).map(row => ({ value: row.id, label: `${row.name} / ${row.version} · ${row.kind === 'road' ? '道路' : '案件'} · ${row.sample_count}份` }))}
+        options={(datasets.data?.items || []).map(row => ({ value: row.id, label: `${row.name} / ${row.version} · ${row.evaluation_family === 'facility_source' ? '设施来源对照' : row.kind === 'road' ? '道路' : '案件'} · ${row.sample_count}份` }))}
         onChange={changeDataset} /></label>
       {selected?.kind === 'case' && <label>评分版本<Select aria-label="评分版本" value={policy} disabled={busy} onChange={setPolicy}
-        options={[{ value: 'captured', label: '冻结时原版本' }, { value: 'current_candidate', label: '当前候选版本' }]} /></label>}
+        options={evaluationPolicies(selected.evaluation_family)} /></label>}
       <Button type="primary" loading={run.isPending} disabled={!selected || !visible || busy}
         onClick={() => { comparison.reset(); run.mutate() }}>运行评测</Button>
     </div>
+    {selected?.evaluation_family === 'facility_source' && <p>旧规则最多一项来源，新规则最多三项；同时查看首项和前三命中率。只重放冻结评分，不重跑路由；资料不足不算正确阴性。</p>}
     <Space wrap><Button size="small" disabled={before === undefined || busy} onClick={() => { changeDataset(); setBefore(undefined) }}>最新数据集</Button>
       <Button size="small" disabled={!datasets.data?.next_before_id || busy} onClick={() => { changeDataset(); setBefore(datasets.data!.next_before_id!) }}>更早数据集</Button></Space>
     {!datasets.isLoading && !datasets.isError && !datasets.data?.items.length && <Empty description="此页暂无可访问的固定输入。由管理员归档评测集后运行；未冻结的实时案件不替代固定评测。" />}
@@ -101,16 +103,16 @@ export default function FixedEvaluationPanel() {
       locale={{ emptyText: '此数据集暂无最近运行记录' }} columns={[
         { title: '运行时间', dataIndex: 'started_at', render: value => new Date(value).toLocaleString() },
         { title: '状态', dataIndex: 'status', render: evaluationStatus },
-        { title: '版本方式', render: (_, row) => row.algorithm_manifest.scorer_policy === 'current_candidate' ? '当前候选' : selected?.kind === 'road' ? '固定路网' : '冻结原版本' },
+        { title: '版本方式', render: (_, row) => selected?.kind === 'road' ? '固定路网' : evaluationPolicyLabel(row.algorithm_manifest.scorer_policy) },
         { title: '样本 / 失败 / 未标注', render: (_, row) => `${row.metrics.case_count ?? row.metrics.sample_count ?? '—'} / ${row.metrics.failed_case_count ?? row.metrics.failed_sample_count ?? '—'} / ${row.metrics.unlabeled_case_count ?? row.metrics.unlabeled_sample_count ?? '—'}` },
-        { title: '已标注命中率', render: (_, row) => evaluationMetric(row.metrics.positive_top3_hit_rate) },
+        { title: '首项 / 前三命中率', render: (_, row) => `${evaluationMetric(row.metrics.positive_top1_hit_rate)} / ${evaluationMetric(row.metrics.positive_top3_hit_rate)}` },
         { title: '操作', render: (_, row) => row.algorithm_manifest.evaluation_schema === 'road-evaluation-run-4.5-1' ? <Button size="small" onClick={() => setJobId(row.id)}>查看道路任务</Button>
           : row.algorithm_manifest.evaluation_schema === 'fixed-evaluation-4.5-1' ? <Button size="small" onClick={() => setDiagnosticId(row.id)}>错误诊断</Button> : '—' },
       ]} />}
     {diagnosticId && visible && records.some(row => row.id === diagnosticId) && <EvaluationDiagnosticsPanel key={diagnosticId} runId={diagnosticId} />}
     {selected?.kind === 'case' && visible && <div className="fixed-evaluations__comparison">
       <details onToggle={event => setLabelsOpen(event.currentTarget.open)}><summary>人工标签与版本修订</summary>
-        {labelsOpen && <EvaluationLabelEditor key={selected.id} datasetId={selected.id} />}
+        {labelsOpen && <EvaluationLabelEditor key={selected.id} datasetId={selected.id} sourceOnly={selected.evaluation_family === 'facility_source'} />}
       </details>
       <h3>同一数据集的两次运行比较</h3>
       <Space wrap><Select aria-label="基线运行" placeholder="基线运行" value={baseline} options={compareOptions} disabled={busy} onChange={value => { setBaseline(value); comparison.reset() }} />

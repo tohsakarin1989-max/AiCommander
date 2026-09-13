@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Alert,
   Modal,
   Form,
   Input,
@@ -173,7 +174,7 @@ function ScheduleTimeline({ patrols, nowPercent }: TimelineProps) {
           )
         })}
         {active.length === 0 && (
-          <div style={{ padding: '16px 0 8px 80px', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+          <div style={{ padding: '16px 0 8px 80px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
             暂无排班数据
           </div>
         )}
@@ -263,7 +264,7 @@ function AIRecommendations({
 
   if (highRisk.length === 0) {
     return (
-      <div style={{ padding: '24px 16px', textAlign: 'center', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+      <div style={{ padding: '24px 16px', textAlign: 'center', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
         暂无高风险区域，当前部署良好
       </div>
     )
@@ -374,7 +375,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
 
       {/* 动态建议时段 */}
       <div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
           高风险时段
           {schedule && (
             <span style={{ marginLeft: 8, color: 'var(--ink-4)' }}>
@@ -383,7 +384,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
           )}
         </div>
         {noData ? (
-          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 11 }}>暂无历史案件数据</div>
+          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 12 }}>暂无历史案件数据</div>
         ) : (
           schedule!.recommended_windows.map((win, i) => {
             const color = SCHEDULE_RISK_COLOR[win.risk_level]
@@ -395,13 +396,13 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
                   width: 18, height: 18, borderRadius: '50%',
                   background: `${color}22`, border: `1px solid ${color}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--mono)', fontSize: 9, color,
+                  fontFamily: 'var(--mono)', fontSize: 12, color,
                   flexShrink: 0,
                 }}>
                   {i + 1}
                 </div>
                 {/* 时段标签 */}
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-1)', minWidth: 100 }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-1)', minWidth: 100 }}>
                   {win.label}
                 </div>
                 {/* 进度条 */}
@@ -415,11 +416,11 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
                   }} />
                 </div>
                 {/* 数值 */}
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', minWidth: 40, textAlign: 'right' }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', minWidth: 40, textAlign: 'right' }}>
                   {win.percentage}%
                 </div>
                 {/* 风险标签 */}
-                <span className="chip" style={{ color, borderColor: color, fontSize: 9, padding: '1px 5px', minWidth: 42, textAlign: 'center' }}>
+                <span className="chip" style={{ color, borderColor: color, fontSize: 12, padding: '1px 5px', minWidth: 42, textAlign: 'center' }}>
                   {label}
                 </span>
               </div>
@@ -430,7 +431,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
 
       {/* 案件驱动区域规划 */}
       <div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
           案件驱动区域
           {casePlan && (
             <span style={{ marginLeft: 8, color: 'var(--ink-4)' }}>
@@ -439,7 +440,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
           )}
         </div>
         {!casePlan || casePlan.areas.length === 0 ? (
-          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 11 }}>暂无可规划区域</div>
+          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 12 }}>暂无可规划区域</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {casePlan.areas.slice(0, 3).map((area, i) => {
@@ -447,22 +448,22 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
               return (
                 <div key={area.area_name} style={{ border: '1px solid var(--line)', background: 'var(--bg-2)', padding: '8px 10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-                    <span style={{ width: 18, height: 18, borderRadius: 3, border: `1px solid ${color}`, color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 10 }}>
+                    <span style={{ width: 18, height: 18, borderRadius: 3, border: `1px solid ${color}`, color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 12 }}>
                       {i + 1}
                     </span>
                     <span style={{ color: 'var(--ink-1)', fontSize: 12, fontWeight: 600 }}>{area.area_name}</span>
-                    <span className="chip" style={{ marginLeft: 'auto', color, borderColor: color, fontSize: 9 }}>
+                    <span className="chip" style={{ marginLeft: 'auto', color, borderColor: color, fontSize: 12 }}>
                       {Math.round(area.priority_score)}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
                     {area.case_count} 案 · 质量均分 {Math.round(area.average_quality_score)} · {area.oil_natures.join('、') || '油品未标注'}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: 'var(--ink-2)', marginTop: 4 }}>
                     重点：{area.patrol_focus.slice(0, 3).join('、')}
                   </div>
                   {area.recommended_windows[0] && (
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--warn)', marginTop: 4 }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--warn)', marginTop: 4 }}>
                       建议时段：{area.recommended_windows.map(w => w.label).join(' / ')}
                     </div>
                   )}
@@ -476,7 +477,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
       {/* 高发星期 */}
       {schedule && schedule.weekday_priority.length > 0 && (
         <div>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
             重点加强日
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -484,7 +485,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
               <span key={i} className="chip" style={{
                 color: i === 0 ? 'var(--err)' : i === 1 ? 'var(--warn)' : 'var(--ink-2)',
                 borderColor: i === 0 ? 'var(--err)' : i === 1 ? 'var(--warn)' : 'var(--line)',
-                fontFamily: 'var(--mono)', fontSize: 11,
+                fontFamily: 'var(--mono)', fontSize: 12,
               }}>
                 {wd.name} · {wd.case_count}案
               </span>
@@ -495,7 +496,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
 
       {/* 优化路线顺序 */}
       <div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
           最优访问顺序
           {optimized && optimized.hotspot_count > 0 && (
             <span style={{ marginLeft: 8, color: 'var(--ink-4)' }}>
@@ -504,7 +505,7 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
           )}
         </div>
         {noRoutes ? (
-          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 11 }}>暂无热点数据，无法生成路线</div>
+          <div style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono)', fontSize: 12 }}>暂无热点数据，无法生成路线</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {optimized!.routes.map((route, i) => (
@@ -515,22 +516,22 @@ function SmartDispatchPanel({ schedule, optimized, casePlan, scheduleLoading, op
                   background: 'oklch(0.78 0.14 45 / 0.15)',
                   border: '1px solid oklch(0.78 0.14 45 / 0.5)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--mono)', fontSize: 10,
+                  fontFamily: 'var(--mono)', fontSize: 12,
                   color: 'oklch(0.78 0.14 45)', flexShrink: 0,
                 }}>
                   {route.visit_order}
                 </div>
                 {/* 坐标 */}
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-2)', flex: 1 }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)', flex: 1 }}>
                   {route.center_latitude.toFixed(3)}, {route.center_longitude.toFixed(3)}
                 </div>
                 {/* 案件数 */}
-                <span className="chip" style={{ fontSize: 9, color: 'var(--warn)', borderColor: 'var(--warn)', padding: '1px 5px' }}>
+                <span className="chip" style={{ fontSize: 12, color: 'var(--warn)', borderColor: 'var(--warn)', padding: '1px 5px' }}>
                   {route.case_count}案
                 </span>
                 {/* 到下一点距离 */}
                 {route.est_distance_km > 0 && (
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-4)', minWidth: 48, textAlign: 'right' }}>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-4)', minWidth: 48, textAlign: 'right' }}>
                     →{route.est_distance_km}km
                   </div>
                 )}
@@ -603,7 +604,7 @@ const PATROL_WAYPOINTS = [
   [[46.85, 124.35], [47.10, 124.40], [47.50, 124.00]],
 ] as const
 
-function PatrolRouteMap({ areaRisks, hotspots, keyLocations }: PatrolRouteMapProps) {
+export function PatrolRouteMap({ areaRisks, hotspots, keyLocations }: PatrolRouteMapProps) {
   const [hoveredRoute, setHoveredRoute] = useState<number | null>(null)
 
   // 高风险区域转 SVG 坐标（来自 areaRisks）
@@ -650,13 +651,14 @@ function PatrolRouteMap({ areaRisks, hotspots, keyLocations }: PatrolRouteMapPro
       <div className="card">
         <div className="card-head">
           <span className="ico">⊕</span>
-          <span className="ti">AI 巡逻路线规划</span>
+          <span className="ti">历史路线示意</span>
           <span className="spacer" />
-          <span className="chip accent">基于风险分析自动规划</span>
+          <span className="chip accent">固定示意，非规划结果</span>
           <span className="chip" style={{ marginLeft: 6 }}>
-            {routePaths.length} 条路线 · {hotspotPoints.length} 个热点
+            {routePaths.length} 条示意路径 · {hotspotPoints.length} 个数据热点
           </span>
         </div>
+        <Alert type="warning" showIcon message="路线待配置：图中路径为历史固定示意，不随案件或路网计算，不代表可通行路线或已创建的巡逻任务。热点和重点部位单独来自当前数据。" />
         <div className="card-body" style={{ padding: 0, position: 'relative' }}>
           <svg
             className="patrol-map-svg"
@@ -845,16 +847,16 @@ function PatrolRouteMap({ areaRisks, hotspots, keyLocations }: PatrolRouteMapPro
           {hoveredRoute !== null && (
             <div style={{
               position: 'absolute', top: 12, left: 12,
-              background: 'oklch(0.12 0.012 250 / 0.9)',
+              background: "#ffffff",
               border: `1px solid ${ROUTE_COLORS[hoveredRoute].replace(')', ' / 0.6)')}`,
               padding: '10px 14px',
-              fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-1)',
+              fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-1)',
               maxWidth: 280,
             }}>
               <div style={{ color: ROUTE_COLORS[hoveredRoute], fontWeight: 600, marginBottom: 4 }}>
                 {['北线管道巡逻路线', '东线外输巡逻路线', '西北片区巡逻路线', '中俄管线巡逻路线'][hoveredRoute]}
               </div>
-              <div style={{ color: 'var(--ink-2)', lineHeight: 1.6, fontSize: 10.5 }}>
+              <div style={{ color: 'var(--ink-2)', lineHeight: 1.6, fontSize: 12 }}>
                 {[
                   '覆盖喇嘛甸、让胡路、杏树岗、红岗采油区，重点关注油田集输干线及夜间人员活动',
                   '沿大庆-安达-肇东外输管线，关注管线穿越区域及运油车辆异常',
@@ -1127,7 +1129,7 @@ const Patrols: React.FC = () => {
                       <div className="sq-area">
                         {p.area_name}
                         {p.patrol_type && (
-                          <span style={{ marginLeft: 6, color: 'var(--ink-3)', fontSize: 10 }}>
+                          <span style={{ marginLeft: 6, color: 'var(--ink-3)', fontSize: 12 }}>
                             {TYPE_MAP[p.patrol_type] ?? p.patrol_type}
                           </span>
                         )}
@@ -1345,15 +1347,15 @@ const Patrols: React.FC = () => {
                       <td>
                         {area.last_patrol_date ? (
                           <Space>
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-2)' }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>
                               {dayjs(area.last_patrol_date).format('MM-DD')}
                             </span>
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: dColor }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: dColor }}>
                               {daysAgo}天前
                             </span>
                           </Space>
                         ) : (
-                          <span style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', fontSize: 11 }}>从未巡逻</span>
+                          <span style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', fontSize: 12 }}>从未巡逻</span>
                         )}
                       </td>
                       <td>
@@ -1495,7 +1497,7 @@ const Patrols: React.FC = () => {
             label={<span style={{ color: 'var(--ink-2)', fontSize: 12 }}>巡逻效果评分</span>}
           >
             <Rate count={5} allowHalf />
-            <span style={{ marginLeft: 8, color: 'var(--ink-3)', fontSize: 11 }}>（5星=100分）</span>
+            <span style={{ marginLeft: 8, color: 'var(--ink-3)', fontSize: 12 }}>（5星=100分）</span>
           </Form.Item>
           <Form.Item
             name="feedback_notes"
@@ -1600,7 +1602,7 @@ const Patrols: React.FC = () => {
                 column={1}
                 size="small"
                 styles={{
-                  label: { color: 'var(--ink-3)', width: 90, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase' },
+                  label: { color: 'var(--ink-3)', width: 90, fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase' },
                   content: { color: 'var(--ink-1)' },
                 }}
               >

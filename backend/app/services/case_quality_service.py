@@ -445,7 +445,7 @@ class CaseQualityService:
     @staticmethod
     def build_case_feature_profile(db: Session, case: Case) -> Dict[str, Any]:
         related = CaseQualityService.get_related_data(db, case.id)
-        quality = case.quality_issues or CaseQualityService.refresh_case_quality(db, case)
+        quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
         profile = {
             "case": {
                 "id": case.id,

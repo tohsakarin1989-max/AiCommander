@@ -1,6 +1,6 @@
 # Optional API override, used after the two input images are accepted locally.
 # API and ordinary consumers share application code and report dependencies.
-x-road-api-image: &road-api-image ${IMAGE_PREFIX:-aicommander}-backend-roads:${APP_VERSION:-4.5.0-stable}
+x-road-api-image: &road-api-image ${IMAGE_PREFIX:-aicommander}-backend-roads:${APP_VERSION:-5.2.0-stable}
 services:
   backend:
     image: *road-api-image

@@ -1,6 +1,9 @@
+import hashlib
 import os
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -101,7 +104,19 @@ def test_release_quality_gate_checks_rehearsal_scripts():
     workbench_gate = _read("scripts/verify-workbench.sh")
     assert "tests/test_workbench.py" in workbench_gate
     assert "src/pages/Workbench/workbenchPresentation.test.ts" in workbench_gate
-    assert "a7d9e1f2b304" in workbench_gate
+    required_tables = {
+        "knowledge-assets": {"knowledge_assets", "knowledge_reuse_records", "workbench_task_sessions"},
+        "workbench": {"workbench_task_sessions"},
+        "evidence-graph": {"cases", "case_evidence", "chain_links", "jurisdiction_assets",
+                           "agent_runs", "agent_artifacts", "knowledge_assets"},
+        "situation": {"cases", "jurisdiction_assets", "chain_links", "knowledge_assets"},
+    }
+    for module, tables in required_tables.items():
+        gate = _read(f"scripts/verify-{module}.sh")
+        invocation = '"$PYTHON" "$ROOT_DIR/scripts/verify-sqlite-schema.py" "$VERIFY_DB" \\\n'
+        assert invocation in gate
+        assert set(gate.split(invocation, 1)[1].splitlines()[0].split()) == tables
+        assert "a7d9e1f2b304" not in gate
 
 
 def test_smoke_verifier_records_evidence_without_credentials(tmp_path):
@@ -200,3 +215,89 @@ sys.stdout.write(str(status))
     assert "application_version=3.0.0-stable" in manifest
     assert "agent_mode=off" in manifest
     assert "overall=passed" in manifest
+
+
+def _run_restore_verifier(tmp_path, *, manifest_revision="revision_test", restored_revision="revision_test",
+                          table_count="42", revision_query_exit="0", with_manifest=True):
+    """Run the real shell verifier against an isolated, non-networked Docker stub."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+args = ' '.join(sys.argv[1:])
+with Path(os.environ['RESTORE_COMMAND_LOG']).open('a') as log:
+    log.write(args + '\\n')
+if 'information_schema.tables' in args:
+    print(os.environ['RESTORED_TABLE_COUNT'])
+elif 'SELECT version_num FROM alembic_version' in args:
+    print(os.environ['RESTORED_REVISION'])
+    sys.exit(int(os.environ['REVISION_QUERY_EXIT']))
+elif 'pg_restore ' in args:
+    sys.stdin.buffer.read()
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o700)
+    backup = tmp_path / "aicommander-test.dump"
+    backup.write_bytes(b"isolated restore verification fixture")
+    backup.with_suffix(".dump.sha256").write_text(
+        hashlib.sha256(backup.read_bytes()).hexdigest() + f"  {backup.name}\n"
+    )
+    if with_manifest:
+        backup.with_suffix(".dump.manifest").write_text(
+            f"database_name=aicommander\ndatabase_revision={manifest_revision}\nformat=postgres-custom\n",
+            encoding="utf-8",
+        )
+    env_file = tmp_path / ".env.production"
+    env_file.write_text(f"BACKUP_DIR={tmp_path}\n", encoding="utf-8")
+    command_log = tmp_path / "docker-commands.log"
+    evidence = tmp_path / "restore-verified"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "ENV_FILE": str(env_file), "BACKUP_FILE": str(backup), "EVIDENCE_FILE": str(evidence),
+        "RESTORE_COMMAND_LOG": str(command_log), "RESTORED_TABLE_COUNT": table_count,
+        "RESTORED_REVISION": restored_revision, "REVISION_QUERY_EXIT": revision_query_exit,
+    }
+    result = subprocess.run(
+        ["sh", str(REPOSITORY_ROOT / "scripts/verify-backup-restore.sh")],
+        cwd=REPOSITORY_ROOT, env=env, capture_output=True, text=True, check=False,
+    )
+    return result, evidence, command_log
+
+
+@pytest.mark.parametrize("overrides", [
+    {"with_manifest": False},
+    {"table_count": "0"},
+    {"revision_query_exit": "1"},
+    {"restored_revision": ""},
+    {"manifest_revision": "untracked", "restored_revision": "untracked"},
+    {"restored_revision": "other_revision"},
+])
+def test_restore_verifier_rejects_incomplete_or_unmatched_backups(tmp_path, overrides):
+    result, evidence, commands = _run_restore_verifier(tmp_path, **overrides)
+    assert result.returncode != 0, "incomplete restoration must never be marked passed"
+    assert not evidence.exists()
+    if commands.exists() and "createdb" in commands.read_text():
+        assert "dropdb" in commands.read_text(), "temporary restore database must be cleaned up on failure"
+
+
+def test_restore_verifier_requires_manifest_revision_and_records_verified_result(tmp_path):
+    result, evidence, commands = _run_restore_verifier(tmp_path)
+    assert result.returncode == 0, result.stderr
+    text = evidence.read_text()
+    assert "restored_table_count=42" in text
+    assert "database_revision=revision_test" in text
+    assert "expected_database_revision=revision_test" in text
+    assert "restore_status=passed" in text
+    assert "dropdb" in commands.read_text()
+
+
+def test_disaster_recovery_stops_all_application_writers():
+    runbook = _read("docs/server-deployment-runbook.zh-CN.md")
+    recovery = runbook.split("### 17.3 灾难恢复", 1)[1].split("## 18.", 1)[0]
+    assert "stop frontend backend celery celery-beat agent-worker road-worker map-worker" in recovery

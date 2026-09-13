@@ -31,14 +31,15 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { agentRunApi } from '../../services/agentRuns'
-import { caseApi, type CaseImportOptions, type CaseImportResult, type CasePageParams } from '../../services/cases'
+import { caseApi, type CaseImportOptions, type CaseImportResult } from '../../services/cases'
 import CaseImportCorrections from './CaseImportCorrections'
 import CaseImportConfiguration from './CaseImportConfiguration'
+import CaseHistoryReferences from './CaseHistoryReferences'
 import CaseResultPanel from '../../components/CaseResult/CaseResultPanel'
 import CaseResultMap from '../../components/CaseResult/CaseResultMap'
-import { caseResultsApi } from '../../services/caseResults'
+import { useCaseWorkspace, useCaseWorkspaceSection } from '../../services/useCaseWorkspace'
+import { caseContextPath, parseCaseContextParams, writeCaseFilterParams } from '../../services/caseContext'
 import type { ImportCorrectionResult } from '../../services/caseImports'
-import { intelligenceFlowApi } from '../../services/intelligenceFlow'
 import { caseStewardApi } from '../../services/caseSteward'
 import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
@@ -47,7 +48,8 @@ import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
 import { authApi } from '../../services/auth'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
-import { agentLabEnabled, bonusAccountingEnabled, canAccessAgentLab } from '../../config/features'
+import { canAccessAgentLab } from '../../config/features'
+import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import { summarizeBatchReview } from './batchReviewPresentation'
@@ -472,6 +474,8 @@ export const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
 }
 
 const Cases: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const caseContext = parseCaseContextParams(searchParams)
   const [form] = Form.useForm()
   const [evidenceForm] = Form.useForm()
   const [modal, modalContextHolder] = Modal.useModal()
@@ -509,15 +513,29 @@ const Cases: React.FC = () => {
   const [showMapPicker, setShowMapPicker] = useState(false)
   const [aiIntakeText, setAiIntakeText] = useState('')
   const [aiIntakeSourceText, setAiIntakeSourceText] = useState('')
-  const [filters, setFilters] = useState<CasePageParams>({})
+  const filters = caseContext.filters
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
-  const [keyword, setKeyword] = useState('')
-  const [sidebarFilter, setSidebarFilter] = useState<FilterState>(defaultFilterState)
+  const [keyword, setKeyword] = useState(() => filters.keyword ?? '')
+  const [sidebarFilter, setSidebarFilter] = useState<FilterState>(() => ({
+    ...defaultFilterState, statuses: filters.statuses ?? [], caseTypes: filters.case_types ?? [], oilTypes: filters.oil_types ?? [],
+    startDate: filters.start_date ? dayjs(filters.start_date).format('YYYY-MM-DD') : '',
+    endDate: filters.end_date ? dayjs(filters.end_date).subtract(1, 'millisecond').format('YYYY-MM-DD') : '',
+  }))
+  const filterToken = writeCaseFilterParams(new URLSearchParams(), filters).toString()
+  useEffect(() => {
+    const current = parseCaseContextParams(new URLSearchParams(filterToken)).filters
+    setKeyword(current.keyword ?? '')
+    const day = (value: string | undefined, end = false) => value && Number.isFinite(Date.parse(value))
+      ? new Date(Date.parse(value) + 8 * 3600000 - (end ? 1 : 0)).toISOString().slice(0, 10) : ''
+    setSidebarFilter({ ...defaultFilterState, statuses: current.statuses ?? [], caseTypes: current.case_types ?? [],
+      oilTypes: current.oil_types ?? [], startDate: day(current.start_date), endDate: day(current.end_date, true) })
+    setPage(1)
+  }, [filterToken])
   const queryClient = useQueryClient()
   const { user, sessionEpoch } = useAuth()
+  const { bonusAccountingEnabled, agentLabEnabled } = useRuntimeFeatures()
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
   const editRequestRef = useRef(0)
   const [batchReviewResult, setBatchReviewResult] = useState<BatchReviewResult | null>(null)
   const areaScopesQuery = useQuery({
@@ -560,6 +578,7 @@ const Cases: React.FC = () => {
   const casesQuery = useQuery({
     queryKey: ['cases', 'page', user?.id, sessionEpoch, filters, page, pageSize],
     queryFn: ({ signal }) => caseApi.getCasePage({ ...filters, page, page_size: pageSize }, signal),
+    enabled: !caseContext.error,
   })
   const { data: casePage, isLoading, isError: caseSearchError } = casesQuery
   const filteredCases = caseSearchError ? [] : casePage?.items ?? []
@@ -615,74 +634,32 @@ const Cases: React.FC = () => {
   const { data: preprocessStatus } = useQuery({
     queryKey: ['preprocess-status'],
     queryFn: () => caseApi.getPreprocessStatus(),
+    enabled: user?.role === 'admin',
     refetchInterval: 5000,
   })
 
-  const { data: bonusAssessment } = useQuery({
-    queryKey: ['case-bonus-assessment', selectedCase?.id],
-    queryFn: () => caseApi.getBonusAssessment(selectedCase!.id),
-    enabled: bonusAccountingEnabled && !!selectedCase,
-  })
+  const { data: bonusAssessment } = useCaseWorkspaceSection(
+    'case-bonus-assessment', selectedCase?.id, () => caseApi.getBonusAssessment(selectedCase!.id), bonusAccountingEnabled)
+  const automationQuery = useCaseWorkspaceSection(
+    'case-automation-workbench', selectedCase?.id, () => caseApi.getAutomationWorkbench(selectedCase!.id))
+  const automationWorkbench = automationQuery.data
+  const profileQuery = useCaseWorkspaceSection<CaseProfile>(
+    'case-profile', selectedCase?.id, () => caseApi.getCaseProfile(selectedCase!.id))
+  const caseProfile = profileQuery.data
 
-  const { data: automationWorkbench } = useQuery({
-    queryKey: ['case-automation-workbench', selectedCase?.id],
-    queryFn: () => caseApi.getAutomationWorkbench(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
+  const { workspace, isPending: resultLoading, error: resultError } = useCaseWorkspace(selectedCase?.id)
+  const unifiedResult = workspace?.result.data ?? undefined
 
-  const { data: caseProfile } = useQuery<CaseProfile>({
-    queryKey: ['case-profile', selectedCase?.id],
-    queryFn: () => caseApi.getCaseProfile(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
-
-  const { data: pipelineStatus } = useQuery({
-    queryKey: ['case-pipeline-status', selectedCase?.id],
-    queryFn: () => intelligenceFlowApi.getCasePipelineStatus(selectedCase!.id),
-    enabled: !!selectedCase,
-    retry: false,
-    refetchInterval: query => ['pending', 'processing', 'degraded'].includes(query.state.data?.status ?? '') ? 3000 : false,
-  })
-
-  const { data: unifiedResult, isPending: resultLoading, error: resultError } = useQuery({
-    queryKey: ['case-unified-result', selectedCase?.id],
-    queryFn: () => caseResultsApi.latest(selectedCase!.id),
-    enabled: !!selectedCase,
-    retry: false,
-    gcTime: 0,
-    refetchInterval: query => (
-      !query.state.data
-      || ['pending', 'processing', 'degraded'].includes(pipelineStatus?.status ?? '')
-      || query.state.data.freshness === 'pending_update'
-      || query.state.data.content.analysis_status === 'not_generated'
-        ? 5000
-        : 30000
-    ),
-  })
-
-  const { data: processingCard } = useQuery<CaseProcessingCard>({
-    queryKey: ['case-processing-card', selectedCase?.id],
-    queryFn: () => caseApi.getProcessingCard(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
-
-  const { data: caseDiagram } = useQuery({
-    queryKey: ['case-diagram', selectedCase?.id],
-    queryFn: () => caseApi.getCaseDiagram(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
-
-  const { data: caseEvidence } = useQuery({
-    queryKey: ['case-evidence', selectedCase?.id],
-    queryFn: () => caseApi.getCaseEvidence(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
-
-  const { data: chainLinks } = useQuery({
-    queryKey: ['case-chain-links', selectedCase?.id],
-    queryFn: () => caseApi.getChainLinks(selectedCase!.id),
-    enabled: !!selectedCase,
-  })
+  const processingQuery = useCaseWorkspaceSection<CaseProcessingCard>(
+    'case-processing-card', selectedCase?.id, () => caseApi.getProcessingCard(selectedCase!.id))
+  const processingCard = processingQuery.data
+  const diagramQuery = useCaseWorkspaceSection(
+    'case-diagram', selectedCase?.id, () => caseApi.getCaseDiagram(selectedCase!.id))
+  const caseDiagram = diagramQuery.data
+  const { data: caseEvidence } = useCaseWorkspaceSection(
+    'case-evidence', selectedCase?.id, () => caseApi.getCaseEvidence(selectedCase!.id))
+  const { data: chainLinks } = useCaseWorkspaceSection(
+    'case-chain-links', selectedCase?.id, () => caseApi.getChainLinks(selectedCase!.id))
 
   const { data: missingLocationCases, isLoading: missingLocationLoading } = useQuery({
     queryKey: ['cases-missing-location'],
@@ -790,7 +767,7 @@ const Cases: React.FC = () => {
     }),
     onSuccess: run => {
       message.success(`案件数据管家任务 ${run.id.slice(0, 8)} 已进入独立队列`)
-      navigate('/agents')
+      navigate(`/agent-lab?runId=${encodeURIComponent(run.id)}`)
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
@@ -1126,14 +1103,20 @@ const Cases: React.FC = () => {
       message.warning('开始日期不能晚于结束日期')
       return
     }
-    setFilters(buildCaseSearchParams({ ...sidebarFilter, keyword }))
+    setSearchParams(previous => writeCaseFilterParams(previous, {
+      ...filters, ...buildCaseSearchParams({ ...sidebarFilter, keyword }),
+      keyword: keyword.trim() || undefined, statuses: sidebarFilter.statuses,
+      case_types: sidebarFilter.caseTypes, oil_types: sidebarFilter.oilTypes,
+      start_date: buildCaseSearchParams(sidebarFilter).start_date,
+      end_date: buildCaseSearchParams(sidebarFilter).end_date,
+    }))
     setPage(1)
   }
 
   const resetFilters = () => {
     setSidebarFilter(defaultFilterState)
     setKeyword('')
-    setFilters({})
+    setSearchParams(previous => writeCaseFilterParams(previous, {}))
     setPage(1)
   }
 
@@ -1366,7 +1349,7 @@ const Cases: React.FC = () => {
   const renderAutomationPanel = (workbench?: CaseAutomationWorkbench) => {
     const assessment = bonusAccountingEnabled ? (workbench?.bonus_assessment || bonusAssessment) : undefined
     const gate = assessment?.material_gate
-    const total = assessment?.total_suggested_amount ?? 0
+    const unavailable = !selectedCase ? '待选择案件' : automationQuery.isError ? '暂不可读' : '加载中…'
     const primarySquad = assessment?.primary_squad || selectedCase?.report_unit || '未选择'
     const moduleByKey = new Map((workbench?.modules || []).map(item => [item.key, item]))
     const conclusion = moduleByKey.get('conclusion_layering')
@@ -1386,11 +1369,13 @@ const Cases: React.FC = () => {
           </div>
           <div>
             <span>佐证材料</span>
-            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : `${workbench?.gap_closure.material_gaps.length || 0} 缺口`}</b>
+            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : workbench ? `${workbench.gap_closure.material_gaps.length} 缺口` : unavailable}</b>
           </div>
           <div>
             <span>{bonusAccountingEnabled ? '奖金测算' : '研判复核'}</span>
-            <b>{bonusAccountingEnabled ? `¥${total.toLocaleString()}` : (workbench?.ready_for_human_review ? '可复核' : '需补充')}</b>
+            <b>{bonusAccountingEnabled
+              ? (assessment ? `¥${assessment.total_suggested_amount.toLocaleString()}` : unavailable)
+              : workbench ? (workbench.ready_for_human_review ? '可复核' : '需补充') : unavailable}</b>
           </div>
         </div>
         <div className="cases-automation-actions">
@@ -1420,19 +1405,19 @@ const Cases: React.FC = () => {
           <div className={`cases-automation-module cases-automation-module--${conclusion?.status || 'idle'}`}>
             <span>4 结论分层</span>
             <b>
-              事实 {workbench?.conclusion_layering.facts.length || 0} · 推断 {workbench?.conclusion_layering.inferences.length || 0}
+              {workbench ? `事实 ${workbench.conclusion_layering.facts.length} · 推断 ${workbench.conclusion_layering.inferences.length}` : unavailable}
             </b>
-            <small>建议 {workbench?.conclusion_layering.suggestions.length || 0} · 缺口 {workbench?.conclusion_layering.information_gaps.length || 0}</small>
+            {workbench && <small>建议 {workbench.conclusion_layering.suggestions.length} · 缺口 {workbench.conclusion_layering.information_gaps.length}</small>}
           </div>
           <div className={`cases-automation-module cases-automation-module--${card?.status || 'idle'}`}>
             <span>5 经验卡</span>
-            <b>经验 {workbench?.experience_card.reusable_lessons.length || 0}</b>
-            <small>{workbench?.experience_card.how_it_was_found?.[0] || '选择案件后自动沉淀'}</small>
+            <b>{workbench ? `经验 ${workbench.experience_card.reusable_lessons.length}` : unavailable}</b>
+            {workbench && <small>{workbench.experience_card.how_it_was_found?.[0] || '暂无发现方式记录'}</small>}
           </div>
           <div className={`cases-automation-module cases-automation-module--${gap?.status || 'idle'}`}>
             <span>6 缺口闭环</span>
-            <b>待办 {actions.length}</b>
-            <small>{actions[0]?.title || '材料和信息缺口会自动汇总'}</small>
+            <b>{workbench ? `待办 ${actions.length}` : unavailable}</b>
+            {workbench && <small>{actions[0]?.title || '当前没有待补充或待判断事项'}</small>}
           </div>
         </div>
       </div>
@@ -1444,7 +1429,7 @@ const Cases: React.FC = () => {
       {modalContextHolder}
       {messageContextHolder}
       {/* 预处理状态提醒 */}
-      {preprocessStatus && (
+      {user?.role === 'admin' && preprocessStatus && (
         <Alert
           type="info"
           showIcon
@@ -1579,7 +1564,7 @@ const Cases: React.FC = () => {
               <span className="kbd">⌘K</span>
             </div>
             <div className="tools-bar-right">
-              {caseStewardStatus?.can_start && (
+              {user?.role === 'admin' && caseStewardStatus?.can_start && (
                 <button
                   className="btn-ghost"
                   disabled={caseStewardMutation.isPending || filteredCases.length === 0}
@@ -1589,13 +1574,13 @@ const Cases: React.FC = () => {
                   <SafetyCertificateOutlined /> {caseStewardMutation.isPending ? '提交中' : '本页质检'}
                 </button>
               )}
-              <button
+              {user?.role === 'admin' && <button
                 className="btn-ghost"
                 disabled={batchReviewMutation.isPending || filteredCases.length === 0}
                 onClick={handleBatchReview}
               >
                 <ApiOutlined /> {batchReviewMutation.isPending ? '复核中' : '本页批量复核'}
-              </button>
+              </button>}
               <button className="btn-ghost" onClick={() => setLocationModalVisible(true)}>
                 <EnvironmentOutlined /> 坐标补录
               </button>
@@ -1615,6 +1600,7 @@ const Cases: React.FC = () => {
           </div>
 
           {renderAutomationPanel(automationWorkbench)}
+          {caseContext.error && <Alert type="error" showIcon message={caseContext.error} />}
           {linkedCaseQuery.isError && <Alert type="warning" showIcon message="链接中的案件不存在或当前无权访问。" />}
 
           {/* 案件列表 + 详情分栏 */}
@@ -1703,13 +1689,13 @@ const Cases: React.FC = () => {
                               >
                                 <EditOutlined />
                               </button>
-                              <button
+                              {user?.role === 'admin' && <button
                                 className="cases-act-btn"
                                 title="预处理"
                                 onClick={() => preprocessMutation.mutate(caseItem.id)}
                               >
                                 <ApiOutlined />
-                              </button>
+                              </button>}
                               <button
                                 className="cases-act-btn"
                                 title="案件研判"
@@ -1780,6 +1766,16 @@ const Cases: React.FC = () => {
                     </span>
                   </div>
 
+                  <nav className="case-context-links detail-section" aria-label="当前案件关联视图">
+                    <Link to={caseContextPath(`/case-intelligence?caseId=${selectedCase.id}`, searchParams)}>历史关联与研判</Link>
+                    <Link to={caseContextPath(`/cases/map?caseId=${selectedCase.id}`, searchParams)}>案件地图</Link>
+                    <Link to={caseContextPath(`/graphs/evidence?caseId=${selectedCase.id}`, searchParams)}>证据图谱</Link>
+                    <Link to={caseContextPath(`/assistant?caseId=${selectedCase.id}`, searchParams)}>带条件询问助手</Link>
+                    {unifiedResult && <Link to={caseContextPath(`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`, searchParams)}>同版报告</Link>}
+                  </nav>
+                  {(profileQuery.isError || processingQuery.isError || diagramQuery.isError || automationQuery.isError) && <Alert type="warning" showIcon
+                    message="部分案件资料暂不可读，不能将其视为没有缺项。原始记录和可读成果仍可使用。" />}
+
                   <div className="detail-section">
                     <div className="ds-head">信息质量与报送</div>
                     <div className="detail-grid">
@@ -1831,21 +1827,25 @@ const Cases: React.FC = () => {
                     <div className="detail-grid">
                       <div className="kv">
                         <span className="k">证据</span>
-                        <span className="v">{caseProfile?.related.evidence.length ?? caseEvidence?.length ?? 0} 项</span>
+                        <span className="v">{caseProfile ? `${caseProfile.related.evidence.length} 项`
+                          : caseEvidence ? `${caseEvidence.length} 项` : profileQuery.isError ? '暂不可读' : '加载中…'}</span>
                       </div>
                       <div className="kv">
                         <span className="k">车辆/人员</span>
                         <span className="v">
-                          {caseProfile?.related.vehicles.length ?? 0}/{caseProfile?.related.persons.length ?? 0}
+                          {caseProfile ? `${caseProfile.related.vehicles.length}/${caseProfile.related.persons.length}`
+                            : profileQuery.isError ? '暂不可读' : '加载中…'}
                         </span>
                       </div>
                       <div className="kv">
                         <span className="k">AI 特征</span>
-                        <span className="v">{caseProfile?.availability.has_ai_features ? '已沉淀' : '待提取'}</span>
+                        <span className="v">{caseProfile ? (caseProfile.availability.has_ai_features ? '已沉淀' : '待提取')
+                          : profileQuery.isError ? '暂不可读' : '加载中…'}</span>
                       </div>
                       <div className="kv">
                         <span className="k">一案一图</span>
-                        <span className="v">{caseDiagram ? `${caseDiagram.nodes.length} 节点` : '待生成'}</span>
+                        <span className="v">{caseDiagram ? `${caseDiagram.nodes.length} 节点`
+                          : diagramQuery.isError ? '暂不可读' : '加载中…'}</span>
                       </div>
                     </div>
                     <p className="narr">
@@ -1866,7 +1866,7 @@ const Cases: React.FC = () => {
                         {processingCard.gap_groups.length === 0 && (
                           <div>
                             <b>暂无归并缺口</b>
-                            <span>当前案件画像、经验卡和报告复核未发现阻断项。</span>
+                            <span>当前没有待补充或待判断事项。经验卡和报告按需使用，不影响案件办理状态。</span>
                           </div>
                         )}
                       </div>
@@ -1881,8 +1881,9 @@ const Cases: React.FC = () => {
                     error={!!resultError}
                     errorStatus={(resultError as { status?: number } | null)?.status}
                     map={unifiedResult && <CaseResultMap result={unifiedResult} operationalAreaId={selectedCase.operational_area_id ?? undefined} />}
-                    footer={unifiedResult && <Link to={`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`}>在报告中心查看此版本</Link>}
+                    footer={unifiedResult && <Link to={caseContextPath(`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`, searchParams)}>在报告中心查看此版本</Link>}
                   />
+                  <CaseHistoryReferences caseId={selectedCase.id} revision={selectedCase.updated_at || workspace?.profile.data?.source_hash} />
 
                   {bonusAccountingEnabled && (
                     <div className="detail-section">
@@ -2032,7 +2033,7 @@ const Cases: React.FC = () => {
                     {selectedCase.latitude != null && selectedCase.longitude != null && (
                       <div className="kv">
                         <span className="k">坐标</span>
-                        <span className="v" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+                        <span className="v" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
                           {selectedCase.latitude.toFixed(5)}, {selectedCase.longitude.toFixed(5)}
                         </span>
                       </div>
@@ -2243,7 +2244,7 @@ const Cases: React.FC = () => {
                     className="cases-map-toggle"
                     onClick={() => setShowMapPicker(!showMapPicker)}
                   >
-                    {showMapPicker ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+                    {showMapPicker ? <UpOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
                     地图坐标（可选，用于地图与空间分析）
                     {latitude != null && longitude != null && (
                       <span>{Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}</span>
@@ -2401,7 +2402,7 @@ const Cases: React.FC = () => {
             className="cases-advanced-toggle"
             onClick={() => setShowAdvancedFields(!showAdvancedFields)}
           >
-            {showAdvancedFields ? <UpOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+            {showAdvancedFields ? <UpOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
             涉油案件特征（高级，可选）
           </div>
 
@@ -2419,7 +2420,7 @@ const Cases: React.FC = () => {
                 </Select>
               </Form.Item>
 
-              <Form.Item name="oil_volume" label="涉油数量（吨或升）">
+              <Form.Item name="oil_volume" label="涉油数量（吨，仅填写核定吨值）">
                 <InputNumber style={{ width: '100%' }} />
               </Form.Item>
 

@@ -92,6 +92,9 @@ def preview_internal_roads(payload: dict) -> dict:
             errors.append("道路须为LineString/MultiLineString，入口须为Point；不以点代替道路")
         if not _conditions(properties.get("conditions", {})):
             errors.append("通行条件、车型参数或带时区的有效期不合法")
+        if "facility_asset_id" in properties and (kind != "entrance"
+                or type(properties["facility_asset_id"]) is not int or properties["facility_asset_id"] <= 0):
+            errors.append("设施关联仅用于入口，须提供系统稳定设施编号，不按名称自动合并")
         rows.append({"row": index, "source_feature_id": identifier if isinstance(identifier, str) else None,
                      "kind": kind if kind in ("road", "entrance") else None,
                      "status": "invalid" if errors else "pending_verification", "errors": errors,
@@ -105,6 +108,8 @@ def preview_internal_roads(payload: dict) -> dict:
             row["warnings"].append("连接关系和通行许可尚未核验，不自动连路或认定可通行")
             if row["kind"] == "entrance" and row["feature"]["properties"]["road_id"] not in roads:
                 row["warnings"].append("本批未找到关联道路，需核对历史道路记录")
+            if row["kind"] == "entrance" and "facility_asset_id" not in row["feature"]["properties"]:
+                row["warnings"].append("未记录稳定设施关联，不能仅按井名认定该入口属于某设施")
     return {"schema_version": "internal-road-preview-4.1.0-1", "input_sha256": hashlib.sha256(encoded).hexdigest(),
             "coordinate_system": "EPSG:4326", "rows": rows, "total": len(rows),
             "valid": sum(not row["errors"] for row in rows), "vertices": vertices,

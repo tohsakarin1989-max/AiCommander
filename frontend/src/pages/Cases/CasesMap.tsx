@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Button, List, Select, Spin, Switch } from 'antd'
+import { Alert, Button, List, Select, Spin, Switch } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -11,9 +11,12 @@ import {
 } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
 import { authApi } from '../../services/auth'
+import { useAuth } from '../../auth/AuthContext'
+import { caseDetailKey, parseCaseDeepLinkId, visibleCaseDetail } from './caseSearch'
+import { caseFocusCenter, casesWithAuthorizedFocus } from './caseMapFocus'
+import { caseContextPath, parseCaseContextParams } from '../../services/caseContext'
 import LeafletMap from '../../components/Map/LeafletMap'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
-import type { Case } from '../../types'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import './CasesMap.css'
 
@@ -33,46 +36,64 @@ const LEGEND_ITEMS: Array<{ label: string; type: 'dot' | 'line'; color: string; 
 
 const CasesMap: React.FC = () => {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { user, sessionEpoch } = useAuth()
+  const caseContext = parseCaseContextParams(searchParams)
   const [showSerial, setShowSerial] = useState(true)
   const [showChainLinks, setShowChainLinks] = useState(true)
   const [visiblePositions, setVisiblePositions] = useState<ChainPosition[]>(['upstream', 'midstream', 'downstream', 'unknown'])
-  const [selectedCase, setSelectedCase] = useState<Case | null>(null)
-  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
-  const selectedCaseId = Number(searchParams.get('caseId') || 0) || undefined
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(caseContext.filters.operational_area_id ?? null)
+  const selectedCaseId = parseCaseDeepLinkId(searchParams.get('caseId'))
+  const focusQuery = useQuery({
+    queryKey: caseDetailKey(user?.id, sessionEpoch, selectedCaseId),
+    queryFn: ({ signal }) => caseApi.getCase(selectedCaseId!, signal),
+    enabled: selectedCaseId != null, retry: false, gcTime: 0,
+  })
+  const focus = selectedCaseId == null ? null : visibleCaseDetail(focusQuery)
+  const focusCenter = focus?.operational_area_id === activeAreaId ? caseFocusCenter(focus) : undefined
 
   const areaScopesQuery = useQuery({
-    queryKey: ['my-area-scopes'],
+    queryKey: ['my-area-scopes', user?.id, sessionEpoch],
     queryFn: authApi.myAreaScopes,
     staleTime: 5 * 60_000,
   })
 
   React.useEffect(() => {
-    const scopes = areaScopesQuery.data ?? []
+    const scopes = areaScopesQuery.isError ? [] : areaScopesQuery.data ?? []
     if (scopes.length === 0) return
+    if (focus?.operational_area_id && scopes.some(scope => scope.operational_area_id === focus.operational_area_id)) {
+      setActiveAreaId(focus.operational_area_id)
+      return
+    }
     if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
     const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
     setActiveAreaId(preferred.operational_area_id)
-  }, [activeAreaId, areaScopesQuery.data])
+  }, [activeAreaId, areaScopesQuery.data, areaScopesQuery.isError, focus?.id, focus?.operational_area_id])
 
-  const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases', 'map', activeAreaId],
+  const mapCasesQuery = useQuery({
+    queryKey: ['cases', 'map', activeAreaId, user?.id, sessionEpoch, caseContext.filters],
     queryFn: () => caseApi.getCases({
+      ...caseContext.filters, end_exclusive: true,
       limit: 2000,
       operational_area_id: activeAreaId as number,
     }),
-    enabled: activeAreaId != null,
+    enabled: activeAreaId != null && !caseContext.error,
   })
+  const isLoading = mapCasesQuery.isLoading
+  const cases = casesWithAuthorizedFocus(mapCasesQuery.isError ? [] : mapCasesQuery.data ?? [], focus, activeAreaId)
+  const selectedCase = cases.find(item => item.id === selectedId) ?? null
   const areaCaseIdSet = new Set((cases ?? []).map(item => item.id))
 
-  const { data: hotspots } = useQuery({
-    queryKey: ['hotspots', 'map', activeAreaId],
+  const hotspotsQuery = useQuery({
+    queryKey: ['hotspots', 'map', activeAreaId, user?.id, sessionEpoch],
     queryFn: () => caseApi.getHotspots(0.5, 3, activeAreaId as number),
     enabled: activeAreaId != null,
   })
+  const hotspots = hotspotsQuery.isError ? undefined : hotspotsQuery.data
 
-  const { data: serialCases } = useQuery({
-    queryKey: ['serialCases', activeAreaId],
+  const serialQuery = useQuery({
+    queryKey: ['serialCases', activeAreaId, user?.id, sessionEpoch],
     // 仅用地理分析，关闭语义搜索（向量库未就绪时会超时 20s+）
     queryFn: () => caseApi.getSerialCases(
       undefined,
@@ -85,16 +106,18 @@ const CasesMap: React.FC = () => {
     ),
     enabled: activeAreaId != null,
   })
+  const serialCases = serialQuery.isError ? undefined : serialQuery.data
 
-  const { data: chainMapData } = useQuery({
-    queryKey: ['chain-map-data', selectedCaseId, activeAreaId],
-    queryFn: () => caseApi.getChainMapData({ case_id: selectedCaseId, min_confidence: 0.5 }),
-    enabled: activeAreaId != null,
+  const chainQuery = useQuery({
+    queryKey: ['chain-map-data', selectedCaseId, activeAreaId, user?.id, sessionEpoch],
+    queryFn: () => caseApi.getChainMapData({ case_id: selectedCaseId ?? undefined, min_confidence: 0.5 }),
+    enabled: activeAreaId != null && (!selectedCaseId || !!focus),
   })
+  const chainMapData = chainQuery.isError ? undefined : chainQuery.data
 
   // 有坐标的案件 → LeafletMap markers
   const markers: CaseMarker[] = (cases || [])
-    .filter((c) => c.latitude != null && c.longitude != null)
+    .filter((c) => caseFocusCenter(c) != null)
     .map((c) => {
       const chainPosition = getChainPosition(c)
       return {
@@ -154,14 +177,8 @@ const CasesMap: React.FC = () => {
   const topHotspots = (hotspots || []).slice(0, 5)
 
   React.useEffect(() => {
-    if (!selectedCaseId || !cases) return
-    const found = cases.find(item => item.id === selectedCaseId)
-    if (found) setSelectedCase(found)
-  }, [selectedCaseId, cases])
-
-  React.useEffect(() => {
-    setSelectedCase(null)
-  }, [activeAreaId])
+    setSelectedId(focus?.operational_area_id === activeAreaId ? focus?.id ?? null : null)
+  }, [focus?.id, focus?.operational_area_id, activeAreaId])
 
   const toggleChainPosition = (position: ChainPosition) => {
     setVisiblePositions(prev => (
@@ -190,7 +207,11 @@ const CasesMap: React.FC = () => {
                 value: scope.operational_area_id,
                 label: scope.area_name,
               }))}
-              onChange={setActiveAreaId}
+              onChange={id => {
+                setActiveAreaId(id)
+                setSelectedId(null)
+                setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('caseId'); return next })
+              }}
             />
           )}
           <Button
@@ -202,6 +223,12 @@ const CasesMap: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {(focusQuery.isError || (searchParams.has('caseId') && selectedCaseId == null)) && <Alert type="warning"
+        message="指定案件不存在、参数无效或当前不可访问，未替换为其他案件。" />}
+      {caseContext.error && <Alert type="error" message={caseContext.error} />}
+      {mapCasesQuery.isError && <Alert type="error" message="区域案件暂不可读，不代表该区域没有案件。" />}
+      {focus && !caseFocusCenter(focus) && <Alert type="info" message="指定案件缺少有效坐标，保留记录但不猜测地图位置。" />}
 
       {/* ── 筛选/图层控制卡片（顶部） ── */}
       <div className="cases-map-filter">
@@ -237,7 +264,7 @@ const CasesMap: React.FC = () => {
         ))}
         <span className="cases-map-filter__label" style={{ marginLeft: 12 }}>
           <EnvironmentOutlined style={{ marginRight: 6 }} />
-          标记点：{markers.length} / {(cases || []).length} 件含坐标
+          当前加载 {cases.length} 起 / 显示 {markers.length} 个点（区域列表最多 2000 起，指定案件另行读取）
         </span>
       </div>
 
@@ -250,7 +277,7 @@ const CasesMap: React.FC = () => {
           {/* 热点区域 */}
           <div className="cases-map-card">
             <div className="cases-map-card__hdr">
-              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 11 }} />
+              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 12 }} />
               <span className="cases-map-card__title">热点区域</span>
             </div>
             <div className="cases-map-card__body">
@@ -303,7 +330,8 @@ const CasesMap: React.FC = () => {
             </div>
           ) : (
             <LeafletMap
-              key={activeAreaId ?? 'no-area'}
+              key={`${activeAreaId ?? 'no-area'}:${focus?.id ?? 'overview'}:${sessionEpoch}`}
+              center={focusCenter}
               markers={markers}
               serialGroups={serialGroups}
               chainLinks={chainLinks}
@@ -311,7 +339,7 @@ const CasesMap: React.FC = () => {
               operationalAreaId={activeAreaId ?? undefined}
               onMarkerClick={(m) => {
                 const found = (cases || []).find((c) => c.id === m.id)
-                if (found) setSelectedCase(found)
+                if (found) setSelectedId(found.id)
               }}
             />
           )}
@@ -324,7 +352,7 @@ const CasesMap: React.FC = () => {
           {selectedCase && (
             <div className="cases-map-card">
               <div className="cases-map-card__hdr">
-                <EnvironmentOutlined style={{ color: 'var(--c-cyan)', fontSize: 11 }} />
+                <EnvironmentOutlined style={{ color: 'var(--c-cyan)', fontSize: 12 }} />
                 <span className="cases-map-card__title">选中案件</span>
               </div>
               <div className="cases-map-card__body">
@@ -338,7 +366,7 @@ const CasesMap: React.FC = () => {
                   type="link"
                   size="small"
                   className="cases-map-selected__link"
-                  onClick={() => navigate('/cases')}
+                  onClick={() => navigate(caseContextPath(`/cases?caseId=${selectedCase.id}`, searchParams))}
                 >
                   查看详情 →
                 </Button>
@@ -349,7 +377,7 @@ const CasesMap: React.FC = () => {
           {/* AI 巡逻建议 */}
           <div className="cases-map-card">
             <div className="cases-map-card__hdr">
-              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 11 }} />
+              <FireOutlined style={{ color: 'var(--c-warning)', fontSize: 12 }} />
               <span className="cases-map-card__title">AI 巡逻建议</span>
             </div>
             <div className="cases-map-card__body">
@@ -360,7 +388,7 @@ const CasesMap: React.FC = () => {
           {/* 链条关联 */}
           <div className="cases-map-card">
             <div className="cases-map-card__hdr">
-              <LinkOutlined style={{ color: '#a78bfa', fontSize: 11 }} />
+              <LinkOutlined style={{ color: '#a78bfa', fontSize: 12 }} />
               <span className="cases-map-card__title">链条推断</span>
             </div>
             <div className="cases-map-card__body">

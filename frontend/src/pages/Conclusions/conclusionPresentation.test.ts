@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { Conclusion } from '../../types'
-import { getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
+import { conclusionConfidence, conclusionConfidenceLabel, getConclusionDraftMeta, getConclusionMarkdown } from './conclusionPresentation'
 
 describe('conclusionPresentation', () => {
+  it('复用成果的兼容0不是概率，显示和导出均保留未知', () => {
+    const conclusion = { id: 20, case_id: 5, status: 'needs_review', confidence: 0, confidence_available: false,
+      model_status: 'reused_case_result', risk_level: 'unknown', created_at: '',
+      evidence: { source_result: { result_id: 'result-5', content_sha256: 'hash', schema_version: '1', versions: {} } },
+    } satisfies Conclusion
+    expect(conclusionConfidence(conclusion)).toBeNull()
+    expect(conclusionConfidenceLabel(conclusion)).toBe('未提供准确概率')
+    expect(getConclusionMarkdown(conclusion)).not.toContain('置信度：0%')
+    expect(getConclusionDraftMeta(conclusion).modelStatus).toBe('复用既有案件成果')
+  })
   it('prefers normalized ai output markdown and review metadata', () => {
     const conclusion = {
       id: 9,

@@ -98,6 +98,11 @@ class ResultDistanceBudget(ResultRouteRequest):
     distance_m: float = Field(gt=0, le=50000, strict=True, allow_inf_nan=False)
 
 
+class FacilityRouteRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
 class ResultTimeBudget(ResultRouteRequest):
     metric: Literal['time']
     seconds: float = Field(gt=0, le=7200, strict=True, allow_inf_nan=False)
@@ -346,6 +351,25 @@ def _artifact_read(function, db, *args, **kwargs):
 def road_artifact(artifact_id: str, db: Session = Depends(read_session)):
     from app.services.case_road_artifact_service import read_road_artifact
     return _artifact_read(read_road_artifact, db, artifact_id)
+
+
+@router.post('/artifacts/{artifact_id}/facilities/{asset_id}/routes')
+async def facility_candidate_route(artifact_id: str, asset_id: int, payload: FacilityRouteRequest,
+                                   request: Request, db: Session = Depends(read_session)):
+    from app.services.facility_reference_route import read_facility_comparison, route_facility_candidate, selected_entrance
+    try:
+        content = read_facility_comparison(db, artifact_id, payload.content_sha256)
+        selected_entrance(content, asset_id)
+        calculation = content['calculation']
+        reference = ServerCaseCalculation(analysis_at=calculation['analysis_at'], vehicle=calculation['vehicle'])
+    except PermissionError:
+        return _failure(404, 'road_artifact_not_available', '道路成果不存在或当前不可访问')
+    except ValueError:
+        return _failure(409, 'road_artifact_reference_invalid', '候选或成果版本已变化，请刷新结果')
+    except SQLAlchemyError:
+        return _failure(503, 'road_artifact_storage_unavailable', '道路成果暂时无法读取')
+    return await _request_calculation(request, route_facility_candidate, db, reference,
+        comparison_id=artifact_id, comparison_sha256=payload.content_sha256, asset_id=asset_id)
 
 
 @router.get('/case-results/{result_id}/artifacts')

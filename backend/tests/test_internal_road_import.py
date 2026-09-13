@@ -25,6 +25,69 @@ def collection(*features):
             "features": list(features or [feature()])}
 
 
+def facility_entrance(asset_id):
+    return {"type": "Feature", "id": f"gate-{asset_id}",
+            "geometry": {"type": "Point", "coordinates": [125, 46]},
+            "properties": {"kind": "entrance", "name": "同名井入口", "road_id": "road-1",
+                           "facility_asset_id": asset_id}}
+
+
+@pytest.mark.parametrize("identifier", [True, 0, -1, "井-001", None])
+def test_facility_link_requires_explicit_stable_numeric_id(identifier):
+    assert preview_internal_roads(collection(facility_entrance(identifier)))["valid"] == 0
+
+
+def test_facility_links_preserve_ids_and_hide_inaccessible_asset_details(db_session, source):
+    from app.models.jurisdiction import JurisdictionAsset
+    db_session.add(OperationalArea(id=2, code="facility-private", name="其他厂区"))
+    db_session.flush()
+    db_session.add_all([
+        JurisdictionAsset(id=11, operational_area_id=1, name="同名井", asset_type="well"),
+        JurisdictionAsset(id=12, operational_area_id=1, name="同名井", asset_type="well"),
+        JurisdictionAsset(id=13, operational_area_id=2, name="不可见设施名称", asset_type="well"),
+    ])
+    db_session.commit()
+    db_session.info["area_access_levels"] = {1: "manage"}
+    client = _client(db_session)
+    uploaded = client.post(f"/api/map-sources/{source}/roads/ingest",
+                           json=collection(feature(), *(facility_entrance(i) for i in (11, 12, 13))))
+    assert uploaded.status_code == 201
+    body = client.get(f"/api/map-sources/{source}/roads/imports/{uploaded.json()['id']}").json()
+    checks = body["entrance_checks"]
+    assert [item["facility_asset_id"] for item in checks] == [11, 12, 13]
+    assert [item["facility_link_status"] for item in checks] == ["declared_pending_verification", "declared_pending_verification", "unavailable"]
+    assert all(not item["facility_link_verified"] and not item["routing_available"] for item in checks)
+    assert "不可见设施名称" not in str(body)
+    assert client.get(f"/api/map-sources/{source}/roads/imports/{uploaded.json()['id']}").json() == body
+
+
+def test_review_facility_ownership_requires_visible_matching_id_and_is_reversible(db_session, source):
+    from app.models.jurisdiction import JurisdictionAsset
+    db_session.add(JurisdictionAsset(id=11, operational_area_id=1, name="合成井", asset_type="well"))
+    db_session.commit()
+    db_session.info["area_access_levels"] = {1: "manage"}
+    client = _client(db_session)
+    root = f"/api/map-sources/{source}/roads"
+    imported = client.post(f"{root}/ingest", json=collection(feature(), facility_entrance(11))).json()
+    url = f"{root}/imports/{imported['id']}"
+    payload = {"input_sha256": imported["input_sha256"], "request_key": "facility-confirm-1",
+        "decision": "verified", "note": "合成归属核验", "evidence_reference": "合成核验依据",
+        "connection_evidence": {"road_import_id": imported["id"], "road_source_sha256": imported["input_sha256"],
+            "status": "connected", "facility_asset_id": 12}}
+    assert client.post(f"{url}/features/gate-11/reviews", json=payload).status_code == 409
+    payload["connection_evidence"]["facility_asset_id"] = 11
+    verified = client.post(f"{url}/features/gate-11/reviews", json=payload)
+    assert verified.status_code == 201, verified.text
+    assert client.post(f"{url}/features/gate-11/reviews", json=payload).status_code == 200
+    check = client.get(url).json()["entrance_checks"][0]
+    assert check["facility_link_verified"] and not check["routing_available"]
+    revoked = client.post(f"{url}/features/gate-11/reviews", json={**payload,
+        "request_key": "facility-confirm-2", "decision": "pending_verification",
+        "previous_review_id": verified.json()["id"], "connection_evidence": None})
+    assert revoked.status_code == 201
+    assert not client.get(url).json()["entrance_checks"][0]["facility_link_verified"]
+
+
 def test_same_named_segments_preserve_all_nodes_without_inferred_permissions():
     payload = collection(feature(), feature("road-2"))
     original = deepcopy(payload)
@@ -75,7 +138,8 @@ def test_missing_entrance_link_does_not_snap_to_another_road():
                 "properties": {"kind": "entrance", "name": "入口", "road_id": "absent-road"}}
     row = preview_internal_roads(collection(feature(), entrance))["rows"][1]
     assert row["status"] == "pending_verification"
-    assert len(row["warnings"]) == 2
+    assert len(row["warnings"]) == 3
+    assert any("稳定设施关联" in warning for warning in row["warnings"])
     assert row["feature"] == entrance
 
 

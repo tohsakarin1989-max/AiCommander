@@ -16,6 +16,8 @@ import { caseApi } from '../../services/cases'
 import { aiApi } from '../../services/ai'
 import { analysisApi, SmartAnalysisReport } from '../../services/analysis'
 import { suggestionsApi } from '../../services/suggestions'
+import { useAuth } from '../../auth/AuthContext'
+import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import type { Case } from '../../types'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -47,6 +49,9 @@ const INTELLIGENCE_ACTIONS = [
 
 const Home: React.FC = () => {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const { bonusAccountingEnabled } = useRuntimeFeatures()
+  const canRunSmartAnalysis = user?.role === 'admin'
   const [analysisModal, setAnalysisModal] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<SmartAnalysisReport | null>(null)
 
@@ -56,6 +61,7 @@ const Home: React.FC = () => {
   })
 
   const { data: cases }       = useQuery({ queryKey: ['cases'],       queryFn: () => caseApi.getCases() })
+  const { data: caseStatistics } = useQuery({ queryKey: ['home-case-statistics'], queryFn: () => caseApi.getStatistics() })
   const { data: conclusions } = useQuery({ queryKey: ['conclusions'], queryFn: () => aiApi.conclusion.list() })
   const { data: suggestionsData } = useQuery({
     queryKey: ['home-suggestions'],
@@ -64,15 +70,15 @@ const Home: React.FC = () => {
   })
 
   const stats = {
-    totalCases:          cases?.length || 0,
-    pendingCases:        cases?.filter((c: Case) => c.status === 'pending').length || 0,
-    casesWithGeo:        cases?.filter((c: Case) => c.latitude != null && c.longitude != null).length || 0,
+    totalCases:          caseStatistics?.total_cases ?? 0,
+    pendingCases:        caseStatistics?.pending_cases ?? 0,
+    casesWithGeo:        caseStatistics?.cases_with_geo ?? 0,
     highQualityCases:    cases?.filter((c: Case) => (c.quality_score || 0) >= 80).length || 0,
     analyzableCases:     cases?.filter((c: Case) => c.occurred_time && c.location && c.description).length || 0,
     pendingReview:       conclusions?.filter((c: any) => c.status === 'needs_review').length || 0,
   }
 
-  const recentCases    = (cases    || []).slice(-5).reverse()
+  const recentCases    = (cases    || []).slice(0, 5)
   const suggestions = suggestionsData?.suggestions ?? []
   const highPrioritySuggestions = suggestions.filter(item => item.priority === 'high').length
   const bonusSuggestions = suggestions.filter(item => item.type === 'bonus').length
@@ -85,7 +91,7 @@ const Home: React.FC = () => {
     { label: '奖金核算内业', metric: `${bonusSuggestions} 项`, desc: '仅在案件/奖金页处理指标和佐证材料', action: '进入核算', path: '/cases/bonus', tone: bonusSuggestions > 0 ? 'hot' : 'normal' },
     { label: '数智告警核查', metric: `${alertSuggestions} 条`, desc: '接收告警后形成研判包，不自动派发执行', action: '打开数智', path: '/intelli-inspect', tone: alertSuggestions > 0 ? 'warn' : 'normal' },
     { label: '辖区底座维护', metric: `${stats.casesWithGeo} 坐标`, desc: '公共地图参考、井点、管线、监控设施分层维护', action: '维护底座', path: '/jurisdiction', tone: 'normal' },
-  ]
+  ].filter(item => bonusAccountingEnabled || item.path !== '/cases/bonus')
 
   const systemItems = [
     { label: '后台复核队列', value: suggestions.length ? `${suggestions.length} 项待处理` : '暂无积压', desc: '默认模型失败时走确定性降级，不中断全量任务' },
@@ -98,9 +104,9 @@ const Home: React.FC = () => {
     { lbl: '案件总数',   val: stats.totalCases,        sub: '↗ 全部案件',    path: '/cases' },
     { lbl: '待处理',     val: stats.pendingCases,       sub: '需立即跟进',    path: '/cases' },
     { lbl: '带坐标案件', val: stats.casesWithGeo,       sub: '可做空间研判',  path: '/cases/map' },
-    { lbl: '高质量案件', val: stats.highQualityCases,   sub: '可复用样本',    path: '/cases/features' },
-    { lbl: '可研判案件', val: stats.analyzableCases,    sub: '具备核心字段',  path: '/case-intelligence' },
-    { lbl: '待审核结论', val: stats.pendingReview,       sub: '等待人工确认',  path: '/conclusions' },
+    { lbl: '高质量案件', val: stats.highQualityCases,   sub: '已载案件中的可复用样本', path: '/cases/features' },
+    { lbl: '可研判案件', val: stats.analyzableCases,    sub: '已载案件中具备核心字段', path: '/case-intelligence' },
+    { lbl: '待审核结论', val: stats.pendingReview,       sub: '已载结论中等待人工确认', path: '/conclusions' },
   ]
 
   return (
@@ -110,14 +116,14 @@ const Home: React.FC = () => {
         <div className="home-hero-title">
           <span>AiCommander · 内业总控台</span>
           <h1>指挥中心</h1>
-          <p>把案件录入、研判待办、奖金内业、报告复核和辖区底座放到同一个工作入口。</p>
+          <p>把案件录入、研判待办、{bonusAccountingEnabled ? '奖金内业、' : ''}报告复核和辖区底座放到同一个工作入口。</p>
           <button
             className="btn-primary"
-            onClick={() => smartAnalysisMutation.mutate()}
+            onClick={() => canRunSmartAnalysis ? smartAnalysisMutation.mutate() : navigate('/case-intelligence')}
             disabled={smartAnalysisMutation.isPending}
           >
             <ThunderboltOutlined style={{ marginRight: 6 }} />
-            {smartAnalysisMutation.isPending ? '分析中…' : '一键智能研判'}
+            {smartAnalysisMutation.isPending ? '分析中…' : canRunSmartAnalysis ? '一键智能研判' : '进入案件研判'}
           </button>
         </div>
         <div className="home-entry-switchboard" aria-label="核心工作入口">
@@ -140,6 +146,8 @@ const Home: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {smartAnalysisMutation.isError && <Alert type="error" showIcon message="智能研判未完成，请检查服务状态后重试。" />}
 
       <section className="home-kpis-row home-kpis-row--redesign">
         {kpis.map((k, i) => (
@@ -195,10 +203,10 @@ const Home: React.FC = () => {
           </div>
           <button
             className="btn-primary home-system-action"
-            onClick={() => smartAnalysisMutation.mutate()}
+            onClick={() => canRunSmartAnalysis ? smartAnalysisMutation.mutate() : navigate('/case-intelligence')}
             disabled={smartAnalysisMutation.isPending}
           >
-            {smartAnalysisMutation.isPending ? '后台处理中…' : '一键智能研判'}
+            {smartAnalysisMutation.isPending ? '后台处理中…' : canRunSmartAnalysis ? '一键智能研判' : '进入案件研判'}
           </button>
         </section>
       </section>
@@ -228,7 +236,7 @@ const Home: React.FC = () => {
                   key={c.id}
                   className={`alert-row ${sevClass}`}
                   style={{ cursor: 'pointer' }}
-                  onClick={() => navigate('/cases')}
+                  onClick={() => navigate(`/cases?caseId=${c.id}`)}
                 >
                   <div className="sev" />
                   <div className="glyph">C</div>
@@ -329,7 +337,7 @@ const Home: React.FC = () => {
 
             {analysisResult.summary.key_insights.length > 0 && (
               <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '14px 16px', marginBottom: 12 }}>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>关键洞察</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>关键洞察</div>
                 <List size="small"
                   dataSource={analysisResult.summary.key_insights}
                   renderItem={(item: string) => (
@@ -345,7 +353,7 @@ const Home: React.FC = () => {
 
             {analysisResult.priority_actions.length > 0 && (
               <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '14px 16px', marginBottom: 12 }}>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>优先行动</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>优先行动</div>
                 <Timeline items={analysisResult.priority_actions.map(action => ({
                   color: action.priority === 1 ? 'var(--err)' : action.priority === 2 ? 'var(--warn)' : 'var(--info)',
                   children: (
@@ -465,13 +473,13 @@ const Home: React.FC = () => {
 
             {analysisResult.recommendations.length > 0 && (
               <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--line)', padding: '14px 16px' }}>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>综合建议</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>综合建议</div>
                 <List size="small"
                   dataSource={analysisResult.recommendations}
                   renderItem={(item: string, index: number) => (
                     <List.Item style={{ borderColor: 'var(--line-soft)', padding: '5px 0' }}>
                       <Space>
-                        <Tag style={{ fontFamily: 'var(--mono)', fontSize: 10, borderRadius: 0 }}>{index + 1}</Tag>
+                        <Tag style={{ fontFamily: 'var(--mono)', fontSize: 12, borderRadius: 0 }}>{index + 1}</Tag>
                         <Paragraph style={{ color: 'var(--ink-1)', fontSize: 13, margin: 0 }}>{item}</Paragraph>
                       </Space>
                     </List.Item>
@@ -481,7 +489,7 @@ const Home: React.FC = () => {
             )}
 
             <div style={{ marginTop: 12, textAlign: 'right' }}>
-              <Text style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }}>
+              <Text style={{ fontSize: 12, color: 'var(--ink-3)', fontFamily: 'var(--mono)' }}>
                 分析耗时：{analysisResult.duration_seconds?.toFixed(2) || '-'}s
               </Text>
             </div>

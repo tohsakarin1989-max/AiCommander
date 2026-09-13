@@ -5,6 +5,7 @@ from typing import Any, Dict, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import get_db
@@ -13,6 +14,28 @@ from app.services.knowledge_asset_service import KnowledgeAssetError, KnowledgeA
 
 
 router = APIRouter()
+
+
+@router.get("/history")
+def authorized_history(request: Request, response: Response,
+                       q: str = Query("", max_length=2000),
+                       source_case_id: int | None = Query(None, gt=0),
+                       operational_area_id: int | None = Query(None, gt=0),
+                       limit: int = Query(3, ge=1, le=20), db: Session = Depends(get_db)):
+    from app.services.case_history_retrieval import CaseHistoryRetrieval, HistoryUnavailable
+    if getattr(request.state, "principal", None) is None:
+        raise HTTPException(401, "请先登录")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return CaseHistoryRetrieval.search(db, query=q, source_case_id=source_case_id,
+                                           filters={"operational_area_id": operational_area_id}, limit=limit)
+    except HistoryUnavailable:
+        raise HTTPException(404, "历史参考不可访问或来源已失效", headers={"Cache-Control": "no-store"}) from None
+    except ValueError:
+        raise HTTPException(422, "请提供有效查询条件或来源案件") from None
+    except SQLAlchemyError:
+        raise HTTPException(503, "历史检索暂不可用，不能据此判断没有匹配资料",
+                            headers={"Cache-Control": "no-store"}) from None
 
 
 class ExperienceCardStatusRequest(BaseModel):
@@ -291,9 +314,19 @@ def update_experience_card_status(
 
 @router.get("/search")
 def search_knowledge(
-    q: str,
-    case_id: Optional[int] = None,
-    limit: int = 20,
+    response: Response,
+    q: str = Query(..., min_length=1, max_length=2000),
+    case_id: Optional[int] = Query(None, gt=0),
+    limit: int = Query(20, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    return CaseKnowledgeService.search(db, q, case_id=case_id, limit=limit)
+    from app.services.case_history_retrieval import HistoryUnavailable
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return CaseKnowledgeService.search(db, q, case_id=case_id, limit=limit)
+    except HistoryUnavailable:
+        raise HTTPException(404, '检索范围不可访问', headers={'Cache-Control': 'no-store'}) from None
+    except ValueError:
+        raise HTTPException(422, '请提供有效查询条件') from None
+    except SQLAlchemyError:
+        raise HTTPException(503, '检索暂不可用，不能据此判断没有相关资料', headers={'Cache-Control': 'no-store'}) from None

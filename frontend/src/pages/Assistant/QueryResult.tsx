@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import type { QueryCard } from '../../services/intelligentQueries'
 import { rowsOf, textValue, toolNames } from './queryPresentation'
 import { roadDetourLabel, type RoadDetourReference } from '../../services/roadAnalysis'
+import { isCaseHistoryResult } from '../../services/caseHistory'
+import { CaseHistoryContent } from '../Cases/CaseHistoryReferences'
 
 const assertionKinds: Record<string, string> = { stated: '原文明述（未核实）', negated: '原文否定', uncertain: '不确定', inferred: '推断' }
 function ProfileContent({ row }: { row: Record<string, unknown> }) {
@@ -77,7 +79,9 @@ export function QueryResult({ card }: { card: QueryCard }) {
   const publicData = data.public_places as { items?: unknown; state?: string } | undefined
   return <section className="query-result" aria-label={toolNames[card.tool] || '查询结果'}>
     <h2>{toolNames[card.tool] || '查询结果'}</h2>
-    {card.state === 'empty' && <p>当前授权范围和筛选条件下没有匹配数据。</p>}
+    {card.state === 'empty' && card.tool !== 'find_history' && <p>当前授权范围和筛选条件下没有匹配数据。</p>}
+    {card.tool === 'find_history' && (isCaseHistoryResult(data)
+      ? <CaseHistoryContent result={data} /> : <p role="alert">历史参考结构或来源不完整，不能据此判断没有匹配资料。</p>)}
     {card.tool === 'count_cases' && <p>匹配案件：<strong>{textValue(data.count)}</strong> 起</p>}
     {card.tool === 'compare_periods' && <dl className="query-comparison">
       <div><dt>本期</dt><dd>{textValue(data.current_count)} 起</dd></div>
@@ -87,7 +91,7 @@ export function QueryResult({ card }: { card: QueryCard }) {
     {'total' in data && <p>共 {textValue(data.total)} 条，本次展示 {rows.length} 条。</p>}
     {card.tool === 'find_road_results' && <p>本批读取 {rows.length} 份历史道路成果，不是案件总数。
       {data.next_page != null && `可继续查询第 ${textValue(data.next_page)} 批。`}</p>}
-    {rows.length > 0 && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
+    {rows.length > 0 && card.tool !== 'find_history' && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
       {card.tool === 'find_cases' && typeof row.id === 'number'
         ? <Link to={`/cases?caseId=${row.id}`}>{textValue(row.case_number)}</Link>
         : <strong>{card.tool === 'find_road_results' ? (row.operation === 'route' ? '留存参考路径' : '留存距离比较') : textValue(row.case_number ?? row.name ?? row.run_id ?? row.id)}</strong>}
@@ -107,7 +111,7 @@ export function QueryResult({ card }: { card: QueryCard }) {
       {publicData.state === 'unavailable' ? <p>地名索引不可用，不能据此认定地点不存在。</p>
         : <ul>{rowsOf(publicData.items).map((row, index) => <li key={index}>{textValue(row.name)}</li>)}</ul>}
     </div>}
-    {card.information_gaps?.length ? <ul className="query-gaps">{card.information_gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul> : null}
+    {card.tool !== 'find_history' && card.information_gaps?.length ? <ul className="query-gaps">{card.information_gaps.map((gap, i) => <li key={i}>{gap}</li>)}</ul> : null}
     <details><summary>查询口径与来源</summary>
       <p>数据来源：{textValue(card.evidence?.source)}；查询时刻：{textValue(card.evidence?.queried_at)}</p>
       <dl>{Object.entries(card.evidence?.filters || {}).filter(([, value]) => value != null).map(([key, value]) =>

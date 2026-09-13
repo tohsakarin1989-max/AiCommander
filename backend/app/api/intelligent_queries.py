@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.database import get_db
 from app.services import intelligent_query_tasks as service
 from app.services.intelligent_query_document import export_query_document
 from app.services.case_result_export import CaseResultExportError
+from app.services.intelligent_query_initial_context import InitialQueryContext
 
 
 router = APIRouter()
@@ -20,6 +21,13 @@ class QueryCreate(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     query: str = Field(min_length=1, max_length=2000)
     parent_query_id: UUID | None = None
+    initial_context: InitialQueryContext | None = None
+
+    @model_validator(mode='after')
+    def single_context(self):
+        if self.parent_query_id is not None and self.initial_context is not None:
+            raise ValueError('query_context_conflict')
+        return self
 
 
 def _authorize(request, db, response):
@@ -40,7 +48,7 @@ def _call(db, operation, *args):
     except PermissionError as exc:
         db.rollback()
         raise HTTPException(403, detail={'code': 'query_access_changed',
-            'message': '账号或数据范围已变化，请重新查询'}) from exc
+            'message': '账号、数据范围或源案件版本已变化，请重新查询'}) from exc
     except ValueError as exc:
         db.rollback()
         if str(exc) == 'query_capacity_reached':
@@ -57,7 +65,8 @@ def _call(db, operation, *args):
 def create(payload: QueryCreate, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, db, response)
     result = _call(db, service.create_query, payload.query,
-                   str(payload.parent_query_id) if payload.parent_query_id else None)
+                   str(payload.parent_query_id) if payload.parent_query_id else None,
+                   payload.initial_context.model_dump(mode='json') if payload.initial_context else None)
     response.headers['Location'] = f"/api/intelligent-queries/{result['id']}"
     return result
 

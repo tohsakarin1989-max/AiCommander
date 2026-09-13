@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { expandCaseRoad, roadDetourLabel, type CaseRoadComparison, type CaseRoadRoute, type RoadDetourReference } from '../../services/roadAnalysis'
+import { expandCaseRoad, expandFacilityRoad, roadDetourLabel, type CaseFacilityComparison, type CaseRoadComparison, type CaseRoadRoute, type RoadDetourReference } from '../../services/roadAnalysis'
 import { roadPolyline } from '../Map/roadPolyline'
+import CaseResultDownload from './CaseResultDownload'
 
 const Map = lazy(() => import('../Map/LeafletMap'))
 
-export default function CaseRoadPath({ comparison, assetId, onUnavailable }: {
-  comparison: CaseRoadComparison; assetId: number; onUnavailable: () => void
+export default function CaseRoadPath({ comparison, artifact, assetId, onUnavailable }: {
+  comparison: CaseRoadComparison | CaseFacilityComparison; artifact?: { id: string; content_sha256: string }
+  assetId: number; onUnavailable: () => void
 }) {
   const [view, setView] = useState<{ data: CaseRoadRoute; paths: Array<{ points: Array<[number, number]>; distance: number; detour?: RoadDetourReference }> } | null>(null)
   const [selectedPath, setSelectedPath] = useState(0)
@@ -16,7 +18,10 @@ export default function CaseRoadPath({ comparison, assetId, onUnavailable }: {
     const request = new AbortController()
     controller.current = request
     setView(null); setSelectedPath(0); setStatus('loading')
-    void expandCaseRoad(comparison, assetId, request.signal).then(data => {
+    const response = comparison.schema_version === 'case-facility-comparison-5.2-1'
+      ? artifact ? expandFacilityRoad(comparison, artifact, assetId, request.signal) : Promise.reject(new Error('缺少候选版本'))
+      : expandCaseRoad(comparison, assetId, request.signal)
+    void response.then(data => {
       if (request.signal.aborted) return
       const alternatives = data.route.alternatives ?? []
       if (!Array.isArray(alternatives) || alternatives.length > 1) throw new Error('备选路径数量无效')
@@ -28,7 +33,7 @@ export default function CaseRoadPath({ comparison, assetId, onUnavailable }: {
       setView({ data, paths }); setStatus('ready')
     }).catch(() => { if (!request.signal.aborted) { setView(null); setStatus('failed'); onUnavailable() } })
     return () => request.abort()
-  }, [comparison, assetId, attempt, onUnavailable])
+  }, [comparison, artifact, assetId, attempt, onUnavailable])
   return <div aria-label="已知道路参考路径">
     {status === 'loading' && <><p role="status">正在展开同版本参考路径…</p><button type="button" onClick={() => {
       controller.current?.abort(); setView(null); setStatus('cancelled')
@@ -38,6 +43,9 @@ export default function CaseRoadPath({ comparison, assetId, onUnavailable }: {
       <button type="button" onClick={() => setAttempt(value => value + 1)}>重试路径</button></>}
     {view && status === 'ready' && <>
       <p>{view.data.target.name}附近道路参考路径，不是实际行驶轨迹。</p>
+      {view.data.facility_comparison && <p>路径终点为本轮候选选定的已核验入口，不是设施中心或最近公共地名点。</p>}
+      {view.data.artifact && <CaseResultDownload resultId={view.data.result_id} hash={view.data.content_sha256}
+        road={view.data.artifact} />}
       {view.paths.length > 1 && <div role="group" aria-label="主路径与备选路径">
         {view.paths.map((path, index) => <button key={index} type="button" aria-pressed={selectedPath === index}
           onClick={() => setSelectedPath(index)}>{index === 0 ? '主路径' : '备选路径'}：{(path.distance / 1000).toFixed(2)} 公里</button>)}

@@ -14,6 +14,9 @@ from app.models.conclusion import Conclusion
 from app.models.ai_model import AIModel
 from app.models.meeting import Meeting
 from app.models.report import Report
+from test_case_result_access import result_data  # noqa: F401
+from test_case_results import db_session  # noqa: F401
+from test_conclusion_result_reuse import current_profile, frozen_result  # noqa: F401
 
 
 def _session() -> Session:
@@ -183,16 +186,10 @@ def test_report_api_exposes_normalized_review_draft_markdown():
     assert "## 证据索引" in payload["ai_output"]["markdown"]
 
 
-def test_conclusion_generation_and_detail_expose_review_draft_contract():
-    db = _session()
+def test_conclusion_generation_and_detail_expose_review_draft_contract(db_session, frozen_result):
+    db = db_session
     client = _client(db)
-    case = _add_case(
-        db,
-        "AI-B-003",
-        3,
-        1,
-        "夜间发现可疑车辆靠近井场，缺少现场照片和车辆处置材料。",
-    )
+    case = db.get(Case, frozen_result["content"]["case_id"])
 
     generated = client.post("/api/conclusions/generate", json={"case_id": case.id})
 
@@ -201,13 +198,18 @@ def test_conclusion_generation_and_detail_expose_review_draft_contract():
     assert generated_payload["status"] == "needs_review"
     assert generated_payload["draft_status"] == "draft"
     assert generated_payload["review_status"] == "pending_review"
+    assert generated_payload["model_status"] == "reused_case_result"
+    assert generated_payload["confidence_available"] is False
+    assert generated_payload["evidence"]["source_result"]["result_id"] == frozen_result["id"]
     ai_output = generated_payload["ai_output"]
     assert ai_output["output_type"] == "conclusion_draft"
     assert ai_output["facts"]
     assert ai_output["inferences"]
-    assert ai_output["recommendations"]
+    assert ai_output["recommendations"] == []
+    assert ai_output["confidence_available"] is False
     assert ai_output["information_gaps"]
-    assert any(ref["id"].startswith("case:") for ref in ai_output["evidence_refs"])
+    expected_refs = set(frozen_result["content"]["facts_summary"]["evidence_refs"])
+    assert expected_refs.issubset({ref["id"] for ref in ai_output["evidence_refs"]})
     assert "不替代人工审核" in "；".join(ai_output["boundary"])
 
     detail = client.get(f"/api/conclusions/{generated_payload['id']}")

@@ -5,7 +5,6 @@ from typing import List, Optional
 from datetime import datetime, date, time
 from app.utils.geo import haversine_km, bounding_box
 from app.repositories.case_repository import CaseRepository
-from app.config import settings
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_pipeline_service import CasePipelineService
 from app.database import require_area_write_access
@@ -179,34 +178,8 @@ class CaseService:
     @staticmethod
     def finish_created_case(db: Session, case: Case) -> None:
         """Best-effort derived indexes after the business transaction commits."""
-        # 自动索引到向量数据库（异步，不阻塞）
-        if settings.ENABLE_VECTOR_DB:
-            try:
-                from app.services.vector_db_service import VectorDBService
-                vector_db = VectorDBService()
-                if vector_db.is_available():
-                    case_dict = {
-                        "case_number": case.case_number,
-                        "description": case.description,
-                        "modus_operandi": case.modus_operandi,
-                        "case_type": case.case_type,
-                        "facility_type": case.facility_type,
-                        "oil_type": case.oil_type,
-                        "vehicle_info": case.vehicle_info,
-                        "location": case.location,
-                        "occurred_time": case.occurred_time,
-                        "source_type": case.source_type,
-                        "oil_nature": case.oil_nature,
-                        "report_unit": case.report_unit,
-                        "quality_score": case.quality_score,
-                        "operational_area_id": case.operational_area_id,
-                    }
-                    vector_db.add_case(case.id, case_dict)
-            except Exception as e:
-                from app.utils.logger import logger
-                logger.warning(f"自动索引案件到向量数据库失败: {e}")
-        
-        # 预处理改为由用户手动触发，不再自动执行
+        # Same-transaction Outbox drives profile/history rebuilding in background.
+        # No embedding model or secondary vector store is invoked by case save.
         CaseService._refresh_chain_links(db, case.id)
 
     @staticmethod
@@ -383,32 +356,7 @@ class CaseService:
             raise
         db.refresh(case)
         
-        # 更新向量数据库索引
-        if settings.ENABLE_VECTOR_DB:
-            try:
-                from app.services.vector_db_service import VectorDBService
-                vector_db = VectorDBService()
-                if vector_db.is_available():
-                    case_dict = {
-                        "case_number": case.case_number,
-                        "description": case.description,
-                        "modus_operandi": case.modus_operandi,
-                        "case_type": case.case_type,
-                        "facility_type": case.facility_type,
-                        "oil_type": case.oil_type,
-                        "vehicle_info": case.vehicle_info,
-                        "location": case.location,
-                        "occurred_time": case.occurred_time,
-                        "source_type": case.source_type,
-                        "oil_nature": case.oil_nature,
-                        "report_unit": case.report_unit,
-                        "quality_score": case.quality_score,
-                        "operational_area_id": case.operational_area_id,
-                    }
-                    vector_db.update_case(case.id, case_dict)
-            except Exception as e:
-                from app.utils.logger import logger
-                logger.warning(f"更新向量数据库索引失败: {e}")
+        # History index updates are delivered by the committed Outbox event.
         CaseService._refresh_chain_links(db, case.id)
         return case
     
@@ -421,18 +369,21 @@ class CaseService:
             return False
         require_area_write_access(db, case.operational_area_id)
         
-        # 从向量数据库删除
-        if settings.ENABLE_VECTOR_DB:
-            try:
-                from app.services.vector_db_service import VectorDBService
-                vector_db = VectorDBService()
-                if vector_db.is_available():
-                    vector_db.delete_case(case_id)
-            except Exception as e:
-                from app.utils.logger import logger
-                logger.warning(f"从向量数据库删除案件失败: {e}")
-        
-        repo.delete(case)
+        # Retain only scope metadata before derived rows disappear by FK cascade.
+        # The notification and deletion share the repository commit.
+        from app.models.case_history_index import CaseHistoryIndex
+        from app.services.history_road_refresh import record_change
+        index = db.get(CaseHistoryIndex, (case.id, 'case', str(case.id)))
+        areas = [case.operational_area_id]
+        if index is not None:
+            areas.append(index.payload.get('history_area_id')
+                         if isinstance(index.payload, dict) else None)
+        try:
+            record_change(db, case_id=case.id, area_ids=areas)
+            repo.delete(case)
+        except Exception:
+            db.rollback()
+            raise
         return True
 
     @staticmethod

@@ -9,6 +9,7 @@ import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
 import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import { escapeHtml } from '../../utils/html'
+import { validReferencePoint, type ReferencePoint } from './referencePoint'
 import { hypothesisRegionColor, hypothesisSupportLabel, parseCircleHypothesisRegion } from './caseHypothesisMap'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
@@ -32,6 +33,9 @@ interface LeafletMapProps {
   snapshotRef?: string
   referencePath?: Array<[number, number]>
   referenceRoadSegments?: Array<Array<[number, number]>>
+  referencePoints?: ReferencePoint[]
+  focusedReferenceId?: string | null
+  onReferencePointClick?: (id: string) => void
   productionAssetIds?: number[]
   hypothesisRegions?: Array<{
     id: string
@@ -140,6 +144,9 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   snapshotRef = 'current',
   referencePath,
   referenceRoadSegments,
+  referencePoints = [],
+  focusedReferenceId,
+  onReferencePointClick,
   productionAssetIds = [],
   hypothesisRegions = [],
 }) => {
@@ -147,6 +154,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   const containerRef = useRef<HTMLDivElement>(null)
   const layersRef = useRef<L.Layer[]>([])
   const highlightLayersRef = useRef<L.Layer[]>([])
+  const referenceMarkersRef = useRef(new Map<string, L.Marker>())
   const [productionLayerStatus, setProductionLayerStatus] = useState<string | null>(null)
   const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
   const retryBasemapRef = useRef<() => void>(() => {})
@@ -181,9 +189,13 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     const controller = new AbortController()
     setProductionLayerStatus(productionAssetKey ? '正在加载研判版本生产图层…' : null)
     const stopBasemap = mountOfflineBasemap(map, {
-      operationalAreaId, snapshotRef, onStatus: setBasemapStatus,
+      operationalAreaId, snapshotRef, onStatus: status => {
+        setBasemapStatus(status)
+        if (status === 'unavailable') setProductionLayerStatus(current =>
+          current === '正在加载研判版本生产图层…' ? '底图来源暂不可用，生产图层未加载；冻结入口标记仍可查看。' : current)
+      },
       onConfig: config => { void (async () => {
-      if (!center && markers.length === 0 && config.bounds) {
+      if (!center && markers.length === 0 && referencePoints.length === 0 && config.bounds) {
         map.fitBounds(config.bounds, { padding: [24, 24] })
       }
       if (!productionAssetKey) return
@@ -238,6 +250,10 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       stopBasemap()
       retryBasemapRef.current = () => {}
       if (productionLayer && map.hasLayer(productionLayer)) map.removeLayer(productionLayer)
+      // Canvas paths must leave before their renderer is destroyed; otherwise
+      // removing a road path can queue a redraw after the canvas context is gone.
+      map.eachLayer(layer => { if (layer instanceof L.Path) map.removeLayer(layer) })
+      layersRef.current = []
       // 先停止所有动画，再销毁，避免 Leaflet zoom 动画竞态报错
       try { map.stop() } catch (_) { /* ignore */ }
       map.remove()
@@ -403,7 +419,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     })
 
     // 有 markers 时自动调整视野
-    if (markers.length > 0 || mappedHypotheses.length > 0) {
+    if (!center && (markers.length > 0 || mappedHypotheses.length > 0)) {
       const points: Array<[number, number]> = [
         ...markers.map((marker): [number, number] => [marker.lat, marker.lng]),
         ...mappedHypotheses.map(({ region }): [number, number] => [region.latitude, region.longitude]),
@@ -411,7 +427,38 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       const bounds = L.latLngBounds(points)
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 })
     }
-  }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick, operationalAreaId, hypothesisRegions])
+  }, [markers, serialGroups, chainLinks, chainSearchRadiusKm, onMarkerClick, operationalAreaId, hypothesisRegions, center])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !referencePoints.length) return
+    const points = referencePoints.filter(validReferencePoint)
+    if (points.length !== referencePoints.length) return
+    const entries = new Map<string, L.Marker>()
+    for (const point of points) {
+      const marker = L.marker([point.latitude, point.longitude], { title: point.title, alt: point.title, keyboard: true })
+        .bindTooltip(escapeHtml(point.title), { permanent: true, direction: 'top' })
+        .bindPopup(`<strong>${escapeHtml(point.title)}</strong><p>${escapeHtml(point.description)}</p>`)
+        .addTo(map)
+      if (onReferencePointClick) marker.on('click', () => onReferencePointClick(point.id))
+      entries.set(point.id, marker)
+    }
+    referenceMarkersRef.current = entries
+    map.fitBounds(L.latLngBounds(points.map(point => [point.latitude, point.longitude] as [number, number])),
+      { padding: [45, 45], maxZoom: 14 })
+    return () => {
+      for (const marker of entries.values()) if (map.hasLayer(marker)) map.removeLayer(marker)
+      referenceMarkersRef.current.clear()
+    }
+  }, [referencePoints, onReferencePointClick, operationalAreaId, snapshotRef, productionAssetKey])
+
+  useEffect(() => {
+    const marker = focusedReferenceId ? referenceMarkersRef.current.get(focusedReferenceId) : null
+    if (marker && mapRef.current) {
+      mapRef.current.panTo(marker.getLatLng(), { animate: false })
+      marker.openPopup()
+    }
+  }, [focusedReferenceId, referencePoints, operationalAreaId, snapshotRef, productionAssetKey])
 
   useEffect(() => {
     const map = mapRef.current
@@ -426,8 +473,10 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     const map = mapRef.current
     if (!map || !referenceRoadSegments?.length) return
     // A multi-polyline preserves disconnected branches; never join them or fill an area.
+    // This is a single SVG path. Canvas can leave a redraw queued after the
+    // synchronous fitBounds reset and then access a destroyed context on unmount.
     const lines = L.polyline(referenceRoadSegments, {
-      renderer: L.canvas(), color: PRODUCTION_COLORS.road, weight: 4, opacity: .9,
+      renderer: L.svg(), color: PRODUCTION_COLORS.road, weight: 4, opacity: .9,
     }).addTo(map)
     lines.bindTooltip('预算内道路段参考；未显示不代表不可达')
     map.fitBounds(lines.getBounds(), { padding: [30, 30], maxZoom: 15 })

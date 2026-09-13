@@ -11,21 +11,20 @@
   padding: 24px;
   border: 1px solid var(--line);
   background:
-    radial-gradient(circle at 10% 10%, oklch(0.64 0.10 80 / 0.18), transparent 34%),
-    linear-gradient(135deg, oklch(0.18 0.018 245), oklch(0.12 0.014 245));
+    var(--bg-1);
 }
 
 .jurisdiction-hero .eyebrow {
   font-family: var(--mono);
   color: var(--accent);
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .jurisdiction-hero h1 {
   margin: 8px 0;
-  font-size: clamp(26px, 4vw, 42px);
+  font-size: 24px;
   color: var(--ink-1);
 }
 
@@ -40,7 +39,7 @@
   min-width: 170px;
   padding: 18px;
   border: 1px solid oklch(0.64 0.10 80 / 0.28);
-  background: oklch(0.13 0.015 245 / 0.78);
+  background: var(--bg-2);
 }
 
 .hero-metric span,
@@ -48,7 +47,7 @@
   display: block;
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .hero-metric strong {
@@ -103,7 +102,7 @@
   gap: 10px 12px;
   padding: 12px;
   border: 1px solid oklch(0.64 0.10 80 / 0.22);
-  background: oklch(0.14 0.018 245 / 0.72);
+  background: var(--bg-2);
 }
 
 .jurisdiction-auto-sync span {
@@ -127,7 +126,7 @@
 .jurisdiction-card {
   height: 100%;
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--bg-1);
 }
 
 .map-governance-card {
@@ -140,8 +139,8 @@
 .offline-map-manager__versions { display: grid; gap: 6px; margin-top: 16px; }
 .offline-map-manager__versions > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--line-soft); }
 .offline-map-manager__versions > div > span { display: grid; gap: 2px; }
-.offline-map-manager__versions strong { color: var(--ink-1); font: 10px var(--mono); }
-.offline-map-manager__versions small { color: var(--ink-3); font-size: 9px; }
+.offline-map-manager__versions strong { color: var(--ink-1); font: 12px var(--mono); }
+.offline-map-manager__versions small { color: var(--ink-3); font-size: 12px; }
 
 @media (max-width: 900px) {
   .offline-map-manager__controls { grid-template-columns: 1fr; }
@@ -179,12 +178,12 @@
   margin-bottom: 8px;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .jurisdiction-card .selected-row > td {
-  background: oklch(0.24 0.04 80 / 0.32) !important;
+  background: var(--bg-2) !important;
 }
 
 .jurisdiction-card .ant-table-row {

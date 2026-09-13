@@ -27,13 +27,19 @@ class CaseMapImageError(ValueError):
 
 
 def render_case_map_image(db, result_id: str, *, road_artifact_id: str | None = None) -> bytes:
-    context = load_result_map_context(db, result_id)
     artifact = None
+    map_spec = None
     if road_artifact_id:
         from app.services.case_road_document import decode_road_geometry, load_document_road
+        from app.services.facility_document_map import resolve_facility_map_input
 
-        artifact = load_document_road(db, result_id, context['content_sha256'],
-                                     context['map']['map_snapshot_id'], road_artifact_id)
+        source = CaseResultService.read(db, result_id)
+        artifact = load_document_road(db, result_id, source['content_sha256'],
+                                     source['content']['versions']['map_snapshot_id'], road_artifact_id)
+        map_spec = resolve_facility_map_input(db, artifact, case_id=source['content']['case_id'])
+    context = (load_result_map_context(db, result_id, map_spec=map_spec)
+               if map_spec is not None else load_result_map_context(db, result_id))
+    if artifact:
         if artifact['content']['schema_version'] == 'case-road-route-4.2.0-1':
             context['reference_path'] = decode_road_geometry(artifact['content']['route']['shape_polyline6'])
             alternatives = artifact['content']['route'].get('alternatives', [])

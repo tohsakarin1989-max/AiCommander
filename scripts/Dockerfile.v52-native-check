@@ -1,0 +1,12 @@
+# Offline verification layer only. Production still installs requirements.txt.
+# Reuse the existing Linux CPython 3.12 wheels; do not rebuild the road engine.
+FROM aicommander-map-worker:v4-dashboard-candidate AS numerical_dependencies
+FROM aicommander-backend-roads:4.5.0-stable
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/numpy /usr/local/lib/python3.12/site-packages/numpy
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/numpy.libs /usr/local/lib/python3.12/site-packages/numpy.libs
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/numpy-2.5.3.dist-info /usr/local/lib/python3.12/site-packages/numpy-2.5.3.dist-info
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/osmium /usr/local/lib/python3.12/site-packages/osmium
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/osmium.libs /usr/local/lib/python3.12/site-packages/osmium.libs
+COPY --from=numerical_dependencies /usr/local/lib/python3.12/site-packages/osmium-4.3.1.dist-info /usr/local/lib/python3.12/site-packages/osmium-4.3.1.dist-info
+RUN python -c "import numpy, valhalla; from importlib.metadata import version; assert version('numpy') == '2.5.3'; assert version('pyvalhalla') == '3.8.3'"
+RUN python -c "import osmium; from importlib.metadata import version; assert version('osmium') == '4.3.1'"

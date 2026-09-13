@@ -84,7 +84,9 @@ class FrozenRepository:
         return self._read('cases', arguments)
 
 
-def capture_inputs(db, *, case_id, profile_id, snapshot_id):
+def capture_inputs(db, *, case_id, profile_id, snapshot_id, candidate_family='all'):
+    if candidate_family not in ('all', 'possible_source'):
+        raise ValueError('invalid_frozen_candidate_family')
     if 'authorized_area_ids' not in db.info:
         raise PermissionError('evaluation_scope_required')
     case = db.query(Case).filter(Case.id == case_id).first()
@@ -101,7 +103,9 @@ def capture_inputs(db, *, case_id, profile_id, snapshot_id):
         raise ValueError('evaluation_profile_source_changed')
     capture = CapturingRepository()
     if case.latitude is not None and case.longitude is not None:
-        CaseInsightService._build_candidates(db, case, profile, snapshot, capture)
+        method = (CaseInsightService._source_candidates if candidate_family == 'possible_source'
+                  else CaseInsightService._build_candidates)
+        method(db, case, profile, snapshot, capture)
     payload = {'schema': SCHEMA, 'classification': 'internal_sensitive',
         'algorithm_version': CASE_INSIGHT_ALGORITHM_VERSION, 'scorer_checksum': scorer_checksum(),
         'case': {key: getattr(case, key) for key in CASE_FIELDS},
@@ -112,6 +116,8 @@ def capture_inputs(db, *, case_id, profile_id, snapshot_id):
         'source_case_ids': sorted(capture.case_ids | {case.id}), 'source_asset_ids': sorted(capture.asset_ids),
         'boundary': '仅在内网保存的评分输入；包含精确坐标和来源标识，不是可外发的脱敏评测包。冻结检索结果，不包含机动车路由图。'}
     payload = deepcopy(payload)
+    if candidate_family != 'all':
+        payload['candidate_family'] = candidate_family
     return {'payload': payload, 'checksum': checksum(payload)}
 
 
@@ -130,7 +136,11 @@ def replay_inputs(envelope, *, scorer_policy='captured'):
     case = SimpleNamespace(**payload['case'])
     if case.latitude is None or case.longitude is None:
         return {'status': 'empty', 'candidates': [], 'information_gaps': ['案件缺少坐标，未生成空间候选。']}
-    candidates = scorer._build_candidates(None, case, SimpleNamespace(**payload['profile']),
+    family = payload.get('candidate_family', 'all')
+    if family not in ('all', 'possible_source'):
+        raise ValueError('invalid_frozen_candidate_family')
+    method = scorer._source_candidates if family == 'possible_source' else scorer._build_candidates
+    candidates = method(None, case, SimpleNamespace(**payload['profile']),
         SimpleNamespace(**payload['map']), FrozenRepository(payload['queries']))
     return {'status': 'completed' if candidates else 'empty', 'candidates': candidates,
             'information_gaps': [] if candidates else ['冻结输入中没有足够候选依据。']}

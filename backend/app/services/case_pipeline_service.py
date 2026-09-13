@@ -17,6 +17,7 @@ from app.models.map_foundation import OperationalArea
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_semantic_service import SEMANTIC_RULE_VERSION, TEXT_FIELDS, build_semantic_profile
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
+from app.services.case_local_semantic_model import resolve_model_plan, extract as extract_local_semantics
 
 
 CASE_PROFILE_SCHEMA_VERSION = "4.1.0"
@@ -80,6 +81,7 @@ class CasePipelineService:
         if changed.isdisjoint(ANALYSIS_RELEVANT_FIELDS):
             return None
         source_hash = CasePipelineService.source_hash(db, case)
+        dictionary_version = resolve_model_plan(db).version
         state = (
             db.query(CasePipelineState)
             .filter(CasePipelineState.case_id == case.id)
@@ -91,7 +93,7 @@ class CasePipelineService:
                 CaseAnalysisProfile.case_id == case.id,
                 CaseAnalysisProfile.source_hash == source_hash,
                 CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
-                CaseAnalysisProfile.dictionary_version == CASE_DICTIONARY_VERSION,
+                CaseAnalysisProfile.dictionary_version == dictionary_version,
                 CaseAnalysisProfile.is_current.is_(True),
             )
             .first()
@@ -102,14 +104,14 @@ class CasePipelineService:
             state is not None
             and state.source_hash == source_hash
             and state.schema_version == CASE_PROFILE_SCHEMA_VERSION
-            and state.dictionary_version == CASE_DICTIONARY_VERSION
+            and state.dictionary_version == dictionary_version
             and state.status in {"pending", "processing", "degraded"}
         ):
             return None
         idempotency_key = hashlib.sha256(
             (
                 f"case:{case.id}:{source_hash}:{CASE_PROFILE_SCHEMA_VERSION}:"
-                f"{CASE_DICTIONARY_VERSION}:after:{state.event_id if state else 'initial'}"
+                f"{dictionary_version}:after:{state.event_id if state else 'initial'}"
             ).encode()
         ).hexdigest()
         existing = (
@@ -129,7 +131,8 @@ class CasePipelineService:
                 "source_hash": source_hash,
                 "changed_fields": sorted(changed.intersection(ANALYSIS_RELEVANT_FIELDS)),
                 "schema_version": CASE_PROFILE_SCHEMA_VERSION,
-                "dictionary_version": CASE_DICTIONARY_VERSION,
+                "dictionary_version": dictionary_version,
+                "history_index_pending": True,
             },
             idempotency_key=idempotency_key,
             status="pending",
@@ -149,7 +152,7 @@ class CasePipelineService:
                 source_hash=source_hash,
                 event_id=event.id,
                 schema_version=CASE_PROFILE_SCHEMA_VERSION,
-                dictionary_version=CASE_DICTIONARY_VERSION,
+                dictionary_version=dictionary_version,
             )
             db.add(state)
         else:
@@ -157,7 +160,7 @@ class CasePipelineService:
             state.source_hash = source_hash
             state.event_id = event.id
             state.schema_version = CASE_PROFILE_SCHEMA_VERSION
-            state.dictionary_version = CASE_DICTIONARY_VERSION
+            state.dictionary_version = dictionary_version
             state.requested_at = datetime.now(timezone.utc)
             state.completed_at = None
             state.last_error = None
@@ -179,6 +182,27 @@ class CasePipelineService:
             }
         worker_id = str(event.worker_id)
         try:
+            plan = resolve_model_plan(db)
+            model_output = None
+            if plan.status != "not_enabled":
+                # Capture input before taking any case/state row locks. Model
+                # latency must never hold up the case editing transaction.
+                source_case = db.query(Case).filter(Case.id == int(event.aggregate_id)).first()
+                source_hash = CasePipelineService.source_hash(db, source_case) if source_case else None
+                already_built = db.query(CaseAnalysisProfile.id).filter(
+                    CaseAnalysisProfile.case_id == int(event.aggregate_id),
+                    CaseAnalysisProfile.source_hash == source_hash,
+                    CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
+                    CaseAnalysisProfile.dictionary_version == plan.version,
+                ).first()
+                should_extract = bool(source_case and not already_built
+                    and source_hash == event.payload.get("source_hash")
+                    and plan.version == event.payload.get("dictionary_version"))
+                values = {name: getattr(source_case, name) for name in TEXT_FIELDS} if should_extract else {}
+                db.rollback()  # Claim was committed; release the snapshot read transaction.
+                if should_extract:
+                    model_output = extract_local_semantics(plan, values)
+                db.expire_all()
             # 所有案件派生 Worker 统一按 case -> state/profile -> snapshot 加锁，
             # 与案件更新事务保持一致，避免 PostgreSQL 双会话交叉等待。
             case_query = db.query(Case).filter(Case.id == int(event.aggregate_id))
@@ -213,7 +237,10 @@ class CasePipelineService:
                 state.status = "processing"
                 state.attempts = event.attempts
             current_hash = CasePipelineService.source_hash(db, case)
-            if current_hash != event.payload.get("source_hash"):
+            dictionary_version = resolve_model_plan(db).version
+            if (current_hash != event.payload.get("source_hash")
+                    or dictionary_version != event.payload.get("dictionary_version")
+                    or dictionary_version != plan.version):
                 CasePipelineService.enqueue_case_change(db, case)
                 OutboxClaimService.finish(
                     db,
@@ -230,7 +257,7 @@ class CasePipelineService:
                     CaseAnalysisProfile.case_id == case.id,
                     CaseAnalysisProfile.source_hash == current_hash,
                     CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
-                    CaseAnalysisProfile.dictionary_version == CASE_DICTIONARY_VERSION,
+                    CaseAnalysisProfile.dictionary_version == dictionary_version,
                 )
                 .first()
             )
@@ -239,6 +266,11 @@ class CasePipelineService:
                 if existing is None
                 else None
             )
+            if payload is not None:
+                payload["dictionary_version"] = dictionary_version
+                if model_output is not None:
+                    payload["semantics"]["model_extraction"] = model_output
+                    payload["semantics"]["event_fragments"]["deep_model_status"] = model_output["status"]
             if state is not None:
                 db.refresh(state)
             if (
@@ -282,7 +314,7 @@ class CasePipelineService:
                     profile_version=(latest.profile_version + 1) if latest else 1,
                     source_hash=current_hash,
                     schema_version=CASE_PROFILE_SCHEMA_VERSION,
-                    dictionary_version=CASE_DICTIONARY_VERSION,
+                    dictionary_version=dictionary_version,
                     payload=payload,
                     quality_score=float(payload["quality"]["score"]),  # type: ignore[index]
                     analysis_readiness=payload["overall_readiness"],  # type: ignore[index]
@@ -299,10 +331,11 @@ class CasePipelineService:
                     source_hash=current_hash,
                     event_id=event.id,
                     schema_version=CASE_PROFILE_SCHEMA_VERSION,
-                    dictionary_version=CASE_DICTIONARY_VERSION,
+                    dictionary_version=dictionary_version,
                 )
                 db.add(state)
             state.status = "completed"
+            state.dictionary_version = dictionary_version
             state.source_hash = current_hash
             state.event_id = event.id
             state.last_error = None

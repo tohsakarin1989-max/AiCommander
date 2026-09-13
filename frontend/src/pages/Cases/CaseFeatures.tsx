@@ -175,7 +175,7 @@ const CaseFeatures: React.FC = () => {
           <div className="card-head">
             <span className="ti">NORMALIZED SUMMARY · 标准化摘要</span>
             {confidence !== null && (
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 10, color: confidence >= 0.7 ? 'var(--ok)' : 'var(--warn)' }}>
+              <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 12, color: confidence >= 0.7 ? 'var(--ok)' : 'var(--warn)' }}>
                 置信度 {(confidence * 100).toFixed(0)}%
               </span>
             )}
@@ -328,7 +328,7 @@ const CaseFeatures: React.FC = () => {
           <div className="card-head">
             <span className="ti">案件列表</span>
             <span className="spacer" />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
               {selectedRowKeys.length > 0 ? `已选 ${selectedRowKeys.length} 条` : '点击行选中'}
             </span>
           </div>

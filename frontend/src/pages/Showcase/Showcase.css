@@ -1,7 +1,7 @@
 .showcase { max-width: 1440px; margin: 0 auto; padding: 32px 24px; line-height: 1.7; }
 .showcase-intro { max-width: 880px; margin-bottom: 28px; }
-.showcase-kicker { color: var(--accent); font-size: 12px; letter-spacing: .12em; }
-.showcase h1 { font-size: clamp(26px, 3vw, 38px); margin: 10px 0; }
+.showcase-kicker { color: var(--accent); font-size: 12px; letter-spacing: 0; }
+.showcase h1 { font-size: 24px; margin: 10px 0; }
 .showcase h2 { font-size: 22px; }
 .showcase h3 { font-size: 19px; }
 .showcase h4 { font-size: 18px; margin: 0; }

@@ -14,8 +14,8 @@
 .settings-nav-item {
   padding: 9px 14px;
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ink-2);
   cursor: pointer;
@@ -39,8 +39,8 @@
 }
 .settings-info-block__title {
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.18em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--info);
   text-transform: uppercase;
   margin-bottom: 7px;
@@ -73,11 +73,11 @@
 /* ── provider badge ── */
 .settings-badge {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
   padding: 2px 7px;
   display: inline-block;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   border: 1px solid var(--line);
   color: var(--ink-2);
   background: var(--bg-2);
@@ -94,14 +94,14 @@
 /* ── 表格操作按钮 ── */
 .settings-action-btn {
   font-family: var(--mono) !important;
-  font-size: 10.5px !important;
+  font-size: 12px !important;
   color: var(--ink-3) !important;
   background: transparent !important;
   border: 1px solid var(--line) !important;
   padding: 3px 8px !important;
   cursor: pointer !important;
   transition: border-color 0.12s, color 0.12s !important;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 .settings-action-btn:hover            { border-color: var(--accent-line) !important; color: var(--accent) !important; }
 .settings-action-btn--danger:hover    { border-color: oklch(0.70 0.20 25 / 0.5) !important; color: var(--err) !important; }
@@ -136,9 +136,9 @@
 .settings-tabs .ant-tabs-nav { margin-bottom: 0 !important; }
 .settings-tabs .ant-tabs-tab {
   font-family: var(--mono) !important;
-  font-size: 11px !important;
+  font-size: 12px !important;
   color: var(--ink-3) !important;
-  letter-spacing: 0.08em !important;
+  letter-spacing: 0 !important;
   text-transform: uppercase !important;
 }
 .settings-tabs .ant-tabs-tab:hover { color: var(--ink-1) !important; }
@@ -150,3 +150,9 @@
 .settings-modal .ant-modal-content { border-radius: 0 !important; background: var(--bg-1) !important; border: 1px solid var(--line) !important; }
 .settings-modal .ant-modal-header  { background: transparent !important; border-bottom: 1px solid var(--line) !important; }
 .settings-modal .ant-form-item-label > label { color: var(--ink-2) !important; font-size: 12px !important; }
+ .settings-runtime { border-block: 1px solid var(--line); padding: 16px 0; margin: 16px 0 24px; }
+ .settings-runtime h2 { font-size: 16px; margin: 0 0 16px; }
+ .settings-runtime dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; }
+ .settings-runtime dt { color: var(--ink-2); font-size: 12px; }
+ .settings-runtime dd { margin: 8px 0 0; }
+ @media (max-width: 767px) { .settings-runtime dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -44,14 +44,14 @@
   font-size: 26px;
   color: var(--ink-0);
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .rt-list-head .sub {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   margin-top: 4px;
 }
 
@@ -63,7 +63,7 @@
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   border: 1px solid var(--accent);
   cursor: pointer;
   width: 100%;
@@ -88,7 +88,7 @@
   flex: 1;
   padding: 6px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
   border-right: 1px solid var(--line);
   background: transparent;
@@ -154,16 +154,16 @@
 
 .rt-id {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
 }
 
 .live-dot {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ok);
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   animation: rtPulse 1.4s infinite;
 }
 
@@ -181,10 +181,10 @@
 
 .rt-c-phase {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--accent);
   margin-top: 6px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .rt-card.done .rt-c-phase {
@@ -196,7 +196,7 @@
   justify-content: space-between;
   margin-top: 8px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
 }
 
@@ -245,7 +245,7 @@
   font-family: var(--mono);
   font-size: 13px;
   color: var(--accent);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   padding: 3px 9px;
   background: var(--accent-soft);
   border: 1px solid var(--accent-line);
@@ -257,15 +257,15 @@
   color: var(--ink-0);
   font-weight: 500;
   margin: 10px 0 5px;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
   line-height: 1.3;
 }
 
 .rt-sub {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 /* ==========================================================================
@@ -290,7 +290,7 @@
 .phase .num {
   font-family: var(--mono);
   font-size: 12px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   color: var(--ink-3);
   display: inline-block;
   padding: 1px 6px;
@@ -306,7 +306,7 @@
 
 .phase .t {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
   margin-top: 3px;
 }
@@ -322,7 +322,7 @@
 
 /* 当前活跃阶段 */
 .phase.active {
-  background: linear-gradient(to bottom, var(--accent-soft), transparent);
+  background: var(--bg-1);
 }
 
 .phase.active .num {
@@ -339,7 +339,7 @@
    ========================================================================== */
 
 .rt-progress-card {
-  background: oklch(0.18 0.014 250 / 0.7);
+  background: var(--bg-2);
   border: 1px solid oklch(0.78 0.14 155 / 0.22);
   border-left: 3px solid var(--ok);
   padding: 12px 16px;
@@ -347,8 +347,8 @@
 
 .rt-progress-label {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.2em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ok);
   text-transform: uppercase;
   margin-bottom: 10px;
@@ -412,16 +412,16 @@
 
 .ai-role {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   margin-top: 2px;
 }
 
 .ai-stat {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
   padding: 3px 7px;
   border: 1px solid var(--line);
   white-space: nowrap;
@@ -470,9 +470,9 @@
   display: flex;
   justify-content: space-between;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   margin-bottom: 6px;
 }
 
@@ -501,7 +501,7 @@
 }
 
 .rt-synth .card-head {
-  background: linear-gradient(to right, var(--accent-soft), transparent);
+  background: var(--bg-1);
 }
 
 .synth-grid {
@@ -514,8 +514,8 @@
 
 .synth-col .sh {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 8px;
@@ -593,9 +593,9 @@
 
 .rt-no-sel-sub {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 
 /* ==========================================================================
@@ -607,7 +607,7 @@
   color: var(--ink-2);
   padding: 4px 9px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   border: 1px solid var(--line);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
@@ -623,7 +623,7 @@
   color: var(--accent-ink);
   padding: 5px 10px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--accent);
   cursor: pointer;
@@ -648,12 +648,12 @@
   font-family: var(--serif);
   color: var(--accent);
   font-size: 15px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }
 
 .modal-meeting-id {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-3);
   background: var(--bg-2);
   padding: 3px 8px;
@@ -692,7 +692,7 @@
   color: var(--ink-3);
   line-height: 1.5;
   font-family: var(--mono);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
 }
 
 /* 分析内容区 */
@@ -701,7 +701,7 @@
   border: 1px solid var(--line);
   padding: 12px 14px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-2);
   white-space: pre-wrap;
   word-break: break-all;
@@ -724,10 +724,10 @@
 
 .report-section-title {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-3);
-  letter-spacing: 0.15em;
+  letter-spacing: 0;
   text-transform: uppercase;
   margin-bottom: 10px;
   padding-bottom: 7px;
@@ -752,8 +752,8 @@
   gap: 5px;
   padding: 4px 9px;
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  letter-spacing: 0;
   border: 1px solid var(--line);
   background: var(--bg-1);
   color: var(--ink-2);

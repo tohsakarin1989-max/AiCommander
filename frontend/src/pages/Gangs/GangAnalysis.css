@@ -41,7 +41,7 @@
 .gang-side {
   padding: 22px 18px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(to bottom, oklch(0.70 0.20 25 / 0.04), transparent);
+  background: var(--bg-1);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -78,9 +78,9 @@
 .gh-codename {
   text-align: center;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   margin-top: 3px;
 }
 
@@ -109,9 +109,9 @@
 
 .gh-risk-l {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
   margin-top: 4px;
   text-transform: uppercase;
 }
@@ -126,7 +126,7 @@
   font-size: 12px;
 }
 .gh-kvs .kv .k {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 /* ── 主区（图谱 + 时间线 + 成员表） ────────────────────── */
@@ -140,8 +140,8 @@
 
 .gh-section .sh {
   font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 10px;
@@ -174,7 +174,7 @@
 
 .gtl-t {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
   text-align: center;
 }
@@ -186,7 +186,7 @@
   display: grid;
   gap: 4px;
   justify-items: center;
-  font-size: 10.5px;
+  font-size: 12px;
   transition: border-color 0.15s;
 }
 .gtl-item:hover .gtl-box {
@@ -210,7 +210,7 @@
   place-items: center;
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
 }
 .cluster.c-a { background: var(--err);  color: white; }
 .cluster.c-b { background: var(--warn); color: oklch(0.18 0.05 75); }
@@ -226,13 +226,13 @@
 .gtl-loc {
   color: var(--ink-1);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 .gtl-val {
   color: var(--accent);
   font-family: var(--mono);
   font-weight: 500;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 /* ── 右侧 其他团伙列表 ──────────────────────────────────── */
@@ -299,10 +299,10 @@
 }
 .og-meta {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
   margin-top: 4px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .og-risk {
@@ -321,9 +321,9 @@
 }
 .og-risk .l {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
 }
 
 /* ── 空状态（英雄区无数据） ───────────────────────────────── */
@@ -337,7 +337,7 @@
   font-family: var(--mono);
   font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   flex: 1;
 }
 .gang-hero-empty .icon {
@@ -364,9 +364,9 @@
 
 .gang-ctrl-label {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--ink-3);
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -374,8 +374,8 @@
 /* ── mini tag ─────────────────────────────────────────────── */
 .gang-mini-tag {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  letter-spacing: 0;
   padding: 2px 7px;
   border: 1px solid currentColor;
   background: transparent;
@@ -392,8 +392,8 @@
 .gh-members-table thead th {
   padding: 7px 10px;
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ink-3);
   border-bottom: 1px solid var(--line);
@@ -443,8 +443,8 @@
 
 .gang-kv__key {
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.18em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--ink-3);
   text-transform: uppercase;
   margin-bottom: 6px;
@@ -469,14 +469,14 @@
 /* ── 操作按钮 ─────────────────────────────────────────────── */
 .gang-action-btn {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 10px;
   border: 1px solid var(--line);
   background: transparent;
   color: var(--ink-2);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 .gang-action-btn:hover {
   border-color: var(--accent-line);

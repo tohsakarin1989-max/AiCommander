@@ -17,6 +17,7 @@ class SemanticAnalysisService:
     def __init__(self):
         self.vector_db = VectorDBService()
         self.geo_service = GeoAnalysisService
+        self.semantic_status = {'state': 'not_enabled', 'complete': False}
     
     def analyze_hybrid_serial_cases(
         self,
@@ -72,17 +73,19 @@ class SemanticAnalysisService:
         
         serial_groups = []
         processed = set()
+        semantic_states = []
         
         for i, case1 in enumerate(cases_sorted):
             if case1.id in processed:
                 continue
             
             group = [case1]
+            semantic_pairs = set()
             processed.add(case1.id)
             
             # 语义相似案件
             semantic_matches = []
-            if use_semantic and self.vector_db.is_available():
+            if use_semantic and self.vector_db.is_available(db):
                 semantic_matches = self.vector_db.find_semantic_serial_cases(
                     case1.id,
                     top_k=20,
@@ -90,7 +93,10 @@ class SemanticAnalysisService:
                     operational_area_ids=[case1.operational_area_id]
                     if case1.operational_area_id is not None
                     else list(db.info.get("authorized_area_ids") or []),
+                    db=db,
                 )
+            if use_semantic:
+                semantic_states.append(dict(self.vector_db.status))
             
             for case2 in cases_sorted[i+1:]:
                 if case2.id in processed:
@@ -100,6 +106,7 @@ class SemanticAnalysisService:
                 
                 # 检查是否应该加入串案组
                 should_include = False
+                matched_by_semantic = False
                 match_reasons = []
                 
                 # 语义相似度检查
@@ -110,7 +117,8 @@ class SemanticAnalysisService:
                     )
                     if semantic_match:
                         should_include = True
-                        match_reasons.append(f"语义相似度: {semantic_match['similarity']:.2%}")
+                        matched_by_semantic = True
+                        match_reasons.append(f"语义余弦支持度（非概率）: {semantic_match['similarity']:.3f}")
                 
                 # 地理距离检查
                 if use_geo and case1.latitude and case1.longitude and case2.latitude and case2.longitude:
@@ -138,6 +146,8 @@ class SemanticAnalysisService:
                 if should_include and time_diff <= time_window_days:
                     group.append(case2)
                     processed.add(case2.id)
+                    if matched_by_semantic:
+                        semantic_pairs.add((case1.id, case2.id))
             
             if len(group) >= 2:
                 # 计算组内特征
@@ -161,17 +171,9 @@ class SemanticAnalysisService:
                 ]
                 
                 # 判断串案可能性
-                has_semantic_match = use_semantic and any(
-                    self.vector_db.find_semantic_serial_cases(
-                        c.id,
-                        top_k=5,
-                        min_similarity=min_semantic_similarity,
-                        operational_area_ids=[c.operational_area_id]
-                        if c.operational_area_id is not None
-                        else list(db.info.get("authorized_area_ids") or []),
-                    )
-                    for c in group
-                )
+                # Reuse the actual pair evidence that formed this group; do not
+                # run a second search that might match cases outside the group.
+                has_semantic_match = bool(semantic_pairs)
                 has_geo_cluster = use_geo and avg_lat and avg_lng
                 
                 likely_serial = (
@@ -219,6 +221,12 @@ class SemanticAnalysisService:
                     }
                 })
         
+        if semantic_states:
+            complete = all(item.get('complete') for item in semantic_states)
+            states = {item['state'] for item in semantic_states}
+            self.semantic_status = {'state': 'ready' if complete else (
+                'unavailable' if 'unavailable' in states else 'partial' if 'partial' in states else 'not_enabled'),
+                'complete': complete, 'queries': len(semantic_states)}
         return serial_groups
 
     def _structured_match_reasons(self, case1: Case, case2: Case) -> List[str]:
@@ -319,7 +327,8 @@ class SemanticAnalysisService:
         Returns:
             相似案件列表，包含完整案件信息
         """
-        if not self.vector_db.is_available():
+        if not self.vector_db.is_available(db):
+            self.semantic_status = dict(self.vector_db.status)
             logger.warning("向量数据库不可用，无法进行语义搜索")
             return []
         
@@ -333,7 +342,9 @@ class SemanticAnalysisService:
                 if db.info.get("authorized_area_ids") is not None
                 else None
             ),
+            db=db,
         )
+        self.semantic_status = dict(self.vector_db.status)
         
         # 从数据库获取完整案件信息
         results = []
@@ -353,7 +364,10 @@ class SemanticAnalysisService:
                         "modus_operandi": case.modus_operandi,
                     },
                     "similarity": item["similarity"],
-                    "match_reason": "语义相似"
+                    "match_reason": "本地语义相似条件，非事实关联或准确概率",
+                    "score_kind": item['score_kind'], "versions": item['versions'],
+                    "shared_conditions": item['shared_conditions'],
+                    "different_conditions": item['different_conditions'],
                 })
         
         return results

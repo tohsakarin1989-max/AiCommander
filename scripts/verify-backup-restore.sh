@@ -52,6 +52,17 @@ expected_checksum="$(sed -n '1s/[[:space:]].*$//p' "$CHECKSUM_FILE")"
 actual_checksum="$(checksum_value "$BACKUP_FILE")"
 [ "$expected_checksum" = "$actual_checksum" ] || fail "备份文件 SHA-256 校验失败"
 
+MANIFEST_FILE="${BACKUP_FILE}.manifest"
+[ -s "$MANIFEST_FILE" ] || fail "缺少备份清单: $MANIFEST_FILE"
+manifest_format="$(sed -n 's/^format=//p' "$MANIFEST_FILE")"
+[ "$manifest_format" = "postgres-custom" ] || fail "备份清单格式不是 postgres-custom"
+expected_database_revision="$(sed -n 's/^database_revision=//p' "$MANIFEST_FILE")"
+case "$expected_database_revision" in
+    ''|untracked|unknown|*[!a-zA-Z0-9_]*)
+        fail "备份清单缺少已登记的迁移版本；首次迁移前备份不能作为恢复通过证据"
+        ;;
+esac
+
 timestamp="$(date '+%Y%m%d_%H%M%S')"
 RESTORE_DATABASE="aicommander_restore_check_${timestamp}_$$"
 case "$RESTORE_DATABASE" in
@@ -89,13 +100,17 @@ restored_table_count="$(
 case "$restored_table_count" in
     ''|*[!0-9]*) fail "无法读取恢复后的表数量" ;;
 esac
+[ "$restored_table_count" -gt 0 ] || fail "恢复后的 public schema 没有业务表"
 
-database_revision="$(
+if ! database_revision="$(
     compose exec -T postgres sh -c \
-        'export PGPASSWORD="$(cat /run/secrets/db_password)"; psql -h 127.0.0.1 -U aicommander -d "$1" -Atc "SELECT version_num FROM alembic_version"' \
-        sh "$RESTORE_DATABASE" 2>/dev/null || true
-)"
-database_revision="${database_revision:-untracked}"
+        'export PGPASSWORD="$(cat /run/secrets/db_password)"; exec psql -h 127.0.0.1 -U aicommander -d "$1" -v ON_ERROR_STOP=1 -Atc "SELECT version_num FROM alembic_version"' \
+        sh "$RESTORE_DATABASE"
+)"; then
+    fail "读取恢复后的 Alembic 版本失败"
+fi
+[ "$database_revision" = "$expected_database_revision" ] \
+    || fail "恢复后的 Alembic 版本与备份清单不一致"
 
 EVIDENCE_FILE="${EVIDENCE_FILE:-${BACKUP_FILE}.restore-verified}"
 umask 077
@@ -105,6 +120,7 @@ printf '%s\n' \
     "sha256=$actual_checksum" \
     "restored_table_count=$restored_table_count" \
     "database_revision=$database_revision" \
+    "expected_database_revision=$expected_database_revision" \
     "restore_status=passed" \
     > "$EVIDENCE_FILE"
 

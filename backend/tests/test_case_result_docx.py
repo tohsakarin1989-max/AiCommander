@@ -75,7 +75,7 @@ def test_real_docx_from_semantic_document_keeps_all_records_and_references(tmp_p
     profile.payload["semantics"] = build_semantic_profile({"description": description}, structured={"vehicle_info": records})
     source = {"id": "synthetic-long-result", "created_at": "2026-09-11T00:00:00Z", **assemble_case_result(profile, None, [])}
     document = build_case_result_document(source)
-    result = render(asdict(document)["blocks"])
+    result = render(asdict(document)["blocks"], schema=document.schema)
     assert result.returncode == 0, result.stderr.decode()
     with ZipFile(io.BytesIO(result.stdout)) as archive:
         xml = ElementTree.fromstring(archive.read("word/document.xml"))
@@ -89,6 +89,12 @@ def test_real_docx_from_semantic_document_keeps_all_records_and_references(tmp_p
     target = tmp_path / "synthetic-long-result.docx"
     target.write_bytes(result.stdout)
     print(f"synthetic_docx_visual_sample={target}")
+
+
+def test_unknown_document_schema_stays_rejected():
+    result = render([], schema="case-result-document-future")
+    assert result.returncode != 0
+    assert result.stderr.decode().splitlines()[-1] == "unsupported_document_schema"
 
 
 @pytest.mark.parametrize("change", ["result_id", "content_sha256", "map_snapshot_id", "png_base64"])

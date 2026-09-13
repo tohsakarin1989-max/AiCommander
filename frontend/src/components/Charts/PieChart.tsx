@@ -1,3 +1,4 @@
+import { useThemeMode } from '../../theme/ThemeContext'
 /**
  * 饼图/环形图组件
  * 展示案件类型分布等比例数据
@@ -33,20 +34,20 @@ export interface PieChartProps {
 const PieChart: React.FC<PieChartProps> = ({
   data,
   height = 300,
-  theme = 'light',
   title,
   donut = true,
   showLegend = true,
   showLabel = true,
   colors: customColors,
 }) => {
+  const { mode: theme } = useThemeMode()
   const defaultColors =
     theme === 'dark'
       ? ['#00d4ff', '#ff6b6b', '#ffd93d', '#6bcb77', '#9b59b6', '#3498db', '#e74c3c']
       : ['#1890ff', '#ff4d4f', '#faad14', '#52c41a', '#722ed1', '#13c2c2', '#eb2f96']
 
   const colors = customColors || defaultColors
-  const textColor = theme === 'dark' ? '#b0b0b0' : '#666'
+  const textColor = (theme === 'dark' ? '#a9b8b5' : '#606c70')
 
   const option = useMemo(
     () => ({
@@ -64,8 +65,8 @@ const PieChart: React.FC<PieChartProps> = ({
         : undefined,
       tooltip: {
         trigger: 'item',
-        backgroundColor: theme === 'dark' ? 'rgba(30,30,50,0.95)' : 'rgba(255,255,255,0.95)',
-        borderColor: theme === 'dark' ? '#444' : '#ddd',
+        backgroundColor: (theme === 'dark' ? '#272f31' : '#ffffff'),
+        borderColor: (theme === 'dark' ? '#435053' : '#d8e0e2'),
         textStyle: { color: textColor },
         formatter: (params: any) => {
           return `${params.name}<br/>数量: <strong>${params.value}</strong> (${params.percent}%)`
@@ -89,7 +90,7 @@ const PieChart: React.FC<PieChartProps> = ({
           avoidLabelOverlap: true,
           itemStyle: {
             borderRadius: donut ? 4 : 0,
-            borderColor: theme === 'dark' ? '#1a1a2e' : '#fff',
+            borderColor: (theme === 'dark' ? '#272f31' : '#ffffff'),
             borderWidth: 2,
           },
           label: showLabel

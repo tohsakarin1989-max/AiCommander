@@ -5,6 +5,7 @@
  */
 import { useState } from 'react'
 import {
+  Alert,
   Space,
   Modal,
   Timeline,
@@ -28,6 +29,7 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
+import { useAuth } from '../../auth/AuthContext'
 import { gangApi } from '../../services/gangs'
 import type { GangProfile, TimelineEntry } from '../../types'
 import dayjs from 'dayjs'
@@ -220,7 +222,7 @@ function GangSidePanel({ gang, index }: { gang: GangProfile; index: number }) {
         {gang.geographic_center && (
           <div className="kv">
             <span className="k">活动中心</span>
-            <span className="v" style={{ fontFamily: 'var(--mono)', fontSize: 10 }}>
+            <span className="v" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
               {gang.geographic_center.latitude.toFixed(4)},{' '}
               {gang.geographic_center.longitude.toFixed(4)}
             </span>
@@ -234,19 +236,22 @@ function GangSidePanel({ gang, index }: { gang: GangProfile; index: number }) {
 // ── 主组件 ──────────────────────────────────────────────────
 
 const GangAnalysis: React.FC = () => {
+  const { user } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [analysisParams, setAnalysisParams] = useState({
     min_similarity:   0.5,
     min_cases:        2,
     time_window_days: 90,
   })
+  const [resultParams, setResultParams] = useState(analysisParams)
   const [selectedGang, setSelectedGang]               = useState<GangProfile | null>(null)
   const [detailModalVisible, setDetailModalVisible]   = useState(false)
   const [timelineModalVisible, setTimelineModalVisible] = useState(false)
 
   // ── 数据获取 ────────────────────────────────────────────
-  const { data: statistics, isLoading: statsLoading } = useQuery({
-    queryKey: ['gangStatistics', analysisParams.time_window_days],
-    queryFn:  () => gangApi.getStatistics(analysisParams.time_window_days),
+  const { data: statistics, isLoading: statsLoading, isError: statisticsError } = useQuery({
+    queryKey: ['gangStatistics', resultParams.time_window_days],
+    queryFn:  () => gangApi.getStatistics(resultParams.time_window_days),
   })
 
   const identifyMutation = useMutation({ mutationFn: gangApi.identify })
@@ -254,31 +259,37 @@ const GangAnalysis: React.FC = () => {
   const { data: timeline, isLoading: timelineLoading } = useQuery({
     queryKey: ['gangTimeline', selectedGang?.case_ids],
     queryFn:  () => gangApi.getTimeline(selectedGang!.case_ids),
-    enabled:  !!selectedGang && timelineModalVisible,
+    enabled:  canWrite && !!selectedGang && timelineModalVisible,
   })
 
-  const handleAnalyze = () => identifyMutation.mutate(analysisParams)
+  const handleAnalyze = () => {
+    if (!canWrite) return
+    setSelectedGang(null)
+    setResultParams(analysisParams)
+    identifyMutation.mutate(analysisParams)
+  }
 
   // ── 条件组数据 ──────────────────────────────────────────
-  const gangs: GangProfile[] = identifyMutation.data || statistics?.top_gangs || []
+  const gangs: GangProfile[] = identifyMutation.isPending || identifyMutation.isError || statisticsError
+    ? [] : identifyMutation.data || statistics?.top_gangs || []
 
   // 当前英雄（默认第一个）
-  const heroGang = selectedGang ?? gangs[0] ?? null
+  const heroGang = (selectedGang && gangs.includes(selectedGang) ? selectedGang : null) ?? gangs[0] ?? null
   const heroIndex = heroGang ? gangs.indexOf(heroGang) : 0
   const otherGangs = heroGang ? gangs.filter(g => g !== heroGang) : gangs
 
   // ── 热力图数据（针对当前条件组） ─────────────────────────
   const { data: heatmapData } = useQuery({
-    queryKey: ['gangHeatmap', heroIndex, analysisParams],
-    queryFn: () => gangApi.getActivityHeatmap(heroIndex, analysisParams),
-    enabled: gangs.length > 0,
+    queryKey: ['gangHeatmap', heroIndex, resultParams],
+    queryFn: () => gangApi.getActivityHeatmap(heroIndex, resultParams),
+    enabled: canWrite && gangs.length > 0,
   })
 
   // ── 重复锚点提示（后端当前返回空列表，仅保留兼容旧接口） ───
   const { data: crossPersons } = useQuery({
-    queryKey: ['crossGangPersons', analysisParams],
-    queryFn: () => gangApi.getCrossGangPersons(analysisParams),
-    enabled: gangs.length > 0,
+    queryKey: ['crossGangPersons', resultParams],
+    queryFn: () => gangApi.getCrossGangPersons(resultParams),
+    enabled: canWrite && gangs.length > 0,
   })
 
   // Modal 通用样式
@@ -291,6 +302,8 @@ const GangAnalysis: React.FC = () => {
 
   return (
     <div className="page-gangs">
+      {!canWrite && <Alert type="info" message="只读账号可查看条件组概览；重新分析、时段热力和时间线需要分析权限" />}
+      {(statisticsError || identifyMutation.isError) && <Alert type="error" message="条件组分析读取失败，请重试" />}
 
       {/* ── 页面标题 ── */}
       <div className="page-title">
@@ -309,7 +322,7 @@ const GangAnalysis: React.FC = () => {
               onChange={v => setAnalysisParams(p => ({ ...p, min_similarity: v }))}
               style={{ width: 100 }}
             />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)', width: 30 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)', width: 30 }}>
               {analysisParams.min_similarity}
             </span>
           </div>
@@ -330,12 +343,12 @@ const GangAnalysis: React.FC = () => {
               onChange={v => v && setAnalysisParams(p => ({ ...p, time_window_days: v }))}
               style={{ width: 70 }}
             />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>天</span>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>天</span>
           </div>
           <button
             className="btn-ghost"
             onClick={handleAnalyze}
-            disabled={identifyMutation.isPending}
+            disabled={!canWrite || identifyMutation.isPending}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
             <SearchOutlined />
@@ -346,7 +359,7 @@ const GangAnalysis: React.FC = () => {
             onClick={() => setDetailModalVisible(true)}
             disabled={!heroGang}
           >
-            ＋ 新建条件组档案
+            查看当前画像
           </button>
         </div>
       </div>
@@ -362,7 +375,7 @@ const GangAnalysis: React.FC = () => {
       )}
 
       {/* ── 无数据提示 ── */}
-      {!statsLoading && !identifyMutation.isPending && gangs.length === 0 && (
+      {!statisticsError && !identifyMutation.isError && !statsLoading && !identifyMutation.isPending && gangs.length === 0 && (
         <div className="empty-state">
           <div className="icon"><TeamOutlined /></div>
           <div>暂无条件组数据，请调整参数后点击「开始分析」</div>
@@ -397,6 +410,7 @@ const GangAnalysis: React.FC = () => {
                     </button>
                     <button
                       className="btn-ghost-sm"
+                      disabled={!canWrite}
                       onClick={() => { setSelectedGang(heroGang); setTimelineModalVisible(true) }}
                     >
                       时间线
@@ -431,7 +445,7 @@ const GangAnalysis: React.FC = () => {
                             <div className="gtl-t">#{String(i + 1).padStart(2, '0')}</div>
                             <div className="gtl-box">
                               <span className={`cluster ${clusterClass(i)}`}>{i + 1}</span>
-                              <span className="gtl-loc" style={{ fontSize: 9 }}>
+                              <span className="gtl-loc" style={{ fontSize: 12 }}>
                                 {heroGang.preferred_locations?.[i % (heroGang.preferred_locations.length || 1)] ?? '—'}
                               </span>
                               <span className="gtl-val">案件</span>
@@ -462,7 +476,7 @@ const GangAnalysis: React.FC = () => {
                             ),
                           }).map((_, i) => (
                             <tr key={i}>
-                              <td style={{ fontFamily: 'var(--mono)', color: 'var(--ink-3)', fontSize: 11 }}>
+                              <td style={{ fontFamily: 'var(--mono)', color: 'var(--ink-3)', fontSize: 12 }}>
                                 {String(i + 1).padStart(2, '0')}
                               </td>
                               <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
@@ -500,7 +514,7 @@ const GangAnalysis: React.FC = () => {
                             type: 'category',
                             data: Array.from({ length: 24 }, (_, i) => `${i}`),
                             axisLabel: {
-                              fontSize: 9,
+                              fontSize: 12,
                               color: 'var(--ink-3)',
                               formatter: (v: string) => `${v}h`,
                             },
@@ -510,7 +524,7 @@ const GangAnalysis: React.FC = () => {
                           yAxis: {
                             type: 'category',
                             data: HEATMAP_DAY_NAMES,
-                            axisLabel: { fontSize: 9, color: 'var(--ink-3)' },
+                            axisLabel: { fontSize: 12, color: 'var(--ink-3)' },
                             axisLine: { lineStyle: { color: 'var(--line)' } },
                             splitArea: { show: true, areaStyle: { color: ['oklch(0.22 0.01 250 / 0.4)', 'transparent'] } },
                           },
@@ -535,7 +549,7 @@ const GangAnalysis: React.FC = () => {
                     ) : (
                       <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description={<span style={{ fontSize: 11, color: 'var(--ink-3)' }}>暂无时段数据</span>}
+                        description={<span style={{ fontSize: 12, color: 'var(--ink-3)' }}>暂无时段数据</span>}
                         style={{ padding: '16px 0' }}
                       />
                     )}
@@ -598,7 +612,7 @@ const GangAnalysis: React.FC = () => {
               {otherGangs.length === 0 && gangs.length <= 1 && (
                 <div style={{
                   padding: 24, textAlign: 'center',
-                  fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)',
+                  fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)',
                 }}>
                   无其他相似条件组
                 </div>
@@ -608,12 +622,12 @@ const GangAnalysis: React.FC = () => {
             {/* ── 重复锚点核验提示 ── */}
             <div style={{ borderTop: '1px solid var(--line)', padding: '10px 14px' }}>
               <div className="card-head" style={{ padding: 0, marginBottom: 8, border: 'none' }}>
-                <span className="ico" style={{ fontSize: 11 }}>⇌</span>
-                <span className="ti" style={{ fontSize: 11 }}>重复锚点核验</span>
+                <span className="ico" style={{ fontSize: 12 }}>⇌</span>
+                <span className="ti" style={{ fontSize: 12 }}>重复锚点核验</span>
                 {crossPersons && crossPersons.length > 0 && (
                   <>
                     <span className="spacer" />
-                    <span className="chip" style={{ fontSize: 10 }}>{crossPersons.length} 人</span>
+                    <span className="chip" style={{ fontSize: 12 }}>{crossPersons.length} 人</span>
                   </>
                 )}
               </div>
@@ -627,7 +641,7 @@ const GangAnalysis: React.FC = () => {
                         padding: '4px 6px',
                         background: 'var(--bg-0)',
                         border: '1px solid var(--line)',
-                        fontSize: 11,
+                        fontSize: 12,
                       }}
                     >
                       <UserOutlined style={{ color: 'var(--warn)', flexShrink: 0 }} />
@@ -640,7 +654,7 @@ const GangAnalysis: React.FC = () => {
                             key={gi}
                             style={{
                               fontFamily: 'var(--mono)',
-                              fontSize: 9,
+                              fontSize: 12,
                               padding: '0 4px',
                               lineHeight: '16px',
                               margin: 0,
@@ -658,7 +672,7 @@ const GangAnalysis: React.FC = () => {
                 </div>
               ) : (
                 <div style={{
-                  fontFamily: 'var(--mono)', fontSize: 10,
+                  fontFamily: 'var(--mono)', fontSize: 12,
                   color: 'var(--ink-3)', padding: '6px 0',
                   letterSpacing: '0.05em',
                 }}>
@@ -695,7 +709,7 @@ const GangAnalysis: React.FC = () => {
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 22, color: 'var(--accent)', lineHeight: 1, fontWeight: 500 }}>
                   {val}
                 </div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', marginTop: 3, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginTop: 3, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   {lbl}
                 </div>
               </div>
@@ -726,7 +740,7 @@ const GangAnalysis: React.FC = () => {
                 <div className="gang-risk-banner__left">
                   <WarningOutlined style={{ color: info.color, fontSize: 20 }} />
                   <div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.2em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 2 }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.2em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 2 }}>
                       RISK ASSESSMENT
                     </div>
                     <div style={{ color: info.color, fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 600 }}>
@@ -738,7 +752,7 @@ const GangAnalysis: React.FC = () => {
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 28, fontWeight: 700, color: info.color, lineHeight: 1 }}>
                     {heroGang.risk_score.toFixed(0)}
                   </div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>/ 100</div>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.1em' }}>/ 100</div>
                 </div>
               </div>
 
@@ -845,7 +859,7 @@ const GangAnalysis: React.FC = () => {
                 {heroGang.geographic_center && (
                   <div className="gang-kv">
                     <div className="gang-kv__key">活动中心</div>
-                    <div className="gang-kv__val" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-2)' }}>
+                    <div className="gang-kv__val" style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>
                       {heroGang.geographic_center.latitude.toFixed(6)},{' '}
                       {heroGang.geographic_center.longitude.toFixed(6)}
                     </div>
@@ -873,7 +887,7 @@ const GangAnalysis: React.FC = () => {
         {timelineLoading ? (
           <div style={{ textAlign: 'center', padding: 48 }}>
             <Spin />
-            <div style={{ marginTop: 12, fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.2em' }}>
+            <div style={{ marginTop: 12, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.2em' }}>
               加载时间轴…
             </div>
           </div>
@@ -895,7 +909,7 @@ const GangAnalysis: React.FC = () => {
                           {entry.case_number}
                         </span>
                         {entry.occurred_time && (
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                             {dayjs(entry.occurred_time).format('YYYY-MM-DD HH:mm')}
                           </span>
                         )}

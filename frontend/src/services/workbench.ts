@@ -1,5 +1,30 @@
 import api from './api'
 
+export interface DailyWorkbenchCase {
+  id: number
+  case_number: string
+  occurred_time: string | null
+  location: string | null
+  case_status: string
+  pipeline_status: string | null
+  profile_ready: boolean
+  information_gaps: string[]
+  target_path: string
+}
+
+export interface DailyWorkbench {
+  schema_version: 'daily-workbench-5.0-1'
+  generated_at: string
+  summary: {
+    total_cases: number
+    needs_information: number
+    analysis_pending: number
+    analysis_ready: number
+  }
+  cases: DailyWorkbenchCase[]
+  pagination: { limit: number; offset: number; returned: number; total: number }
+}
+
 export type WorkbenchStage =
   | 'data_review'
   | 'experience_generate'
@@ -80,6 +105,10 @@ export interface WorkbenchMetrics {
 }
 
 export const workbenchApi = {
+  daily: async (params: { limit?: number; offset?: number } = {}): Promise<DailyWorkbench> => {
+    const response = await api.get<DailyWorkbench>('/workbench/daily', { params })
+    return response.data
+  },
   today: async (): Promise<TodayWorkbench> => {
     const response = await api.get<TodayWorkbench>('/workbench/today')
     return response.data

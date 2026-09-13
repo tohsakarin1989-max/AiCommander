@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
@@ -35,7 +36,7 @@ def _text(value: Any) -> str:
 def _tokens(query: str) -> List[str]:
     cleaned = query.replace("，", " ").replace(",", " ").strip().lower()
     parts = [token.strip() for token in cleaned.split() if token.strip()]
-    if len(parts) == 1 and len(parts[0]) >= 4:
+    if len(parts) == 1 and re.fullmatch(r'[\u3400-\u9fff]{4,}', parts[0]):
         token = parts[0]
         return [token, *[token[index : index + 2] for index in range(0, len(token) - 1)]]
     return parts
@@ -105,59 +106,11 @@ class CaseKnowledgeService:
 
     @staticmethod
     def search(db: Session, query: str, case_id: Optional[int] = None, limit: int = 20) -> Dict[str, Any]:
+        from app.services.legacy_history_search import history_candidates, merge_source_ranks
+        if not 1 <= limit <= 20 or not query.strip() or len(query) > 2000:
+            raise ValueError('invalid_knowledge_query')
+        history, history_state = history_candidates(db, query, case_id, limit)
         candidates: List[Dict[str, Any]] = []
-        case_query = db.query(Case)
-        if case_id is not None:
-            case_query = case_query.filter(Case.id == case_id)
-        for case in case_query.order_by(Case.occurred_time.desc()).limit(200).all():
-            features = _as_dict(case.features)
-            case_text = _text([
-                case.case_number,
-                case.location,
-                case.case_type,
-                case.description,
-                case.source_type,
-                case.report_unit,
-                case.oil_type,
-                case.oil_nature,
-                features,
-                case.quality_issues,
-            ])
-            score = _score(query, case_text)
-            if score > 0 or not query.strip():
-                candidates.append({
-                    "source_type": "case_profile",
-                    "source_id": case.id,
-                    "title": f"案件画像 {case.case_number}",
-                    "snippet": case.description or case.location or case.case_type or "案件基础信息",
-                    "score": score,
-                    "route": f"/cases?caseId={case.id}",
-                    "evidence_refs": CaseKnowledgeService._case_evidence_refs_from_case(db, case),
-                })
-            asset = CaseKnowledgeService._latest_experience_asset(
-                db, case.id, status="confirmed"
-            )
-            if asset:
-                card_score = _score(query, _text(asset.content))
-                if card_score > 0 or not query.strip():
-                    candidates.append(
-                        CaseKnowledgeService._experience_asset_result(
-                            case, asset, card_score
-                        )
-                    )
-            elif not CaseKnowledgeService._has_experience_asset(db, case.id):
-                # 兼容 v2.6 之前存放在 Case.features 中的已确认经验卡。
-                card = _as_dict(
-                    _as_dict(features.get("intelligence")).get("experience_card")
-                )
-                if card.get("manual_review_status") == "confirmed":
-                    card_score = _score(query, _text(card))
-                    if card_score > 0 or not query.strip():
-                        candidates.append(
-                            CaseKnowledgeService._experience_result(
-                                case, card, card_score
-                            )
-                        )
 
         for conclusion in CaseKnowledgeService._conclusion_query(db, case_id):
             text = _text([conclusion.summary, conclusion.evidence])
@@ -176,7 +129,7 @@ class CaseKnowledgeService:
                     ],
                 })
 
-        for report in CaseKnowledgeService._report_query(db):
+        for report in CaseKnowledgeService._report_query(db, case_id):
             text = _text([report.content, report.consensus_points, report.disagreement_points, report.model_contributions])
             score = _score(query, text)
             if score > 0:
@@ -197,26 +150,31 @@ class CaseKnowledgeService:
                     ],
                 })
 
-        candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
+        items = merge_source_ranks(history, candidates, limit)
         return {
             "query": query,
-            "items": candidates[:limit],
-            "total": min(len(candidates), limit),
-            "insufficient_evidence": not candidates,
-            "boundary": "检索结果只返回已有案件、经验卡、报告或结论来源，不补造事实。",
+            "items": items,
+            "total": len(items),
+            "insufficient_evidence": not items,
+            "history": history_state,
+            "state": history_state['state'],
+            "boundary": "案件与已确认经验复用全库授权检索；报告、结论为兼容补充（各检查最近100条），不代表这些材料的全库检索。历史相似不是当前事实，不补造事实。",
         }
 
     @staticmethod
     def evidence_qa(db: Session, query: str, case_id: Optional[int] = None) -> Dict[str, Any]:
-        results = CaseKnowledgeService.search(db, query, case_id=case_id, limit=5).get("items", [])
+        search = CaseKnowledgeService.search(db, query, case_id=case_id, limit=5)
+        results = search.get("items", [])
         if not results:
             return {
-                "answer": "资料不足：当前案件底座中没有找到可以支撑该问题的事实或引用来源。",
+                "answer": ("检索尚未完成：当前只有部分结果，不能判断没有相关资料。" if search['state'] == 'partial'
+                           else "本次条件下未找到可引用来源；历史报告和结论仅在兼容范围内检索。"),
                 "facts": [],
                 "inferences": [],
                 "citations": [],
                 "insufficient_evidence": True,
-                "boundary": "无证据不生成判断。",
+                "state": search['state'], "history": search['history'],
+                "boundary": search['boundary'],
             }
         facts = [item["snippet"] for item in results[:3] if item.get("snippet")]
         citations = [
@@ -236,12 +194,14 @@ class CaseKnowledgeService:
             ],
             "citations": citations,
             "insufficient_evidence": False,
-            "boundary": "回答只基于返回引用，不直接生成处置任务。",
+            "state": search['state'], "history": search['history'],
+            "boundary": search['boundary'] + "回答只基于返回引用，不直接生成处置任务。",
         }
 
     @staticmethod
     def citation_assist(db: Session, query: str, case_id: Optional[int] = None) -> Dict[str, Any]:
-        results = CaseKnowledgeService.search(db, query, case_id=case_id, limit=8).get("items", [])
+        search = CaseKnowledgeService.search(db, query, case_id=case_id, limit=8)
+        results = search.get("items", [])
         citations = [
             {
                 "title": item["title"],
@@ -258,7 +218,8 @@ class CaseKnowledgeService:
             "citations": citations,
             "draft_lines": [f"{item['snippet']}（来源：{item['title']}）" for item in citations[:5]],
             "insufficient_evidence": not citations,
-            "boundary": "引用助手只提供可回溯素材，报告正文仍需人工复核。",
+            "state": search['state'], "history": search['history'],
+            "boundary": search['boundary'] + "引用助手只提供可回溯素材，报告正文仍需人工复核。",
         }
 
     @staticmethod
@@ -565,14 +526,32 @@ class CaseKnowledgeService:
 
     @staticmethod
     def _conclusion_query(db: Session, case_id: Optional[int]) -> Iterable[Conclusion]:
+        from app.services.case_result_access import CaseResultAccessError
+        from app.services.conclusion_factory_service import ConclusionFactoryService
+
         query = db.query(Conclusion)
         if case_id is not None:
             query = query.filter(Conclusion.case_id == case_id)
-        return query.order_by(Conclusion.id.desc()).limit(100).all()
+        accessible = []
+        for conclusion in query.order_by(Conclusion.id.desc()).limit(100):
+            try:
+                ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
+            except CaseResultAccessError:
+                continue
+            accessible.append(conclusion)
+        return accessible
 
     @staticmethod
-    def _report_query(db: Session) -> Iterable[Report]:
-        return db.query(Report).order_by(Report.id.desc()).limit(100).all()
+    def _report_query(db: Session, case_id: Optional[int] = None) -> Iterable[Report]:
+        if case_id is None:
+            return db.query(Report).order_by(Report.id.desc()).limit(100).all()
+        from app.models.meeting import Meeting
+        # Retain the documented legacy 100-report supplement, but never mix an
+        # unrelated meeting into a case-filtered query. No text-similarity dedup.
+        rows = (db.query(Report, Meeting.case_ids).join(Meeting, Report.meeting_id == Meeting.meeting_id)
+                .order_by(Report.id.desc()).limit(100).all())
+        return [report for report, identifiers in rows
+                if isinstance(identifiers, list) and case_id in identifiers]
 
     @staticmethod
     def _tag_merges(tags: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

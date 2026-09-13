@@ -5,6 +5,30 @@ from pathlib import Path
 from app.config import Settings
 
 
+def test_local_embedding_runtime_is_opt_in_and_model_mount_is_read_only():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / 'backend/Dockerfile').read_text()
+    overlay = yaml.safe_load((root / 'docker-compose.local-embedding.yml').read_text())
+    assert 'ARG INSTALL_LOCAL_EMBEDDING=false' in dockerfile
+    assert dockerfile.strip().endswith('FROM core AS runtime')
+    assert set(overlay['services']) == {'backend', 'celery', 'agent-worker'}
+    for service in overlay['services'].values():
+        environment = service['environment']
+        assert environment['HF_HUB_OFFLINE'] == '1'
+        assert environment['TRANSFORMERS_OFFLINE'] == '1'
+        assert ':?set approved manifest sha256' in environment['LOCAL_EMBEDDING_MANIFEST_SHA256']
+        mount = service['volumes'][0]
+        assert mount['target'] == environment['LOCAL_EMBEDDING_BUNDLE']
+        assert mount['read_only'] is True
+        assert mount['bind']['create_host_path'] is False
+        assert 'ports' not in service
+    assert overlay['services']['backend']['build']['args']['INSTALL_LOCAL_EMBEDDING'] == 'true'
+    assert overlay['services']['backend']['image'] == overlay['services']['celery']['image']
+    assert overlay['services']['backend']['image'] == overlay['services']['agent-worker']['image']
+
+
 def test_document_runtime_is_optional_and_keeps_host_dependencies_out_of_image():
     root = Path(__file__).resolve().parents[2]
     dockerfile = (root / 'backend/Dockerfile').read_text()
@@ -117,7 +141,8 @@ def test_production_agent_lab_is_opt_in_and_uses_a_dedicated_worker_profile():
     assert 'ENABLE_LEGACY_EXTERNAL_GEO: "false"' in compose
     assert 'ENABLE_LEGACY_PATROL_MATERIALIZATION: "false"' in compose
     assert "ALEMBIC_TARGET=head" in env_example
-    assert "POSTGIS_IMAGE=postgis/postgis:16-3.4-alpine@sha256:" in env_example
+    assert "\nPOSTGIS_IMAGE=\n" in env_example
+    assert "POSTGIS_IMAGE:?" in compose
 
     deploy_script = (project_root / "scripts" / "deploy-production.sh").read_text(
         encoding="utf-8"

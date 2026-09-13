@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -10,6 +11,7 @@ import app.models  # noqa: F401
 from app.api import cases
 from app.database import Base, get_db
 from app.models.case import Case, CaseVehicle
+from app.models.map_foundation import OperationalArea
 from app.models.preprocess_job import PreprocessJob
 
 
@@ -211,3 +213,84 @@ def test_batch_review_does_not_reopen_confirmed_experience_card():
         for issue in issues
         if issue["type"] == "experience" and issue.get("case_id") == confirmed.id
     ]
+
+
+@pytest.mark.parametrize("change", ["other_user", "scope_revoked", "case_moved"])
+def test_batch_review_cached_results_recheck_owner_and_current_case_access(change):
+    db = _session()
+    client = _client(db)
+    seeded = _seed(db)
+    db.add_all([
+        OperationalArea(id=1, code="BATCH-AREA-1", name="测试厂区一"),
+        OperationalArea(id=2, code="BATCH-AREA-2", name="测试厂区二"),
+    ])
+    db.flush()
+    for case in seeded:
+        case.operational_area_id = 1
+    db.commit()
+    db.info.update(principal_user_id=1, authorized_area_ids=(1,))
+
+    created = client.post("/api/cases/batch-review", json={"use_llm": False})
+    assert created.status_code == 200
+    assert created.json()["processed"] == 2
+    job_url = f"/api/cases/batch-review/{created.json()['job_id']}"
+    assert client.get(job_url).status_code == 200
+
+    if change == "other_user":
+        db.info["principal_user_id"] = 2
+    elif change == "scope_revoked":
+        db.info["authorized_area_ids"] = ()
+    else:
+        db.execute(
+            Case.__table__.update()
+            .where(Case.__table__.c.id == seeded[0].id)
+            .values(operational_area_id=2)
+        )
+        db.commit()
+
+    denied = client.get(job_url)
+    assert denied.status_code == 404
+    assert denied.json() == {"detail": "批量复核任务不存在"}
+
+
+def test_batch_preprocess_empty_selection_does_not_process_all_cases():
+    db = _session()
+    client = _client(db)
+    seeded = _seed(db)
+
+    response = client.post(
+        "/api/cases/preprocess/batch", json={"case_ids": [], "use_llm": False}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["processed"] == 0
+    assert response.json()["total_candidates"] == 0
+    assert db.query(PreprocessJob).count() == 0
+    assert all(not case.features for case in seeded)
+
+
+def test_batch_preprocess_recovers_from_one_case_database_failure(monkeypatch):
+    db = _session()
+    client = _client(db)
+    seeded = _seed(db)
+    failing_id = seeded[1].id
+    original = cases.CasePreprocessService._preprocess_case_record
+
+    def fail_one_case(session, case, llm):
+        if case.id == failing_id:
+            session.add(Case(case_number=case.case_number, occurred_time=datetime.utcnow()))
+            session.flush()
+        return original(session, case, llm)
+
+    monkeypatch.setattr(cases.CasePreprocessService, "_preprocess_case_record", fail_one_case)
+
+    response = client.post("/api/cases/preprocess/batch", json={"use_llm": False})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["processed"] == 2
+    assert payload["success"] == 1
+    assert payload["failed"] == 1
+    jobs = {job.case_id: job.status for job in db.query(PreprocessJob).all()}
+    assert jobs == {seeded[0].id: "success", failing_id: "failed"}
+    assert db.query(Case).count() == 2

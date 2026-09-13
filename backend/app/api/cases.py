@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timedelta
@@ -48,6 +49,7 @@ BATCH_REVIEW_JOB_LIMIT = 50
 BATCH_REVIEW_JOB_TTL_SECONDS = 3600
 BATCH_REVIEW_JOBS: Dict[str, Dict[str, Any]] = {}
 BATCH_REVIEW_JOB_TIMESTAMPS: Dict[str, datetime] = {}
+BATCH_REVIEW_JOB_ACCESS: Dict[str, Dict[str, Any]] = {}
 NULLABLE_CASE_UPDATE_FIELDS = {
     "location",
     "case_type",
@@ -252,6 +254,7 @@ class CaseUpdate(BaseModel):
 
 class CaseResponse(BaseModel):
     id: int
+    updated_at: Optional[datetime] = None
     operational_area_id: Optional[int] = None
     case_number: str
     occurred_time: datetime
@@ -331,15 +334,19 @@ class CasePageResponse(BaseModel):
 
 @router.get("/dashboard-summary")
 def dashboard_summary(
+    response: Response,
     days: int = Query(7, ge=1, le=90),
+    activity_limit: int = Query(20, ge=1, le=100),
     operational_area_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     from app.services.dashboard_summary_service import DashboardSummaryService
+    response.headers['Cache-Control'] = 'no-store'
     allowed = db.info.get("authorized_area_ids")
     if operational_area_id is not None and allowed is not None and operational_area_id not in allowed:
         raise HTTPException(status_code=403, detail="当前账号无权查看该辖区态势")
-    return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days)
+    return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days,
+                                         activity_limit=activity_limit)
 
 
 class CaseStructureRequest(BaseModel):
@@ -619,11 +626,13 @@ def _prune_batch_review_jobs(now: Optional[datetime] = None) -> None:
     for job_id in expired:
         BATCH_REVIEW_JOBS.pop(job_id, None)
         BATCH_REVIEW_JOB_TIMESTAMPS.pop(job_id, None)
+        BATCH_REVIEW_JOB_ACCESS.pop(job_id, None)
 
     while len(BATCH_REVIEW_JOBS) > BATCH_REVIEW_JOB_LIMIT:
         oldest_id = min(BATCH_REVIEW_JOB_TIMESTAMPS, key=BATCH_REVIEW_JOB_TIMESTAMPS.get)
         BATCH_REVIEW_JOBS.pop(oldest_id, None)
         BATCH_REVIEW_JOB_TIMESTAMPS.pop(oldest_id, None)
+        BATCH_REVIEW_JOB_ACCESS.pop(oldest_id, None)
 
 
 def _append_quality_issues(issues: List[Dict[str, Any]], case: Case, quality: Dict[str, Any]) -> None:
@@ -901,6 +910,10 @@ def get_cases(
     status: Optional[str] = None,
     case_type: Optional[str] = None,
     oil_type: Optional[str] = None,
+    statuses: Optional[List[str]] = Query(None),
+    case_types: Optional[List[str]] = Query(None),
+    oil_types: Optional[List[str]] = Query(None),
+    end_exclusive: bool = False,
     source_type: Optional[str] = None,
     report_unit: Optional[str] = None,
     current_stage: Optional[str] = None,
@@ -958,6 +971,10 @@ def get_cases(
     if oil_type:
         query = query.filter(Case.oil_type == oil_type)
 
+    for field, values in ((Case.status, statuses), (Case.case_type, case_types), (Case.oil_type, oil_types)):
+        if isinstance(values, list) and values:
+            query = query.filter(field.in_(values))
+
     if source_type:
         query = query.filter(Case.source_type == source_type)
 
@@ -979,7 +996,8 @@ def get_cases(
     if start_date:
         query = query.filter(Case.occurred_time >= utc_datetime(start_date))
     if end_date:
-        query = query.filter(Case.occurred_time <= utc_datetime(end_date))
+        query = query.filter(Case.occurred_time < utc_datetime(end_date) if end_exclusive
+                             else Case.occurred_time <= utc_datetime(end_date))
 
     # 地理坐标筛选
     if missing_location is True:
@@ -1048,6 +1066,12 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
     _prune_batch_review_jobs(now)
     BATCH_REVIEW_JOBS[job_id] = job
     BATCH_REVIEW_JOB_TIMESTAMPS[job_id] = now
+    authorized_area_ids = db.info.get("authorized_area_ids")
+    BATCH_REVIEW_JOB_ACCESS[job_id] = {
+        "user_id": db.info.get("principal_user_id"),
+        "area_ids": None if authorized_area_ids is None else frozenset(authorized_area_ids),
+        "case_ids": tuple(case.id for case in review_cases),
+    }
     _prune_batch_review_jobs(now)
 
     preprocess_case_ids = {case.id for case in preprocess_cases}
@@ -1148,10 +1172,20 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
 
 
 @router.get("/batch-review/{job_id}")
-def get_batch_review_job(job_id: str):
+def get_batch_review_job(job_id: str, db: Session = Depends(get_db)):
     _prune_batch_review_jobs()
     job = BATCH_REVIEW_JOBS.get(job_id)
-    if not job:
+    access = BATCH_REVIEW_JOB_ACCESS.get(job_id)
+    if not job or access is None or access["user_id"] != db.info.get("principal_user_id"):
+        raise HTTPException(status_code=404, detail="批量复核任务不存在")
+    # 缓存不能绕过实时授权：总量包含原范围，逐案内容也必须仍在当前可见范围。
+    area_ids = db.info.get("authorized_area_ids")
+    if area_ids is not None and (
+        access["area_ids"] is None or not access["area_ids"].issubset(area_ids)
+    ):
+        raise HTTPException(status_code=404, detail="批量复核任务不存在")
+    case_ids = access["case_ids"]
+    if case_ids and db.query(Case.id).filter(Case.id.in_(case_ids)).count() != len(case_ids):
         raise HTTPException(status_code=404, detail="批量复核任务不存在")
     return job
 
@@ -1320,7 +1354,7 @@ def get_case_quality(case_id: int, db: Session = Depends(get_db)):
     """获取案件信息质量评分，评分规则来自业务管理细则。"""
     case = _get_case_or_404(db, case_id)
     if not case.quality_issues:
-        return CaseQualityService.refresh_case_quality(db, case)
+        return CaseQualityService.evaluate_case(db, case)
     return case.quality_issues
 
 
@@ -1780,22 +1814,30 @@ def get_serial_cases(
         serial_cases = GeoAnalysisService.analyze_serial_cases(
             db, case_ids, max_distance_km, time_window_days, operational_area_id
         )
-    return {"serial_cases": serial_cases}
+    return {"serial_cases": serial_cases,
+            "semantic_status": service.semantic_status if use_semantic else {'state': 'not_requested', 'complete': False},
+            "boundary": "分析案组不等于正式串并案；语义未启用或不完整时不能据此排除关联。"}
 
 @router.get("/semantic/search")
 def semantic_search(
-    query: str,
-    top_k: int = 10,
-    min_similarity: float = 0.5,
+    query: str = Query(..., min_length=1, max_length=2000),
+    top_k: int = Query(10, ge=1, le=100),
+    min_similarity: float = Query(0.5, ge=0, le=1),
     db: Session = Depends(get_db)
 ):
     """基于语义相似度搜索案件"""
     from app.services.semantic_analysis_service import SemanticAnalysisService
     service = SemanticAnalysisService()
-    results = service.search_by_semantic_similarity(
-        db, query, top_k, min_similarity
-    )
-    return {"query": query, "results": results}
+    if not query.strip():
+        raise HTTPException(422, '查询内容不能为空')
+    try:
+        results = service.search_by_semantic_similarity(db, query, top_k, min_similarity)
+    except PermissionError:
+        raise HTTPException(404, '检索范围不可访问') from None
+    except (ValueError, SQLAlchemyError):
+        raise HTTPException(503, '本地语义检索暂不可用，不能据此判断没有相似案件') from None
+    return {"query": query, "results": results, "semantic_status": service.semantic_status,
+            "boundary": "只检索当前授权及当前来源的本地向量；余弦相似度不是准确概率。"}
 
 @router.get("/trajectory/{case_ids}")
 def get_trajectory(

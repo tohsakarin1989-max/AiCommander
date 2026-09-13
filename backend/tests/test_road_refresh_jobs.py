@@ -61,6 +61,7 @@ def test_new_connection_requeues_without_any_old_path_or_artifact(delegated):
     assert job.payload['result_id'] == result_id
     assert job.payload['user_id'] == 1 and job.payload['scope'] == [1]
     assert job.payload['network_id'] == 'graph-1'
+    assert job.payload['facility_versions'] == refresh.current_versions()
     assert refresh.process(db, event_id)['claimed'] is False
     assert db.query(OutboxEvent).filter_by(event_type=COMPARE_TYPE).count() == 1
     assert db.get(Case, 1).description == '合成记录'
@@ -132,6 +133,55 @@ def test_future_conditions_wait_until_graph_validity_begins(delegated):
         valid_from=datetime.now(timezone.utc) + timedelta(hours=1))
     db.commit()
     assert refresh.process(db, identifier)['claimed'] is False
+    assert db.query(OutboxEvent).filter_by(event_type=COMPARE_TYPE).count() == 0
+
+
+def test_algorithm_upgrade_reuses_original_scope_once_without_page_reads(delegated, monkeypatch):
+    from app.tasks import case_road_tasks
+    from app.tasks.celery_app import celery_app
+    db, result_id = delegated
+    monkeypatch.setattr(case_road_tasks, 'SessionLocal', sessionmaker(bind=db.bind, autoflush=False))
+    first = case_road_tasks.reconcile_algorithm.run()
+    assert first['created']
+    assert not case_road_tasks.reconcile_algorithm.run()['created']
+    assert celery_app.conf.beat_schedule['reconcile-facility-algorithm']['options']['queue'] == 'road_analysis'
+    outcome = case_road_tasks.process_next_comparison.run()
+    assert outcome['event_id'] == first['event_id'] and outcome['created'] == 1
+    job = db.scalar(select(OutboxEvent).where(OutboxEvent.event_type == COMPARE_TYPE))
+    assert job.payload['result_id'] == result_id and job.payload['scope'] == [1]
+    assert job.payload['facility_versions'] == refresh.current_versions()
+    assert not case_road_tasks.reconcile_algorithm.run()['created']
+
+
+@pytest.mark.parametrize('change', ['revoked', 'cancelled', 'no_delegation', 'source_changed'])
+def test_algorithm_upgrade_does_not_resurrect_unauthorized_or_cancelled_work(delegated, change):
+    db, result_id = delegated
+    if change == 'revoked':
+        db.query(RoadAccessMembership).delete()
+    elif change == 'cancelled':
+        db.add(OutboxEvent(id='cancelled-comparison', event_type=COMPARE_TYPE, aggregate_type='case_result',
+            aggregate_id=result_id, payload={}, idempotency_key='cancelled-comparison', status='cancelled'))
+    elif change == 'no_delegation':
+        db.scalar(select(OutboxEvent).where(OutboxEvent.event_type == REQUEST_TYPE)).payload = {'result_id': result_id}
+    else:
+        db.get(Case, 1).description = '更新后的原始记录'
+    db.commit()
+    identifier = refresh.enqueue_algorithm_upgrade(db)
+    db.commit()
+    assert refresh.process(db, identifier)['created'] == 0
+    assert db.query(OutboxEvent).filter_by(event_type=COMPARE_TYPE, status='pending').count() == 0
+
+
+def test_changed_algorithm_has_new_idempotency_and_old_pass_is_superseded(delegated, monkeypatch):
+    db, _ = delegated
+    old = refresh.enqueue_algorithm_upgrade(db)
+    db.commit()
+    versions = {**refresh.current_versions(), 'production': 'fixture-next'}
+    monkeypatch.setattr(refresh, 'current_versions', lambda: versions)
+    new = refresh.enqueue_algorithm_upgrade(db)
+    assert new and new != old
+    db.commit()
+    assert refresh.process(db, old)['status'] == 'superseded'
     assert db.query(OutboxEvent).filter_by(event_type=COMPARE_TYPE).count() == 0
 
 

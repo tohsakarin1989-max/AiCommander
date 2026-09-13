@@ -462,7 +462,7 @@ class CasePreprocessService:
         - 每条案件写入 PreprocessJob，便于页面状态栏和后续排查
         """
         query = db.query(Case).order_by(Case.occurred_time.desc(), Case.id.desc())
-        if case_ids:
+        if case_ids is not None:
             query = query.filter(Case.id.in_(case_ids))
         candidates = query.all()
         total_candidates = len(candidates)
@@ -510,6 +510,7 @@ class CasePreprocessService:
                     "confidence": result.get("confidence"),
                 })
             except Exception as e:
+                db.rollback()
                 job.status = "failed"
                 job.finished_at = datetime.utcnow()
                 job.error = str(e)

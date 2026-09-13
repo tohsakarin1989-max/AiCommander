@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -6,6 +8,7 @@ from app.database import AreaWriteAccessError, get_db
 from app.services.meeting_service import MeetingService
 from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Ranking
 from app.models.report import Report
+from app.models.ai_model import AIModel
 
 router = APIRouter()
 
@@ -24,8 +27,8 @@ class MeetingResponse(BaseModel):
     moderator_model_id: int
     analyst_model_ids: List[int]
     final_report_id: Optional[int] = None
-    created_at: str
-    completed_at: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -36,7 +39,7 @@ class ConversationResponse(BaseModel):
     speaker_model_id: int
     message_type: str
     content: str
-    created_at: str
+    created_at: datetime
     
     class Config:
         from_attributes = True
@@ -50,14 +53,12 @@ async def create_meeting(
     """创建并启动会议（异步执行）"""
     try:
         # 先创建会议记录，状态为 "processing"
-        from app.ai.meeting_manager import MeetingManager
         from app.models.meeting import Meeting
         import uuid
-        from datetime import datetime
-        
-        manager = MeetingManager(db)
+
         meeting_id = f"MEET-{uuid.uuid4().hex[:8].upper()}"
         operational_area_id = MeetingService.resolve_meeting_area(db, meeting.case_ids)
+        MeetingService.validate_models(db, meeting.moderator_model_id, meeting.analyst_model_ids)
         
         # 创建会议记录
         meeting_record = Meeting(
@@ -181,6 +182,22 @@ def get_meetings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取会议列表失败: {str(e)}")
+
+class MeetingModelOption(BaseModel):
+    id: int
+    name: str
+    role: str
+    is_active: bool
+
+
+@router.get("/model-options", response_model=List[MeetingModelOption])
+def get_meeting_model_options(db: Session = Depends(get_db)):
+    """会商选择目录仅返回可用模型身份，不公开管理配置和凭据。"""
+    models = db.query(AIModel.id, AIModel.name, AIModel.role, AIModel.is_active).filter(
+        AIModel.is_active.is_(True), AIModel.role.in_(("moderator", "analyst"))
+    ).order_by(AIModel.id).all()
+    return [dict(row._mapping) for row in models]
+
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
 def get_meeting(meeting_id: str, db: Session = Depends(get_db)):

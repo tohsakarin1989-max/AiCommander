@@ -92,6 +92,7 @@ class EntranceConnectionEvidence(BaseModel):
     road_import_id: int = Field(gt=0)
     road_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: Literal["connected", "disconnected", "unknown"]
+    facility_asset_id: int | None = Field(default=None, gt=0)
 
 
 class InternalRoadReviewCreate(BaseModel):
@@ -114,7 +115,10 @@ def review_internal_road_feature(source_id: int, import_id: int, feature_id: str
 
     principal = _road_admin(request)
     try:
-        result, created = review_feature(db, source_id, import_id, feature_id, payload.model_dump(), principal.user_id)
+        data = payload.model_dump()
+        if payload.connection_evidence is not None:
+            data['connection_evidence'] = payload.connection_evidence.model_dump(exclude_none=True)
+        result, created = review_feature(db, source_id, import_id, feature_id, data, principal.user_id)
         db.commit()
     except PermissionError:
         raise HTTPException(403, "缺少道路来源写入权限") from None

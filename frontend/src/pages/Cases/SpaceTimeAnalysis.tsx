@@ -368,21 +368,21 @@ const SpaceTimeAnalysis: React.FC = () => {
         `${String(p.data[0]).padStart(2, '0')}:00  ${DAY_NAMES[p.data[1]]}  ${p.data[2]}起`,
       borderColor: chartPalette.tooltipBorder,
       backgroundColor: chartPalette.tooltipBg,
-      textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
+      textStyle: { color: chartPalette.tooltipText, fontSize: 12 },
     },
     grid: { top: 28, left: 36, right: 8, bottom: 28 },
     xAxis: {
       type: 'category' as const,
       data: Array.from({ length: 24 }, (_, i) => `${i}`),
       splitArea: { show: true, areaStyle: { color: chartPalette.splitAreas } },
-      axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+      axisLabel: { color: chartPalette.axisText, fontSize: 12 },
       axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     yAxis: {
       type: 'category' as const,
       data: DAY_NAMES,
       splitArea: { show: true, areaStyle: { color: chartPalette.splitAreas } },
-      axisLabel: { color: chartPalette.axisText, fontSize: 10 },
+      axisLabel: { color: chartPalette.axisText, fontSize: 12 },
       axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     visualMap: {
@@ -399,7 +399,7 @@ const SpaceTimeAnalysis: React.FC = () => {
           show: true,
           formatter: (p: { data: [number, number, number] }) => (p.data[2] > 0 ? String(p.data[2]) : ''),
           color: chartPalette.heatLabel,
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 700,
         },
         itemStyle: {
@@ -429,17 +429,17 @@ const SpaceTimeAnalysis: React.FC = () => {
       trigger: 'axis' as const,
       backgroundColor: chartPalette.tooltipBg,
       borderColor: chartPalette.tooltipBorder,
-      textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
+      textStyle: { color: chartPalette.tooltipText, fontSize: 12 },
     },
     xAxis: {
       type: 'category' as const,
       data: monthlyTrend.months,
-      axisLabel: { color: chartPalette.axisText, fontSize: 8, rotate: 30 },
+      axisLabel: { color: chartPalette.axisText, fontSize: 12, rotate: 30 },
       axisLine: { lineStyle: { color: chartPalette.axisLine } },
     },
     yAxis: {
       type: 'value' as const,
-      axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+      axisLabel: { color: chartPalette.axisText, fontSize: 12 },
       splitLine: { lineStyle: { color: chartPalette.splitLine } },
     },
     series: [
@@ -512,14 +512,14 @@ const SpaceTimeAnalysis: React.FC = () => {
         trigger: 'axis' as const,
         backgroundColor: chartPalette.tooltipBg,
         borderColor: chartPalette.tooltipBorder,
-        textStyle: { color: chartPalette.tooltipText, fontSize: 11 },
+        textStyle: { color: chartPalette.tooltipText, fontSize: 12 },
       },
       legend: {
         data: topKeys.map((key) => {
           const [lat, lng] = key.split('_')
           return `热点 ${lat},${lng}`
         }),
-        textStyle: { color: chartPalette.axisText, fontSize: 10 },
+        textStyle: { color: chartPalette.axisText, fontSize: 12 },
         itemWidth: 14,
         itemHeight: 6,
         top: 4,
@@ -528,13 +528,13 @@ const SpaceTimeAnalysis: React.FC = () => {
       xAxis: {
         type: 'category' as const,
         data: xLabels,
-        axisLabel: { color: chartPalette.axisText, fontSize: 10 },
+        axisLabel: { color: chartPalette.axisText, fontSize: 12 },
         axisLine: { lineStyle: { color: chartPalette.axisLine } },
       },
       yAxis: {
         type: 'value' as const,
         minInterval: 1,
-        axisLabel: { color: chartPalette.axisText, fontSize: 9 },
+        axisLabel: { color: chartPalette.axisText, fontSize: 12 },
         splitLine: { lineStyle: { color: chartPalette.splitLine } },
       },
       series,
@@ -644,7 +644,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                       <div className="sta-hotspot-item__top">
                         <span className="sta-hotspot-item__name">热点区域 {p.index}</span>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: trendColor }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: trendColor }}>
                             {trendIcon} {trendLabel}
                           </span>
                           <span className={`sta-hotspot-item__risk-${p.riskLevel}`}>
@@ -660,7 +660,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                           <span className="sta-hotspot-item__row-key">高发时段：</span>
                           <span className="sta-hotspot-item__row-val">{p.peakHourLabel}</span>
                           {p.nightRatio > 40 && (
-                            <span style={{ marginLeft: 6, fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--err)' }}>
+                            <span style={{ marginLeft: 6, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--err)' }}>
                               夜间占 {p.nightRatio}%
                             </span>
                           )}
@@ -681,7 +681,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                       {/* 案件类型分布 */}
                       {p.topTypes.length > 0 && (
                         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line-soft)' }}>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-3)', letterSpacing: '0.1em', marginBottom: 5 }}>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.1em', marginBottom: 5 }}>
                             CASE TYPES · 主要案件类型
                           </div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -692,10 +692,10 @@ const SpaceTimeAnalysis: React.FC = () => {
                                   background: ti === 0 ? 'var(--err)' : ti === 1 ? 'var(--warn)' : 'var(--info)',
                                   borderRadius: 0,
                                 }} />
-                                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-1)' }}>
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-1)' }}>
                                   {t.type}
                                 </span>
-                                <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-3)' }}>
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                                   {t.pct}%
                                 </span>
                               </div>
@@ -709,9 +709,9 @@ const SpaceTimeAnalysis: React.FC = () => {
                         marginTop: 8, padding: '7px 10px',
                         background: p.riskLevel === 'high' ? 'oklch(0.70 0.20 25 / 0.08)' : 'oklch(0.78 0.14 45 / 0.05)',
                         borderLeft: `2px solid ${p.riskLevel === 'high' ? 'var(--err)' : p.riskLevel === 'medium' ? 'var(--warn)' : 'var(--ok)'}`,
-                        fontSize: 11, color: 'var(--ink-1)', lineHeight: 1.6,
+                        fontSize: 12, color: 'var(--ink-1)', lineHeight: 1.6,
                       }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-3)', marginRight: 6 }}>建议：</span>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginRight: 6 }}>建议：</span>
                         {p.recommendation}
                       </div>
                     </div>
@@ -727,7 +727,7 @@ const SpaceTimeAnalysis: React.FC = () => {
               <span className="ti">时段 × 星期 规律矩阵</span>
             </div>
             <div className="card-body">
-              <div style={{ padding: '2px 12px 4px', fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)' }}>
+              <div style={{ padding: '2px 12px 4px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>
                 颜色越深表示该时间段发案越集中
               </div>
               <ReactECharts option={matrixOption} style={{ height: 160 }} />
@@ -739,19 +739,19 @@ const SpaceTimeAnalysis: React.FC = () => {
             <div className="card-head">
               <span className="ti">月度发案趋势</span>
               <span className="spacer" />
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'var(--mono)', fontSize: 11, color: trendMeta.color }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'var(--mono)', fontSize: 12, color: trendMeta.color }}>
                 {trendMeta.icon} {trendMeta.label}
               </span>
             </div>
             <div className="card-body">
               <ReactECharts option={trendOption} style={{ height: 110 }} />
               {monthlyTrend.signal === 'increasing' && (
-                <div style={{ padding: '6px 12px 8px', fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--err)', background: 'oklch(0.70 0.20 25 / 0.07)', borderTop: '1px solid var(--line-soft)' }}>
+                <div style={{ padding: '6px 12px 8px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--err)', background: 'oklch(0.70 0.20 25 / 0.07)', borderTop: '1px solid var(--line-soft)' }}>
                   ⚠ 近3个月发案频率高于历史均值，建议提升巡防频次并启动专项整治
                 </div>
               )}
               {monthlyTrend.signal === 'decreasing' && (
-                <div style={{ padding: '6px 12px 8px', fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ok)', background: 'oklch(0.78 0.14 155 / 0.06)', borderTop: '1px solid var(--line-soft)' }}>
+                <div style={{ padding: '6px 12px 8px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ok)', background: 'oklch(0.78 0.14 155 / 0.06)', borderTop: '1px solid var(--line-soft)' }}>
                   ✓ 近期态势持续好转，建议保持现有部署强度，关注隐患反弹
                 </div>
               )}
@@ -800,7 +800,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                         <div key={label} style={{ textAlign: 'center', padding: '6px 4px', background: 'var(--bg-2)', border: '1px solid var(--line)' }}>
                           <div style={{ fontSize: 14 }}>{emoji}</div>
                           <div style={{ fontFamily: 'var(--mono)', fontSize: 16, fontWeight: 700, color, lineHeight: 1.2 }}>{val}</div>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--ink-3)', marginTop: 2 }}>{label}</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{label}</div>
                         </div>
                       ))}
                     </div>
@@ -820,7 +820,7 @@ const SpaceTimeAnalysis: React.FC = () => {
             </div>
             <div className="card-body pad">
               {filteredCases.length === 0 ? (
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', padding: '8px 0' }}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', padding: '8px 0' }}>
                   无案件数据，调整筛选条件后重试
                 </div>
               ) : (
@@ -833,7 +833,7 @@ const SpaceTimeAnalysis: React.FC = () => {
                       { label: '态势', val: { increasing: '上升', stable: '平稳', decreasing: '下降' }[monthlyTrend.signal], color: trendMeta.color },
                     ].map(({ label, val, color }) => (
                       <div key={label} style={{ border: '1px solid var(--line)', padding: '8px 10px', background: 'var(--bg-2)' }}>
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-3)', letterSpacing: '0.1em', marginBottom: 3 }}>{label}</div>
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.1em', marginBottom: 3 }}>{label}</div>
                         <div style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 700, color }}>{val}</div>
                       </div>
                     ))}
@@ -841,10 +841,10 @@ const SpaceTimeAnalysis: React.FC = () => {
 
                   {/* 重点关注事项 */}
                   {predictions.length > 0 && (
-                    <div style={{ fontSize: 11.5, color: 'var(--ink-1)', lineHeight: 1.75 }}>
+                    <div style={{ fontSize: 12, color: 'var(--ink-1)', lineHeight: 1.75 }}>
                       {predictions.filter(p => p.riskLevel === 'high').length > 0 && (
                         <div style={{ padding: '6px 10px', borderLeft: '2px solid var(--err)', background: 'oklch(0.70 0.20 25 / 0.06)', marginBottom: 6 }}>
-                          <b style={{ color: 'var(--err)', fontFamily: 'var(--mono)', fontSize: 10 }}>高风险区域 ({predictions.filter(p => p.riskLevel === 'high').length}处)：</b>
+                          <b style={{ color: 'var(--err)', fontFamily: 'var(--mono)', fontSize: 12 }}>高风险区域 ({predictions.filter(p => p.riskLevel === 'high').length}处)：</b>
                           {' '}{predictions.filter(p => p.riskLevel === 'high').map(p =>
                             `热点${p.index}（${p.peakHourLabel} · ${p.peakDayLabel}）`
                           ).join('、')}，应优先复核防控覆盖
@@ -852,12 +852,12 @@ const SpaceTimeAnalysis: React.FC = () => {
                       )}
                       {predictions[0]?.topTypes[0] && (
                         <div style={{ padding: '6px 10px', borderLeft: '2px solid var(--warn)', background: 'oklch(0.80 0.16 75 / 0.05)', marginBottom: 6 }}>
-                          <b style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', fontSize: 10 }}>主要案件类型：</b>
+                          <b style={{ color: 'var(--warn)', fontFamily: 'var(--mono)', fontSize: 12 }}>主要案件类型：</b>
                           {' '}{predictions[0].topTypes[0].type}（占比 {predictions[0].topTypes[0].pct}%），建议针对此类手法制定专项预防措施
                         </div>
                       )}
                       <div style={{ padding: '6px 10px', borderLeft: '2px solid var(--info)', background: 'oklch(0.78 0.11 220 / 0.05)' }}>
-                        <b style={{ color: 'var(--info)', fontFamily: 'var(--mono)', fontSize: 10 }}>时空规律：</b>
+                        <b style={{ color: 'var(--info)', fontFamily: 'var(--mono)', fontSize: 12 }}>时空规律：</b>
                         {' '}热力矩阵中颜色最深区域即为高发时段，重点关注
                         {predictions[0] ? ` ${predictions[0].peakDayLabel} ${predictions[0].peakHourLabel}` : ''}
                         前后 2 小时窗口，夜间案件比例较高时应加强灯光和技防覆盖

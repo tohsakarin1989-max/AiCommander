@@ -33,8 +33,8 @@ AUTH_REQUIRED=false \
 AUTO_CREATE_TABLES=false \
 "$PYTHON" -m alembic upgrade head
 
-VERIFY_DB="$VERIFY_DB" "$PYTHON" -c \
-    "import os, sqlite3; c=sqlite3.connect(os.environ['VERIFY_DB']); t={r[0] for r in c.execute('select name from sqlite_master where type=\"table\"')}; required={'cases','case_evidence','chain_links','jurisdiction_assets','agent_runs','agent_artifacts','knowledge_assets'}; missing=required-t; v=c.execute('select version_num from alembic_version').fetchone()[0]; c.close(); assert not missing, sorted(missing); assert v == 'a7d9e1f2b304', v"
+"$PYTHON" "$ROOT_DIR/scripts/verify-sqlite-schema.py" "$VERIFY_DB" \
+    cases case_evidence chain_links jurisdiction_assets agent_runs agent_artifacts knowledge_assets
 
 echo "[3/5] 前端证据分层与工作台入口回归"
 cd "$FRONTEND_DIR"

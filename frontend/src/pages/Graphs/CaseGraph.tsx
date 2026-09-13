@@ -1,5 +1,7 @@
-import { useMemo, useState, useCallback, useRef } from 'react'
-import { Input, Table, Switch, message, Select } from 'antd'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { parseCaseDeepLinkId } from '../Cases/caseSearch'
+import { Alert, Input, Table, Switch, message, Select } from 'antd'
 import {
   ShareAltOutlined,
   TableOutlined,
@@ -9,9 +11,12 @@ import {
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { analysisApi, SerialGraph, GraphNode, GraphEdge } from '../../services/analysis'
+import { useAuth } from '../../auth/AuthContext'
 import { caseApi } from '../../services/cases'
 import ReactECharts from 'echarts-for-react'
 import './CaseGraph.css'
+import { useThemeMode } from '../../theme/ThemeContext'
+import { getThemeTokens } from '../../theme/themeMode'
 
 const EDGE_COLORS: Record<string, string> = {
   modus:            '#13c2c2',
@@ -60,6 +65,10 @@ function formatOccurredTime(iso: string | null | undefined): string {
 }
 
 const CaseGraph: React.FC = () => {
+  const { mode } = useThemeMode()
+  const { tokens } = getThemeTokens(mode)
+  const { user, sessionEpoch } = useAuth()
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [caseIdsInput, setCaseIdsInput] = useState('')
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([])
   const [graph, setGraph] = useState<SerialGraph | null>(null)
@@ -67,18 +76,34 @@ const CaseGraph: React.FC = () => {
   const [onlyStrong, setOnlyStrong] = useState(false)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<GraphEdgeDetail | null>(null)
+  const [params] = useSearchParams()
+  const linkedCaseId = parseCaseDeepLinkId(params.get('caseId'))
+  const currentSelection = `${linkedCaseId ?? ''}:${user?.id ?? ''}:${sessionEpoch}`
+  const selectionRef = useRef(currentSelection)
+  selectionRef.current = currentSelection
+  useEffect(() => {
+    setCaseIdsInput(linkedCaseId == null ? '' : String(linkedCaseId))
+    setSelectedCaseIds([])
+    setGraph(null)
+    setSelectedNode(null)
+    setSelectedEdge(null)
+  }, [linkedCaseId, user?.id, sessionEpoch])
   const echartsRef = useRef<ReactECharts | null>(null)
 
   // 获取最近50条案件，用于快捷选择
   const { data: recentCases = [] } = useQuery({
-    queryKey: ['cases', 'recent50'],
+    queryKey: ['cases', 'recent50', user?.id, sessionEpoch],
     queryFn: () => caseApi.getCases({ limit: 50 }),
     staleTime: 60_000,
   })
 
   const buildMutation = useMutation({
-    mutationFn: (caseIds: number[]) => analysisApi.graph.buildSerial(caseIds),
-    onSuccess: (data) => {
+    mutationFn: async (caseIds: number[]) => {
+      const selection = selectionRef.current
+      return { selection, data: await analysisApi.graph.buildSerial(caseIds) }
+    },
+    onSuccess: ({ selection, data }) => {
+      if (selectionRef.current !== selection) return
       setGraph(data)
       setSelectedNode(null)
       setSelectedEdge(null)
@@ -111,9 +136,9 @@ const CaseGraph: React.FC = () => {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
-        backgroundColor: 'oklch(0.12 0.012 250)',
-        borderColor: 'oklch(0.32 0.014 250 / 0.7)',
-        textStyle: { color: 'oklch(0.82 0.010 90)', fontSize: 11 },
+        backgroundColor: tokens.colorBgElevated,
+        borderColor: "#d8e0e2",
+        textStyle: { color: tokens.colorTextBase, fontSize: 12 },
         formatter: (params: { dataType?: string; data?: Record<string, unknown> }) => {
           if (params.dataType === 'edge') {
             const d = params.data ?? {}
@@ -143,7 +168,7 @@ const CaseGraph: React.FC = () => {
           type: 'graph',
           layout: 'force',
           roam: true,
-          label: { show: true, color: 'oklch(0.82 0.010 90)', fontSize: 11 },
+          label: { show: true, color: tokens.colorTextBase, fontSize: 12 },
           force: {
             repulsion: 300,
             edgeLength: [80, 200],
@@ -186,7 +211,7 @@ const CaseGraph: React.FC = () => {
         },
       ],
     }
-  }, [graph, filteredEdges])
+  }, [graph, filteredEdges, tokens.colorBgElevated, tokens.colorTextBase])
 
   const handleChartClick = useCallback((params: { dataType?: string; data?: Record<string, unknown> }) => {
     if (params.dataType === 'node') {
@@ -199,21 +224,22 @@ const CaseGraph: React.FC = () => {
   }, [])
 
   const handleBuild = useCallback(() => {
+    if (!canWrite) return
     const ids = parseCaseIds()
     if (!ids.length) { message.warning('请输入有效案件 ID 或从下拉列表中选择'); return }
     buildMutation.mutate(ids)
-  }, [parseCaseIds, buildMutation])
+  }, [canWrite, parseCaseIds, buildMutation])
 
   // 导出 PNG
   const handleExport = useCallback(() => {
     if (!echartsRef.current) return
     const instance = echartsRef.current.getEchartsInstance()
-    const url = instance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#0d1117' })
+    const url = instance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: tokens.colorBgContainer })
     const link = document.createElement('a')
     link.href = url
     link.download = `case-graph-${Date.now()}.png`
     link.click()
-  }, [])
+  }, [tokens.colorBgContainer])
 
   const stats = graph?.stats
 
@@ -247,6 +273,7 @@ const CaseGraph: React.FC = () => {
 
   return (
     <div className="page-scrollable">
+      {!canWrite && <Alert type="info" message="只读账号不触发关系图谱生成；可从证据图谱查看已有案件依据" />}
 
       {/* 页面标题 */}
       <div className="page-title">
@@ -307,7 +334,7 @@ const CaseGraph: React.FC = () => {
             <button
               className="btn-primary"
               onClick={handleBuild}
-              disabled={buildMutation.isPending}
+              disabled={!canWrite || buildMutation.isPending}
               style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
             >
               <ShareAltOutlined />
@@ -334,7 +361,7 @@ const CaseGraph: React.FC = () => {
               <span className="spacer" />
               {/* 强关联过滤 */}
               <div className="cg-filter-row">
-                <FilterOutlined style={{ color: 'var(--ink-3)', fontSize: 11 }} />
+                <FilterOutlined style={{ color: 'var(--ink-3)', fontSize: 12 }} />
                 <span className="cg-filter-label">仅强关联（≥0.5）</span>
                 <Switch className="cg-switch" size="small" checked={onlyStrong} onChange={setOnlyStrong} />
               </div>
@@ -345,7 +372,7 @@ const CaseGraph: React.FC = () => {
                   <span>导出</span>
                 </button>
               )}
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', marginLeft: 8 }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', marginLeft: 8 }}>
                 {graph
                   ? `${graph.nodes?.length ?? 0} 节点 · ${filteredEdges.length} 关系`
                   : '待生成'}
@@ -413,7 +440,7 @@ const CaseGraph: React.FC = () => {
                     <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>{label}</span>
                   </div>
                 ))}
-                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--ink-3)' }}>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--ink-3)' }}>
                   节点大小 = 涉案人员数
                 </div>
               </div>

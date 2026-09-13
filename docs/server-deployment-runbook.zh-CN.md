@@ -1,5 +1,10 @@
 # AICommander v3.6.0-stable 服务器部署与运维手册
 
+> 当前 v5.2 源码升级须优先阅读 [v5.2 发布、迁移与回退说明](./releases/v5.2.0-stable.md)。
+> v5.1 起数据库必须同时含 PostGIS 和 pgvector；当前配置不再默认沿用本手册历史章节的纯 PostGIS 镜像。
+> 使用相容备份恢复到独立新卷并验证后切换，不直接给旧数据卷更换基础发行版。
+> 以下 v3.6 及更早章节保留为历史部署证据，不代表 v5.2 已在目标服务器投产。
+
 > 初次生产链路核验：2026-08-14；部署加固回归：2026-09-04
 > 适用版本：AICommander 3.6.0-stable（2026-09-10 收口）
 > 推荐环境：单台 Ubuntu Server 24.04 LTS、Docker Engine、Docker Compose Plugin
@@ -839,8 +844,9 @@ sudo ./scripts/backup-production.sh
 
 ### 17.2 非破坏性恢复验证（每次测试部署必做）
 
-先创建一次迁移后的新备份，再把该备份恢复到临时数据库。脚本验证 SHA-256、恢复过程、
-表数量和 Alembic 版本后会删除临时数据库，不停止服务，也不覆盖当前业务库：
+先创建一次迁移后的新备份，再把该备份恢复到临时数据库。脚本验证 SHA-256、备份清单、恢复过程、
+非空表数量和 Alembic 版本与清单一致后会删除临时数据库，不停止服务，也不覆盖当前业务库。
+缺少 `.manifest`、版本为 `untracked` 的首次迁移前备份、空库或版本查询失败均不能标为恢复通过：
 
 ```bash
 cd /opt/aicommander
@@ -863,7 +869,7 @@ sudo BACKUP_FILE=/opt/aicommander/backups/postgres/指定备份.dump \
 ```bash
 cd /opt/aicommander
 sudo docker compose --env-file .env.production \
-  -f docker-compose.production.yml stop frontend backend celery
+  -f docker-compose.production.yml stop frontend backend celery celery-beat agent-worker road-worker map-worker
 
 sudo docker compose --env-file .env.production \
   -f docker-compose.production.yml exec -T postgres \

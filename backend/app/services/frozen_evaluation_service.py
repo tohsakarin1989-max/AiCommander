@@ -33,19 +33,33 @@ def authorize_inputs(db, entries):
         snapshot = db.query(MapSnapshot.id).filter_by(id=payload['map']['id'], operational_area_id=area).first()
         if visible != case_ids or assets != asset_ids or snapshot is None:
             raise PermissionError('evaluation_source_unavailable')
+        if 'facility_evaluation' in payload:
+            from app.services.frozen_facility_inputs import validate_facility_inputs
+            validate_facility_inputs(db, envelope)
 
 
-def create_dataset(db, *, name, version, inputs, ground_truth=None, negative_case_ids=(), created_by=None, origin=None):
+def create_dataset(db, *, name, version, inputs, ground_truth=None, negative_case_ids=(),
+                   created_by=None, origin=None, facility_artifact_ids=None):
     if not name.strip() or len(name.strip()) > 200 or not version.strip() or len(version.strip()) > 80:
         raise ValueError('invalid_dataset_identity')
-    case_ids = [item['case_id'] for item in inputs]
-    if not 1 <= len(inputs) <= 100 or len(set(case_ids)) != len(case_ids):
+    if facility_artifact_ids is None:
+        if not 1 <= len(inputs) <= 100:
+            raise ValueError('invalid_frozen_dataset_size')
+        entries = [capture_inputs(db, **item) for item in sorted(inputs, key=lambda item: item['case_id'])]
+    else:
+        from app.services.frozen_facility_inputs import capture_facility_inputs
+        if inputs or not 1 <= len(facility_artifact_ids) <= 10 or len(set(facility_artifact_ids)) != len(facility_artifact_ids):
+            raise ValueError('invalid_facility_dataset_size')
+        entries = [capture_facility_inputs(db, identifier) for identifier in sorted(facility_artifact_ids)]
+    case_ids = [item['payload']['case']['id'] for item in entries]
+    if len(set(case_ids)) != len(case_ids):
         raise ValueError('invalid_frozen_dataset_size')
     labels = GovernanceService._normalize_ground_truth(ground_truth or {}, case_ids)
+    if facility_artifact_ids is not None:
+        _require_facility_labels(labels)
     negatives = sorted(set(negative_case_ids))
     if not set(negatives) <= set(case_ids) or set(negatives) & {int(key) for key in labels}:
         raise ValueError('conflicting_or_unknown_negative_labels')
-    entries = [capture_inputs(db, **item) for item in sorted(inputs, key=lambda item: item['case_id'])]
     for envelope in entries:
         payload = envelope['payload']
         payload['label_asset_ids'] = sorted({identifier
@@ -55,6 +69,10 @@ def create_dataset(db, *, name, version, inputs, ground_truth=None, negative_cas
     manifest = {'schema': SCHEMA, 'classification': 'internal_sensitive', 'entries': entries,
                 'labels': labels, 'negative_case_ids': negatives,
                 'boundary': '冻结检索输入的生产评分评测，不是完整机动车路网重放；阴性标签代表人工明确标注无候选。'}
+    if facility_artifact_ids is not None:
+        manifest['evaluation_family'] = 'facility_source'
+        manifest['boundary'] = ('同一案件画像、地图快照及固定道路评分证据的来源候选对照；'
+            '旧规则最多1项来源，新规则最多3项，同时比较首项及前三命中。保留各自召回范围；不重跑路由，不代表实际业务效果。')
     if origin is not None:
         manifest['origin'] = deepcopy(origin)
     fingerprint = checksum(manifest)
@@ -68,6 +86,12 @@ def create_dataset(db, *, name, version, inputs, ground_truth=None, negative_cas
     db.add(dataset)
     db.commit()
     return dataset
+
+
+def _require_facility_labels(labels):
+    if any(label['hypothesis_type'] != 'possible_source' or not label['expected_asset_ids']
+           or label.get('expected_region_grid') for group in labels.values() for label in group):
+        raise ValueError('facility_source_asset_labels_required')
 
 
 def create_from_result(db, *, result_id, expected_checksum, name, version, created_by=None):
@@ -109,6 +133,8 @@ def revise_labels(db, dataset_id, *, version, ground_truth, negative_case_ids, r
     if not version.strip() or len(version.strip()) > 80 or not reason.strip() or len(reason.strip()) > 500:
         raise ValueError('invalid_label_revision')
     labels = GovernanceService._normalize_ground_truth(ground_truth, source.case_ids)
+    if source.manifest.get('evaluation_family') == 'facility_source':
+        _require_facility_labels(labels)
     negatives = sorted(set(negative_case_ids))
     if not set(negatives) <= set(source.case_ids) or set(negatives) & {int(key) for key in labels}:
         raise ValueError('conflicting_or_unknown_negative_labels')
@@ -138,26 +164,34 @@ def revise_labels(db, dataset_id, *, version, ground_truth, negative_case_ids, r
 
 
 def run_evaluation(db, dataset_id, *, scorer_policy='captured'):
-    if scorer_policy not in ('captured', 'current_candidate'):
+    if scorer_policy not in ('captured', 'current_candidate', 'facility_captured', 'facility_candidate'):
         raise ValueError('invalid_scorer_policy')
     dataset = read_dataset(db, dataset_id)
     manifest = dataset.manifest
+    facility_policy = scorer_policy.startswith('facility_')
+    if facility_policy and manifest.get('evaluation_family') != 'facility_source':
+        raise ValueError('facility_evaluation_dataset_required')
     labels, negatives = manifest['labels'], set(manifest['negative_case_ids'])
     records = []
-    positive_hits = negative_correct = 0
     for envelope in manifest['entries']:
         case_id = envelope['payload']['case']['id']
         try:
-            result = replay_inputs(envelope) if scorer_policy == 'captured' else replay_inputs(envelope, scorer_policy=scorer_policy)
+            if facility_policy:
+                from app.services.frozen_facility_inputs import replay_facility_inputs
+                result = replay_facility_inputs(envelope, current=scorer_policy == 'facility_candidate')
+            else:
+                result = replay_inputs(envelope) if scorer_policy == 'captured' else replay_inputs(envelope, scorer_policy=scorer_policy)
             candidates = result['candidates']
             positive = labels.get(str(case_id))
             hit = any(GovernanceService._hypothesis_matches_ground_truth(SimpleNamespace(**candidate), label)
                       for candidate in candidates for label in (positive or []))
-            positive_hits += bool(hit)
-            negative_correct += case_id in negatives and result['status'] == 'empty'
+            first_hit = any(GovernanceService._hypothesis_matches_ground_truth(SimpleNamespace(**candidate), label)
+                            for candidate in candidates[:1] for label in (positive or []))
             record = {'case_id': case_id, 'status': result['status'], 'candidate_count': len(candidates),
                 'label_state': 'positive' if positive else 'negative' if case_id in negatives else 'unlabeled',
                 'correct': bool(hit) if positive else result['status'] == 'empty' if case_id in negatives else None,
+                'first_correct': bool(first_hit) if positive else None,
+                'coverage': result.get('coverage'),
                 'candidate_observations': candidate_observations(candidates, positive or [], case_id in negatives),
                 'candidate_checksum': checksum(candidates), 'input_checksum': envelope['checksum']}
         except (ValueError, RuntimeError, TypeError, KeyError, AttributeError):
@@ -167,22 +201,35 @@ def run_evaluation(db, dataset_id, *, scorer_policy='captured'):
                 'failure_reason': 'frozen_replay_failed', 'input_checksum': envelope['checksum']}
         records.append(record)
     failures = sum(row['status'] == 'failed' for row in records)
+    positive_hits = sum(row['label_state'] == 'positive' and row['correct'] is True for row in records)
+    positive_first_hits = sum(row['label_state'] == 'positive' and row.get('first_correct') is True for row in records)
+    negative_correct = sum(row['label_state'] == 'negative' and row['correct'] is True for row in records)
     positive_count, negative_count = len(labels), len(negatives)
     metrics = {'case_count': len(records), 'failed_case_count': failures,
         'empty_case_count': sum(row['status'] == 'empty' for row in records),
+        'incomplete_case_count': sum(row['status'] == 'incomplete' for row in records),
         'unlabeled_case_count': sum(row['label_state'] == 'unlabeled' for row in records),
         'positive_case_count': positive_count, 'negative_case_count': negative_count,
         'positive_top3_hit_rate': positive_hits / positive_count if positive_count else None,
+        'positive_top1_hit_rate': positive_first_hits / positive_count if positive_count else None,
         'negative_correct_empty_rate': negative_correct / negative_count if negative_count else None,
         'metric_basis': SCHEMA, 'score_kind': 'rule_support_not_calibrated_probability'}
     # Reauthorize before persistence; there are no source writes or execution tasks.
     authorize_inputs(db, manifest['entries'])
     trace = {'dataset_checksum': dataset.checksum, 'records': records, 'records_checksum': checksum(records)}
     versions = sorted({entry['payload']['algorithm_version'] for entry in manifest['entries']}) if scorer_policy == 'captured' else [CASE_INSIGHT_ALGORITHM_VERSION]
+    if facility_policy:
+        from app.services.scorers.facility_roads_v52 import VERSION
+        versions = ([VERSION] if scorer_policy == 'facility_candidate' else
+                    sorted({entry['payload']['facility_evaluation']['algorithm_version'] for entry in manifest['entries']}))
     implementations = []
     for version in versions:
         try:
-            fingerprint = scorer_checksum(version)
+            if facility_policy:
+                from app.services.scorers.registry import resolve_facility_scorer
+                fingerprint = resolve_facility_scorer(version)[1]
+            else:
+                fingerprint = scorer_checksum(version)
         except ValueError:
             fingerprint = None
         implementations.append({'version': version, 'code_checksum': fingerprint})
@@ -191,7 +238,8 @@ def run_evaluation(db, dataset_id, *, scorer_policy='captured'):
     algorithm['result_checksum'] = checksum({'metrics': metrics, 'trace': trace, 'algorithm': deepcopy(algorithm)})
     run = EvaluationRun(id=str(uuid4()), dataset_id=dataset.id,
         algorithm_manifest=algorithm,
-        scope_policy_version='current-area-source-check-4.5-1', status='partial_failure' if failures else 'completed',
+        scope_policy_version='current-area-source-check-4.5-1',
+        status='partial_failure' if failures else 'incomplete' if metrics['incomplete_case_count'] else 'completed',
         metrics=metrics, trace_manifest=trace, completed_at=datetime.now(timezone.utc))
     db.add(run)
     db.commit()
@@ -251,4 +299,7 @@ def compare_runs(db, baseline_id, candidate_id):
         'dataset_checksum': old_dataset.checksum, 'counts': counts, 'cases': rows,
         'baseline_failed_cases': baseline.metrics['failed_case_count'],
         'candidate_failed_cases': candidate.metrics['failed_case_count'],
+        'baseline_top1_hit_rate': baseline.metrics.get('positive_top1_hit_rate'),
+        'candidate_top1_hit_rate': candidate.metrics.get('positive_top1_hit_rate'),
+        'evaluation_family': old_dataset.manifest.get('evaluation_family', 'all'),
         'boundary': '同一冻结输入与标签的评分结果比较；未标注变化不计改善，失败保留在原样本中。不代表现场效果或完整路网算法评测。'}

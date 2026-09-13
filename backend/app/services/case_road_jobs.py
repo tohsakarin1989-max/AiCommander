@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,6 +23,7 @@ from app.services.outbox_claim_service import OutboxClaimService
 from app.services.road_access_policy import VehicleAssumption
 from app.services.road_network_service import resolve_network, select_network
 from app.services.vehicle_router import RoadCalculationError
+from app.services.facility_analysis_versions import current_versions
 
 EVENT_TYPE = 'case.roads.compare'
 JOB_VERSION = 'case-road-job-4.2.0-1'
@@ -44,7 +45,8 @@ def _identity(db, user_id, ceiling):
             ceiling if current is None else current)))
 
 
-def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version):
+def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version,
+                       include_facility_pool=False, history_revision=None):
     """Persist once per frozen input/scope/graph, without committing caller work."""
     actor = db.info.get('principal_user_id')
     if 'authorized_area_ids' not in db.info:
@@ -59,6 +61,14 @@ def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version):
         'scope': None if scope is None else sorted(scope), 'content_sha256': source['content_sha256'],
         'network_id': binding.network_id, 'graph_sha256': binding.graph_sha256,
         'policy_revision': binding.policy_revision, 'vehicle': vehicle.model_dump()}
+    if include_facility_pool:
+        payload['facility_versions'] = current_versions()
+        payload['facility_algorithm'] = payload['facility_versions']['scorer']
+    if history_revision is not None:
+        if not include_facility_pool:
+            raise ValueError('history_refresh_requires_facility_pool')
+        # Internal event identity, not a claim that the entire corpus was frozen.
+        payload['history_refresh_event_id'] = str(UUID(history_revision))
     key = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
     payload['analysis_at'] = analysis_at.isoformat()
     dialect = db.get_bind().dialect.name
@@ -67,7 +77,7 @@ def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version):
     insert = sqlite_insert if dialect == 'sqlite' else pg_insert
     identifier = db.scalar(insert(OutboxEvent).values(id=str(uuid4()), event_type=EVENT_TYPE,
         aggregate_type='case_result', aggregate_id=result_id, payload=payload,
-        idempotency_key=key, status='pending', attempts=0)
+        idempotency_key=key, status='pending', attempts=0, created_at=datetime.now(timezone.utc))
         .on_conflict_do_nothing(index_elements=['idempotency_key']).returning(OutboxEvent.id))
     created = identifier is not None
     if not identifier:
@@ -93,7 +103,8 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
             return {'event_id': event_id, 'status': event.status, 'claimed': False}
         token, attempts = event.worker_id, event.attempts
         payload = dict(event.payload)
-        if payload.get('job_version') != JOB_VERSION:
+        if (payload.get('job_version') != JOB_VERSION or
+                (payload.get('facility_algorithm') and payload.get('facility_versions') != current_versions())):
             OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='superseded')
             db.commit()
             return {'event_id': event_id, 'status': 'superseded'}
@@ -112,13 +123,22 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
         db.rollback()  # Release read transaction before potentially long native work.
         if cancel_event is not None and cancel_event.is_set():
             raise RoadCalculationError('road_calculation_cancelled')
-        result = compare_result_roads(db, result_id=payload['result_id'], analysis_at=at,
+        calculate = compare_result_roads
+        if payload.get('facility_algorithm'):
+            from app.services.case_facility_comparison import compare_case_facilities
+            if payload['facility_algorithm'] != current_versions()['scorer']:
+                raise ValueError('facility_job_algorithm_unavailable')
+            calculate = compare_case_facilities
+        result = calculate(db, result_id=payload['result_id'], analysis_at=at,
             vehicle=vehicle, artifact_root=artifact_root, cancel_event=cancel_event,
             network_id=payload['network_id'])
+        if payload.get('history_refresh_event_id'):
+            result = {**result, 'history_refresh_event_id': payload['history_refresh_event_id']}
         authorize()
         if cancel_event is not None and cancel_event.is_set():
             raise RoadCalculationError('road_calculation_cancelled')
-        artifact = freeze_road_artifact(db, result) if isinstance(result.get('matrix'), dict) else None
+        has_calculation = isinstance(result.get('matrix'), dict) or isinstance(result.get('calculation'), dict)
+        artifact = freeze_road_artifact(db, result) if has_calculation else None
         if cancel_event is not None and cancel_event.is_set():
             raise RoadCalculationError('road_calculation_cancelled')
         OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='completed',

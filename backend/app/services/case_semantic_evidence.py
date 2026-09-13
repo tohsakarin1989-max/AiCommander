@@ -10,6 +10,9 @@ from typing import Mapping
 SOURCE_FIELDS = frozenset({
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "vehicle_info", "involved_items", "upstream_source", "downstream_destination",
+    # Search evidence may cite these literal metadata fields. They are not
+    # included in case_semantic_service.TEXT_FIELDS for semantic extraction.
+    "case_number", "case_type", "source_type", "report_unit", "oil_nature",
 })
 ASSERTION_KINDS = frozenset({"stated", "negated", "uncertain", "inferred"})
 

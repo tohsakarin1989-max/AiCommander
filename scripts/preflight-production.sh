@@ -113,9 +113,17 @@ case "$APP_VERSION" in
     *)
         [ "$ALEMBIC_TARGET" = "head" ] \
             || fail "v3.1 及以上候选部署必须使用 ALEMBIC_TARGET=head"
-        case "$POSTGIS_IMAGE" in
+        case "$APP_VERSION" in
+          5.*)
+            sh "$ROOT_DIR/scripts/check-postgres-image.sh" "$POSTGIS_IMAGE" \
+                || fail "v5.1+ 数据库镜像不满足离线迁移条件，请参照 local-history-embedding.zh-CN.md"
+            ;;
+          *)
+          case "$POSTGIS_IMAGE" in
             *postgis*@sha256:????????????????????????????????????????????????????????????????) ;;
             *) fail "v3.1 及以上必须配置带 sha256 摘要的 PostGIS 镜像 POSTGIS_IMAGE" ;;
+          esac
+          ;;
         esac
         ;;
 esac

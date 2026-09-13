@@ -1,5 +1,7 @@
+from copy import deepcopy
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -7,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import case_intelligence
+from app.api import case_intelligence, cases
 from app.database import Base, get_db
 from app.models.case import Case, CaseVehicle
 from app.models.jurisdiction import JurisdictionAsset
@@ -29,6 +31,7 @@ def _session() -> Session:
 def _client(db_session: Session) -> TestClient:
     app = FastAPI()
     app.include_router(case_intelligence.router, prefix="/api/case-intelligence")
+    app.include_router(cases.router, prefix="/api/cases")
 
     def override_get_db():
         yield db_session
@@ -297,3 +300,40 @@ def test_assistant_context_uses_case_intelligence_workbench():
     assert intelligence["similar_cases"][0]["score"] > 0
     assert intelligence["suggestions"][0]["basis"]
     assert "不自动创建执行任务" in intelligence["boundary"]
+
+
+@pytest.mark.parametrize("stored_card", [False, True])
+@pytest.mark.parametrize("path", [
+    "/api/case-intelligence/workbench?case_id={case_id}",
+    "/api/case-intelligence/llm-context?case_id={case_id}",
+    "/api/case-intelligence/report?case_id={case_id}",
+    "/api/case-intelligence/prevention-suggestions?case_id={case_id}",
+    "/api/case-intelligence/cases/{case_id}/experience-card",
+    "/api/cases/{case_id}/automation-workbench",
+    "/api/cases/{case_id}/quality",
+    "/api/cases/{case_id}/feature-profile",
+])
+def test_case_analysis_reads_preserve_quality_and_confirmed_experience(path, stored_card):
+    db = _session()
+    client = _client(db)
+    case = _seed(db)
+    if stored_card:
+        case.features = {
+            "intelligence": {
+                "experience_card": {
+                    "manual_review_status": "confirmed",
+                    "generated_at": "2026-01-01T00:00:00",
+                    "reviewer": "合成人工复核员",
+                    "summary": "已经人工确认的固定内容",
+                },
+            },
+        }
+        db.commit()
+    fields = ("features", "quality_issues", "quality_score", "updated_at")
+    before = {field: deepcopy(getattr(case, field)) for field in fields}
+
+    response = client.get(path.format(case_id=case.id))
+
+    assert response.status_code == 200
+    db.refresh(case)
+    assert {field: getattr(case, field) for field in fields} == before

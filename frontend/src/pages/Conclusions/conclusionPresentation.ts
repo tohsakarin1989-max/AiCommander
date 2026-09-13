@@ -15,6 +15,22 @@ const MODEL_LABELS: Record<string, string> = {
   deterministic_fallback: '规则兜底',
   llm_success: '模型生成',
   llm_failed: '模型失败',
+  reused_case_result: '复用既有案件成果',
+}
+
+export function conclusionConfidence(conclusion?: Conclusion | null): number | null {
+  if (!conclusion) return null
+  const output = getConclusionAiOutput(conclusion)
+  if (conclusion.confidence_available === false || conclusion.evidence?.confidence_available === false
+    || output?.confidence_available === false || conclusion.evidence?.source_result || output?.source_result
+    || conclusion.model_status === 'reused_case_result' || output?.model_status === 'reused_case_result') return null
+  return typeof conclusion.confidence === 'number' && Number.isFinite(conclusion.confidence)
+    && conclusion.confidence >= 0 && conclusion.confidence <= 1 ? conclusion.confidence : null
+}
+
+export function conclusionConfidenceLabel(conclusion?: Conclusion | null): string {
+  const confidence = conclusionConfidence(conclusion)
+  return confidence === null ? '未提供准确概率' : `${Math.round(confidence * 100)}%（历史字段）`
 }
 
 function listBlock(items: string[] | undefined, emptyText: string): string {
@@ -52,7 +68,7 @@ export function getConclusionMarkdown(conclusion?: Conclusion | null): string {
     '',
     `- 结论 ID：${conclusion.id}`,
     `- 当前状态：${conclusion.status || '待人工复核'}`,
-    `- 置信度：${typeof conclusion.confidence === 'number' ? `${Math.round(conclusion.confidence * 100)}%` : '待人工确认'}`,
+    `- 置信度：${conclusionConfidenceLabel(conclusion)}`,
     `- 风险等级：${conclusion.risk_level || '待人工确认'}`,
     '',
     '## 摘要',

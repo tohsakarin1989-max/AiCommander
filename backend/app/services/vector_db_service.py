@@ -1,280 +1,145 @@
-"""
-向量数据库服务 - 使用Chroma存储案件语义向量
-"""
-try:
-    import chromadb
-    from chromadb.config import Settings
-except Exception:  # pragma: no cover - optional dependency
-    chromadb = None
-    Settings = None
-from typing import List, Dict, Optional
-import os
-from app.utils.logger import logger
-from app.services.embedding_service import EmbeddingService
+"""旧向量接口兼容层：只读统一历史索引，不再创建或读取 Chroma。"""
+import heapq
+import math
+import time
+
+from sqlalchemy import func, select
+
+from app.models.case import Case
+from app.models.case_history_index import CaseHistoryIndex
+from app.services.case_history_index_service import cached_features
+from app.services.case_history_retrieval import source_values, business_conditions, compare
+from app.services.case_history_vector_service import exact_distances
+from app.services.case_semantic_evidence import freeze_sources, snapshot_payload
+from app.services.case_semantic_service import TEXT_FIELDS, build_semantic_profile
+from app.services.local_embedding_service import LocalEmbeddingError, get_local_embedder
 
 
 class VectorDBService:
-    """向量数据库服务"""
-    
+    """保持旧方法名及分数含义；状态独立返回，不把失败转成无匹配。"""
+
     def __init__(self):
-        self.client = None
-        self.collection = None
-        self.embedding_service = EmbeddingService()
-        self._init_client()
-    
-    def _init_client(self):
-        """初始化Chroma客户端"""
-        try:
-            if chromadb is None or Settings is None:
-                logger.warning("chromadb 未安装，向量数据库不可用")
-                self.client = None
-                self.collection = None
-                return
-            # 使用持久化存储
-            persist_directory = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "data",
-                "chroma_db"
-            )
-            os.makedirs(persist_directory, exist_ok=True)
-            
-            self.client = chromadb.PersistentClient(
-                path=persist_directory,
-                settings=Settings(anonymized_telemetry=False)
-            )
-            
-            # 获取或创建collection
-            self.collection = self.client.get_or_create_collection(
-                name="cases",
-                metadata={"description": "案件语义向量库"}
-            )
-            
-            logger.info(f"向量数据库初始化成功，存储路径: {persist_directory}")
-        except Exception as e:
-            logger.error(f"向量数据库初始化失败: {e}")
-            self.client = None
-            self.collection = None
-    
-    def is_available(self) -> bool:
-        """检查向量数据库是否可用"""
-        return self.client is not None and self.collection is not None
-    
-    def add_case(self, case_id: int, case_data: Dict, embedding: Optional[List[float]] = None) -> bool:
-        """
-        添加案件到向量数据库
-        
-        Args:
-            case_id: 案件ID
-            case_data: 案件数据字典
-            embedding: 可选的预生成embedding，如果为None则自动生成
-            
-        Returns:
-            是否成功
-        """
-        if not self.is_available():
-            logger.warning("向量数据库不可用，跳过添加")
+        self.status = {'state': 'not_enabled', 'complete': False}
+
+    def is_available(self, db=None) -> bool:
+        if db is None or 'authorized_area_ids' not in db.info:
+            self.status = {'state': 'scope_required', 'complete': False}
             return False
-        try:
-            operational_area_id = int(case_data.get("operational_area_id"))
-        except (TypeError, ValueError):
-            logger.warning(f"案件 {case_id} 尚未归属厂区，跳过向量化")
-            return False
-        
-        try:
-            # 构建案件文本
-            text = self.embedding_service.build_case_text(case_data)
-            if not text:
-                logger.warning(f"案件 {case_id} 无有效文本，跳过向量化")
-                return False
-            
-            # 生成embedding
-            if embedding is None:
-                embedding = self.embedding_service.generate_embedding(text)
-                if not embedding:
-                    logger.error(f"无法为案件 {case_id} 生成embedding")
-                    return False
-            
-            # 添加到collection
-            self.collection.add(
-                ids=[str(case_id)],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[{
-                    "case_id": case_id,
-                    "case_number": case_data.get("case_number", ""),
-                    "case_type": case_data.get("case_type", ""),
-                    "modus_operandi": case_data.get("modus_operandi", ""),
-                    "occurred_time": str(case_data.get("occurred_time", "")),
-                    "operational_area_id": operational_area_id,
-                }]
-            )
-            
-            logger.info(f"案件 {case_id} 已添加到向量数据库")
-            return True
-        except Exception as e:
-            logger.error(f"添加案件到向量数据库失败: {e}")
-            return False
-    
-    def update_case(self, case_id: int, case_data: Dict) -> bool:
-        """更新案件向量（先删除再添加）"""
-        self.delete_case(case_id)
+        model = get_local_embedder()
+        self.status = {'state': model.state, 'complete': False, 'model_version': model.model_version}
+        return model.state == 'ready'
+
+    def add_case(self, case_id, case_data, embedding=None) -> bool:
+        # Save Outbox/background rebuild is the only ingestion path. Never trust
+        # caller-supplied text or vectors as a persisted business source.
+        self.status = {'state': 'background_index_required', 'complete': False}
+        return False
+
+    def update_case(self, case_id, case_data) -> bool:
         return self.add_case(case_id, case_data)
-    
-    def delete_case(self, case_id: int) -> bool:
-        """从向量数据库删除案件"""
-        if not self.is_available():
-            return False
-        
-        try:
-            self.collection.delete(ids=[str(case_id)])
-            logger.info(f"案件 {case_id} 已从向量数据库删除")
-            return True
-        except Exception as e:
-            logger.error(f"从向量数据库删除案件失败: {e}")
-            return False
-    
-    def search_similar_cases(
-        self,
-        query_text: str,
-        top_k: int = 10,
-        min_similarity: float = 0.5,
-        operational_area_ids: Optional[List[int]] = None,
-    ) -> List[Dict]:
-        """
-        语义搜索相似案件
-        
-        Args:
-            query_text: 查询文本（可以是案件描述、作案手法等）
-            top_k: 返回最相似的k个案件
-            min_similarity: 最小相似度阈值（0-1）
-            
-        Returns:
-            相似案件列表，包含相似度分数
-        """
-        if not self.is_available():
-            logger.warning("向量数据库不可用，无法搜索")
-            return []
-        where = self._area_filter(operational_area_ids)
-        if operational_area_ids is not None and where is None:
-            return []
-        
-        try:
-            # 生成查询embedding
-            query_embedding = self.embedding_service.generate_embedding(query_text)
-            if not query_embedding:
-                logger.error("无法生成查询embedding")
-                return []
-            
-            # 搜索相似向量
-            query_options = {
-                "query_embeddings": [query_embedding],
-                "n_results": top_k,
-            }
-            if where is not None:
-                query_options["where"] = where
-            results = self.collection.query(**query_options)
-            
-            # 解析结果
-            similar_cases = []
-            if results["ids"] and len(results["ids"][0]) > 0:
-                for i, case_id_str in enumerate(results["ids"][0]):
-                    distance = results["distances"][0][i] if results["distances"] else 1.0
-                    # Chroma返回的是距离，转换为相似度（1 - distance）
-                    similarity = 1.0 - distance if distance <= 1.0 else 0.0
-                    
-                    if similarity >= min_similarity:
-                        metadata = results["metadatas"][0][i] if results["metadatas"] else {}
-                        similar_cases.append({
-                            "case_id": int(case_id_str),
-                            "similarity": round(similarity, 4),
-                            "distance": round(distance, 4),
-                            "metadata": metadata,
-                        })
-            
-            return similar_cases
-        except Exception as e:
-            logger.error(f"语义搜索失败: {e}")
-            return []
-    
-    def find_semantic_serial_cases(
-        self,
-        case_id: int,
-        top_k: int = 10,
-        min_similarity: float = 0.6,
-        operational_area_ids: Optional[List[int]] = None,
-    ) -> List[Dict]:
-        """
-        基于语义相似度查找串案
-        
-        Args:
-            case_id: 目标案件ID
-            top_k: 返回最相似的k个案件
-            min_similarity: 最小相似度阈值
-            
-        Returns:
-            相似案件列表
-        """
-        if not self.is_available():
-            return []
-        where = self._area_filter(operational_area_ids)
-        if operational_area_ids is not None and where is None:
-            return []
-        
-        try:
-            # 获取目标案件的embedding
-            get_options = {"ids": [str(case_id)]}
-            if where is not None:
-                get_options["where"] = where
-            results = self.collection.get(**get_options)
-            if not results["ids"] or len(results["ids"]) == 0:
-                logger.warning(f"案件 {case_id} 不在向量数据库中")
-                return []
-            
-            # 使用目标案件的embedding搜索相似案件（排除自己）
-            query_embedding = results["embeddings"][0]
-            
-            query_options = {
-                "query_embeddings": [query_embedding],
-                "n_results": top_k + 1,
-            }
-            if where is not None:
-                query_options["where"] = where
-            search_results = self.collection.query(**query_options)
-            
-            similar_cases = []
-            if search_results["ids"] and len(search_results["ids"][0]) > 0:
-                for i, found_id_str in enumerate(search_results["ids"][0]):
-                    found_id = int(found_id_str)
-                    if found_id == case_id:
-                        continue  # 排除自己
-                    
-                    distance = search_results["distances"][0][i] if search_results["distances"] else 1.0
-                    similarity = 1.0 - distance if distance <= 1.0 else 0.0
-                    
-                    if similarity >= min_similarity:
-                        metadata = search_results["metadatas"][0][i] if search_results["metadatas"] else {}
-                        similar_cases.append({
-                            "case_id": found_id,
-                            "similarity": round(similarity, 4),
-                            "metadata": metadata
-                        })
-            
-            return similar_cases
-        except Exception as e:
-            logger.error(f"查找语义串案失败: {e}")
-            return []
+
+    def delete_case(self, case_id) -> bool:
+        # Derived rows follow the business case's transactional FK cascade.
+        self.status = {'state': 'business_delete_required', 'complete': False}
+        return False
+
+    def search_similar_cases(self, query_text, top_k=10, min_similarity=0.5,
+                             operational_area_ids=None, *, db=None):
+        if not isinstance(query_text, str) or not query_text.strip() or len(query_text) > 2000:
+            raise ValueError('invalid_vector_query')
+        return self._search(db, query_text, top_k, min_similarity, operational_area_ids)
+
+    def find_semantic_serial_cases(self, case_id, top_k=10, min_similarity=0.6,
+                                   operational_area_ids=None, *, db=None):
+        self._require_scope(db)
+        if type(case_id) is not int or case_id <= 0:
+            raise ValueError('invalid_vector_case_id')
+        with db.no_autoflush:
+            case = db.scalar(select(Case).where(Case.id == case_id).execution_options(populate_existing=True))
+            if case is None:
+                raise PermissionError('vector_source_unavailable')
+            if operational_area_ids is not None and case.operational_area_id not in operational_area_ids:
+                raise PermissionError('vector_source_unavailable')
+            text = '。'.join(value for value in source_values(case).values() if value)
+            return self._search(db, text, top_k, min_similarity, operational_area_ids, exclude=case_id)
 
     @staticmethod
-    def _area_filter(operational_area_ids: Optional[List[int]]) -> Optional[Dict]:
-        """生成 Chroma 厂区过滤；显式空授权采用拒绝而非全库回退。"""
-        if operational_area_ids is None:
-            return None
+    def _require_scope(db):
+        if db is None or 'authorized_area_ids' not in db.info:
+            raise PermissionError('vector_scope_required')
+
+    def _search(self, db, query_text, top_k, min_similarity, areas, exclude=None):
+        self._require_scope(db)
+        if (type(top_k) is not int or not 1 <= top_k <= 100
+                or type(min_similarity) not in (int, float)
+                or not math.isfinite(min_similarity) or not 0 <= min_similarity <= 1):
+            raise ValueError('invalid_vector_parameters')
+        if areas is not None and (not isinstance(areas, (list, tuple))
+                or any(type(area) is not int or area <= 0 for area in areas)):
+            raise ValueError('invalid_vector_scope')
+        if not self.is_available(db):
+            return []
+        model = get_local_embedder()
+        started = time.monotonic()
         try:
-            normalized = sorted({int(item) for item in operational_area_ids if int(item) > 0})
-        except (TypeError, ValueError):
-            return None
-        if not normalized:
-            return None
-        if len(normalized) == 1:
-            return {"operational_area_id": normalized[0]}
-        return {"operational_area_id": {"$in": normalized}}
+            vector = model.encode(query_text)
+        except LocalEmbeddingError:
+            self.status = {'state': 'unavailable', 'complete': False, 'model_version': model.model_version}
+            return []
+        conditions = business_conditions(build_semantic_profile({'description': query_text}))
+        with db.no_autoflush:
+            query = db.query(Case)
+            if areas is not None:
+                query = query.filter(Case.operational_area_id.in_(areas))
+            if exclude is not None:
+                query = query.filter(Case.id != exclude)
+            upper = query.with_entities(func.max(Case.id)).scalar()
+            total = query.filter(Case.id <= upper).count() if upper is not None else 0
+            cursor, scanned, missing = 0, 0, 0
+            heap = []
+            while upper is not None and cursor < upper:
+                if time.monotonic() - started > 5:
+                    break
+                cases = (query.filter(Case.id > cursor, Case.id <= upper).order_by(Case.id).limit(100)
+                         .execution_options(populate_existing=True).all())
+                if not cases:
+                    break
+                sources = {(case.id, 'case', str(case.id)): snapshot_payload(freeze_sources(source_values(case)))['sha256']
+                           for case in cases}
+                distances = exact_distances(db, sources=sources, vector=vector, model_version=model.model_version)
+                indexes = {row.case_id: row for row in db.scalars(select(CaseHistoryIndex).where(
+                    CaseHistoryIndex.case_id.in_([case.id for case in cases]), CaseHistoryIndex.source_type == 'case')
+                    .execution_options(populate_existing=True))}
+                for case in cases:
+                    key = (case.id, 'case', str(case.id))
+                    distance = distances.get(key)
+                    scanned += 1
+                    if distance is None:
+                        missing += 1
+                        continue
+                    similarity = max(-1., min(1., 1 - distance))
+                    if similarity < min_similarity:
+                        continue
+                    cached = cached_features(indexes.get(case.id), sources[key])
+                    candidate_conditions = cached[1] if cached else business_conditions(build_semantic_profile(
+                        {field: getattr(case, field) for field in TEXT_FIELDS}))
+                    comparison = compare(query_text, conditions, '', candidate_conditions)
+                    if comparison['different_conditions'] and not comparison['shared_conditions']:
+                        continue
+                    item = {'case_id': case.id, 'similarity': round(similarity, 6), 'distance': distance,
+                            'score_kind': 'cosine_similarity_not_probability',
+                            'shared_conditions': comparison['shared_conditions'],
+                            'different_conditions': comparison['different_conditions'],
+                            'metadata': {'case_id': case.id, 'operational_area_id': case.operational_area_id},
+                            'versions': {'source_hash': sources[key], 'model_version': model.model_version}}
+                    entry = (similarity, -case.id, item)
+                    if len(heap) < top_k:
+                        heapq.heappush(heap, entry)
+                    elif entry[:2] > heap[0][:2]:
+                        heapq.heapreplace(heap, entry)
+                cursor = cases[-1].id
+            complete = scanned == total and missing == 0
+            self.status = {'state': 'ready' if complete else 'partial', 'complete': complete,
+                           'authorized_cases': total, 'scanned_cases': scanned, 'missing_vectors': missing,
+                           'model_version': model.model_version, 'recency_limit': None}
+            return [item for _, _, item in sorted(heap, key=lambda row: row[:2], reverse=True)]

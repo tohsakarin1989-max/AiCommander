@@ -14,6 +14,13 @@ from app.services.system_config_service import SystemConfigService
 router = APIRouter()
 
 
+class RuntimeFeatures(BaseModel):
+    legacy_operations: bool
+    bonus_accounting: bool
+    agent_lab: bool
+    showcase: bool
+
+
 class RuntimeStatusResponse(BaseModel):
     status: str
     database: str
@@ -22,6 +29,7 @@ class RuntimeStatusResponse(BaseModel):
     map_provider: str
     map_configured: bool
     version: str
+    features: RuntimeFeatures
 
 
 def _redis_status() -> str:
@@ -62,4 +70,10 @@ def runtime_status(db: Session = Depends(get_db)):
         map_provider=map_provider,
         map_configured=map_configured,
         version=settings.APP_VERSION,
+        features=RuntimeFeatures(
+            legacy_operations=settings.ENABLE_LEGACY_OPERATIONS_MODULES,
+            bonus_accounting=settings.ENABLE_BONUS_ACCOUNTING,
+            agent_lab=settings.ENABLE_AGENT_LAB,
+            showcase=settings.ENABLE_SHOWCASE,
+        ),
     )

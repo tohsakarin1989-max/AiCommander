@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.tasks.chain_tasks",
         "app.tasks.agent_tasks",
         "app.tasks.case_pipeline_tasks",
+        "app.tasks.case_history_tasks",
         "app.tasks.case_insight_tasks",
         "app.tasks.case_result_tasks",
         "app.tasks.case_road_tasks",
@@ -27,10 +28,20 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        "reconcile-case-history-index": {
+            "task": "aicommander.case_history.reconcile",
+            "schedule": 15.0,
+            "options": {"expires": 15},
+        },
         "process-case-road-comparison": {
             "task": "aicommander.case_roads.process_next",
             "schedule": 10.0,
             "options": {"queue": "road_analysis", "expires": 10},
+        },
+        "reconcile-facility-algorithm": {
+            "task": "aicommander.case_roads.reconcile_algorithm",
+            "schedule": 300.0,
+            "options": {"queue": "road_analysis", "expires": 300},
         },
         "process-intelligent-query": {
             "task": "aicommander.queries.process_next",

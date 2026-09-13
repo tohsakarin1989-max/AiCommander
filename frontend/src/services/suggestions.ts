@@ -1,6 +1,9 @@
 import api from './api'
 
 export type SuggestionPriority = 'high' | 'medium' | 'low'
+export type SuggestionWorkflow = 'all' | 'coordinate_gap' | 'data_quality' | 'processing_card'
+  | 'bonus_metric_gap' | 'bonus_material_gap' | 'alert' | 'conclusion_review'
+  | 'report_followup' | 'experience' | 'event_review' | 'area_reference'
 export type SuggestionType =
   | 'data_quality'
   | 'analysis'
@@ -40,16 +43,26 @@ export interface WorkSuggestion {
   status: string
   created_at: string
   meta?: Record<string, unknown>
+  workflow?: Exclude<SuggestionWorkflow, 'all'>
 }
 
 export interface SuggestionsResponse {
   suggestions: WorkSuggestion[]
   total: number
   generated_at: string
+  offset?: number
+  limit?: number
+  has_more?: boolean
+  summary?: {
+    total: number
+    priority: Record<SuggestionPriority, number>
+    type: Record<string, number>
+    workflow: Record<string, number>
+  }
 }
 
 export const suggestionsApi = {
-  list: async (params?: { limit?: number; status?: string }): Promise<SuggestionsResponse> => {
+  list: async (params?: { limit?: number; offset?: number; status?: string; workflow?: SuggestionWorkflow }): Promise<SuggestionsResponse> => {
     const response = await api.get<SuggestionsResponse>('/suggestions/', { params })
     return response.data
   },

@@ -26,8 +26,8 @@
   align-items: center;
   padding: 5px 14px;
   font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  letter-spacing: 0;
   border: 1px solid var(--line);
   background: var(--bg-1);
   color: var(--ink-2);
@@ -74,8 +74,8 @@
   margin-top: 6px;
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -108,7 +108,7 @@
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
-  background: linear-gradient(90deg, var(--accent-line), transparent);
+  background: var(--bg-1);
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -170,8 +170,8 @@
 
 .rp-modal-section__title {
   font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  letter-spacing: 0;
   color: var(--accent);
   text-transform: uppercase;
   margin-bottom: 10px;
@@ -205,7 +205,7 @@
 /* pre 代码块 */
 .rp-pre {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-2);
   white-space: pre-wrap;
   background: var(--bg-0);

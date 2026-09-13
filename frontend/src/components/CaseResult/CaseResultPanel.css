@@ -1,4 +1,9 @@
 .case-result { min-width: 0; color: var(--ink-1); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.case-result__reading-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); gap: 24px; }
+.case-result__document { min-width: 0; }
+.case-result__sources { border-left: 1px solid var(--line); padding-left: 20px; min-width: 0; }
+.case-result__sources code { color: var(--info); }
+@media (max-width: 1279px) { .case-result__reading-layout { grid-template-columns: minmax(0, 1fr); } .case-result__sources { border-left: 0; border-top: 1px solid var(--line); padding: 16px 0; } }
 .case-result__header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .case-result__download { margin: 12px 0; }
 .case-result__download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }

@@ -696,12 +696,40 @@ class MapFoundationService:
             "production_unit",
             "production_status",
             "facility_category",
+            "water_cut_unit",
         ):
             value = MapFoundationService._clean_string(
                 MapFoundationService._mapped_value(raw, mapping, key)
             )
             if value is not None:
                 production_attributes[key] = value
+        for key in ("water_cut_min", "water_cut_max"):
+            value = MapFoundationService._mapped_value(raw, mapping, key)
+            if value not in (None, ""):
+                try:
+                    parsed = float(value)
+                except (TypeError, ValueError):
+                    raise ValueError("invalid_water_cut_range|含水率区间必须是百分比数值") from None
+                if isinstance(value, bool) or not math.isfinite(parsed) or not 0 <= parsed <= 100:
+                    raise ValueError("invalid_water_cut_range|含水率区间必须在0至100之间")
+                production_attributes[key] = parsed
+        if all(key in production_attributes for key in ("water_cut_min", "water_cut_max")):
+            if production_attributes["water_cut_min"] > production_attributes["water_cut_max"]:
+                raise ValueError("invalid_water_cut_range|含水率下限不能大于上限")
+        for key in ("production_valid_from", "production_valid_to"):
+            value = MapFoundationService._mapped_value(raw, mapping, key)
+            if value not in (None, ""):
+                try:
+                    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                except ValueError:
+                    raise ValueError("invalid_production_time|生产条件有效时间必须是ISO日期时间") from None
+                # Explicit timezone avoids silently shifting spreadsheet dates.
+                if parsed.tzinfo is None:
+                    raise ValueError("invalid_production_time|生产条件有效时间需标明时区")
+                production_attributes[key] = parsed.astimezone(timezone.utc).isoformat()
+        if all(key in production_attributes for key in ("production_valid_from", "production_valid_to")):
+            if production_attributes["production_valid_from"] >= production_attributes["production_valid_to"]:
+                raise ValueError("invalid_production_time|生产条件有效结束时间必须晚于开始时间")
         production_output = MapFoundationService._mapped_value(
             raw,
             mapping,

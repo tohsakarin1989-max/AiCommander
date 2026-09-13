@@ -49,6 +49,8 @@ def render_docx(document: CaseResultDocument, *, map_image: bytes | None = None)
             raise CaseResultExportError("invalid_map_image") from None
         data["map_image"] = {"result_id": document.result_id, "content_sha256": document.content_sha256,
                              "map_snapshot_id": maps[0]["map_snapshot_id"],
+                             "road_artifact_id": document.road_artifact_id,
+                             "road_artifact_sha256": document.road_artifact_sha256,
                              "png_base64": base64.b64encode(map_image).decode("ascii")}
     payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode()
     if len(payload) > MAX_INPUT_BYTES:

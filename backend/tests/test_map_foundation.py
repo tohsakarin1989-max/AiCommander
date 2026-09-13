@@ -476,15 +476,20 @@ def test_ingest_preserves_production_attributes_and_quarantines_outside_area(db_
                 "oil_type": "油品",
                 "production_output": "日产量",
                 "is_high_production": "是否高产",
+                "water_cut_min": "含水率下限",
+                "water_cut_max": "含水率上限",
+                "water_cut_unit": "含水率单位",
+                "production_valid_from": "有效开始",
+                "production_valid_to": "有效结束",
             },
             "coordinate_system": "wgs84",
         },
     )
     template = template_response.json()
     content = (
-        "井名,类型,经度,纬度,油品,日产量,是否高产\n"
-        "范围内井,well,125.1,46.6,原油,95,是\n"
-        "范围外井,well,126.1,46.6,原油,80,否\n"
+        "井名,类型,经度,纬度,油品,日产量,是否高产,含水率下限,含水率上限,含水率单位,有效开始,有效结束\n"
+        "范围内井,well,125.1,46.6,原油,95,是,20,40,percent,2026-09-01T00:00:00Z,2026-10-01T00:00:00Z\n"
+        "范围外井,well,126.1,46.6,原油,80,否,,,,,\n"
     )
 
     response = client.post(
@@ -500,7 +505,37 @@ def test_ingest_preserves_production_attributes_and_quarantines_outside_area(db_
     assert asset.attributes["oil_type"] == "原油"
     assert asset.attributes["production_output"] == 95.0
     assert asset.attributes["is_high_production"] is True
+    assert asset.attributes["water_cut_min"] == 20.0
+    assert asset.attributes["water_cut_max"] == 40.0
+    assert asset.attributes["water_cut_unit"] == "percent"
+    assert asset.attributes["production_valid_from"] == "2026-09-01T00:00:00+00:00"
     conflict = db_session.query(MapFeatureClaim).filter(
         MapFeatureClaim.status == "quarantined"
     ).one()
     assert conflict.error_code == "outside_operational_area"
+
+
+@pytest.mark.parametrize("values,code", [
+    (("60", "20", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"), "invalid_water_cut_range"),
+    (("nan", "40", "2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"), "invalid_water_cut_range"),
+    (("20", "40", "2026-09-01", "2026-10-01T00:00:00Z"), "invalid_production_time"),
+    (("20", "40", "2026-10-01T00:00:00Z", "2026-09-01T00:00:00Z"), "invalid_production_time"),
+])
+def test_invalid_production_conditions_are_quarantined_without_publishing(db_session, values, code):
+    client = _client(db_session)
+    source = _create_source(client)
+    fields = ("name", "asset_type", "longitude", "latitude", "water_cut_min", "water_cut_max",
+              "production_valid_from", "production_valid_to")
+    response = client.post("/api/map-import-templates", json={
+        "source_id": source["id"], "name": "生产条件校验模板", "coordinate_system": "wgs84",
+        "field_mapping": {field: field for field in fields},
+    })
+    assert response.status_code == 201
+    content = ",".join(fields) + "\n" + ",".join(("待核验井", "well", "125.1", "46.6", *values)) + "\n"
+    response = client.post(f"/api/map-sources/{source['id']}/ingest",
+        params={"template_id": response.json()["id"]},
+        files={"file": ("invalid.csv", content.encode("utf-8-sig"), "text/csv")})
+    assert response.status_code == 201
+    assert response.json()["valid_rows"] == 0 and response.json()["quarantined_rows"] == 1
+    assert db_session.query(JurisdictionAsset).count() == 0
+    assert db_session.query(MapFeatureClaim).one().error_code == code

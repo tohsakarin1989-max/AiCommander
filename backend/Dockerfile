@@ -8,11 +8,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 复制依赖文件
-COPY requirements.txt .
+COPY requirements.txt requirements-embedding.txt ./
+ARG INSTALL_LOCAL_EMBEDDING=false
 
 # 安装Python依赖
 RUN pip install --upgrade pip==26.2.1 \
-    && pip install -r requirements.txt
+    && pip install -r requirements.txt \
+    && case "$INSTALL_LOCAL_EMBEDDING" in \
+         true) pip install -r requirements-embedding.txt ;; \
+         false) : ;; \
+         *) exit 2 ;; \
+       esac
 
 # 复制应用代码
 COPY . .

@@ -35,6 +35,7 @@ class ScopeArgs(BaseModel):
 
 
 class CaseFilters(ScopeArgs):
+    case_id: int | None = Field(default=None, gt=0, strict=True)
     keyword: Label | None = None
     statuses: list[Label] | None = Field(default=None, max_length=20)
     case_types: list[Label] | None = Field(default=None, max_length=20)
@@ -65,6 +66,19 @@ class FindCaseProfiles(FindCases):
     page_size: int = Field(default=10, ge=1, le=20, strict=True)
 
 
+class FindHistory(CaseFilters):
+    query: str = Field(default='', max_length=2000)
+    source_case_id: int | None = Field(default=None, gt=0, strict=True,
+        description='参考源案件，不是候选范围。case_id及其他继承字段仍筛选候选；不能静默取消。')
+    limit: int = Field(default=3, ge=1, le=3, strict=True)
+
+    @model_validator(mode='after')
+    def history_source(self):
+        if not self.query.strip() and self.source_case_id is None:
+            raise ValueError('history_query_required')
+        return self
+
+
 class ComparePeriods(ScopeArgs):
     start: AwareDatetime
     end: AwareDatetime
@@ -88,14 +102,13 @@ class FindPlaces(ScopeArgs):
     limit: int = Field(default=20, ge=1, le=50, strict=True)
 
 
-class SummarizeResults(ScopeArgs):
-    case_id: int | None = Field(default=None, gt=0, strict=True)
+class SummarizeResults(CaseFilters):
     completed_after: AwareDatetime | None = None
     completed_before: AwareDatetime | None = None
     limit: int = Field(default=20, ge=1, le=50, strict=True)
 
     @model_validator(mode='after')
-    def ordered(self):
+    def completed_window_ordered(self):
         if self.completed_after and self.completed_before and self.completed_after >= self.completed_before:
             raise ValueError('invalid_time_window')
         return self
@@ -106,6 +119,7 @@ TOOLS = {
     'compare_periods': ComparePeriods, 'summarize_results': SummarizeResults,
     'find_road_results': FindRoadResults,
     'find_case_profiles': FindCaseProfiles,
+    'find_history': FindHistory,
 }
 
 
@@ -151,12 +165,11 @@ def _places(db, args):
 
 def _results(db, args):
     from app.models.case import Case
+    case_filters = args.model_dump(exclude={'completed_after', 'completed_before', 'limit'})
+    cases = CaseSearchService.filtered_query(db, **case_filters).with_entities(Case.id)
     query = db.query(CaseAnalysisRun).join(Case, Case.id == CaseAnalysisRun.case_id).filter(
-        CaseAnalysisRun.status.in_(['completed', 'degraded']))
-    if args.operational_area_id is not None:
-        query = query.filter(Case.operational_area_id == args.operational_area_id)
-    if args.case_id is not None:
-        query = query.filter(CaseAnalysisRun.case_id == args.case_id)
+        CaseAnalysisRun.status.in_(['completed', 'degraded']),
+        Case.id.in_(cases.statement))
     if args.completed_after is not None:
         query = query.filter(CaseAnalysisRun.completed_at >= args.completed_after.astimezone(timezone.utc))
     if args.completed_before is not None:
@@ -210,6 +223,21 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
             data, road_partial = profile_results(db, args)
             source = 'case_analysis_profiles'
             gaps.append('本批表述按案件去重计数，肯定、否定和不确定分别统计；不是全库规律或已确认事实。')
+        elif tool == 'find_history':
+            from app.services.case_history_retrieval import CaseHistoryRetrieval
+            data = CaseHistoryRetrieval.search(db, query=args.query, source_case_id=args.source_case_id,
+                filters=args.model_dump(exclude={'query', 'source_case_id', 'limit'}), limit=args.limit)
+            source = 'authorized_case_history_and_confirmed_experience'
+            road_partial = not data['coverage']['complete']
+            gaps.append(data['boundary'])
+            if data['semantic_index_state'] == 'not_enabled':
+                gaps.append('语义向量能力未启用，当前为结构条件与内网词项检索。')
+            elif data['semantic_index_state'] == 'unavailable':
+                gaps.append('本地语义能力不可用，当前保留词项结果，不能据此排除其他语义关联。')
+            elif data['semantic_index_state'] == 'partial':
+                gaps.append('部分资料尚无当前版本向量，联合检索不完整。')
+            if road_partial:
+                gaps.append('检索预算内未遍历全部候选范围，当前结果不能作为全库最优或全库无匹配的结论。')
         else:
             data, source = _results(db, args), 'case_analysis_runs'
             gaps.append('汇总已有成果及可核验候选；规则支持度不是准确概率，历史候选不转为正式事实。')
@@ -217,7 +245,7 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
                 gaps.append('部分成果内容不可读取、证据不可核验或超过展示上限，已返回可用部分。')
     size = data.get('total', data.get('count', data.get('current_count', 0) + data.get('previous_count', 0)))
     public_items = data.get('public_places', {}).get('items', [])
-    empty = (not data['items'] if tool == 'find_road_results' else size == 0) and not public_items
+    empty = (not data['items'] if tool in {'find_road_results', 'find_history'} else size == 0) and not public_items
     if empty:
         gaps.append('当前授权范围与筛选条件下未返回记录，不代表其他范围不存在数据。')
     partial = road_partial or (tool == 'find_places' and gaps) or (tool == 'summarize_results' and any(
@@ -227,6 +255,7 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
             'evidence': {'source': source, 'filters': args.model_dump(mode='json'),
                          'scope': None if allowed is None else sorted(allowed),
                          'queried_at': datetime.now(timezone.utc).isoformat(),
-                         'tool_version': ('v4.3-profile-read-1' if tool == 'find_case_profiles' else
+                         'tool_version': ('v5.1-history-read-1' if tool == 'find_history' else
+                             'v4.3-profile-read-1' if tool == 'find_case_profiles' else
                              'v4.3-road-read-1' if tool == 'find_road_results' else 'v4.0-read-tools-2')},
             'boundary': '内网只读查询；案件按案发时间、成果按完成时间，时间区间左闭右开；不是新增事实或执行指令。'}
