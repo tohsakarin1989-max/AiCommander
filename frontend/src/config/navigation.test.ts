@@ -14,12 +14,15 @@ describe('统一功能导航', () => {
       expect(advanced).toContain(path)
     }
     expect(paths).toContain('/gangs')
+    expect(navigation.find(group => group.label === '案件研判')?.pages.map(page => page.path)).toContain('/topics')
+    expect(advanced).toContain('/gangs')
     expect(navigation.find(group => group.label === '指挥大屏')?.pages).toHaveLength(1)
   })
   it.each(['viewer', 'analyst'])('保留 %s 权限边界', role => {
     const paths = visibleNavigation(role, () => true).flatMap(group => group.pages.map(page => page.path))
     for (const path of ['/agents', '/deployment', '/patrols', '/settings', '/settings/users', '/cases/features']) expect(paths).not.toContain(path)
     expect(paths.includes('/showcase')).toBe(role === 'analyst')
+    expect(paths.includes('/topics')).toBe(role === 'analyst')
     expect(paths.includes('/intelli-inspect')).toBe(role === 'analyst')
   })
   it('关闭功能不影响其他入口', () => {

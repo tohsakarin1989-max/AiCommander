@@ -4,6 +4,7 @@ import { rowsOf, textValue, toolNames } from './queryPresentation'
 import { roadDetourLabel, type RoadDetourReference } from '../../services/roadAnalysis'
 import { isCaseHistoryResult } from '../../services/caseHistory'
 import { CaseHistoryContent } from '../Cases/CaseHistoryReferences'
+import { ProfileAggregateContent } from './ProfileAggregateContent'
 
 const assertionKinds: Record<string, string> = { stated: '原文明述（未核实）', negated: '原文否定', uncertain: '不确定', inferred: '推断' }
 function ProfileContent({ row }: { row: Record<string, unknown> }) {
@@ -82,16 +83,17 @@ export function QueryResult({ card }: { card: QueryCard }) {
     {card.state === 'empty' && card.tool !== 'find_history' && <p>当前授权范围和筛选条件下没有匹配数据。</p>}
     {card.tool === 'find_history' && (isCaseHistoryResult(data)
       ? <CaseHistoryContent result={data} /> : <p role="alert">历史参考结构或来源不完整，不能据此判断没有匹配资料。</p>)}
+    {card.tool === 'aggregate_case_profiles' && <ProfileAggregateContent data={data} />}
     {card.tool === 'count_cases' && <p>匹配案件：<strong>{textValue(data.count)}</strong> 起</p>}
     {card.tool === 'compare_periods' && <dl className="query-comparison">
       <div><dt>本期</dt><dd>{textValue(data.current_count)} 起</dd></div>
       <div><dt>上一等长周期</dt><dd>{textValue(data.previous_count)} 起</dd></div>
       <div><dt>数量变化</dt><dd>{textValue(data.change)} 起</dd></div>
     </dl>}
-    {'total' in data && <p>共 {textValue(data.total)} 条，本次展示 {rows.length} 条。</p>}
+    {'total' in data && card.tool !== 'aggregate_case_profiles' && <p>共 {textValue(data.total)} 条，本次展示 {rows.length} 条。</p>}
     {card.tool === 'find_road_results' && <p>本批读取 {rows.length} 份历史道路成果，不是案件总数。
       {data.next_page != null && `可继续查询第 ${textValue(data.next_page)} 批。`}</p>}
-    {rows.length > 0 && card.tool !== 'find_history' && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
+    {rows.length > 0 && !['find_history', 'aggregate_case_profiles'].includes(card.tool) && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
       {card.tool === 'find_cases' && typeof row.id === 'number'
         ? <Link to={`/cases?caseId=${row.id}`}>{textValue(row.case_number)}</Link>
         : <strong>{card.tool === 'find_road_results' ? (row.operation === 'route' ? '留存参考路径' : '留存距离比较') : textValue(row.case_number ?? row.name ?? row.run_id ?? row.id)}</strong>}

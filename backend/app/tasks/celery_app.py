@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.tasks.deployment_advisor_tasks",
         "app.tasks.map_package_tasks",
         "app.tasks.intelligent_query_tasks",
+        "app.tasks.analysis_topic_tasks",
     ],
 )
 
@@ -28,6 +29,11 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        "process-analysis-topic": {
+            "task": "aicommander.topics.process_next",
+            "schedule": 15.0,
+            "options": {"queue": settings.AGENT_REDIS_QUEUE, "expires": 15},
+        },
         "reconcile-case-history-index": {
             "task": "aicommander.case_history.reconcile",
             "schedule": 15.0,

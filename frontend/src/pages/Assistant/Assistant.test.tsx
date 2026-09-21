@@ -17,7 +17,7 @@ vi.mock('react', async original => {
   return { ...actual, useState: (value: unknown) => actual.useState(state.hookIndex++ === 0 ? state.question : value) }
 })
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'analyst' }, sessionEpoch: 4 }) }))
-vi.mock('react-router-dom', () => ({ useSearchParams: () => [state.params, vi.fn()] }))
+vi.mock('react-router-dom', () => ({ useSearchParams: () => [state.params, vi.fn()], useNavigate: () => vi.fn() }))
 vi.mock('../../services/intelligentQueries', async original => ({
   ...await original<typeof import('../../services/intelligentQueries')>(),
   intelligentQueriesApi: { create: vi.fn(), read: vi.fn(), cancel: vi.fn(), document: vi.fn() },

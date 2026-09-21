@@ -7,13 +7,13 @@ from app.models.case import Case
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.case_search_service import CaseSearchService
 from app.services.intelligent_query_context import empty_conditions, remember
-from app.services.intelligent_query_tools import CaseFilters
+from app.services.intelligent_query_tools import CaseFilters, ProfileFilters
 
 
 class InitialQueryContext(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source_case_id: int | None = Field(default=None, gt=0, strict=True)
-    filters: CaseFilters = Field(default_factory=CaseFilters)
+    filters: ProfileFilters = Field(default_factory=ProfileFilters)
 
     @model_validator(mode='after')
     def consistent(self):
@@ -49,12 +49,13 @@ def freeze_initial_context(db, value) -> dict:
         if area is None and case.operational_area_id is not None:
             filters['operational_area_id'] = case.operational_area_id
         # A contradictory area/category/time selection must not silently be discarded.
-        typed_filters = CaseFilters.model_validate(filters)
+        typed_filters = CaseFilters.model_validate({key: value for key, value in filters.items() if key != 'conditions'})
         if CaseSearchService.filtered_query(db, **typed_filters.model_dump()).first() is None:
             raise ValueError('query_initial_context_conflict')
         source = {'case_id': case.id, 'operational_area_id': case.operational_area_id,
                   'source_hash': CasePipelineService.source_hash(db, case)}
-    conditions = remember(empty_conditions(), 'find_cases', filters)
+    conditions = remember(empty_conditions(), 'aggregate_case_profiles' if filters.get('conditions') else 'find_cases',
+                          filters if filters.get('conditions') else {k: v for k, v in filters.items() if k != 'conditions'})
     return {'schema_version': 'query-initial-context-5.0-1', 'source_case': source,
             'conditions': conditions,
             'boundary': '从页面继承案件选择与筛选条件，不继承授权；案件内容仍由内网只读工具获取。'}

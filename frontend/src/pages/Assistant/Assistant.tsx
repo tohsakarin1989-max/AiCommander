@@ -6,6 +6,7 @@ import { intelligentQueriesApi, queryEntryContext } from '../../services/intelli
 import type { InitialQueryContext } from '../../services/intelligentQueries'
 import { activeQuery, canFollowup, conditionLines, conditionNames, conditionValue, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
 import { QueryResult } from './QueryResult'
+import { SaveQueryTopic } from '../Topics/SaveQueryTopic'
 import './IntelligentQuery.css'
 
 const examples = ['查找包含“管线”的案件', '统计当前授权范围的案件数量', '查找“大庆”相关地点和设施', '汇总已有研判成果']
@@ -135,6 +136,7 @@ export default function Assistant() {
         <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('pdf')}>导出 PDF</button>
       </div>}
       {exportState && <p role="status">{exportState}</p>}
+      {followup && canQuery && <SaveQueryTopic key={`${current.id}:${sessionEpoch}`} queryId={current.id} question={current.query} />}
       {current.followup_context && <p className="query-history-note">接续：{current.followup_context.previous_question}。
         <button type="button" className="btn-ghost" disabled={busy} onClick={() => setParams({ query: current.followup_context!.parent_query_id })}>查看上一轮</button>
       </p>}

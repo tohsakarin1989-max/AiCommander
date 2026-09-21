@@ -4,7 +4,7 @@ This module does not call models or accept executable expressions. Callers must
 bind the current principal's read scope before every execution, including replay.
 """
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, or_
@@ -66,6 +66,24 @@ class FindCaseProfiles(FindCases):
     page_size: int = Field(default=10, ge=1, le=20, strict=True)
 
 
+class ProfileCondition(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    category: Literal['method', 'oil', 'facility', 'place_condition', 'time_condition',
+                      'tool', 'vehicle', 'upstream_clue', 'downstream_clue']
+    value: Label | None = None
+    kind: Literal['stated', 'negated', 'uncertain', 'inferred', 'conflicting', 'missing'] = 'stated'
+
+
+class ProfileFilters(CaseFilters):
+    conditions: list[ProfileCondition] = Field(default_factory=list, max_length=8,
+        description='条件之间为AND；value为空表示该类别任一词项。缺失不是否定；冲突单独统计。')
+
+
+class AggregateProfiles(ProfileFilters):
+    page: int = Field(default=1, ge=1, le=10000, strict=True)
+    page_size: int = Field(default=20, ge=1, le=20, strict=True)
+
+
 class FindHistory(CaseFilters):
     query: str = Field(default='', max_length=2000)
     source_case_id: int | None = Field(default=None, gt=0, strict=True,
@@ -120,6 +138,7 @@ TOOLS = {
     'find_road_results': FindRoadResults,
     'find_case_profiles': FindCaseProfiles,
     'find_history': FindHistory,
+    'aggregate_case_profiles': AggregateProfiles,
 }
 
 
@@ -185,7 +204,7 @@ def _results(db, args):
         .limit(args.limit).all()]}
 
 
-def execute_tool(db, tool: str, arguments: dict) -> dict:
+def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lambda: False) -> dict:
     schema = TOOLS.get(tool)
     if schema is None:
         raise ValueError('query_tool_not_allowed')
@@ -223,6 +242,15 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
             data, road_partial = profile_results(db, args)
             source = 'case_analysis_profiles'
             gaps.append('本批表述按案件去重计数，肯定、否定和不确定分别统计；不是全库规律或已确认事实。')
+        elif tool == 'aggregate_case_profiles':
+            from app.services.profile_aggregate import aggregate_results
+            data, road_partial = aggregate_results(db, args, deadline=deadline, cancelled=cancelled)
+            source = 'authorized_case_profile_aggregate'
+            gaps.append(data['boundary'])
+            if not data['coverage']['complete']:
+                gaps.append('计算尚未遍历全部授权集合，计数仅为已遍历部分，不得称为总体统计。')
+            if not data['coverage']['profiles_complete']:
+                gaps.append('部分画像缺失、过期、引用无效或提取不完整，条件未知不等于否定。')
         elif tool == 'find_history':
             from app.services.case_history_retrieval import CaseHistoryRetrieval
             data = CaseHistoryRetrieval.search(db, query=args.query, source_case_id=args.source_case_id,
@@ -255,7 +283,8 @@ def execute_tool(db, tool: str, arguments: dict) -> dict:
             'evidence': {'source': source, 'filters': args.model_dump(mode='json'),
                          'scope': None if allowed is None else sorted(allowed),
                          'queried_at': datetime.now(timezone.utc).isoformat(),
-                         'tool_version': ('v5.1-history-read-1' if tool == 'find_history' else
+                         'tool_version': ('profile-aggregate-5.3-1' if tool == 'aggregate_case_profiles' else
+                             'v5.1-history-read-1' if tool == 'find_history' else
                              'v4.3-profile-read-1' if tool == 'find_case_profiles' else
                              'v4.3-road-read-1' if tool == 'find_road_results' else 'v4.0-read-tools-2')},
             'boundary': '内网只读查询；案件按案发时间、成果按完成时间，时间区间左闭右开；不是新增事实或执行指令。'}

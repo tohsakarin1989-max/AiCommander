@@ -16,11 +16,13 @@ export function CaseHistoryContent({ result }: { result: CaseHistoryResult }) {
     {result.semantic_index_state === 'partial' && <p>部分资料尚无当前版本向量，本次联合检索不完整。</p>}
     {result.mode === 'hybrid_local' && <p>已结合结构条件、词项与本地语义进行名次融合，相似程度不是准确概率。</p>}
     {!result.coverage.complete && <p role="status">本次检索未完成全部范围，以下是部分结果，不能据此判断没有其他相关资料。</p>}
+    {!!result.coverage.missing_derived_sources && <p>有 {result.coverage.missing_derived_sources} 项来源缺少当前画像或索引，仅作词项检索，未重新抽取案情。</p>}
     {result.items.length === 0 && result.coverage.complete && <p>本次条件未找到匹配的历史参考，不表示案件没有线索。</p>}
     <ul>{result.items.map(item => <li key={`${item.source_type}:${item.source_id}`}>
       <Link to={item.route}>{item.title}</Link>
       <p>{item.snippet}</p>
       <p>{item.source_type === 'case' ? '历史案件资料' : '已确认历史经验，当前适用性仍需核对'}</p>
+      {(item.profile_state === 'lexical_only' || item.derived_state === 'missing') && <p>仅词项匹配，未形成可引用的结构条件。</p>}
       {!!item.shared_conditions.length && <p>相似条件：{conditions(item.shared_conditions)}</p>}
       {!!item.different_conditions.length && <p>不同表述：{conditions(item.different_conditions)}</p>}
       {!!item.unmatched_query_conditions.length && <details><summary>本案条件在该资料中尚未匹配</summary>

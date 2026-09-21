@@ -20,7 +20,7 @@ from app.services.intelligent_query_history import validate_history_query_eviden
 class Call(BaseModel):
     model_config = ConfigDict(extra='forbid')
     action: Literal['call']
-    tool: Literal['find_cases', 'find_places', 'count_cases', 'compare_periods', 'summarize_results', 'find_road_results', 'find_case_profiles', 'find_history']
+    tool: Literal['find_cases', 'find_places', 'count_cases', 'compare_periods', 'summarize_results', 'find_road_results', 'find_case_profiles', 'find_history', 'aggregate_case_profiles']
     arguments: dict
     change_basis: str | None = Field(default=None, min_length=2, max_length=500)
 
@@ -84,6 +84,8 @@ async def run_query(db, question: str, model, *, cancelled=lambda: False,
                     '不可用无关引文扩大条件。工具不能表达原条件时换工具，不得丢弃条件。'
                     '历史上下文不算本轮证据，必须重新调用只读工具。'
                     '手法、地点条件、否定和不确定线索使用find_case_profiles读取已有画像。'
+                    '全库条件分布或组合统计必须使用aggregate_case_profiles，conditions之间为AND，'
+                    '肯定、否定、不确定、推断、冲突和缺失分别处理；总体仅在coverage.complete为真时成立。'
                     '历史相似案件与已确认经验使用find_history，最多三项，覆盖范围以工具实际返回为准。'
                     'source_case_id是参考源，case_id及日期、辖区、类型仍是候选筛选条件。'
                     '若用户要求以当前案件找其他历史资料，显式给source_case_id，并将case_id置null，'
@@ -111,7 +113,7 @@ async def run_query(db, question: str, model, *, cancelled=lambda: False,
             decision = Decision.validate_json(content)
             if isinstance(decision, Finish):
                 if decision.reason == 'completed' and cards:
-                    if any(card['tool'] == 'find_history' and card['state'] == 'partial' for card in cards):
+                    if any(card['tool'] in {'find_history', 'aggregate_case_profiles'} and card['state'] == 'partial' for card in cards):
                         return result('degraded', 'query_partial_results')
                     return result('completed')
                 return result('degraded', f'query_{decision.reason}' if decision.reason != 'completed' else 'query_no_evidence')
@@ -127,7 +129,7 @@ async def run_query(db, question: str, model, *, cancelled=lambda: False,
                 feedback.append({'tool': decision.tool, 'error_code': str(error)})
                 trace.append({'step': step + 1, 'tool': decision.tool, 'error_code': str(error)})
                 continue
-            card = execute_tool(db, decision.tool, arguments)
+            card = execute_tool(db, decision.tool, arguments, deadline=deadline, cancelled=cancelled)
             conditions = remember(conditions, decision.tool, arguments)
             cards.append(card)
             trace.append({'step': step + 1, 'tool': decision.tool,
