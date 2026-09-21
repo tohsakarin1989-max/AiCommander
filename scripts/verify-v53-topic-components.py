@@ -25,7 +25,7 @@ def main():
         raise RuntimeError('explicit_disposable_test_required')
     root = Path(__file__).resolve().parents[1]
     image = 'aicommander-postgis-vector:16-0.8.6'
-    containers, worker = [], None
+    containers, worker, beat = [], None, None
     secret = secrets.token_hex(24)
     env = {key: os.environ[key] for key in ('PATH', 'LANG', 'TMPDIR') if key in os.environ}
     env.update(PYTHONPATH=str(root / 'backend'), ENVIRONMENT='test', SECRET_KEY=secrets.token_hex(32),
@@ -64,6 +64,17 @@ def main():
                 worker.wait(timeout=5)
             worker = None
 
+    def stop_beat():
+        nonlocal beat
+        if beat is not None:
+            beat.terminate()
+            try:
+                beat.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                beat.kill()
+                beat.wait(timeout=5)
+            beat = None
+
     try:
         pg, pg_port = container(image, 5432, '--tmpfs', '/var/lib/postgresql/data',
             '-e', 'POSTGRES_USER=aic_topic_test', '-e', 'POSTGRES_DB=aic_topic_test', '-e', 'POSTGRES_PASSWORD')
@@ -72,9 +83,8 @@ def main():
             '-U', 'aic_topic_test'], capture_output=True).returncode == 0, 'database_not_ready')
         url = f'postgresql://aic_topic_test:{secret}@127.0.0.1:{pg_port}/aic_topic_test'
         broker = f'redis://127.0.0.1:{redis_port}/0'
-        queue = 'topic-check-' + uuid4().hex[:12]
         env.update(DATABASE_URL=url, REDIS_URL=broker, CELERY_BROKER_URL=broker,
-                   CELERY_RESULT_BACKEND=broker, AGENT_REDIS_QUEUE=queue)
+                   CELERY_RESULT_BACKEND=broker, AGENT_REDIS_QUEUE='unconsumed-agent-lab')
         with tempfile.TemporaryDirectory(prefix='aic-topics-components-') as temporary:
             os.chdir(temporary)  # Do not load the workspace .env.
             os.environ.clear()
@@ -94,6 +104,7 @@ def main():
             from app.services.case_pipeline_service import CasePipelineService
             from app.services import analysis_topic_service as topics
             from app.tasks.celery_app import celery_app
+            queue = celery_app.conf.task_default_queue
             config = Config(str(root / 'backend/alembic.ini'))
             config.set_main_option('script_location', str(root / 'backend/alembic'))
             command.upgrade(config, 'd72e31b86fa2')
@@ -170,9 +181,20 @@ def main():
                 db.info['principal_user_id'] = uid
                 task_topic = topics.create_topic(db, '真实队列专题', {})['id']
             worker = launch_worker()
-            celery_app.send_task('aicommander.topics.process_next', queue=queue)
+            # Real Beat, unchanged production entry, default worker queue. Only
+            # unrelated periodic jobs are excluded from this disposable fixture.
+            beat_code = (
+                'from app.tasks.celery_app import celery_app; '
+                'entry = celery_app.conf.beat_schedule["process-analysis-topic"]; '
+                'celery_app.conf.beat_schedule = {"process-analysis-topic": entry}; '
+                'celery_app.Beat(loglevel="WARNING", schedule="topic-beat.db").run()'
+            )
+            beat = subprocess.Popen([sys.executable, '-c', beat_code], cwd=temporary,
+                                    env=env, stdout=log, stderr=subprocess.STDOUT)
             wait_until(lambda: revision(task_topic) == 1, 'real_worker_did_not_publish')
+            stop_beat()
             stop_worker()
+            print('Real Beat delivered to default worker with Agent Lab disabled', flush=True)
             # Redis outage does not lose the DB admission; no publish needed to save a topic.
             # Freeze Redis without reallocating Docker's random host port on
             # restart. A timed-out real PING proves the broker is unavailable.
@@ -236,10 +258,12 @@ def main():
             print(json.dumps({'status': 'passed', 'synthetic_only': True, 'revision': revision_id,
                 'postgres_image': image, 'concurrent_statuses': statuses, 'pause_race': 'passed',
                 'redis_celery': 'passed', 'broker_recovery': 'passed', 'expired_lease_recovery': 'passed',
+                'production_beat_entry_default_queue': 'passed', 'agent_lab_enabled': False,
                 'backup_restore': 'passed', 'previous_schema_restored_separately': True,
                 'new_raw_rows_preserved': True, 'backup_sha256': hashlib.sha256(after_dump).hexdigest(),
                 'target_server_verified': False, 'real_model_verified': False}, ensure_ascii=False), flush=True)
     finally:
+        stop_beat()
         stop_worker()
         for identifier in reversed(containers):
             label = docker('inspect', '-f', '{{index .Config.Labels "aicommander.disposable"}}', identifier).stdout.decode().strip()

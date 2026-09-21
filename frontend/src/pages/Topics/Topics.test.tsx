@@ -9,12 +9,14 @@ import { filterLines } from './topicPresentation'
 
 const id = '11111111-1111-4111-8111-111111111111'
 const state = vi.hoisted(() => ({ role: 'analyst', error: undefined as unknown, data: undefined as Topic | undefined,
+  listItems: [] as Topic[],
   queries: [] as Array<{ queryKey: unknown[]; enabled?: boolean }> }))
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: state.role }, sessionEpoch: 1 }) }))
 vi.mock('@tanstack/react-query', () => ({
   useQuery: (options: { queryKey: unknown[]; enabled?: boolean }) => {
     state.queries.push(options)
-    return { data: options.queryKey[0] === 'analysis-topic' ? state.data : undefined, error: state.error,
+    return { data: options.queryKey[0] === 'analysis-topic' ? state.data : options.queryKey[0] === 'analysis-topics'
+      ? { items: state.listItems, total: state.listItems.length } : undefined, error: state.error,
       isPending: false, isFetching: false, refetch: vi.fn() }
   },
   useMutation: () => ({ isPending: false, mutate: vi.fn(), error: undefined }),
@@ -31,7 +33,15 @@ const views: TopicViews = { snapshot_id: 'frozen', content_sha256: 'digest', bou
 
 describe('专题共享成果界面', () => {
   beforeEach(() => {
-    state.role = 'analyst'; state.error = undefined; state.data = undefined; state.queries = []
+    state.role = 'analyst'; state.error = undefined; state.data = undefined; state.queries = []; state.listItems = []
+  })
+  it('当前专题后台完成后列表同步显示最新状态，不保留等待更新', () => {
+    state.data = { id, title: '已完成专题', notes: '', filters: {}, paused: false,
+      refresh_state: 'ready', last_error: null, created_at: '', next_refresh_at: null }
+    state.listItems = [{ ...state.data, refresh_state: 'queued' }]
+    const html = renderPage()
+    expect(html).toContain('成果可用')
+    expect(html).not.toContain('等待更新')
   })
   it('读取失败时隐藏缓存成果和标题，不把故障显示为零', () => {
     state.data = { id, title: '不可再见的专题', notes: '', filters: {}, paused: false,

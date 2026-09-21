@@ -32,7 +32,8 @@ celery_app.conf.update(
         "process-analysis-topic": {
             "task": "aicommander.topics.process_next",
             "schedule": 15.0,
-            "options": {"queue": settings.AGENT_REDIS_QUEUE, "expires": 15},
+            # Saved topics are deterministic daily business, not Agent Lab.
+            "options": {"expires": 15},
         },
         "reconcile-case-history-index": {
             "task": "aicommander.case_history.reconcile",

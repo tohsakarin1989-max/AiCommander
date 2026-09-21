@@ -116,7 +116,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
       {list.isPending && <p role="status">正在读取专题…</p>}
       {list.error ? <p role="alert">{topicError(list.error)}</p> : <ul className="topic-list">{list.data?.items.map(item => <li key={item.id}>
         <Link aria-current={item.id === id ? 'page' : undefined} to={`/topics?topic=${item.id}`}>{item.title}</Link>
-        <small>{topicState[item.refresh_state] || '状态待确认'}</small></li>)}</ul>}
+        <small>{topicState[item.id === topic?.id ? topic.refresh_state : item.refresh_state] || '状态待确认'}</small></li>)}</ul>}
       {!list.error && list.data?.total === 0 && <p>还没有专题。保存一次条件后，后续可直接查看新增依据。</p>}
       <div className="topic-actions"><button className="btn-ghost" disabled={listPage === 1} onClick={() => setListPage(v => v - 1)}>上一页专题</button>
         <button className="btn-ghost" disabled={!list.data || listPage * 20 >= list.data.total || !!list.error} onClick={() => setListPage(v => v + 1)}>下一页专题</button>
