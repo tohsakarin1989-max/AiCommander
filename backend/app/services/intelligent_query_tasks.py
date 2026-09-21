@@ -93,6 +93,8 @@ def _validate_context(db, row, user):
     if context is not None and initial is not None:
         raise PermissionError('query_context_changed')
     require_source_case_version(db, context or initial)
+    from app.services.topic_query_bridge import validate_topic_source
+    validate_topic_source(db, (context or initial or {}).get('topic_source'))
     if context:
         parent = db.query(AgentRun).filter_by(id=context['parent_query_id'], task_type=TASK_TYPE,
             created_by=user.id).populate_existing().first()
@@ -106,13 +108,23 @@ def _validate_context(db, row, user):
     return context
 
 
-def create_query(db, question, parent_query_id=None, initial_context=None):
+def create_query(db, question, parent_query_id=None, initial_context=None, *, topic_source=None):
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise ValueError('invalid_query_question')
     user = _identity(db)
     if parent_query_id is not None and initial_context is not None:
         raise ValueError('query_context_conflict')
-    initial = freeze_initial_context(db, initial_context) if initial_context is not None else None
+    if topic_source is not None:
+        from app.services.topic_query_bridge import validate_topic_source
+        from app.services.intelligent_query_context import empty_conditions, remember
+        from app.services.intelligent_query_tools import ProfileFilters
+        validate_topic_source(db, topic_source)
+        filters = ProfileFilters.model_validate((initial_context or {})['filters']).model_dump(mode='json', exclude_none=True)
+        initial = {'schema_version': 'topic-query-context-5.3-1', 'source_case': None,
+                   'conditions': remember(empty_conditions(), 'aggregate_case_profiles', filters),
+                   'topic_source': topic_source, 'boundary': '继承专题条件；重新读取授权内数据，不把旧统计当作本轮证据。'}
+    else:
+        initial = freeze_initial_context(db, initial_context) if initial_context is not None else None
     context = None
     if parent_query_id is not None:
         parent, user = _owned(db, parent_query_id)

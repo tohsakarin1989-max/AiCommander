@@ -23,6 +23,7 @@ const Reports = lazy(() => import('./pages/Reports/Reports'))
 const Settings = lazy(() => import('./pages/Settings/Settings'))
 const Deployment = lazy(() => import('./pages/Deployment/Deployment'))
 const Assistant = lazy(() => import('./pages/Assistant/Assistant'))
+const Topics = lazy(() => import('./pages/Topics/Topics'))
 const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'))
 const ConclusionFactory = lazy(() => import('./pages/Conclusions/ConclusionFactory'))
 const AgentCenter = lazy(() => import('./pages/Agents/IntelligenceRuntimeCenter'))
@@ -100,6 +101,7 @@ export function AuthenticatedApp() {
           <Route path="/gangs"           element={<GangAnalysis />} />
           <Route path="/patrols"         element={<RuntimeFeatureGate feature="legacy_operations" label="历史巡逻模块">{adminOnly(<Patrols />)}</RuntimeFeatureGate>} />
           <Route path="/assistant"       element={<Assistant />} />
+          <Route path="/topics"          element={<Topics />} />
           <Route path="/agent-lab" element={adminOnly(<RuntimeFeatureGate feature="agent_lab" label="Agent 试用"><AgentLab /></RuntimeFeatureGate>)} />
           <Route path="/agents"          element={adminOnly(<AgentCenter />)} />
           <Route path="/settings"        element={adminOnly(<Settings />)} />

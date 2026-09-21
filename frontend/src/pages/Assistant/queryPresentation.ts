@@ -9,11 +9,14 @@ export const conditionNames: Record<string, string> = {
   completed_after: '成果生成起始时间', completed_before: '成果生成截止时间', include_public_places: '包含公共地名',
   min_detour_ratio: '最小沿路/直线比',
   query: '历史参考检索条件', source_case_id: '参考源案件编号',
+  conditions: '组合条件（须全部满足）',
 }
 export function conditionValue(value: unknown): string {
   if (value == null) return '不限'
   if (typeof value === 'boolean') return value ? '是' : '否'
-  if (Array.isArray(value)) return value.map(textValue).join('、') || '不限'
+  if (Array.isArray(value)) return value.map(item => item && typeof item === 'object'
+    ? Object.entries(item).map(([key, val]) => `${key}=${textValue(val)}`).join('，') : textValue(item))
+    .join(value.some(item => item && typeof item === 'object') ? '；' : '、') || '不限'
   return textValue(value)
 }
 export function conditionLines(conditions?: QueryConditions): string[] {
@@ -40,6 +43,7 @@ export const toolNames: Record<string, string> = {
   find_road_results: '道路研判成果',
   find_case_profiles: '案件语义画像',
   find_history: '历史案件与经验参考',
+  aggregate_case_profiles: '全库画像条件统计',
 }
 export const statusNames: Record<string, string> = {
   queued: '排队中', running: '正在查询', completed: '查询完成',
@@ -50,7 +54,7 @@ export function failureText(code?: string | null): string {
     query_model_unavailable: '内网模型不可用，请联系管理员检查配置；案件和地图功能仍可使用。',
     query_timeout: '查询超时，已取得的结果保留在下方。',
     query_step_limit: '已达到本次查询步骤上限，可缩小问题范围后重新查询。',
-    query_partial_results: '历史检索尚未完成全部候选范围，以下仅为当前取得的部分结果。',
+    query_partial_results: '检索、统计或画像资料尚不完整，以下仅为当前取得的部分结果。',
     query_insufficient_data: '当前条件不足，请补充明确的时间或查询条件。',
     query_unsupported: '当前支持案件、地点、统计、周期比较、历史参考、已有研判和道路成果查询。',
   }

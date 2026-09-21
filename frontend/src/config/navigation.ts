@@ -16,7 +16,7 @@ export const navigation: { label: string; pages: NavigationPage[] }[] = [
   ] },
   { label: '案件研判', pages: [
     { label: '案件研判', path: '/case-intelligence' }, { label: '研判助手', path: '/assistant' },
-    { label: '相似条件组', path: '/gangs' },
+    { label: '专题研判', path: '/topics', analystOnly: true },
   ] },
   { label: '空间研判', pages: [
     { label: '案件地图', path: '/cases/map' }, { label: '时空研判', path: '/cases/spacetime' },
@@ -27,6 +27,7 @@ export const navigation: { label: string; pages: NavigationPage[] }[] = [
   { label: '研判成果', pages: [{ label: '分析报告', path: '/reports' }] },
   { label: '高级功能', pages: [
     { label: '多模型会议', path: '/meetings' },
+    { label: '历史相似条件组', path: '/gangs' },
     { label: '关系图谱', path: '/graphs/serial' }, { label: '证据图谱', path: '/graphs/evidence' },
     { label: '历史情报结论', path: '/conclusions' }, { label: '历史首页', path: '/legacy-home' },
     { label: '预处理维护', path: '/cases/features', adminOnly: true },

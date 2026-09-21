@@ -102,7 +102,9 @@ def _asset_access(db: Session, asset: KnowledgeAsset) -> bool:
 class CaseHistoryRetrieval:
     @staticmethod
     def search(db: Session, *, query: str = "", source_case_id: int | None = None,
-               filters: dict | None = None, limit: int = 3) -> dict:
+               filters: dict | None = None, limit: int = 3, reuse_only: bool = False,
+               query_conditions: set[tuple[str, str, str]] | None = None,
+               deadline: float | None = None, exclude_case_sources: set[int] | None = None) -> dict:
         if "authorized_area_ids" not in db.info:
             raise HistoryUnavailable("history_unavailable")
         area = (filters or {}).get("operational_area_id")
@@ -112,6 +114,14 @@ class CaseHistoryRetrieval:
         if not 1 <= limit <= 20 or len(query) > 2000:
             raise ValueError("invalid_history_query")
         started = time.monotonic()
+        exclude_case_sources = exclude_case_sources or set()
+        stop_at = min(started + SCAN_SECONDS, deadline) if deadline is not None else started + SCAN_SECONDS
+        if query_conditions is not None and any(
+            not isinstance(item, tuple) or len(item) != 3
+            or any(not isinstance(value, str) or not value for value in item)
+            for item in query_conditions
+        ):
+            raise ValueError('invalid_history_conditions')
         source = None
         with db.no_autoflush:
             if source_case_id is not None:
@@ -128,7 +138,11 @@ class CaseHistoryRetrieval:
                              "scope_hash": text_hash(json.dumps(db.info["authorized_area_ids"], sort_keys=True)),
                              "filters": filters or {}, "retrieval_version": RETRIEVAL_VERSION}
             # 查询短文本只在内网解析；候选优先复用已生成的当前语义画像。
-            query_conditions = business_conditions(build_semantic_profile({"description": query}))
+            query_conditions = (business_conditions(build_semantic_profile({"description": query}))
+                                if query_conditions is None else query_conditions)
+            if reuse_only:
+                query_context['reuse_only'] = True
+                query_context['conditions'] = [list(item) for item in sorted(query_conditions)]
             embedder = get_local_embedder()
             vector, vector_state = None, embedder.state
             if vector_state == 'ready':
@@ -147,11 +161,16 @@ class CaseHistoryRetrieval:
             total = filtered.filter(Case.id <= upper).count() if upper is not None else 0
             scanned, matched, cursor, serial = 0, 0, 0, 0
             indexed_sources, fallback_sources = 0, 0
+            missing_derived_sources = 0
             heap = []
             partial = False
 
             def offer(item):
                 nonlocal serial, matched, vector_sources, vector_missing
+                # Cohort cases already have their own frozen profile evidence.
+                # Still search their confirmed experience cards as a separate source.
+                if item['source_type'] == 'case' and item['case_id'] in exclude_case_sources:
+                    return
                 if fusion is not None:
                     key = (item['case_id'], item['source_type'], str(item['source_id']))
                     distance = distances.get(key)
@@ -171,7 +190,7 @@ class CaseHistoryRetrieval:
                     heapq.heapreplace(heap, entry)
 
             while upper is not None and cursor < upper:
-                if time.monotonic() - started > SCAN_SECONDS:
+                if time.monotonic() > stop_at:
                     partial = True
                     break
                 cases = filtered.filter(Case.id > cursor, Case.id <= upper).order_by(Case.id).limit(BATCH_SIZE)\
@@ -206,7 +225,7 @@ class CaseHistoryRetrieval:
                                 sources[(case.id, 'legacy_experience_card', str(case.id))] = content_hash(legacy)
                     distances = exact_distances(db, sources=sources, vector=vector, model_version=embedder.model_version)
                 for case in cases:
-                    if time.monotonic() - started > SCAN_SECONDS:
+                    if time.monotonic() > stop_at:
                         partial = True
                         break
                     values = source_values(case)
@@ -218,7 +237,10 @@ class CaseHistoryRetrieval:
                                          and (semantics.get("source_snapshot") or {}).get("sha256") == semantic_snapshot["sha256"])
                     cached = cached_features(indexes.get((case.id, "case", str(case.id))), snapshot["sha256"])
                     if not valid_profile and cached is None:
-                        semantics = build_semantic_profile({field: values[field] for field in TEXT_FIELDS})
+                        # Recurring topics never re-extract the corpus. Lexical
+                        # recall remains available, with the missing semantics explicit.
+                        semantics = {} if reuse_only else build_semantic_profile({field: values[field] for field in TEXT_FIELDS})
+                        missing_derived_sources += int(reuse_only and case.id not in exclude_case_sources)
                     candidate_text = "。".join(value for value in values.values() if value)
                     indexed_sources += int(cached is not None)
                     fallback_sources += int(cached is None)
@@ -244,7 +266,8 @@ class CaseHistoryRetrieval:
                            "evidence_refs": [{"id": f"case:{case.id}", "source_text_hash": snapshot["sha256"],
                                               "reference": {"field": snippet_field, "source_sha256": text_hash(snippet_source),
                                                             "start": 0, "end": len(snippet_source[:500]), "quote": snippet_source[:500]}}] + metadata_refs,
-                           "profile_state": "current" if valid_profile else "lexical_fallback",
+                           "profile_state": ("current" if valid_profile else "lexical_only"
+                                             if reuse_only and cached is None else "lexical_fallback"),
                            **comparison})
                     asset = assets.get(case.id)
                     if asset is not None and _asset_access(db, asset):
@@ -253,6 +276,7 @@ class CaseHistoryRetrieval:
                         cached = cached_features(indexes.get((case.id, "experience_card", str(asset.id))), content_hash(content))
                         indexed_sources += int(cached is not None)
                         fallback_sources += int(cached is None)
+                        missing_derived_sources += int(reuse_only and cached is None)
                         offer({"source_type": "experience_card", "source_id": asset.id, "case_id": case.id,
                                "case_number": case.case_number, "title": asset.title, "snippet": text[:500],
                                "route": f"/case-intelligence?caseId={case.id}",
@@ -261,8 +285,9 @@ class CaseHistoryRetrieval:
                                             "content_hash": text_hash(json.dumps(content, sort_keys=True, ensure_ascii=False)),
                                             "retrieval_version": RETRIEVAL_VERSION},
                                "evidence_refs": asset.evidence_refs, "profile_state": "historical_confirmed",
+                               "derived_state": "missing" if reuse_only and cached is None else "available",
                                **compare(query, query_conditions, text,
-                                         cached[1] if cached is not None else business_conditions(build_semantic_profile({"description": text})),
+                                         cached[1] if cached is not None else (set() if reuse_only else business_conditions(build_semantic_profile({"description": text}))),
                                          candidate_terms=cached[0] if cached is not None else None)})
                     elif case.id not in dedicated:
                         card = ((case.features or {}).get("intelligence") or {}).get("experience_card") or {}
@@ -271,23 +296,27 @@ class CaseHistoryRetrieval:
                             cached = cached_features(indexes.get((case.id, "legacy_experience_card", str(case.id))), content_hash(card))
                             indexed_sources += int(cached is not None)
                             fallback_sources += int(cached is None)
+                            missing_derived_sources += int(reuse_only and cached is None)
                             offer({"source_type": "legacy_experience_card", "source_id": case.id, "case_id": case.id,
                                    "case_number": case.case_number, "title": f"已确认历史经验 {case.case_number}",
                                    "snippet": text[:500], "route": f"/case-intelligence?caseId={case.id}",
                                    "versions": {"content_hash": text_hash(json.dumps(card, sort_keys=True, ensure_ascii=False)),
                                                 "retrieval_version": RETRIEVAL_VERSION},
                                    "evidence_refs": [{"id": f"case:{case.id}"}], "profile_state": "historical_confirmed",
+                                   "derived_state": "missing" if reuse_only and cached is None else "available",
                                    **compare(query, query_conditions, text,
-                                             cached[1] if cached is not None else business_conditions(build_semantic_profile({"description": text})),
+                                             cached[1] if cached is not None else (set() if reuse_only else business_conditions(build_semantic_profile({"description": text}))),
                                              candidate_terms=cached[0] if cached is not None else None)})
                     scanned += 1
                 cursor = cases[-1].id
                 if partial:
                     break
+            scan_complete = not partial
             if fusion is not None:
                 vector_state = 'partial' if vector_missing or partial else 'ready'
                 matched = len(fusion.scores)
                 partial = partial or vector_missing > 0
+            partial = partial or missing_derived_sources > 0
             return {"schema_version": "case-history-5.1-1", "state": "partial" if partial else "ready",
                     "mode": "hybrid_local" if vector_sources else "lexical_fallback", "semantic_index_state": vector_state,
                     "source_case_id": source_case_id, "query_context": query_context,
@@ -295,6 +324,7 @@ class CaseHistoryRetrieval:
                     "coverage": {"authorized_cases": total, "scanned_cases": scanned, "matched_sources": matched,
                                  "indexed_sources": indexed_sources, "fallback_sources": fallback_sources,
                                  "vector_sources": vector_sources, "vector_missing": vector_missing,
+                                 "missing_derived_sources": missing_derived_sources, "scan_complete": scan_complete,
                                  "recency_limit": None, "complete": not partial, "budget_seconds": SCAN_SECONDS},
                     "items": fusion.finish(limit) if fusion is not None else [item for _, _, item in sorted(heap, key=lambda row: row[:2], reverse=True)],
                     "boundary": "历史相似条件仅供参考，须核对差异与适用性，不成为当前案件事实；词项支持度不是准确概率。"}

@@ -10,8 +10,13 @@ SCHEMA = 'intelligent-query-document-4.3-1'
 TOOLS = {'find_cases': '案件查找', 'find_places': '地点与设施', 'count_cases': '条件统计',
          'compare_periods': '时间段比较', 'summarize_results': '已有研判成果',
          'find_road_results': '历史道路成果', 'find_case_profiles': '案件语义画像',
-         'find_history': '历史案件与经验参考'}
-LABELS = {'coverage': '实际检索覆盖', 'authorized_cases': '候选范围案件数', 'scanned_cases': '已检查案件数',
+         'find_history': '历史案件与经验参考', 'aggregate_case_profiles': '全库画像条件统计'}
+LABELS = {'statistics': '已遍历集合统计', 'matched': '满足全部条件', 'unmatched': '不同或相反表述',
+          'unknown': '条件资料不足', 'denominator': '统计分母', 'missingness': '类别表述缺失比例',
+          'missing_count': '无该类表述的画像数', 'ratio': '比例', 'patterns': '匹配案组条件分布',
+          'condition_statistics': '各条件统计', 'counterexamples': '不同或相反表述案例',
+          'unknown_examples': '资料不足案例', 'profile_states': '画像可用状态',
+          'coverage': '实际检索覆盖', 'authorized_cases': '候选范围案件数', 'scanned_cases': '已检查案件数',
           'matched_sources': '匹配资料来源数（非案件总数）', 'complete': '是否完成全部候选范围',
           'shared_conditions': '相似条件', 'different_conditions': '不同表述',
           'unmatched_query_conditions': '尚未匹配条件', 'snippet': '原文摘录',
@@ -19,7 +24,7 @@ LABELS = {'coverage': '实际检索覆盖', 'authorized_cases': '候选范围案
           'assertions': '原文表述', 'batch_patterns': '本批表述分布（非全库规律）',
           'kind': '表述性质（stated明述、negated否定、uncertain不确定、inferred推断）',
           'reference': '原文引用', 'quote': '原句', 'category': '语义类别', 'value': '标准词项',
-          'case_count': '本批去重案件数', 'count': '匹配案件数', 'current_count': '本期案件数', 'previous_count': '上一等长周期案件数',
+          'case_count': '该条件去重案件数（统计范围见所属结果）', 'count': '匹配案件数', 'current_count': '本期案件数', 'previous_count': '上一等长周期案件数',
           'change': '数量变化', 'items': '本批记录', 'total': '匹配总数', 'summary': '摘要',
           'title': '标题', 'claim': '候选推断', 'hypotheses': '候选（未确认）',
           'supporting_evidence': '支持证据', 'counter_evidence': '反向证据',
@@ -68,6 +73,8 @@ def build_query_document(task):
             raise ValueError('query_document_unknown_tool')
         blocks.append(DocumentBlock('heading', TOOLS[card['tool']]))
         blocks.append(DocumentBlock('paragraph', f"结果状态：{card.get('state', '未知')}。列表仅代表本批返回内容，不替代全库统计。"))
+        if card['tool'] == 'aggregate_case_profiles':
+            blocks.append(DocumentBlock('paragraph', '总体分母与扫描完成度见 coverage；案组计数与分页代表案例分开。未知不当作否定。'))
         for label, value in [('查询成果', card.get('data', {})), ('证据与查询口径', card.get('evidence', {})),
                              ('信息缺口', card.get('information_gaps', []))]:
             blocks.append(DocumentBlock('table', label, tuple(_rows(value))))

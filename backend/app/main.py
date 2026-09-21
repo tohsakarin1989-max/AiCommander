@@ -5,6 +5,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api import agent_runs, auth, case_imports, case_insights, case_pipeline, case_steward, cases, deployment_advisor, dual_domain_pilot, governance, meetings, models, reports, suggestions, system_config, deployment, map_foundation, map_mcp, offline_maps, assistant, websocket, conclusions, agents, graphs, events, patrols, gangs, meeting_templates, personnel, key_locations, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime, situation, workbench
 from app.api import map_package_imports
 from app.api import intelligent_queries
+from app.api import analysis_topics
 from app.api import showcase
 from app.api import case_results
 from app.api import road_analysis
@@ -97,6 +98,7 @@ app.include_router(deployment.router, prefix="/api/deployment", tags=["deploymen
 app.include_router(map_mcp.router, prefix="/api/map-mcp", tags=["map-mcp"])
 app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
 app.include_router(intelligent_queries.router, prefix="/api/intelligent-queries", tags=["intelligent-queries"])
+app.include_router(analysis_topics.router, prefix="/api/analysis-topics", tags=["analysis-topics"])
 app.include_router(showcase.router, prefix="/api/showcase", tags=["showcase"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])

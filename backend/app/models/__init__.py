@@ -141,3 +141,4 @@ from .road_network import RoadAccessGroup, RoadAccessMembership, RoadAccessGrant
 from .road_public_alias import RoadPublicAlias
 from .case_road_artifact import CaseRoadArtifact
 from .case_history_index import CaseHistoryIndex, CaseHistoryIndexCursor, CaseHistoryEmbedding
+from .analysis_topic import AnalysisTopic, TopicSnapshot

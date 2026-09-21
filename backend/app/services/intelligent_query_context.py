@@ -6,7 +6,7 @@ import json
 from app.services.intelligent_query_tools import TOOLS, CaseFilters
 
 VERSION = 'query-context-4.3-1'
-CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles', 'summarize_results', 'find_history'}
+CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles', 'summarize_results', 'find_history', 'aggregate_case_profiles'}
 PAGE_FIELDS = {'page', 'page_size', 'limit'}
 
 
@@ -41,6 +41,11 @@ def remember(conditions, tool, arguments):
 
 def inherit(tool, arguments, conditions, *, question, change_basis=None):
     fields = TOOLS[tool].model_fields
+    if (tool != 'aggregate_case_profiles'
+            and conditions['tool_defaults'].get('aggregate_case_profiles', {}).get('conditions')):
+        # Ordinary case/date filters cannot represent semantic AND conditions.
+        # Clear them explicitly in an aggregate call with a traced user basis.
+        raise ValueError('query_context_tool_cannot_preserve_filters')
     history = conditions['tool_defaults'].get('find_history', {})
     if tool != 'find_history' and (history.get('query') or history.get('source_case_id') is not None):
         # Similarity-ranked retrieval is not an equivalent ordinary case count.
@@ -115,6 +120,9 @@ def freeze_context(parent):
     source_case = (previous or initial or {}).get('source_case')
     if source_case is not None:
         context['source_case'] = copy.deepcopy(source_case)
+    topic_source = (previous or initial or {}).get('topic_source')
+    if topic_source is not None:
+        context['topic_source'] = copy.deepcopy(topic_source)
     if len(json.dumps(context, ensure_ascii=False).encode()) > 32_768:
         raise ValueError('query_context_limit')
     return context

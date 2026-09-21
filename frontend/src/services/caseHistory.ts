@@ -6,13 +6,14 @@ export interface HistoryReference {
   shared_conditions: [string, string, string][]
   different_conditions: [string, string, string][]
   unmatched_query_conditions: [string, string, string][]
-  score: number; score_kind: string; profile_state: string
+  score: number; score_kind: string; profile_state: string; derived_state?: string
   versions: Record<string, string | number | null>
 }
 export interface CaseHistoryResult {
   schema_version: 'case-history-5.1-1'; source_case_id: number | null
   state: 'ready' | 'partial'; mode: string; semantic_index_state: string
-  coverage: { authorized_cases: number; scanned_cases: number; matched_sources: number; complete: boolean }
+  coverage: { authorized_cases: number; scanned_cases: number; matched_sources: number; complete: boolean
+    scan_complete?: boolean; missing_derived_sources?: number }
   items: HistoryReference[]; boundary: string
 }
 export function isCaseHistoryResult(value: unknown): value is CaseHistoryResult {

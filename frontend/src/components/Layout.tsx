@@ -38,7 +38,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="workspace-account">
       <button className="workspace-theme-toggle" type="button" role="switch" aria-checked={mode === 'dark'} aria-label="深色主题" onClick={toggle}>{mode === 'dark' ? <MoonOutlined /> : <SunOutlined />}<span>{mode === 'dark' ? '深色主题' : '浅色主题'}</span><span className="theme-switch-track" aria-hidden="true" /></button>
       <div className="account-identity"><Avatar icon={<UserOutlined />} /><div><strong>{user?.display_name}</strong><span>{user?.role === 'admin' ? '系统管理员' : user?.role === 'analyst' ? '研判人员' : '只读查看'}</span></div></div>
-      <small className="workspace-version">运行版本 {runtime?.version || '5.2.0-stable'}</small>
+      <small className="workspace-version">运行版本 {runtime?.version || '5.3.0-stable'}</small>
       <button type="button" onClick={() => void logout()}><LogoutOutlined />退出登录</button>
     </div>
   </>
