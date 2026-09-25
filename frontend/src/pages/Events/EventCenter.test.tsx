@@ -4,7 +4,7 @@ import EventCenter from './EventCenter'
 
 const state = vi.hoisted(() => ({ role: 'viewer', error: false }))
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { role: state.role } }) }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
+vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn(), useSearchParams: () => [new URLSearchParams(), vi.fn()] }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useMutation: () => ({ isPending: false, mutate: vi.fn() }),

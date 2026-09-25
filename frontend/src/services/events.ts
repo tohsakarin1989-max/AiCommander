@@ -43,8 +43,8 @@ export const eventApi = {
     return response.data
   },
 
-  get: async (eventId: number): Promise<Event> => {
-    const response = await api.get(`/events/${eventId}`)
+  get: async (eventId: number, signal?: AbortSignal): Promise<Event> => {
+    const response = await api.get(`/events/${eventId}`, { signal })
     return response.data
   },
 

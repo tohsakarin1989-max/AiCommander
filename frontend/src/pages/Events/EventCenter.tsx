@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Alert, DatePicker, Form, Input, InputNumber, Modal, Select, message } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../../auth/AuthContext'
 import { eventApi } from '../../services/events'
@@ -9,6 +9,7 @@ import { jurisdictionApi } from '../../services/jurisdiction'
 import type { Event, EventCreateData } from '../../types'
 import { EVENT_TYPES } from '../../types/event'
 import './EventCenter.css'
+import { openFacilityDossier, parseRegionalContext, regionalContextPath, writeRegionalContext } from '../../services/regionalContext'
 
 const { TextArea } = Input
 const { Option } = Select
@@ -32,7 +33,9 @@ const OBSERVATION_EVENT_TYPES = new Set([
 ])
 
 const EventCenter: React.FC = () => {
-  const { user } = useAuth()
+  const { user, sessionEpoch } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const regional = parseRegionalContext(params)
   const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [form] = Form.useForm()
   const [modalOpen, setModalOpen] = useState(false)
@@ -40,6 +43,10 @@ const EventCenter: React.FC = () => {
   const queryClient = useQueryClient()
   const selectedEventType = Form.useWatch('event_type', form)
   const isWellObservation = OBSERVATION_EVENT_TYPES.has(selectedEventType)
+  const detailQuery = useQuery({ queryKey: ['event-detail', user?.id, sessionEpoch, regional.eventId],
+    queryFn: ({ signal }) => eventApi.get(regional.eventId!, signal), enabled: regional.eventId != null && !regional.error,
+    retry: false, gcTime: 0 })
+  const selectedEvent = !detailQuery.isError && !regional.error && detailQuery.data?.id === regional.eventId ? detailQuery.data : undefined
 
   const { data: events, isLoading, isError } = useQuery({
     queryKey: ['events'],
@@ -125,6 +132,17 @@ const EventCenter: React.FC = () => {
 
   return (
     <div className="page event-page">
+      {params.has('operational_area_id') && <p>当前保留共享辖区与时间选择。此页保留原事件管理清单，<button className="btn-ghost" onClick={() => navigate(regionalContextPath('/area-analysis', params))}>查看同条件事件时间线</button>。</p>}
+      {regional.error && <Alert type="error" message={regional.error} />}
+      {params.has('eventId') && <section className="card" aria-label="指定事件原始记录">
+        <div className="card-head"><h2>指定事件原始记录</h2><button onClick={() => setParams(previous => writeRegionalContext(previous, { eventId: null }))}>关闭</button></div>
+        {detailQuery.isError ? <p role="alert">指定事件不存在或当前不可访问，未展示旧缓存。</p> : selectedEvent ? <div className="card-body pad">
+          <h3>{selectedEvent.event_number} · {selectedEvent.title}</h3><p>{selectedEvent.description || '描述未提供'}</p>
+          <p>{selectedEvent.occurred_time} · {selectedEvent.location || '地点未提供'}</p>
+          {selectedEvent.related_asset_id && <button onClick={() => openFacilityDossier(selectedEvent.related_asset_id!)}>查看关联设施档案</button>}
+          {selectedEvent.related_case_id && <button onClick={() => navigate(regionalContextPath(`/cases?caseId=${selectedEvent.related_case_id}`, params))}>查看已关联案件</button>}
+        </div> : <p>正在读取指定事件…</p>}
+      </section>}
       {!canWrite && <Alert type="info" message="只读账号可查看事件，不能录入或转案件" />}
       <div className="page-title">
         <h1>事件中心</h1>
@@ -211,8 +229,9 @@ const EventCenter: React.FC = () => {
                       </div>
                     </td>
                     <td>
+                      <button className="btn-ghost-sm" onClick={() => setParams(previous => writeRegionalContext(previous, { eventId: event.id }))}>详情</button>
                       {event.related_case_id ? (
-                        <button className="btn-ghost-sm" onClick={() => navigate(`/cases?caseId=${event.related_case_id}`)}>
+                        <button className="btn-ghost-sm" onClick={() => navigate(regionalContextPath(`/cases?caseId=${event.related_case_id}`, params))}>
                           查看案件
                         </button>
                       ) : (

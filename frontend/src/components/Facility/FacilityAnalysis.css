@@ -1,0 +1,14 @@
+.facility-dossier { color: var(--ink, inherit); overflow-wrap: anywhere; }
+.facility-dossier h2 small { display: block; font-size: 13px; font-weight: 400; margin-top: 8px; }
+.facility-dossier section { border-top: 1px solid var(--line, #ddd); margin-top: 22px; padding-top: 10px; }
+.facility-dossier p, .regional-analysis p { line-height: 1.65; }
+.facility-evidence { border-left: 2px solid var(--line, #ddd); padding: 8px 14px; margin: 10px 0; }
+.facility-evidence a { display: inline-block; margin-right: 12px; }
+.facility-state { color: var(--ink-2, #64748b); }
+.regional-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0 20px; }
+.regional-controls label { display: flex; gap: 8px; align-items: center; }
+.regional-controls input, .regional-controls select { max-width: 100%; color: var(--ink, inherit); background: var(--bg-1, transparent); border: 1px solid var(--line, #ccc); padding: 6px; border-radius: 4px; }
+.regional-links { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0; }
+.regional-facilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px; }
+.regional-facilities article { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 16px; overflow-wrap: anywhere; }
+.regional-pagination { display: flex; align-items: center; gap: 14px; margin: 16px 0; }

@@ -15,6 +15,8 @@ import { useAuth } from '../../auth/AuthContext'
 import { caseDetailKey, parseCaseDeepLinkId, visibleCaseDetail } from './caseSearch'
 import { caseFocusCenter, casesWithAuthorizedFocus } from './caseMapFocus'
 import { caseContextPath, parseCaseContextParams } from '../../services/caseContext'
+import { facilityAnalysisApi } from '../../services/facilityAnalysis'
+import { openFacilityDossier, parseRegionalContext, regionalContextPath, writeRegionalContext } from '../../services/regionalContext'
 import LeafletMap from '../../components/Map/LeafletMap'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
@@ -39,6 +41,7 @@ const CasesMap: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const { user, sessionEpoch } = useAuth()
   const caseContext = parseCaseContextParams(searchParams)
+  const regionalContext = parseRegionalContext(searchParams)
   const [showSerial, setShowSerial] = useState(true)
   const [showChainLinks, setShowChainLinks] = useState(true)
   const [visiblePositions, setVisiblePositions] = useState<ChainPosition[]>(['upstream', 'midstream', 'downstream', 'unknown'])
@@ -50,26 +53,45 @@ const CasesMap: React.FC = () => {
     queryFn: ({ signal }) => caseApi.getCase(selectedCaseId!, signal),
     enabled: selectedCaseId != null, retry: false, gcTime: 0,
   })
-  const focus = selectedCaseId == null ? null : visibleCaseDetail(focusQuery)
-  const focusCenter = focus?.operational_area_id === activeAreaId ? caseFocusCenter(focus) : undefined
+  const focusRecord = selectedCaseId == null ? null : visibleCaseDetail(focusQuery)
 
   const areaScopesQuery = useQuery({
     queryKey: ['my-area-scopes', user?.id, sessionEpoch],
     queryFn: authApi.myAreaScopes,
-    staleTime: 5 * 60_000,
+    staleTime: 0, refetchInterval: 30_000,
   })
+  const focus = !areaScopesQuery.isError && areaScopesQuery.data?.some(scope => scope.operational_area_id === focusRecord?.operational_area_id) ? focusRecord : null
+  const areaAuthorized = activeAreaId != null && !areaScopesQuery.isError && !!areaScopesQuery.data?.some(scope => scope.operational_area_id === activeAreaId)
+  const canReadArea = areaAuthorized && !regionalContext.error && (regionalContext.areaId == null || regionalContext.areaId === activeAreaId)
+  const focusCenter = canReadArea && focus?.operational_area_id === activeAreaId ? caseFocusCenter(focus) : undefined
 
   React.useEffect(() => {
     const scopes = areaScopesQuery.isError ? [] : areaScopesQuery.data ?? []
     if (scopes.length === 0) return
+    if (caseContext.filters.operational_area_id != null) {
+      setActiveAreaId(scopes.some(scope => scope.operational_area_id === caseContext.filters.operational_area_id) ? caseContext.filters.operational_area_id : null)
+      return
+    }
     if (focus?.operational_area_id && scopes.some(scope => scope.operational_area_id === focus.operational_area_id)) {
       setActiveAreaId(focus.operational_area_id)
+      setSearchParams(previous => writeRegionalContext(previous, { operational_area_id: focus.operational_area_id!, caseId: focus.id,
+        assetId: regionalContext.assetId, eventId: regionalContext.eventId }), { replace: true })
       return
     }
     if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
     const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
     setActiveAreaId(preferred.operational_area_id)
-  }, [activeAreaId, areaScopesQuery.data, areaScopesQuery.isError, focus?.id, focus?.operational_area_id])
+    if (!selectedCaseId) setSearchParams(previous => writeRegionalContext(previous, { operational_area_id: preferred.operational_area_id,
+      assetId: regionalContext.assetId, eventId: regionalContext.eventId }), { replace: true })
+  }, [activeAreaId, areaScopesQuery.data, areaScopesQuery.isError, focus?.id, focus?.operational_area_id, caseContext.filters.operational_area_id, selectedCaseId, setSearchParams])
+
+  const regionQuery = useQuery({
+    queryKey: ['facility-region', user?.id, sessionEpoch, activeAreaId, regionalContext.startDate, regionalContext.endDate, 1, 50],
+    queryFn: ({ signal }) => facilityAnalysisApi.region({ operational_area_id: activeAreaId!, start_date: regionalContext.startDate,
+      end_date: regionalContext.endDate, page: 1, page_size: 50 }, signal),
+    enabled: canReadArea, retry: false, gcTime: 0,
+  })
+  const region = canReadArea && !regionQuery.isError && regionQuery.data?.scope?.operational_area_id === activeAreaId ? regionQuery.data : undefined
 
   const mapCasesQuery = useQuery({
     queryKey: ['cases', 'map', activeAreaId, user?.id, sessionEpoch, caseContext.filters],
@@ -78,19 +100,19 @@ const CasesMap: React.FC = () => {
       limit: 2000,
       operational_area_id: activeAreaId as number,
     }),
-    enabled: activeAreaId != null && !caseContext.error,
+    enabled: canReadArea,
   })
   const isLoading = mapCasesQuery.isLoading
-  const cases = casesWithAuthorizedFocus(mapCasesQuery.isError ? [] : mapCasesQuery.data ?? [], focus, activeAreaId)
+  const cases = canReadArea ? casesWithAuthorizedFocus(mapCasesQuery.isError ? [] : mapCasesQuery.data ?? [], focus, activeAreaId) : []
   const selectedCase = cases.find(item => item.id === selectedId) ?? null
   const areaCaseIdSet = new Set((cases ?? []).map(item => item.id))
 
   const hotspotsQuery = useQuery({
     queryKey: ['hotspots', 'map', activeAreaId, user?.id, sessionEpoch],
     queryFn: () => caseApi.getHotspots(0.5, 3, activeAreaId as number),
-    enabled: activeAreaId != null,
+    enabled: canReadArea,
   })
-  const hotspots = hotspotsQuery.isError ? undefined : hotspotsQuery.data
+  const hotspots = !canReadArea || hotspotsQuery.isError ? undefined : hotspotsQuery.data
 
   const serialQuery = useQuery({
     queryKey: ['serialCases', activeAreaId, user?.id, sessionEpoch],
@@ -104,16 +126,16 @@ const CasesMap: React.FC = () => {
       0.6,
       activeAreaId as number,
     ),
-    enabled: activeAreaId != null,
+    enabled: canReadArea,
   })
-  const serialCases = serialQuery.isError ? undefined : serialQuery.data
+  const serialCases = !canReadArea || serialQuery.isError ? undefined : serialQuery.data
 
   const chainQuery = useQuery({
     queryKey: ['chain-map-data', selectedCaseId, activeAreaId, user?.id, sessionEpoch],
     queryFn: () => caseApi.getChainMapData({ case_id: selectedCaseId ?? undefined, min_confidence: 0.5 }),
-    enabled: activeAreaId != null && (!selectedCaseId || !!focus),
+    enabled: canReadArea && (!selectedCaseId || !!focus),
   })
-  const chainMapData = chainQuery.isError ? undefined : chainQuery.data
+  const chainMapData = !canReadArea || chainQuery.isError ? undefined : chainQuery.data
 
   // 有坐标的案件 → LeafletMap markers
   const markers: CaseMarker[] = (cases || [])
@@ -210,14 +232,14 @@ const CasesMap: React.FC = () => {
               onChange={id => {
                 setActiveAreaId(id)
                 setSelectedId(null)
-                setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('caseId'); return next })
+                setSearchParams(previous => writeRegionalContext(previous, { operational_area_id: id }))
               }}
             />
           )}
           <Button
             className="cases-map-filter__spacetime-btn"
             icon={<FieldTimeOutlined />}
-            onClick={() => navigate('/cases/spacetime')}
+            onClick={() => navigate(regionalContextPath('/cases/spacetime', searchParams))}
           >
             时空研判
           </Button>
@@ -227,6 +249,10 @@ const CasesMap: React.FC = () => {
       {(focusQuery.isError || (searchParams.has('caseId') && selectedCaseId == null)) && <Alert type="warning"
         message="指定案件不存在、参数无效或当前不可访问，未替换为其他案件。" />}
       {caseContext.error && <Alert type="error" message={caseContext.error} />}
+      {regionalContext.areaId != null && !areaScopesQuery.isLoading && !areaAuthorized && <Alert type="warning" message="当前指定辖区不可访问，未切换到其他辖区或展示旧数据。" />}
+      {regionQuery.isError && <Alert type="warning" message="设施和事件图层暂不可读，不影响已读取的案件记录。" />}
+      <nav className="regional-links"><Button type="link" onClick={() => navigate(regionalContextPath('/area-analysis', searchParams))}>同条件设施对照与时间线</Button>
+        <span>设施显示前 50 个；完整清单可在条件对照中翻页。独立事件保留来源标签。</span></nav>
       {mapCasesQuery.isError && <Alert type="error" message="区域案件暂不可读，不代表该区域没有案件。" />}
       {focus && !caseFocusCenter(focus) && <Alert type="info" message="指定案件缺少有效坐标，保留记录但不猜测地图位置。" />}
 
@@ -337,9 +363,24 @@ const CasesMap: React.FC = () => {
               chainLinks={chainLinks}
               height="100%"
               operationalAreaId={activeAreaId ?? undefined}
+              snapshotRef={region?.versions.map_snapshot_id ?? undefined}
+              productionAssetIds={region?.facilities.items.map(item => item.id) ?? []}
+              referencePoints={[
+                ...(region?.facilities.items ?? []).filter(item => item.latitude != null && item.longitude != null).map(item => ({
+                  id: `asset:${item.id}`, latitude: item.latitude!, longitude: item.longitude!, title: `设施：${item.name}`, description: '登记资料，不表示涉案；点击查看设施档案。',
+                })),
+                ...(region?.events.items ?? []).filter(item => item.latitude != null && item.longitude != null).map(item => ({
+                  id: `event:${item.id}`, latitude: item.latitude!, longitude: item.longitude!, title: `事件：${item.title || item.event_number}`, description: item.related_case_id ? '已关联案件的事件记录，不重复计为独立案件。' : '独立事件记录，非案件认定。',
+                })),
+              ]}
+              focusedReferenceId={regionalContext.assetId ? `asset:${regionalContext.assetId}` : regionalContext.eventId ? `event:${regionalContext.eventId}` : undefined}
+              onReferencePointClick={id => {
+                if (id.startsWith('asset:')) openFacilityDossier(Number(id.slice(6)))
+                else if (id.startsWith('event:')) setSearchParams(previous => writeRegionalContext(previous, { eventId: Number(id.slice(6)) }))
+              }}
               onMarkerClick={(m) => {
                 const found = (cases || []).find((c) => c.id === m.id)
-                if (found) setSelectedId(found.id)
+                if (found) { setSelectedId(found.id); setSearchParams(previous => writeRegionalContext(previous, { caseId: found.id })) }
               }}
             />
           )}

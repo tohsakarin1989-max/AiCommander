@@ -34,6 +34,7 @@ interface SpaceTimeMapProps {
   height?: string | number
   center?: [number, number]
   operationalAreaId?: number
+  snapshotRef?: string
 }
 
 const RISK_COLORS = {
@@ -48,6 +49,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
   height = 500,
   center,
   operationalAreaId,
+  snapshotRef,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -55,6 +57,8 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
   const hotspotLayersRef = useRef<L.Layer[]>([])
   const [basemapStatus, setBasemapStatus] = useState<BasemapStatus>('loading')
   const retryBasemapRef = useRef<() => void>(() => {})
+  const fittedRef = useRef(false)
+  const userInteractedRef = useRef(false)
 
   // 初始化地图（只运行一次）
   useEffect(() => {
@@ -67,11 +71,17 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
       zoomAnimation: false,
     })
     mapRef.current = map
+    fittedRef.current = false
+    userInteractedRef.current = false
+    const container = containerRef.current
+    const markInteraction = () => { userInteractedRef.current = true }
+    container.addEventListener('pointerdown', markInteraction)
+    container.addEventListener('wheel', markInteraction, { passive: true })
 
     const stopBasemap = mountOfflineBasemap(map, {
-      operationalAreaId, onStatus: setBasemapStatus,
+      operationalAreaId, snapshotRef, onStatus: setBasemapStatus,
       onConfig: config => {
-        if (!center && heatPoints.length === 0 && config.bounds) {
+        if (!center && !fittedRef.current && !userInteractedRef.current && heatPoints.length === 0 && config.bounds) {
           map.fitBounds(config.bounds, { padding: [24, 24] })
         }
       },
@@ -89,13 +99,15 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
 
     return () => {
       stopBasemap()
+      container.removeEventListener('pointerdown', markInteraction)
+      container.removeEventListener('wheel', markInteraction)
       retryBasemapRef.current = () => {}
       const heatLayer = heatRef.current
       heatRef.current = null
       disposeLeafletHeatMap(map, heatLayer)
       mapRef.current = null
     }
-  }, [operationalAreaId]) // center is applied when this area-specific map mounts
+  }, [operationalAreaId, snapshotRef]) // center is applied when this area-specific map mounts
 
   // 热力图点位更新
   useEffect(() => {
@@ -105,11 +117,12 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
     )
     try { heatRef.current.setLatLngs(pts) } catch (_) { return }
 
-    if (pts.length > 0 && mapRef.current) {
+    if (pts.length > 0 && mapRef.current && !fittedRef.current && !userInteractedRef.current) {
       const bounds = L.latLngBounds(heatPoints.map((p) => [p.lat, p.lng]))
       mapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 })
+      fittedRef.current = true
     }
-  }, [heatPoints, operationalAreaId])
+  }, [heatPoints, operationalAreaId, snapshotRef])
 
   // 预测热点圈更新
   useEffect(() => {
@@ -148,7 +161,7 @@ const SpaceTimeMap: React.FC<SpaceTimeMapProps> = ({
 
       hotspotLayersRef.current.push(circle, marker)
     })
-  }, [predictionHotspots, operationalAreaId])
+  }, [predictionHotspots, operationalAreaId, snapshotRef])
 
   return (
     <div style={{ position: 'relative', height }}>

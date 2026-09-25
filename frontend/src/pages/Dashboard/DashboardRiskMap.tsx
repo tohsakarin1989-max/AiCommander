@@ -12,6 +12,7 @@ import { mountOfflineBasemap, type BasemapStatus } from '../../components/Map/of
 import { BasemapNotice } from '../../components/Map/BasemapNotice'
 import { escapeHtml } from '../../utils/html'
 import { shouldFitInitialMap } from './dailyDashboardModel'
+import { openFacilityDossier } from '../../services/regionalContext'
 import type {
   DashboardHotspot,
   DashboardMapPoint,
@@ -34,6 +35,7 @@ interface DashboardRiskMapProps {
   operationalAreaId?: number
   neutralWells?: boolean
   focus?: [number, number] | null
+  onWellClick?: (assetId: number) => void
 }
 
 const DEFAULT_CENTER: L.LatLngExpression = [46.5977, 125.1034]
@@ -74,6 +76,7 @@ export default function DashboardRiskMap({
   operationalAreaId,
   neutralWells = false,
   focus,
+  onWellClick = openFacilityDossier,
 }: DashboardRiskMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<L.Map | null>(null)
@@ -195,6 +198,7 @@ export default function DashboardRiskMap({
             <span>${well.isHighProduction ? '高产井' : '普通井点'} · 数据来源：辖区井点资产</span>
           </div>
         `)
+        marker.on('click', () => onWellClick(well.assetId))
         marker.bindTooltip(
           neutralWells ? escapeHtml(well.name) : `${escapeHtml(well.name)} · 关注 ${well.attentionScore}`,
           {
@@ -299,7 +303,7 @@ export default function DashboardRiskMap({
       fittedRef.current = true
       fitMap(map, boundsRef.current)
     }
-  }, [cases, chainLines, hotspots, layer, operationalAreaId, signals, wells, neutralWells])
+  }, [cases, chainLines, hotspots, layer, operationalAreaId, signals, wells, neutralWells, onWellClick])
 
   const visibleCount = layer === 'cases'
     ? cases.length + hotspots.length + chainLines.length

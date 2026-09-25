@@ -4,9 +4,10 @@ import { AimOutlined, PauseOutlined, CaretRightOutlined } from '@ant-design/icon
 import { Tooltip } from 'antd'
 import type { DashboardActivity } from '../../services/dashboard'
 import { validMapCoordinate } from './dailyDashboardModel'
+import { dossierSourcePath } from '../../services/regionalContext'
 
-export default function DashboardActivityList({ items, onLocate, auto = true }: {
-  items: DashboardActivity[]; onLocate: (point: [number, number]) => void; auto?: boolean
+export default function DashboardActivityList({ items, onLocate, auto = true, caseParams }: {
+  items: DashboardActivity[]; onLocate: (point: [number, number]) => void; auto?: boolean; caseParams?: URLSearchParams
 }) {
   const container = useRef<HTMLDivElement>(null)
   const previous = useRef<Set<string> | null>(null)
@@ -48,7 +49,7 @@ export default function DashboardActivityList({ items, onLocate, auto = true }: 
       {!items.length && <p className="daily-message">本期暂无可展示记录</p>}
       {items.map(item => <article key={item.id} className={fresh.has(item.id) ? 'activity-new' : ''}>
         <time dateTime={item.recorded_at}>{new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(item.recorded_at))}</time>
-        <Link to={item.result_id ? `/reports?resultId=${encodeURIComponent(item.result_id)}` : `/cases?caseId=${item.case_id}`}><strong>{item.title}</strong><span>{item.case_number}</span></Link>
+        <Link to={item.result_id ? `/reports?resultId=${encodeURIComponent(item.result_id)}` : dossierSourcePath(`/cases?caseId=${item.case_id}`, caseParams ?? new URLSearchParams())}><strong>{item.title}</strong><span>{item.case_number}</span></Link>
         {item.detail && <small>{item.detail}</small>}
         {validMapCoordinate(item.latitude, item.longitude) && <Tooltip title="地图定位"><button aria-label={`定位 ${item.case_number}`} onClick={() => onLocate([item.latitude!, item.longitude!])}><AimOutlined /></button></Tooltip>}
       </article>)}

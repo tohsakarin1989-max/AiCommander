@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.tasks.map_package_tasks",
         "app.tasks.intelligent_query_tasks",
         "app.tasks.analysis_topic_tasks",
+        "app.tasks.facility_summary_tasks",
     ],
 )
 
@@ -29,6 +30,11 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
+        "reconcile-facility-catalog": {
+            "task": "aicommander.facilities.reconcile",
+            "schedule": 60.0,
+            "options": {"expires": 60},
+        },
         "process-analysis-topic": {
             "task": "aicommander.topics.process_next",
             "schedule": 15.0,

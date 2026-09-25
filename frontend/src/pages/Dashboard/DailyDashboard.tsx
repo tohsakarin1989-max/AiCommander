@@ -4,7 +4,10 @@ import { Link } from 'react-router-dom'
 import { Drawer } from 'antd'
 import { FullscreenOutlined, FullscreenExitOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useAuth } from '../../auth/AuthContext'
-import { authApi } from '../../services/auth'
+import { useRegionalContext } from '../../services/useRegionalContext'
+import { dossierSourcePath, regionalContextPath } from '../../services/regionalContext'
+import { dashboardWindow, rollingWindowParams } from './dashboardWindow'
+import { useSearchParams } from 'react-router-dom'
 import { getDashboardSummary } from '../../services/dashboard'
 import DashboardRiskMap, { type DashboardMapLayer } from './DashboardRiskMap'
 import type { DashboardMapPoint, DashboardWellPoint } from './dashboardCommandModel'
@@ -20,8 +23,11 @@ const formatTime = (value: string) => new Intl.DateTimeFormat('zh-CN', {
 
 export default function DailyDashboard() {
   const { user, sessionEpoch } = useAuth()
-  const [areaId, setAreaId] = useState<number | null>(null)
-  const [days, setDays] = useState(7)
+  const regional = useRegionalContext()
+  const [, setSearchParams] = useSearchParams()
+  const areaId = regional.ready ? regional.areaId : null
+  const windowSelection = dashboardWindow(regional.params)
+  const days = windowSelection.days
   const [layer, setLayer] = useState<DashboardMapLayer>('cases')
   const [focus, setFocus] = useState<[number, number] | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
@@ -29,13 +35,9 @@ export default function DailyDashboard() {
   const [fullscreenError, setFullscreenError] = useState(false)
   const [moreActivity, setMoreActivity] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  const scopes = useQuery({ queryKey: ['my-area-scopes', user?.id, sessionEpoch], queryFn: authApi.myAreaScopes, refetchInterval: 30_000 })
-  useEffect(() => {
-    const available = scopes.data ?? []
-    if (!available.some(item => item.operational_area_id === areaId)) {
-      setAreaId((available.find(item => item.is_default) ?? available[0])?.operational_area_id ?? null)
-    }
-  }, [areaId, scopes.data])
+  const scopes = { data: regional.scopes, isError: !!regional.error, isPending: !regional.ready && !regional.error,
+    error: regional.error ? { status: 403 } : undefined, refetch: regional.refetchScopes }
+  const windowParams = windowSelection.request
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000)
     const onFullscreen = () => setFullscreen(document.fullscreenElement === root.current)
@@ -43,14 +45,19 @@ export default function DailyDashboard() {
     return () => { window.clearInterval(timer); document.removeEventListener('fullscreenchange', onFullscreen) }
   }, [])
   const summary = useQuery({
-    queryKey: ['cases', 'dashboard', user?.id, sessionEpoch, areaId, days],
-    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal),
-    enabled: areaId != null, refetchInterval: 30_000, retry: 1,
+    queryKey: ['cases', 'dashboard', user?.id, sessionEpoch, areaId, days, windowParams],
+    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 20, windowParams),
+    enabled: areaId != null && !windowSelection.allHistory, refetchInterval: 30_000, retry: 1,
   })
-  const authorizedSummary = mayShowCachedDashboard(summary.error) && mayShowCachedDashboard(scopes.error) ? summary.data : undefined
+  const authorizedSummary = !windowSelection.allHistory && regional.ready && mayShowCachedDashboard(summary.error) && mayShowCachedDashboard(scopes.error) ? summary.data : undefined
+  useEffect(() => {
+    if (windowSelection.rolling && authorizedSummary) {
+      setSearchParams(previous => rollingWindowParams(previous, days, authorizedSummary.period), { replace: true })
+    }
+  }, [authorizedSummary, windowSelection.rolling, days, setSearchParams])
   const allActivity = useQuery({
-    queryKey: ['cases', 'dashboard-activities', user?.id, sessionEpoch, areaId, days],
-    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 100),
+    queryKey: ['cases', 'dashboard-activities', user?.id, sessionEpoch, areaId, days, windowParams],
+    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 100, windowParams),
     enabled: moreActivity && areaId != null && !!authorizedSummary, refetchInterval: moreActivity ? 30_000 : false,
     retry: 1,
   })
@@ -78,40 +85,46 @@ export default function DailyDashboard() {
       <div><h1>涉油案件态势总览</h1></div>
       <div className="daily-controls">
         <label>辖区<select aria-label="大屏辖区" value={areaId ?? ''} onChange={event => {
-          setAreaId(Number(event.target.value)); setFocus(null)
+          regional.update({ operational_area_id: Number(event.target.value) }); setFocus(null)
         }}>
           {!scopes.data?.length && <option value="">暂无授权辖区</option>}
           {scopes.data?.map(item => <option key={item.operational_area_id} value={item.operational_area_id}>{item.area_name}</option>)}
         </select></label>
-        <label>周期<select aria-label="大屏周期" value={days} onChange={event => { setDays(Number(event.target.value)); setFocus(null) }}>
-          <option value={7}>最近 7 天</option><option value={30}>最近 30 天</option>
+        <label>周期<select aria-label="大屏周期" value={windowSelection.rolling ? String(days) : 'custom'} onChange={event => {
+          const selected = Number(event.target.value); if (!selected) return
+          setFocus(null)
+          setSearchParams(previous => { const next = new URLSearchParams(previous); next.set('dashboard_period', String(selected)); next.delete('time_scope'); return next })
+        }}>
+          <option value="custom">当前共享时间窗</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option>
         </select></label>
-        <button aria-label="刷新" title="刷新" onClick={() => void summary.refetch()} disabled={areaId == null || summary.isFetching}><ReloadOutlined /></button>
+        <Link to={regionalContextPath('/area-analysis', regional.params)}>区域条件对照</Link>
+        <button aria-label="刷新" title="刷新" onClick={() => void summary.refetch()} disabled={areaId == null || windowSelection.allHistory || summary.isFetching}><ReloadOutlined /></button>
         <button className="daily-fullscreen" onClick={() => void toggleFullscreen()}>{fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}{fullscreen ? '退出全屏' : '全屏投屏'}</button>
       </div>
     </header>
+    {windowSelection.allHistory && <p role="status">已保留全部授权历史条件。周期大屏需要有限时间窗，请明确选择最近 7 天或 30 天；全部历史总量与时间线可在“区域条件对照”继续查看。</p>}
     <div className="daily-status" role="status">
-      {data ? <><span>北京时间 {formatTime(data.period.start)} — {formatTime(data.as_of)}</span>
-        <span className={stale ? 'daily-warning' : ''}>{stale ? '数据已过期，请刷新' : summary.isFetching ? '正在更新' : '每 30 秒自动更新'}</span></>
-        : <span>{scopes.isError || summary.isError ? '数据读取失败，不能视为无案件。' : scopes.isPending || summary.isFetching ? '正在读取完整授权数据…' : '当前没有可查看的辖区。'}</span>}
+      {data ? <><span>北京时间 {formatTime(data.period.start)} — {formatTime(data.period.end)}（截止不含）</span>
+        <span className={stale ? 'daily-warning' : ''}>{stale ? '数据已过期，请刷新' : summary.isFetching ? '正在更新' : windowSelection.rolling ? '每 30 秒更新滚动时间窗' : '固定共享时间窗，每 30 秒复核资料'}</span></>
+        : <span>{windowSelection.allHistory ? '全部历史条件已保留，尚未选择有限周期。' : scopes.isError || summary.isError ? '数据读取失败，不能视为无案件。' : scopes.isPending || summary.isFetching ? '正在读取完整授权数据…' : '当前没有可查看的辖区。'}</span>}
       {fullscreenError && <span className="daily-warning">浏览器不支持全屏，可继续在当前窗口使用。</span>}
     </div>
-    {(scopes.isError || summary.isError) && <div className="daily-message" role="alert">
+    {(scopes.isError || (!windowSelection.allHistory && summary.isError)) && <div className="daily-message" role="alert">
       无法取得最新授权数据，请检查连接或权限后重试。
-      <button onClick={() => { void scopes.refetch(); if (areaId) void summary.refetch() }}>重试</button>
+      <button onClick={() => { void scopes.refetch(); if (areaId && !windowSelection.allHistory) void summary.refetch() }}>重试</button>
     </div>}
     {data && <>
       <section className="daily-metrics" aria-label="统一口径态势指标">
         {[
           { label: '本期案件', value: data.metrics.cases, unit: '起', note: '按案发时间统计，包含无坐标案件', detail: data.definitions.cases },
-          { label: '较上一同长度周期', value: `${data.metrics.change > 0 ? '+' : ''}${data.metrics.change}`, unit: '起', note: `上期 ${data.metrics.previous_cases} 起，同样 ${days} 天`, detail: '数量增减不直接代表风险变化' },
+          { label: '较上一同长度周期', value: `${data.metrics.change > 0 ? '+' : ''}${data.metrics.change}`, unit: '起', note: `上期 ${data.metrics.previous_cases} 起，按相同时间长度比较`, detail: '数量增减不直接代表风险变化' },
           { label: '范围内登记井', value: data.metrics.registered_wells, unit: '口', note: '当前有效登记井，非历史井数', detail: data.definitions.registered_wells },
           { label: '完成研判次数', value: data.metrics.analysis_results, unit: '次', note: '按完成时间，含降级完成和重算', detail: data.definitions.analysis_results },
         ].map(item => <article key={item.label} title={item.detail}><h2>{item.label}</h2><div className="daily-value">{item.value}<small>{item.unit}</small></div><p>{item.note}</p></article>)}
       </section>
       <div className="daily-main-grid">
         <section className="daily-activity-panel"><h2>最新动态</h2>
-          <DashboardActivityList key={`${areaId}:${days}`} items={data.activities ?? EMPTY} onLocate={point => { setLayer('cases'); setFocus(point) }} />
+          <DashboardActivityList key={`${areaId}:${days}`} items={data.activities ?? EMPTY} caseParams={regional.params} onLocate={point => { setLayer('cases'); setFocus(point) }} />
           <button className="activity-more" onClick={() => setMoreActivity(true)}>查看更多动态</button>
           {data.processing && <div className="daily-processing">排队 {data.processing.pending} · 处理 {data.processing.processing}<br />重试 {data.processing.retry} · 失败 {data.processing.failed}</div>}
         </section>
@@ -151,13 +164,13 @@ export default function DailyDashboard() {
               <p>画像 {item.case_profile_id} · 地图 {item.map_snapshot_id} · 算法 {item.algorithm_version}</p>
             </>}
             <ul>{item.evidence.map(evidence => <li key={evidence.case_id}>
-              <Link to={`/cases?caseId=${evidence.case_id}`}>{evidence.case_number}</Link>
+              <Link to={dossierSourcePath(`/cases?caseId=${evidence.case_id}`, regional.params)}>{evidence.case_number}</Link>
               {validMapCoordinate(evidence.latitude, evidence.longitude) && <button onClick={() => {
                 setLayer('cases'); setFocus([evidence.latitude!, evidence.longitude!])
               }}>地图定位</button>}
             </li>)}</ul><p className="daily-boundary">{item.boundary}</p></details>
           </article>)}
-          <section className="daily-results"><h2>最新研判成果</h2><DashboardActivityList items={data.recent_results ?? EMPTY} auto={false} onLocate={point => { setLayer('cases'); setFocus(point) }} /></section>
+          <section className="daily-results"><h2>最新研判成果</h2><DashboardActivityList items={data.recent_results ?? EMPTY} caseParams={regional.params} auto={false} onLocate={point => { setLayer('cases'); setFocus(point) }} /></section>
         </aside>
       </div>
       <div className="daily-bottom-grid">
@@ -172,7 +185,7 @@ export default function DailyDashboard() {
       </div>
     </>}
     <Drawer title="本期最新动态（最多 100 条）" open={moreActivity} onClose={() => setMoreActivity(false)} getContainer={() => root.current!} width={480}>
-      {data && mayShowCachedDashboard(allActivity.error) ? <><p role="status">{allActivity.isError ? '刷新失败，以下为缓存记录' : allActivity.isFetching ? '正在更新' : ''}</p><DashboardActivityList key={`${areaId}:${days}`} items={allActivity.data?.activities ?? EMPTY} auto={false} onLocate={point => { setLayer('cases'); setFocus(point); setMoreActivity(false) }} /></> : <p>数据不可访问，请重新确认权限。</p>}
+      {data && mayShowCachedDashboard(allActivity.error) ? <><p role="status">{allActivity.isError ? '刷新失败，以下为缓存记录' : allActivity.isFetching ? '正在更新' : ''}</p><DashboardActivityList key={`${areaId}:${days}`} items={allActivity.data?.activities ?? EMPTY} caseParams={regional.params} auto={false} onLocate={point => { setLayer('cases'); setFocus(point); setMoreActivity(false) }} /></> : <p>数据不可访问，请重新确认权限。</p>}
     </Drawer>
   </div>
 }

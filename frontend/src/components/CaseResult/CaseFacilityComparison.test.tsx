@@ -32,7 +32,8 @@ describe('道路前置候选的日常展示', () => {
     expect(html).toContain('入口或连接待核')
     expect(html).toContain('不能据此认定全域最优')
     expect(html).toContain('非案件事实')
-    expect(html).not.toContain('<button')
+    expect(html).toContain('查看设施档案')
+    expect(html).not.toContain('展开可信入口参考路径')
   })
   it('自动成果只读查询，绑定原成果与可导出的附件', async () => {
     const content = fixture()

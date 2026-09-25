@@ -42,8 +42,8 @@ export interface DashboardSummary {
   }
 }
 
-export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal, activityLimit = 20): Promise<DashboardSummary> {
+export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal, activityLimit = 20, window?: { start_date?: string; end_date?: string }): Promise<DashboardSummary> {
   return (await api.get<DashboardSummary>('/cases/dashboard-summary', {
-    params: { operational_area_id: areaId, days, activity_limit: activityLimit }, signal,
+    params: { operational_area_id: areaId, days, activity_limit: activityLimit, ...window }, signal,
   })).data
 }
