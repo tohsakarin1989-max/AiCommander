@@ -17,10 +17,15 @@ from app.services.dashboard_activity_service import dashboard_activity
 class DashboardSummaryService:
     @staticmethod
     def build(db: Session, *, operational_area_id: int | None, days: int,
-              as_of: datetime | None = None, map_limit: int = 500, activity_limit: int = 20) -> dict:
-        end = utc_datetime(as_of or datetime.now(timezone.utc))
-        start = end - timedelta(days=days)
-        previous_start = start - timedelta(days=days)
+              as_of: datetime | None = None, map_limit: int = 500, activity_limit: int = 20,
+              start_date: datetime | None = None, end_date: datetime | None = None) -> dict:
+        measured_at = utc_datetime(as_of or datetime.now(timezone.utc))
+        end = utc_datetime(end_date) if end_date else measured_at
+        start = utc_datetime(start_date) if start_date else end - timedelta(days=days)
+        duration = end - start
+        if duration <= timedelta(0) or duration > timedelta(days=3660):
+            raise ValueError('dashboard_window_invalid')
+        previous_start = start - duration
         cases = db.query(Case)
         wells = db.query(JurisdictionAsset).filter(
             JurisdictionAsset.asset_type == "well", JurisdictionAsset.status == "active")
@@ -124,9 +129,9 @@ class DashboardSummaryService:
         return {
             **activity,
             "schema_version": 1, "operational_area_id": operational_area_id,
-            "as_of": end, "state": "ready" if current_count or well_count or analyses or activity["activities"] else "empty",
+            "as_of": measured_at, "state": "ready" if current_count or well_count or analyses or activity["activities"] else "empty",
             "period": {"start": start, "end": end, "previous_start": previous_start,
-                       "previous_end": start, "days": days, "timezone": "Asia/Shanghai"},
+                       "previous_end": start, "days": duration.total_seconds() / 86400, "timezone": "Asia/Shanghai"},
             "metrics": {"cases": current_count, "previous_cases": previous_count,
                         "change": current_count - previous_count, "registered_wells": well_count,
                         "analysis_results": analyses},

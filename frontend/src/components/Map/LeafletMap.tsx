@@ -11,6 +11,7 @@ import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import { escapeHtml } from '../../utils/html'
 import { validReferencePoint, type ReferencePoint } from './referencePoint'
 import { hypothesisRegionColor, hypothesisSupportLabel, parseCircleHypothesisRegion } from './caseHypothesisMap'
+import { openFacilityDossier } from '../../services/regionalContext'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -37,6 +38,7 @@ interface LeafletMapProps {
   focusedReferenceId?: string | null
   onReferencePointClick?: (id: string) => void
   productionAssetIds?: number[]
+  onProductionAssetClick?: (assetId: number, snapshotRef: string) => void
   hypothesisRegions?: Array<{
     id: string
     hypothesis_type: string
@@ -148,6 +150,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   focusedReferenceId,
   onReferencePointClick,
   productionAssetIds = [],
+  onProductionAssetClick = openFacilityDossier,
   hypothesisRegions = [],
 }) => {
   const mapRef = useRef<L.Map | null>(null)
@@ -228,6 +231,8 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
         }),
         onEachFeature: (feature, layer) => {
           layer.bindPopup(productionPopup(feature.properties), { maxWidth: 260 })
+          const assetId = feature.properties?.asset_id
+          if (typeof assetId === 'number' && Number.isSafeInteger(assetId) && assetId > 0) layer.on('click', () => onProductionAssetClick(assetId, snapshotRef))
         },
       }).addTo(map)
       setProductionLayerStatus(

@@ -339,7 +339,7 @@ def test_public_map_reference_is_not_marked_as_verified_business_fact(db_session
     assert db_session.query(JurisdictionAssetVersion).count() == 1
 
 
-def test_higher_trust_source_updates_same_cross_source_asset(db_session: Session):
+def test_higher_trust_source_does_not_establish_cross_source_identity(db_session: Session):
     client = _client(db_session)
     public = client.post(
         "/api/map-sources",
@@ -376,9 +376,12 @@ def test_higher_trust_source_updates_same_cross_source_asset(db_session: Session
     )
 
     assert response.status_code == 201
-    assert response.json()["updated_assets"] == 1
-    assert db_session.query(JurisdictionAsset).count() == 1
-    asset = db_session.query(JurisdictionAsset).one()
+    # Trust controls conflicting values only after identity is established;
+    # a nearby namesake with a different source ID is not the same facility.
+    assert response.json()["created_assets"] == 1
+    assert response.json()["updated_assets"] == 0
+    assert db_session.query(JurisdictionAsset).count() == 2
+    asset = db_session.query(JurisdictionAsset).filter_by(external_id="INNER-9001").one()
     assert asset.longitude == pytest.approx(125.102)
     assert asset.attributes["source_key"] == "production-wells"
 
@@ -428,22 +431,27 @@ def test_lower_trust_source_never_overwrites_verified_ledger_asset(db_session: S
     )
 
     assert response.status_code == 201
-    assert response.json()["quarantined_rows"] == 1
-    asset = db_session.query(JurisdictionAsset).one()
+    assert response.json()["created_assets"] == 1
+    assert response.json()["updated_assets"] == 0
+    assert db_session.query(JurisdictionAsset).count() == 2
+    public_asset = db_session.query(JurisdictionAsset).filter_by(external_id="PUBLIC-1").one()
+    assert public_asset.verification_state == "reference_only"
+    asset = db_session.query(JurisdictionAsset).filter_by(external_id="INNER-1").one()
     assert asset.external_id == "INNER-1"
     assert asset.verified is True
     assert asset.source == "ledger"
     assert asset.attributes["source_key"] == "trusted-ledger"
 
 
-def test_same_name_type_at_distant_coordinates_creates_distinct_assets(db_session: Session):
+@pytest.mark.parametrize("second_coordinates", ["126.100,47.600", "125.10001,46.60001", "125.100,46.600"])
+def test_same_name_type_distinct_identifiers_create_distinct_assets(db_session: Session, second_coordinates):
     client = _client(db_session)
     source = _create_source(client)
     template = _create_template(client, source["id"])
     content = (
         "井号,井名,类型,经度,纬度\n"
         "W-A,重复井名,well,125.100,46.600\n"
-        "W-B,重复井名,well,126.100,47.600\n"
+        f"W-B,重复井名,well,{second_coordinates}\n"
     )
 
     response = client.post(

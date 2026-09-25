@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 import hashlib
 import io
 import json
@@ -23,7 +24,6 @@ from app.models.map_foundation import (
     MapSource,
     OperationalArea,
 )
-from app.utils.geo import haversine_km
 
 
 ALLOWED_TABLE_EXTENSIONS = (".csv", ".xlsx", ".xlsm", ".xltx", ".xltm")
@@ -526,33 +526,39 @@ class MapFoundationService:
             .filter(JurisdictionAsset.canonical_key == canonical_key)
             .first()
         )
+        if asset is not None and (
+            asset.external_id != normalized.get("external_id")
+            or (asset.attributes or {}).get("source_id") != source.id
+        ):
+            raise ValueError("asset_identity_conflict|稳定标识与已存来源身份不一致，需人工核验")
         if asset is None:
-            nearby_candidates = (
-                db.query(JurisdictionAsset)
-                .filter(
-                    JurisdictionAsset.operational_area_id == source.operational_area_id,
-                    JurisdictionAsset.asset_type == normalized["asset_type"],
-                    JurisdictionAsset.name == normalized["name"],
-                    JurisdictionAsset.latitude.isnot(None),
-                    JurisdictionAsset.longitude.isnot(None),
-                )
-                .all()
+            # Upgrade compatibility for the old case-folded ID / rounded-point
+            # key: adopt only exact identity in the *same registered source*.
+            # This does not revive the former same-name proximity merge.
+            query = db.query(JurisdictionAsset).filter(
+                JurisdictionAsset.operational_area_id == source.operational_area_id,
+                JurisdictionAsset.external_id == normalized.get("external_id"),
             )
-            distances = [
-                (
-                    candidate,
-                    haversine_km(
-                        candidate.latitude,
-                        candidate.longitude,
-                        normalized["latitude"],
-                        normalized["longitude"],
-                    ),
+            if not normalized.get("external_id"):
+                query = query.filter(
+                    JurisdictionAsset.name == normalized["name"],
+                    JurisdictionAsset.asset_type == normalized["asset_type"],
+                    JurisdictionAsset.latitude == normalized["latitude"],
+                    JurisdictionAsset.longitude == normalized["longitude"],
                 )
-                for candidate in nearby_candidates
+            matches = [
+                item for item in query.all()
+                if (item.attributes or {}).get("source_id") == source.id
             ]
-            close_candidates = [item for item in distances if item[1] <= 0.5]
-            if close_candidates:
-                asset = min(close_candidates, key=lambda item: (item[1], item[0].id))[0]
+            if len(matches) > 1:
+                raise ValueError("ambiguous_asset_identity|来源内稳定标识重复，需人工核验")
+            asset = matches[0] if matches else None
+        if asset is not None and not normalized.get("external_id") and asset.verified:
+            raise ValueError("asset_identity_requires_review|无稳定编号的导入不能覆盖已核验要素")
+        # Names, proximity and source trust are not proof of shared identity.
+        # Only the source/area-scoped identifier (or exact unidentified record
+        # fingerprint) may resolve an existing asset. Cross-source linking needs
+        # an explicit, separately reviewed identity mapping.
         created = asset is None
         if asset is None:
             asset = JurisdictionAsset(canonical_key=canonical_key)
@@ -604,9 +610,10 @@ class MapFoundationService:
         db: Session,
         *,
         asset: JurisdictionAsset,
-        claim: MapFeatureClaim,
+        claim: MapFeatureClaim | None = None,
         change_type: str,
     ) -> None:
+        db.flush()
         latest = (
             db.query(JurisdictionAssetVersion)
             .filter(JurisdictionAssetVersion.asset_id == asset.id)
@@ -616,11 +623,26 @@ class MapFoundationService:
         version = JurisdictionAssetVersion(
             asset_id=asset.id,
             version=(latest.version + 1) if latest else 1,
-            source_claim_id=claim.id,
-            snapshot=MapFoundationService.asset_to_dict(asset),
+            source_claim_id=claim.id if claim else None,
+            snapshot=deepcopy(MapFoundationService.asset_to_dict(asset)),
             change_type=change_type,
         )
         db.add(version)
+        db.flush()
+
+    @staticmethod
+    def record_observed_baseline(db: Session, asset: JurisdictionAsset) -> None:
+        """Record what is observable now, never invent an old creation history."""
+        latest = (
+            db.query(JurisdictionAssetVersion)
+            .filter(JurisdictionAssetVersion.asset_id == asset.id)
+            .order_by(JurisdictionAssetVersion.version.desc())
+            .first()
+        )
+        if latest is None:
+            MapFoundationService._record_asset_version(
+                db, asset=asset, change_type="baseline_observed",
+            )
 
     @staticmethod
     def _normalize_row(
@@ -672,14 +694,15 @@ class MapFoundationService:
         identity = (
             {
                 "source_key": source.source_key,
-                "external_id": MapFoundationService._canonical_text(external_id),
+                "external_id": external_id,
             }
             if external_id
             else {
+                "source_key": source.source_key,
                 "name": MapFoundationService._canonical_text(name),
                 "asset_type": asset_type.lower(),
-                "latitude_grid": round(latitude, 3),
-                "longitude_grid": round(longitude, 3),
+                "latitude": round(latitude, 8),
+                "longitude": round(longitude, 8),
             }
         )
         canonical_suffix = MapFoundationService._hash_json(identity)[:24]
@@ -767,8 +790,11 @@ class MapFoundationService:
             "status": "active",
             "risk_level": 1,
             "confidence_score": 0.7 if is_public_reference else 1.0,
-            "verified": not is_public_reference,
-            "verification_state": "reference_only" if is_public_reference else "source_verified",
+            "verified": bool(external_id) and not is_public_reference,
+            "verification_state": (
+                "identity_pending" if not external_id
+                else "reference_only" if is_public_reference else "source_verified"
+            ),
             "coordinate_system": "epsg:4326",
             "attributes": production_attributes,
         }
@@ -1016,6 +1042,7 @@ class MapFoundationService:
             "longitude": asset.longitude,
             "geometry": asset.geometry,
             "address": asset.address,
+            "description": asset.description,
             "source": asset.source,
             "status": asset.status,
             "verified": asset.verified,
@@ -1024,6 +1051,7 @@ class MapFoundationService:
             "accuracy_m": asset.accuracy_m,
             "source_claim_refs": asset.source_claim_refs,
             "attributes": asset.attributes,
+            "tags": asset.tags,
             "valid_from": MapFoundationService._json_safe(asset.valid_from),
             "valid_to": MapFoundationService._json_safe(asset.valid_to),
         }

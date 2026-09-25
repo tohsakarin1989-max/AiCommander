@@ -42,7 +42,9 @@ import {
 import JurisdictionAssetMap from './JurisdictionAssetMap'
 import MapDataGovernance from './MapDataGovernance'
 import { useAuth } from '../../auth/AuthContext'
-import { authApi } from '../../services/auth'
+import { useRegionalContext } from '../../services/useRegionalContext'
+import RegionalControls from '../../components/Facility/RegionalControls'
+import { openFacilityDossier } from '../../services/regionalContext'
 import './Jurisdiction.css'
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
@@ -260,18 +262,22 @@ const assetColumns: ColumnsType<JurisdictionAsset> = [
 
 export default function Jurisdiction() {
   const { user } = useAuth()
+  const regional = useRegionalContext()
   const canManageAssets = user?.role === 'admin'
   const canWrite = canManageAssets || user?.role === 'analyst'
   const [form] = Form.useForm<AssetFormValues>()
   const [editForm] = Form.useForm<AssetFormValues>()
   const queryClient = useQueryClient()
   const [caseIdInput, setCaseIdInput] = useState<number | null>(null)
-  const [activeCaseId, setActiveCaseId] = useState<number | null>(null)
-  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null)
+  const activeCaseId = regional.caseId
+  const setActiveCaseId = (id: number | null) => regional.update({ caseId: id })
+  const selectedAssetId = regional.assetId
+  const setSelectedAssetId = (id: number | null) => regional.update({ assetId: id })
   const [editingAsset, setEditingAsset] = useState<JurisdictionAsset | null>(null)
   const [geoJsonInput, setGeoJsonInput] = useState('')
   const [hiddenAssetTypes, setHiddenAssetTypes] = useState<string[]>([])
-  const [activeAreaId, setActiveAreaId] = useState<number | null>(null)
+  const activeAreaId = regional.ready ? regional.areaId : null
+  const setActiveAreaId = (id: number) => regional.update({ operational_area_id: id })
   const [feedbackForm] = Form.useForm<{
     adopted: boolean
     result?: string
@@ -279,22 +285,9 @@ export default function Jurisdiction() {
     notes?: string
   }>()
 
-  const areaScopesQuery = useQuery({
-    queryKey: ['my-area-scopes'],
-    queryFn: authApi.myAreaScopes,
-    staleTime: 5 * 60_000,
-  })
+  const areaScopesQuery = { data: regional.scopes }
 
   useEffect(() => {
-    const scopes = areaScopesQuery.data ?? []
-    if (scopes.length === 0) return
-    if (activeAreaId && scopes.some(scope => scope.operational_area_id === activeAreaId)) return
-    const preferred = scopes.find(scope => scope.is_default) ?? scopes[0]
-    setActiveAreaId(preferred.operational_area_id)
-  }, [activeAreaId, areaScopesQuery.data])
-
-  useEffect(() => {
-    setSelectedAssetId(null)
     setHiddenAssetTypes([])
   }, [activeAreaId])
 
@@ -305,7 +298,7 @@ export default function Jurisdiction() {
   })
 
   const assetsQuery = useQuery({
-    queryKey: ['jurisdiction-assets', activeAreaId],
+    queryKey: ['jurisdiction-assets', activeAreaId, ...regional.identity],
     queryFn: () => jurisdictionApi.listAssets({
       limit: 200,
       operational_area_id: activeAreaId as number,
@@ -339,16 +332,10 @@ export default function Jurisdiction() {
     enabled: activeCaseId != null,
   })
 
-  const assetProfileQuery = useQuery({
-    queryKey: ['jurisdiction-asset-risk-profile', selectedAssetId],
-    queryFn: () => jurisdictionApi.getAssetRiskProfile(selectedAssetId as number),
-    enabled: selectedAssetId != null,
-  })
-
   const patrolPlanQuery = useQuery<PatrolPlan>({
     queryKey: ['jurisdiction-patrol-plan', activeCaseId],
     queryFn: () => jurisdictionApi.createPatrolPlan({ case_id: activeCaseId as number, limit: 6 }),
-    enabled: canWrite && activeCaseId != null,
+    enabled: false,
   })
 
   const briefingQuery = useQuery({
@@ -456,16 +443,16 @@ export default function Jurisdiction() {
   })
 
   const context = contextQuery.data
-  const assets = assetsQuery.data ?? []
+  const assets = regional.ready && !assetsQuery.isError ? assetsQuery.data ?? [] : []
   const snapshotAssets = useMemo(
-    () => snapshotLayersQuery.data
+    () => regional.ready && !snapshotLayersQuery.isError && snapshotLayersQuery.data
       ? snapshotLayersToAssets(snapshotLayersQuery.data)
       : [],
-    [snapshotLayersQuery.data],
+    [snapshotLayersQuery.data, snapshotLayersQuery.isError, regional.ready],
   )
-  const publishedMapAvailable = Boolean(snapshotLayersQuery.data)
+  const publishedMapAvailable = regional.ready && !snapshotLayersQuery.isError && Boolean(snapshotLayersQuery.data)
   const displayedAssets = publishedMapAvailable ? snapshotAssets : assets
-  const summary = summaryQuery.data
+  const summary = regional.ready && !summaryQuery.isError ? summaryQuery.data : undefined
   const layerCounts = summary?.by_layer ?? {}
   const publicReferenceCount = layerCounts.public_map_reference ?? assets.filter(asset => assetLayer(asset) === 'public').length
   const businessAssetCount = layerCounts.oil_business_asset ?? assets.filter(asset => assetLayer(asset) === 'business').length
@@ -511,6 +498,7 @@ export default function Jurisdiction() {
 
   return (
     <div className="jurisdiction-page">
+      <RegionalControls context={regional} />
       <section className="jurisdiction-hero">
         <div>
           <div className="eyebrow">Jurisdiction Risk Foundation</div>
@@ -603,7 +591,7 @@ export default function Jurisdiction() {
           key={activeAreaId ?? 'default-area'}
           assets={mapAssets}
           selectedAssetId={selectedAssetId}
-          onAssetClick={asset => setSelectedAssetId(asset.id)}
+          onAssetClick={asset => openFacilityDossier(asset.id, snapshotLayersQuery.data?.snapshot_id)}
           readOnly={publishedMapAvailable}
           operationalAreaId={activeAreaId ?? undefined}
           snapshotId={snapshotLayersQuery.data?.snapshot_id}
@@ -863,29 +851,15 @@ export default function Jurisdiction() {
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card title="阶段3 · 点位风险画像" className="jurisdiction-card">
-            {assetProfileQuery.isFetching && <Spin />}
-            {assetProfileQuery.data ? (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div className="context-title">{assetProfileQuery.data.asset.name}</div>
-                <Progress
-                  percent={Math.round(assetProfileQuery.data.risk_score)}
-                  status={assetProfileQuery.data.risk_score >= 70 ? 'exception' : 'active'}
-                />
-                <Space wrap>
-                  <Tag color="orange">风险等级 {assetProfileQuery.data.risk_level}</Tag>
-                  <Tag>关联案件 {assetProfileQuery.data.related_cases.length} 起</Tag>
-                </Space>
-                {renderStringList(assetProfileQuery.data.risk_reasons)}
-              </Space>
-            ) : (
-              <Empty description="点击上方辖区要素表中的点位查看画像" />
-            )}
+          <Card title="设施综合档案" className="jurisdiction-card">
+            <p>点击地图或台账要素查看生产资料、分类案件关联、事件、道路和资料缺口。</p>
+            <p>空间邻近、候选与明确关联分别显示，不按邻近案数生成风险分。</p>
           </Card>
         </Col>
 
         <Col xs={24} lg={8}>
           <Card title="阶段4 · 防控参考草案" className="jurisdiction-card">
+            <Button disabled={!canWrite || activeCaseId == null} onClick={() => void patrolPlanQuery.refetch()}>按需生成防控参考</Button>
             {!canWrite && <Alert type="info" message="只读账号不触发部署参考生成，可查看其他已生成的研判依据" />}
             {patrolPlanQuery.isFetching && <Spin />}
             {patrolPlanQuery.data ? (

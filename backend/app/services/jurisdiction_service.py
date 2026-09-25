@@ -14,6 +14,7 @@ from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.patrol import PatrolRecord
 from app.services.patrol_service import PatrolService
+from app.services.map_foundation_service import MapFoundationService
 from app.utils.geo import haversine_km
 from app.database import require_area_write_access
 
@@ -91,6 +92,7 @@ class JurisdictionService:
         JurisdictionService._lock_operational_area(db, data.get("operational_area_id"))
         asset = JurisdictionAsset(**data)
         db.add(asset)
+        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_created")
         db.commit()
         db.refresh(asset)
         return asset
@@ -108,6 +110,7 @@ class JurisdictionService:
         if not asset:
             raise ValueError("asset_not_found")
         JurisdictionService._lock_operational_area(db, asset.operational_area_id)
+        MapFoundationService.record_observed_baseline(db, asset)
         geometry_type = str(data.get("geometry_type") or asset.geometry_type or "point").lower()
         latitude = data.get("latitude", asset.latitude)
         longitude = data.get("longitude", asset.longitude)
@@ -121,6 +124,7 @@ class JurisdictionService:
             data["geometry"] = {"type": "Point", "coordinates": [longitude, latitude]}
         for key, value in data.items():
             setattr(asset, key, value)
+        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_updated")
         if commit:
             db.commit()
             db.refresh(asset)
@@ -146,6 +150,7 @@ class JurisdictionService:
             JurisdictionService._lock_operational_area(db, payload.get("operational_area_id"))
             asset = JurisdictionAsset(**payload)
             db.add(asset)
+            MapFoundationService._record_asset_version(db, asset=asset, change_type="bulk_created")
             created.append(asset)
         db.commit()
         for asset in created:
@@ -1134,7 +1139,9 @@ out body geom qt;
         if not name:
             raise ValueError("缺少 name")
         return {
-            "external_id": str(properties.get("id") or properties.get("external_id") or name),
+            "external_id": JurisdictionService._clean_text(
+                properties.get("external_id") or properties.get("id") or feature.get("id")
+            ),
             "name": str(name),
             "asset_type": str(asset_type),
             "geometry_type": str(geometry.get("type", "point")).lower(),
@@ -1310,27 +1317,47 @@ out body geom qt;
             query = db.query(JurisdictionAsset).filter(
                 JurisdictionAsset.external_id == external_id,
                 JurisdictionAsset.source == payload.get("source"),
+                JurisdictionAsset.operational_area_id == area_id,
             )
-            if area_id is not None:
-                query = query.filter(JurisdictionAsset.operational_area_id == area_id)
-            existing = query.first()
-        if existing is None:
-            query = db.query(JurisdictionAsset).filter(
-                JurisdictionAsset.name == payload["name"],
-                JurisdictionAsset.asset_type == payload["asset_type"],
-                JurisdictionAsset.source == payload.get("source"),
-            )
-            if area_id is not None:
-                query = query.filter(JurisdictionAsset.operational_area_id == area_id)
-            existing = query.first()
+            matches = query.limit(2).all()
+            if len(matches) > 1:
+                raise ValueError("ambiguous_asset_identity")
+            existing = matches[0] if matches else None
+            if existing is not None and (existing.attributes or {}).get("source_id") is not None:
+                # Generic legacy source labels such as 'ledger' are not a
+                # registered MapSource namespace. Use its governed import path.
+                raise ValueError("asset_identity_namespace_required")
+        else:
+            geometry = payload.get("geometry")
+            if not geometry and (payload.get("latitude") is None or payload.get("longitude") is None):
+                raise ValueError("asset_identity_required")
+            identity = {
+                "source": payload.get("source"), "area": area_id,
+                "name": payload["name"], "asset_type": payload["asset_type"],
+                "geometry": geometry or {
+                    "type": "Point", "coordinates": [payload["longitude"], payload["latitude"]],
+                },
+            }
+            payload["canonical_key"] = "legacy-unidentified:" + MapFoundationService._hash_json(identity)
+            payload["verified"] = False
+            payload["verification_state"] = "identity_pending"
+            existing = db.query(JurisdictionAsset).filter(
+                JurisdictionAsset.canonical_key == payload["canonical_key"],
+                JurisdictionAsset.operational_area_id == area_id,
+            ).first()
+            if existing is not None and existing.verified:
+                raise ValueError("asset_identity_requires_review")
 
         if existing is None:
             asset = JurisdictionAsset(**payload)
             db.add(asset)
+            MapFoundationService._record_asset_version(db, asset=asset, change_type="import_created")
             return asset, True
 
+        MapFoundationService.record_observed_baseline(db, existing)
         for key, value in payload.items():
             setattr(existing, key, value)
+        MapFoundationService._record_asset_version(db, asset=existing, change_type="import_updated")
         return existing, False
 
     @staticmethod

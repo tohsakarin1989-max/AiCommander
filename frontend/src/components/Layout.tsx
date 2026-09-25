@@ -10,6 +10,8 @@ import './Layout.css'
 import { MoonOutlined, SunOutlined } from '@ant-design/icons'
 import { useThemeMode } from '../theme/ThemeContext'
 import { caseContextPath } from '../services/caseContext'
+import { regionalContextPath } from '../services/regionalContext'
+import FacilityDossierDrawer from './Facility/FacilityDossierDrawer'
 
 const icons = [HomeOutlined, DesktopOutlined, FolderOpenOutlined, ApartmentOutlined, ApartmentOutlined, FileTextOutlined, RobotOutlined, SettingOutlined]
 
@@ -25,7 +27,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const current = groups.find(group => group.pages.some(page => page.path === location.pathname))
   const page = current?.pages.find(item => item.path === location.pathname)
   const secondary = current && current.pages.length > 1
-  const contextPath = (path: string) => ['/cases', '/cases/map', '/case-intelligence', '/graphs/evidence', '/graphs/serial', '/assistant', '/reports', '/conclusions'].includes(path)
+  const contextPath = (path: string) => ['/cases', '/cases/map', '/jurisdiction', '/area-analysis', '/cases/spacetime', '/dashboard', '/events'].includes(path)
+    ? regionalContextPath(path, new URLSearchParams(location.search))
+    : ['/case-intelligence', '/graphs/evidence', '/graphs/serial', '/assistant', '/reports', '/conclusions'].includes(path)
     ? caseContextPath(path, new URLSearchParams(location.search)) : path
   const sidebar = <>
     <Link className="workspace-brand" to="/workbench"><strong>AiCommander</strong><span>涉油案件研判</span></Link>
@@ -38,7 +42,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="workspace-account">
       <button className="workspace-theme-toggle" type="button" role="switch" aria-checked={mode === 'dark'} aria-label="深色主题" onClick={toggle}>{mode === 'dark' ? <MoonOutlined /> : <SunOutlined />}<span>{mode === 'dark' ? '深色主题' : '浅色主题'}</span><span className="theme-switch-track" aria-hidden="true" /></button>
       <div className="account-identity"><Avatar icon={<UserOutlined />} /><div><strong>{user?.display_name}</strong><span>{user?.role === 'admin' ? '系统管理员' : user?.role === 'analyst' ? '研判人员' : '只读查看'}</span></div></div>
-      <small className="workspace-version">运行版本 {runtime?.version || '5.3.0-stable'}</small>
+      <small className="workspace-version">运行版本 {runtime?.version || '5.4.0-stable'}</small>
       <button type="button" onClick={() => void logout()}><LogoutOutlined />退出登录</button>
     </div>
   </>
@@ -52,6 +56,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </header>
       {location.pathname === '/legacy-home' && <ActiveWorkSessionBar />}
       <main className="app-main" data-page={location.pathname}>{children}</main>
+      <FacilityDossierDrawer />
     </div>
   </div>
 }

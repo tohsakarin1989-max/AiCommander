@@ -338,6 +338,8 @@ def dashboard_summary(
     days: int = Query(7, ge=1, le=90),
     activity_limit: int = Query(20, ge=1, le=100),
     operational_area_id: Optional[int] = None,
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ):
     from app.services.dashboard_summary_service import DashboardSummaryService
@@ -345,8 +347,11 @@ def dashboard_summary(
     allowed = db.info.get("authorized_area_ids")
     if operational_area_id is not None and allowed is not None and operational_area_id not in allowed:
         raise HTTPException(status_code=403, detail="当前账号无权查看该辖区态势")
-    return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days,
-                                         activity_limit=activity_limit)
+    try:
+        return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days,
+            activity_limit=activity_limit, start_date=start_date, end_date=end_date)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="大屏时间窗须大于零且不超过十年；全历史请使用区域或专题统计") from error
 
 
 class CaseStructureRequest(BaseModel):

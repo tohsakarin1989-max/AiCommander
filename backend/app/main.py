@@ -6,6 +6,7 @@ from app.api import agent_runs, auth, case_imports, case_insights, case_pipeline
 from app.api import map_package_imports
 from app.api import intelligent_queries
 from app.api import analysis_topics
+from app.api import facility_analysis
 from app.api import showcase
 from app.api import case_results
 from app.api import road_analysis
@@ -99,6 +100,7 @@ app.include_router(map_mcp.router, prefix="/api/map-mcp", tags=["map-mcp"])
 app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
 app.include_router(intelligent_queries.router, prefix="/api/intelligent-queries", tags=["intelligent-queries"])
 app.include_router(analysis_topics.router, prefix="/api/analysis-topics", tags=["analysis-topics"])
+app.include_router(facility_analysis.router, prefix="/api/facility-analysis", tags=["facility-analysis"])
 app.include_router(showcase.router, prefix="/api/showcase", tags=["showcase"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])

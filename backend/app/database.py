@@ -124,6 +124,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.case_history_index import CaseHistoryIndex, CaseHistoryEmbedding
     from app.models.case_result import CaseResultSnapshot
     from app.models.case_road_artifact import CaseRoadArtifact
+    from app.models.facility_summary import FacilityDerivedSummary
     from app.models.preprocess_job import PreprocessJob
     from app.models.automation_alert import AutomationAlert
     from app.models.chain_link import ChainLink
@@ -188,6 +189,11 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         Meeting.operational_area_id.in_(area_ids)
     )
     options.extend((
+        with_loader_criteria(
+            FacilityDerivedSummary,
+            FacilityDerivedSummary.asset_id.in_(allowed_asset_ids),
+            include_aliases=True,
+        ),
         with_loader_criteria(
             ConclusionReview,
             ConclusionReview.conclusion_id.in_(allowed_conclusion_ids),
