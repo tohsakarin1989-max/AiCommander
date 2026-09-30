@@ -3,6 +3,7 @@ import { roadVehicleLabel } from '../../services/roadAnalysis'
 import { lazy, Suspense, useCallback, useId, useMemo, useState } from 'react'
 import { facilityComparisonMapModel } from './facilityComparisonMapModel'
 import { openFacilityDossier } from '../../services/regionalContext'
+import FacilityConditions from './FacilityConditions'
 
 const Map = lazy(() => import('../Map/LeafletMap'))
 
@@ -48,6 +49,8 @@ export default function CaseFacilityComparison({ content, onSelect }: { content:
       {!!candidate.information_gaps.length && <p>资料缺口：{candidate.information_gaps.join('；')}</p>}
       <details><summary>证据引用</summary><ul>{candidate.evidence_refs.map(ref => <li key={ref}>{ref}</li>)}</ul></details>
     </li>)}</ol>
+    {content.result.condition_comparison && <FacilityConditions comparison={content.result.condition_comparison}
+      changes={content.result.ranking_changes} />}
     {!!unresolved.length && <details><summary>尚未形成比较结果的设施 {unresolved.length} 个</summary>
       <ul>{unresolved.map(item => <li key={item.asset_id}>编号 {item.asset_id}：{states[item.state] || '资料待核'}，不按零分或低风险处理。</li>)}</ul>
     </details>}

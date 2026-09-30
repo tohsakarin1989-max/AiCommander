@@ -18,15 +18,22 @@ class ChainConfirmRequest(BaseModel):
 def list_chain_links(
     case_id: Optional[int] = None,
     include_rejected: bool = False,
+    include_stale: bool = False,
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
-    links = ChainAnalysisService.list_links(db, case_id=case_id, include_rejected=include_rejected)
+    links = ChainAnalysisService.list_links(db, case_id=case_id, include_rejected=include_rejected,
+                                            include_stale=include_stale)
     return [ChainAnalysisService.link_to_dict(link) for link in links]
 
 
 @router.post("/{link_id:int}/confirm")
 def confirm_chain_link(link_id: int, payload: ChainConfirmRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    link = ChainAnalysisService.confirm_link(link_id, payload.operator or "人工确认", db)
+    try:
+        link = ChainAnalysisService.confirm_link(link_id, payload.operator or "人工确认", db)
+    except ValueError as exc:
+        if str(exc) != "chain_source_changed":
+            raise
+        raise HTTPException(status_code=409, detail="关联依据已变化，请等待后台重新分析；旧人工记录仍保留") from exc
     if not link:
         raise HTTPException(status_code=404, detail="链条关联不存在")
     return ChainAnalysisService.link_to_dict(link)
@@ -55,7 +62,8 @@ def get_chain_map_data(
     visible = [
         ChainAnalysisService.link_to_dict(link)
         for link in links
-        if link.status == "confirmed" or link.confidence >= threshold
+        if ChainAnalysisService.freshness(link, db) == "current"
+        and (link.status == "confirmed" or link.confidence >= threshold)
     ]
     return {
         "chain_links": visible,

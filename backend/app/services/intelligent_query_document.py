@@ -10,8 +10,18 @@ SCHEMA = 'intelligent-query-document-4.3-1'
 TOOLS = {'find_cases': '案件查找', 'find_places': '地点与设施', 'count_cases': '条件统计',
          'compare_periods': '时间段比较', 'summarize_results': '已有研判成果',
          'find_road_results': '历史道路成果', 'find_case_profiles': '案件语义画像',
-         'find_history': '历史案件与经验参考', 'aggregate_case_profiles': '全库画像条件统计'}
+         'find_history': '历史案件与经验参考', 'aggregate_case_profiles': '全库画像条件统计',
+         'read_case_process': '案件过程与原文证据', 'explain_case_result': '已有成果解释',
+         'read_facility_dossier': '设施综合档案', 'read_facility_at': '历史有效资料',
+         'compare_coverage_scenario': '登记资源名义覆盖情景',
+         'find_business_results': '统一成果目录', 'read_business_result': '统一成果阅读'}
 LABELS = {'statistics': '已遍历集合统计', 'matched': '满足全部条件', 'unmatched': '不同或相反表述',
+          'fragment': '实际命中片段', 'source_revision_id': '原始来源版本', 'process_event_id': '过程片段编号',
+          'indexed_cases': '已建立片段索引的案件数', 'missing_index_cases': '尚未就绪索引的案件数',
+          'indexed_fragments': '索引片段数', 'recalled_fragments': '本轮召回片段数',
+          'validated_fragments': '已复核片段数', 'invalidated_fragments': '失效片段数',
+          'recall_limit': '各分支召回上限', 'recall_truncated': '是否达到召回上限',
+          'structural_rank': '结构条件名次', 'lexical_rank': '词项名次', 'semantic_rank': '本地语义名次',
           'unknown': '条件资料不足', 'denominator': '统计分母', 'missingness': '类别表述缺失比例',
           'missing_count': '无该类表述的画像数', 'ratio': '比例', 'patterns': '匹配案组条件分布',
           'condition_statistics': '各条件统计', 'counterexamples': '不同或相反表述案例',
@@ -68,6 +78,14 @@ def build_query_document(task):
     if task.get('followup_context'):
         blocks.append(DocumentBlock('table', '追问来源与继承条件', tuple(_rows(task['followup_context']))))
     blocks.append(DocumentBlock('table', '本轮有效条件', tuple(_rows(result.get('query_conditions', {})))))
+    if result.get('answer'):
+        answer = result['answer']
+        blocks.extend([DocumentBlock('heading', '证据化回答'), DocumentBlock('paragraph', answer['summary']),
+                       DocumentBlock('paragraph', answer['boundary'])])
+        for finding in answer['findings']:
+            blocks.append(DocumentBlock('paragraph', finding['text']))
+            blocks.append(DocumentBlock('paragraph', '依据：' + '、'.join(finding['evidence_refs'])))
+        blocks.append(DocumentBlock('table', '信息缺口', tuple(_rows(answer['information_gaps']))))
     for card in result['cards']:
         if card.get('tool') not in TOOLS:
             raise ValueError('query_document_unknown_tool')
@@ -75,6 +93,8 @@ def build_query_document(task):
         blocks.append(DocumentBlock('paragraph', f"结果状态：{card.get('state', '未知')}。列表仅代表本批返回内容，不替代全库统计。"))
         if card['tool'] == 'aggregate_case_profiles':
             blocks.append(DocumentBlock('paragraph', '总体分母与扫描完成度见 coverage；案组计数与分页代表案例分开。未知不当作否定。'))
+        if card['tool'] == 'find_history' and card.get('data', {}).get('retrieval_mode') == 'fragment_index':
+            blocks.append(DocumentBlock('paragraph', '片段检索仅复核本轮召回候选，不逐案扫描原文；索引缺失或达到预算上限时不是全库无匹配。'))
         for label, value in [('查询成果', card.get('data', {})), ('证据与查询口径', card.get('evidence', {})),
                              ('信息缺口', card.get('information_gaps', []))]:
             blocks.append(DocumentBlock('table', label, tuple(_rows(value))))

@@ -18,6 +18,7 @@ def test_activity_limits_scope_order_and_read_only(search_db):
     add_case(search_db, "PRIVATE", operational_area_id=2, created_at=NOW-timedelta(seconds=1))
     search_db.commit()
     search_db.info['authorized_area_ids'] = (1,)
+    queued_before_read = search_db.query(OutboxEvent).count()
     first = DashboardSummaryService.build(search_db, operational_area_id=1, days=7, as_of=NOW)
     repeat = DashboardSummaryService.build(search_db, operational_area_id=1, days=7, as_of=NOW)
     assert first['activities'] == repeat['activities']
@@ -29,7 +30,7 @@ def test_activity_limits_scope_order_and_read_only(search_db):
     assert len(more['activities']) == 100
     assert more['metrics'] == first['metrics']
     assert search_db.query(Case).count() == 110
-    assert search_db.query(OutboxEvent).count() == 0
+    assert search_db.query(OutboxEvent).count() == queued_before_read
     assert client_for(search_db).get('/api/cases/dashboard-summary?activity_limit=101').status_code == 422
 
 

@@ -661,6 +661,8 @@ class EvidenceGraphService:
             .limit(max_context_nodes)
             .all()
         )
+        from app.services.chain_analysis_service import ChainAnalysisService
+        links = [link for link in links if ChainAnalysisService.freshness(link, db) == "current"]
         related_ids = {
             link.case_id_b if link.case_id_a == case.id else link.case_id_a
             for link in links

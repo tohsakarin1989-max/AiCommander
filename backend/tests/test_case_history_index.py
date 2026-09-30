@@ -149,10 +149,10 @@ def test_persistent_cursor_rollback_resume_and_rotation(db):
     db.commit()
     assert first["after_case_id"] == cases[1].id
     rebuild = CaseHistoryIndexService.rebuild_case
-    def fail_second(session, case):
+    def fail_second(session, case, **kwargs):
         if case.id == cases[3].id:
             raise RuntimeError("injected interruption")
-        return rebuild(session, case)
+        return rebuild(session, case, **kwargs)
     with patch.object(CaseHistoryIndexService, "rebuild_case", side_effect=fail_second):
         with pytest.raises(RuntimeError):
             CaseHistoryIndexService.reconcile_batch(db, limit=2)
@@ -178,14 +178,14 @@ def test_saved_event_prioritizes_old_case_and_ack_is_transactional(db):
     CaseHistoryIndexService.reconcile_batch(db, limit=1)
     db.commit()
     # The old case is behind the background cursor, but its committed event wins.
-    background_events = db.query(OutboxEvent).count()
+    background_events = db.query(OutboxEvent).filter_by(event_type='case.analysis.requested').count()
     old.description = '新增的囤储线索'
     event = CasePipelineService.enqueue_case_change(db, old, changed_fields={'description'})
     db.commit()
     assert event.payload['history_index_pending'] is True
-    # Only the original profile event is added synchronously by save. History
-    # refresh notifications above were produced by the background index pass.
-    assert db.query(OutboxEvent).count() == background_events + 1
+    # Saving still adds exactly one profile request. Other independent consumers
+    # can append their own notifications to the shared outbox.
+    assert db.query(OutboxEvent).filter_by(event_type='case.analysis.requested').count() == background_events + 1
     result = CaseHistoryIndexService.reconcile_batch(db, limit=1)
     assert result['priority_cases'] == 1 and result['acknowledged_events'] == 1
     assert result['after_case_id'] == 2

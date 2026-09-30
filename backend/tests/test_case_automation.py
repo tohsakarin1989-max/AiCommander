@@ -43,6 +43,7 @@ def _client(db_session: Session) -> TestClient:
     app.include_router(cases.router, prefix="/api/cases")
 
     def override_get_db():
+        db_session.info["authorized_area_ids"] = None  # Isolated legacy API fixture only.
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
@@ -117,37 +118,39 @@ def test_structure_preview_extracts_case_fields_and_material_hints():
 
 
 def test_structure_preview_extracts_standard_reporting_fields_without_llm():
+    # 全部身份、地名和号码均为显式合成占位，不使用业务报案原文。
     payload = CaseAutomationService.structure_case_text(
-        "2023年3月8日04:26，敖南保卫班在肇源县茂兴镇幸福村东大约一公里，"
-        "抓获蓝色京奥牌电动三轮盗油车辆1台，无牌照，车内被盗原油0.18吨，含水5%，"
-        "抓获嫌疑人1名，报茂兴派出所，立案侦查，嫌疑人治安拘留。"
-        "茂兴派出所出警人：姚佳良，联系电话：18846680071，"
-        "敖南保卫班出警人：张伟、王艳龙。巡逻发现。"
+        "合成测试材料，非真实案件。合成保卫班于2026年1月1日10时，"
+        "在合成测试1号井附近巡逻发现盗油线索，收缴被盗原油0.18吨，"
+        "含水5%，已向公安报案并立案。"
+        "合成派出所出警人：测试甲，联系电话：000-00000，"
+        "合成保卫班出警人：测试乙、测试丙。"
     )
 
     fields = payload["case_fields"]
     assert payload["model_status"] == "deterministic_fallback"
-    assert fields["report_unit"] == "敖南保卫班"
-    assert fields["location"] == "肇源县茂兴镇幸福村东大约一公里"
+    assert fields["report_unit"] == "合成保卫班"
+    assert fields["location"] == "合成测试1号井附近"
     assert fields["oil_nature"] == "被盗原油"
     assert fields["oil_volume"] == 0.18
     assert fields["water_cut"] == 5.0
     assert fields["source_type"] == "巡逻发现"
     assert fields["case_filed"] is True
-    assert fields["police_officer"] == "姚佳良"
-    assert fields["police_phone"] == "18846680071"
-    assert fields["security_officers"] == ["张伟", "王艳龙"]
+    assert fields["police_officer"] == "测试甲"
+    assert fields["police_phone"] == "000-00000"
+    assert fields["security_officers"] == ["测试乙", "测试丙"]
 
 
 def test_structure_preview_uses_llm_to_standardize_nonstandard_case_text():
+    # 与规则样例一致，全部身份和电话仅为合成占位。
     llm = _FakeLLM({
         "case_fields": {
             "occurred_time": "2026-05-06T02:30:00",
             "report_time": "2026-05-06T03:00:00",
-            "report_unit": "敖南保卫班",
-            "location": "三号井场东侧临时便道",
+            "report_unit": "合成保卫班",
+            "location": "合成井场东侧临时便道",
             "case_type": "涉油盗窃",
-            "description": "2026年5月6日2时30分，巡逻人员在三号井场东侧临时便道发现辽A12345车辆盗运被盗原油1.5吨，含水率8%，现场抓获2人并移交公安，涉案原油已检斤入库。",
+            "description": "2026年5月6日2时30分，巡逻人员在合成井场东侧临时便道发现辽A12345车辆盗运被盗原油1.5吨，含水率8%，现场抓获2人并移交公安，涉案原油已检斤入库。",
             "oil_type": "原油",
             "oil_nature": "被盗原油",
             "oil_volume": "1.5",
@@ -155,9 +158,9 @@ def test_structure_preview_uses_llm_to_standardize_nonstandard_case_text():
             "source_type": "巡逻发现",
             "person_handling": "移交公安",
             "oil_handling": "检斤入库",
-            "police_officer": "姚警官",
-            "police_phone": "18846680071",
-            "security_officers": ["张伟", "王艳龙"],
+            "police_officer": "测试甲",
+            "police_phone": "000-00000",
+            "security_officers": ["测试乙", "测试丙"],
         },
         "field_sources": {
             "location": "原文‘三号井场东侧小道’标准化为录入地点",
@@ -172,19 +175,19 @@ def test_structure_preview_uses_llm_to_standardize_nonstandard_case_text():
     })
 
     payload = CaseAutomationService.structure_case_text(
-        "5月6日凌晨两点半，巡逻到三号井场东侧小道，看见辽A12345拉油，大概1.5吨，含水8，俩人交公安，油入库。",
+        "2026年5月6日2时30分，巡逻到三号井场东侧小道，看见辽A12345拉油，大概1.5吨，含水8，俩人交公安，油入库。",
         llm=llm,
     )
 
     assert payload["model_status"] == "llm_success"
     assert payload["intake_mode"] == "llm"
-    assert payload["case_fields"]["location"] == "三号井场东侧临时便道"
+    assert payload["case_fields"]["location"] == "合成井场东侧临时便道"
     assert payload["case_fields"]["description"].startswith("2026年5月6日2时30分")
-    assert payload["case_fields"]["report_unit"] == "敖南保卫班"
+    assert payload["case_fields"]["report_unit"] == "合成保卫班"
     assert payload["case_fields"]["oil_volume"] == 1.5
     assert payload["case_fields"]["water_cut"] == 8.0
-    assert payload["case_fields"]["police_phone"] == "18846680071"
-    assert payload["case_fields"]["security_officers"] == ["张伟", "王艳龙"]
+    assert payload["case_fields"]["police_phone"] == "000-00000"
+    assert payload["case_fields"]["security_officers"] == ["测试乙", "测试丙"]
     assert payload["field_sources"]["location"].startswith("大模型整理")
     assert "请确认车辆考核类别。" in payload["follow_up_questions"]
 
@@ -820,14 +823,15 @@ def test_case_automation_workbench_surfaces_456_modules():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["version"] == "automation_456_v1"
+    assert payload["version"] == "automation_saved_outputs_v6"
     module_keys = {item["key"] for item in payload["modules"]}
     assert {"conclusion_layering", "experience_card", "gap_closure"}.issubset(module_keys)
-    assert payload["conclusion_layering"]["facts"]
-    assert payload["conclusion_layering"]["inferences"]
-    assert payload["conclusion_layering"]["suggestions"]
+    assert payload["result_state"] == "unavailable"
+    assert payload["conclusion_layering"]["facts"] == []
+    assert payload["conclusion_layering"]["inferences"] == []
+    assert payload["conclusion_layering"]["suggestions"] == []
     assert payload["experience_card"]["case_id"] == base_id
-    assert payload["experience_card"]["reusable_lessons"]
+    assert payload["experience_card"]["reusable_lessons"] == []
     assert "检斤含水单据" in payload["gap_closure"]["material_gaps"]
     assert any(item["source"] == "material" for item in payload["gap_closure"]["actions"])
     assert payload["ready_for_human_review"] is False

@@ -5,11 +5,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.case_knowledge_service import CaseKnowledgeService
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_history_retrieval import HistoryUnavailable
 
 
 router = APIRouter()
@@ -32,7 +34,11 @@ class TagCurationRequest(BaseModel):
     confirm: bool = False
 
 
-def _handle_service_error(exc: ValueError) -> None:
+def _handle_service_error(exc: ValueError | HistoryUnavailable | SQLAlchemyError) -> None:
+    if isinstance(exc, SQLAlchemyError):
+        raise HTTPException(503, "历史检索暂不可用，不能据此判断没有匹配资料", headers={"Cache-Control": "no-store"}) from None
+    if isinstance(exc, HistoryUnavailable):
+        raise HTTPException(404, "历史参考不可访问或来源已失效", headers={"Cache-Control": "no-store"}) from None
     message = str(exc)
     if message == "case_not_found":
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -58,7 +64,7 @@ def get_case_intelligence_workbench(
             limit=limit,
             radius_km=radius_km,
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -68,7 +74,7 @@ def get_case_tags(case_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]
     try:
         case = CaseIntelligenceService._get_case(db, case_id)
         return CaseIntelligenceService.build_case_tags(db, case)
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -87,7 +93,7 @@ def update_case_tag_overrides(
             added=added,
             removed_keys=payload.removed_keys or [],
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -100,7 +106,7 @@ def curate_case_tags(
     """生成智能标签策展候选；confirm=true 时才写入人工标签覆盖。"""
     try:
         return CaseKnowledgeService.curate_tags(db, case_id, confirm=payload.confirm)
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -119,7 +125,7 @@ def get_similar_cases(
             days=days,
             limit=limit,
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -141,24 +147,8 @@ def get_scene_factors(
     """获取单案现场条件、车辆工具和抓获经验研判。"""
     try:
         return CaseIntelligenceService.analyze_scene_factors(db, case_id=case_id, days=days)
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
-
-
-@router.get("/area-profiles")
-def get_area_profiles(
-    days: int = 365,
-    limit: int = 10,
-    radius_km: float = 1.5,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """获取辖区风险区域画像。"""
-    return CaseIntelligenceService.build_area_risk_profiles(
-        db,
-        days=days,
-        limit=limit,
-        radius_km=radius_km,
-    )
 
 
 @router.get("/prevention-suggestions")
@@ -176,7 +166,7 @@ def get_prevention_suggestions(
             days=days,
             limit=limit,
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -185,7 +175,7 @@ def get_experience_card(case_id: int, db: Session = Depends(get_db)) -> Dict[str
     """获取案件复盘经验卡。"""
     try:
         return CaseIntelligenceService.build_experience_card(db, case_id=case_id, persist=False)
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -204,7 +194,7 @@ def get_intelligence_report(
             days=days,
             limit=limit,
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)
 
 
@@ -225,5 +215,5 @@ def get_llm_context_pack(
             limit=limit,
             radius_km=radius_km,
         )
-    except ValueError as exc:
+    except (ValueError, HistoryUnavailable, SQLAlchemyError) as exc:
         _handle_service_error(exc)

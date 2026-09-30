@@ -69,7 +69,7 @@ class SemanticAnalysisService:
                 return datetime.min
             return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
-        cases_sorted = sorted(cases, key=lambda c: strip_tz(c.occurred_time))
+        cases_sorted = sorted((case for case in cases if case.occurred_time is not None), key=lambda c: strip_tz(c.occurred_time))
         
         serial_groups = []
         processed = set()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -7,8 +7,45 @@ from app.database import get_db
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_knowledge_service import CaseKnowledgeService
+from app.models.case import Case
+from app.models.meeting import Meeting
+from datetime import datetime, timezone
+from sqlalchemy import func
+from app.services.meeting_frozen_service import require_report_sources, report_sources_visible
 
 router = APIRouter()
+
+
+@router.get("/statistics")
+def get_report_statistics(db: Session = Depends(get_db)):
+    """Count saved reports and distinct authorized source cases, not a list page."""
+    if "authorized_area_ids" not in db.info:
+        raise HTTPException(404, "统计范围不可访问")
+    cutoff = datetime.now(timezone.utc)
+    try:
+        reports = db.query(Report).filter(Report.created_at <= cutoff)
+        total = 0
+        referenced_cases: set[int] = set()
+        meeting_ids: set[str] = set()
+        for report in reports.order_by(Report.id).yield_per(100):
+            if not report_sources_visible(db, report):
+                continue
+            total += 1
+            meeting = db.query(Meeting).filter_by(meeting_id=report.meeting_id).one()
+            meeting_ids.add(meeting.meeting_id)
+            case_ids = meeting.case_ids
+            if isinstance(case_ids, list):
+                referenced_cases.update(item for item in case_ids if type(item) is int and item > 0)
+        covered = 0
+        identifiers = sorted(referenced_cases)
+        for start in range(0, len(identifiers), 500):
+            covered += db.query(func.count(Case.id)).filter(Case.id.in_(identifiers[start:start + 500])).scalar() or 0
+    except SQLAlchemyError:
+        raise HTTPException(503, "报告统计暂不可用，不能据此判断为零") from None
+    return {"total_reports": total or 0, "covered_cases": covered,
+            "report_meetings": len(meeting_ids), "scope": "all_authorized_saved_reports",
+            "cutoff": cutoff, "complete": True,
+            "counting_rule": "已保存会议报告按报告ID计数；覆盖案件按当前可访问案件ID去重，不含案件冻结成果。"}
 
 
 class CitationAssistRequest(BaseModel):
@@ -26,11 +63,10 @@ def _report_ai_output(report: Report) -> Dict[str, Any]:
         f"报告编号：{report.id}",
         f"会议编号：{report.meeting_id}",
         f"报告类型：{report.report_type or '未填写'}",
-        content.get("summary") or "报告摘要待补齐",
     ]
     inferences = [
         {
-            "claim": content.get("conclusions") or content.get("ranking_summary") or "会议报告结论待人工复核",
+            "claim": content.get("summary") or content.get("conclusions") or content.get("ranking_summary") or "会议未记录讨论摘要",
             "basis": _as_list(report.consensus_points) or ["会议综合报告"],
             "confidence": "medium",
         }
@@ -93,16 +129,27 @@ def _serialize_report(report: Report) -> Dict[str, Any]:
     }
 
 @router.get("/", response_model=List[dict])
-def get_reports(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_reports(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1), db: Session = Depends(get_db)):
     """获取报告列表"""
-    reports = db.query(Report).offset(skip).limit(limit).all()
-    return [_serialize_report(r) for r in reports]
+    reports = db.query(Report).order_by(Report.created_at.desc(), Report.id.desc()).yield_per(100)
+    visible_index, page = 0, []
+    for report in reports:
+        # An inaccessible source cannot consume an authorized page slot or make
+        # later visible reports unreachable through pagination.
+        if not report_sources_visible(db, report):
+            continue
+        if visible_index >= skip:
+            page.append(_serialize_report(report))
+        visible_index += 1
+        if len(page) == limit:
+            break
+    return page
 
 @router.get("/{report_id:int}")
 def get_report(report_id: int, db: Session = Depends(get_db)):
     """获取单个报告"""
     report = db.query(Report).filter(Report.id == report_id).first()
-    if not report:
+    if not report or not report_sources_visible(db, report):
         raise HTTPException(status_code=404, detail="报告不存在")
     return _serialize_report(report)
 

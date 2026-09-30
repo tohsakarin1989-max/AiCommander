@@ -219,7 +219,7 @@ def run_evaluation(db, dataset_id, *, scorer_policy='captured'):
     trace = {'dataset_checksum': dataset.checksum, 'records': records, 'records_checksum': checksum(records)}
     versions = sorted({entry['payload']['algorithm_version'] for entry in manifest['entries']}) if scorer_policy == 'captured' else [CASE_INSIGHT_ALGORITHM_VERSION]
     if facility_policy:
-        from app.services.scorers.facility_roads_v52 import VERSION
+        from app.services.scorers.facility_roads_v63 import VERSION
         versions = ([VERSION] if scorer_policy == 'facility_candidate' else
                     sorted({entry['payload']['facility_evaluation']['algorithm_version'] for entry in manifest['entries']}))
     implementations = []

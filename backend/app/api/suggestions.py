@@ -20,7 +20,8 @@ from app.services.case_processing_card_service import CaseProcessingCardService
 from app.services.case_profile_service import CaseProfileService
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_result_access import CaseResultAccessError
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from app.services.legacy_conclusion_access import require_conclusion_result_access
+from app.services.experience_state_service import read_experience_state
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -242,7 +243,8 @@ def get_suggestions(
                 )
 
         try:
-            experience = _existing_experience_card(case)
+            experience_state = read_experience_state(db, case)
+            experience = experience_state["card"] or {}
             if CaseProfileService.experience_needs_review(experience):
                 add_item(
                     item_id=f"case-experience-{case.id}",
@@ -254,7 +256,10 @@ def get_suggestions(
                     target_id=case.id,
                     action="review_experience_card",
                     created_at=case.updated_at or case.created_at,
-                    meta={"manual_review_status": experience.get("manual_review_status")},
+                    meta={"manual_review_status": experience.get("manual_review_status"),
+                          "asset_id": experience_state.get("asset_id"),
+                          "asset_version": experience_state.get("asset_version"),
+                          "source": experience_state["source"]},
                 )
         except Exception:
             db.rollback()
@@ -273,12 +278,14 @@ def get_suggestions(
 
     for conclusion in (
         db.query(Conclusion)
-        .filter(Conclusion.status.in_(["draft", "needs_review", "flagged"]))
+        # Old factory drafts are not mandatory work. Only an explicitly
+        # flagged historical record remains an optional human follow-up.
+        .filter(Conclusion.status == "flagged")
         .order_by(Conclusion.created_at.desc(), Conclusion.id.desc())
         .yield_per(100)
     ):
         try:
-            ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
+            require_conclusion_result_access(db, conclusion)
         except CaseResultAccessError:
             continue
         high_risk = conclusion.risk_level == "high"
@@ -286,8 +293,8 @@ def get_suggestions(
             item_id=f"conclusion-review-{conclusion.id}",
             item_type="review",
             priority="high" if high_risk else "medium",
-            title=f"复核研判结论 #{conclusion.id}",
-            description=conclusion.summary or "该结论需要人工复核事实、推断与建议边界后再发布。",
+            title=f"历史人工标记（可选） #{conclusion.id}",
+            description=conclusion.summary or "查看保留的人工标记；不作为案件必经审批。",
             target_type="conclusion",
             target_id=conclusion.id,
             action="review_conclusion",
@@ -348,7 +355,7 @@ def get_suggestions(
         has_conclusion = False
         for item in db.query(Conclusion).filter(Conclusion.meeting_id == meeting.meeting_id):
             try:
-                ConclusionFactoryService.require_conclusion_result_access(db, item)
+                require_conclusion_result_access(db, item)
             except CaseResultAccessError:
                 continue
             has_conclusion = True

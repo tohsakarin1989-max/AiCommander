@@ -28,7 +28,7 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
 }) {
   // A failed refresh must hide cached content, including its map and source text.
   const usable = !error && result?.content.case_id === caseId
-    && result.content.schema_version === 'case-result-4.1.0-1'
+    && ['case-result-4.1.0-1', 'case-result-composition-6.0.0-1'].includes(result.content.schema_version)
   if (!usable) return <section className="detail-section case-result" aria-label="统一研判成果">
     <h3>统一研判成果</h3>
     <p role="status">{error && errorStatus !== 404 ? '成果暂时无法读取，已隐藏上次内容。案件保存不受影响。'
@@ -36,10 +36,12 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
         : '成果尚未生成、引用已失效或当前不可访问。后台完成后自动显示，无需手动运行智能体。'}</p>
   </section>
   const { content } = result
+  const composition = content.composition
   const legacyCandidates = <>
-    <h4>待核验空间候选</h4>
+    <h4>{composition ? '道路与生产条件比较后的来源候选' : '待核验空间候选（基础历史参考）'}</h4>
     {content.candidates.length ? <ol className="case-result__candidates">{content.candidates.slice(0, 3).map(item =>
       <li key={item.id}><h4>{item.rank}. {item.title}</h4><p>{item.claim}</p>
+        {composition && typeof item.road_distance_m === 'number' && <p>可信入口参考道路距离 {(item.road_distance_m / 1000).toFixed(2)} 公里；不是实际轨迹。</p>}
         <small>规则支持度：{Number.isFinite(item.score) ? item.score : '未提供'}，不是准确概率。</small>
         <h5>支持证据</h5><ul>{item.supporting_evidence.map((text, index) => <li key={index}>{text}</li>)}</ul>
         <h5>反向证据与信息缺口</h5>
@@ -57,6 +59,7 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
     <p className="case-result__note">事实记录、候选解释和信息缺口分开呈现，供人工判断，不自动形成正式结论或执行任务。</p>
     <CaseResultDownload key={`${result.id}:${result.content_sha256}`} resultId={result.id} hash={result.content_sha256} />
     {result.freshness === 'pending_update' && <p role="status" className="case-result__warning">等待更新：案件内容或规则已变化，以下为上一次处理结果。</p>}
+    {result.composition_status === 'road_not_ready' && <p role="status" className="case-result__warning">当前道路组合未就绪。基础空间候选不代表道路计算已经完成；无需重新选案或手动运行。</p>}
     <div className="case-result__reading-layout"><div className="case-result__document">
     <details><summary>原始记录摘要与关联条件</summary>
       <p>{content.facts_summary.label}</p><Facts values={content.facts_summary.recorded_fields} />
@@ -67,13 +70,19 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
         {gap.label}{gap.reason ? `：${gap.reason}` : ''}</li>)}</ul>
     </div>}
     {result.freshness === 'pending_update' ? legacyCandidates : <CaseRoadComparison
-      key={`${result.id}:${result.content_sha256}`} resultId={result.id} hash={result.content_sha256} legacyCandidates={legacyCandidates} />}
+      key={`${result.id}:${result.content_sha256}`} resultId={composition?.base_result_id ?? result.id}
+      hash={composition?.base_content_sha256 ?? result.content_sha256} legacyCandidates={legacyCandidates}
+      awaitingComposition={result.composition_status === 'road_not_ready'}
+      frozen={composition ? { id: composition.road_artifact_id, content_sha256: composition.road_content_sha256 } : undefined} />}
     <CaseSemanticProfile key={result.id} semantics={content.semantics ?? undefined} updating={result.freshness === 'pending_update'} />
     </div><aside className="case-result__sources" aria-label="引用依据"><h4>引用依据</h4>
       <details open><summary>事实来源</summary><ul>{content.facts_summary.evidence_refs.map(ref => <li key={ref}><code>{ref}</code></li>)}</ul></details>
     <details><summary>成果版本与边界</summary>
       <dl className="case-result__facts">
         <div><dt>成果编号</dt><dd>{result.id}</dd></div>
+        {composition && <><div><dt>基础成果</dt><dd>{composition.base_result_id}</dd></div>
+          <div><dt>道路附件</dt><dd>{composition.road_artifact_id}</dd></div>
+          <div><dt>路网与计算时刻</dt><dd>{content.road_versions?.network_id} · {content.road_versions?.analysis_at}</dd></div></>}
         <div><dt>生成时间</dt><dd>{result.created_at}</dd></div>
         <div><dt>地图版本</dt><dd>{content.versions.map_snapshot_id || '尚未结合地图'}</dd></div>
         <div><dt>算法版本</dt><dd>{content.versions.algorithm_version || '仅画像整理'}</dd></div>

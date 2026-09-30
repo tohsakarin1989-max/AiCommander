@@ -22,15 +22,18 @@ def endpoint(content):
 def test_get_reads_saved_artifact_without_creating_work(artifact_input):
     db, content = artifact_input
     api = client(db)
+    initial_notifications = db.query(OutboxEvent).count()
     assert api.get(endpoint(content)).json()['status'] == 'not_available'
+    assert db.query(OutboxEvent).count() == initial_notifications
     saved = freeze_road_artifact(db, content)
     db.commit()
+    saved_notifications = db.query(OutboxEvent).count()
     for _ in range(2):
         response = api.get(endpoint(content))
         assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
         assert response.json()['artifact']['id'] == saved['id']
         assert response.json()['status'] == 'completed'
-    assert db.query(OutboxEvent).count() == 0
+    assert db.query(OutboxEvent).count() == saved_notifications
     assert db.query(CaseRoadArtifact).count() == 1
 
 
@@ -56,6 +59,9 @@ def test_job_states_never_masquerade_as_success_or_leak_payload(artifact_input, 
     if expected in {'processing', 'waiting_network'}:
         expected_keys.add('poll_after_seconds')
         assert value['poll_after_seconds'] == (60 if expected == 'waiting_network' else 10)
+    if expected == 'information_missing':
+        expected_keys.add('information_dependencies')
+        assert value['information_dependencies'] == ['有效案件记录位置', '当前授权地图中的生产设施与来源']
     assert set(value) == expected_keys
     assert value['result_id'] == content['result_id']
     assert len(value['content_sha256']) == 64

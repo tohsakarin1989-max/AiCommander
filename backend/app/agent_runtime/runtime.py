@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import asyncio
 import hashlib
 import json
 from time import perf_counter
+import time
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -16,6 +18,7 @@ from app.agent_runtime.service import AgentRunService
 from app.agent_runtime.tools import AgentToolContext, AgentToolRegistry
 from app.config import settings
 from app.models.agent_run import AgentApproval, AgentArtifact, AgentRun
+from app.agent_runtime.execution_contract import ExecutionBudget, TaskEnvelope, sql_budget, evidence_contract
 
 
 _AUTO_NARRATOR = object()
@@ -61,6 +64,11 @@ class AgentRunExecutor:
         run.completed_at = None
         run.started_at = run.started_at or datetime.utcnow()
         run.attempt_count = (run.attempt_count or 0) + 1
+        envelope = TaskEnvelope(run.id, 'deterministic_lab', run.created_by, run.data_version,
+                               min(8, settings.AGENT_MAX_STEPS), min(120, settings.AGENT_TIMEOUT_SECONDS))
+        run.runtime_state = {**(run.runtime_state or {}), 'task_envelope': envelope.public(),
+                             'tool_declarations': AgentToolRegistry().declarations()}
+        budget = ExecutionBudget(time.monotonic() + envelope.timeout_seconds, max_steps=envelope.max_steps)
         AgentRunService.append_event(
             db,
             run,
@@ -91,7 +99,9 @@ class AgentRunExecutor:
                 if run.status == "cancelled":
                     return AgentRunService.get_run(db, run.id)
                 started = perf_counter()
-                output = self.tool_registry.execute(tool_name, db, context)
+                budget.take_step()
+                with sql_budget(db, budget):
+                    output = self.tool_registry.execute(tool_name, db, context)
                 duration_ms = round((perf_counter() - started) * 1000)
                 tool_outputs.append(output)
                 AgentRunService.append_event(
@@ -109,6 +119,7 @@ class AgentRunExecutor:
                         "fact_count": len(output.get("facts", [])),
                         "finding_count": len(output.get("findings", [])),
                         "candidate_count": len(output.get("candidate_actions", [])),
+                        "evidence_contract": evidence_contract(output),
                     },
                     evidence_refs=output.get("evidence_refs", []),
                     duration_ms=duration_ms,
@@ -199,10 +210,12 @@ class AgentRunExecutor:
                 run.model_name = narrator.model_name
                 model_started = perf_counter()
                 try:
-                    raw_outcome = await narrator.summarize(
-                        EXTERNAL_TASK_GOALS[run.task_type],
-                        external.payload,
-                    )
+                    budget.check()
+                    async with asyncio.timeout(max(.001, budget.deadline - time.monotonic())):
+                        raw_outcome = await narrator.summarize(
+                            EXTERNAL_TASK_GOALS[run.task_type],
+                            external.payload,
+                        )
                     if isinstance(raw_outcome, AgentNarrationOutcome):
                         narrative = raw_outcome.content
                         usage = raw_outcome.usage

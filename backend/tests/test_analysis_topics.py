@@ -189,6 +189,7 @@ def test_resume_obeys_same_active_topic_capacity_as_create(query_db):
 
 
 def test_pause_invalidates_late_publication(query_db, monkeypatch):
+    from app.services import profile_aggregate_jobs as jobs
     seed(query_db)
     created = topics.create_topic(query_db, '专题', {})
     original = topics.build_aggregate
@@ -196,7 +197,7 @@ def test_pause_invalidates_late_publication(query_db, monkeypatch):
         snapshot = original(db, args, **kwargs)
         topics.update_topic(db, created['id'], paused=True)
         return snapshot
-    monkeypatch.setattr(topics, 'build_aggregate', paused_during_scan)
+    monkeypatch.setattr(jobs, 'build_aggregate', paused_during_scan)
     assert topics.refresh_topic(query_db, created['id'])['status'] == 'superseded'
     assert query_db.query(TopicSnapshot).count() == 0
 
@@ -222,6 +223,7 @@ def test_evidence_resolves_frozen_profile_and_never_arbitrary_case(query_db):
 
 
 def test_incomplete_refresh_retains_last_successful_snapshot(query_db, monkeypatch):
+    from app.services import profile_aggregate_jobs as jobs
     seed(query_db)
     created = topics.create_topic(query_db, '专题', {})
     topics.refresh_topic(query_db, created['id'])
@@ -231,9 +233,8 @@ def test_incomplete_refresh_retains_last_successful_snapshot(query_db, monkeypat
         result = original(db, args, **kwargs)
         result['coverage']['complete'] = False
         return result
-    monkeypatch.setattr(topics, 'build_aggregate', incomplete)
-    with pytest.raises(ValueError, match='scan_incomplete'):
-        topics.refresh_topic(query_db, created['id'])
+    monkeypatch.setattr(jobs, 'build_aggregate', incomplete)
+    assert topics.refresh_topic(query_db, created['id'])['status'] == 'retry'
     read = topics.read_topic(query_db, created['id'])
-    assert read['refresh_state'] == 'failed'
+    assert read['refresh_state'] == 'retry'
     assert read['snapshot'] == old

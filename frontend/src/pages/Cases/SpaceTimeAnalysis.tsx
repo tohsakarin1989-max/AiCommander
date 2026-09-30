@@ -13,7 +13,7 @@ export function hourDayMatrix(rows: { weekday: number; hour: number; count: numb
     .map(item => [item.hour, item.weekday, item.count])
 }
 
-export default function SpaceTimeAnalysis() {
+export default function SpaceTimeAnalysis({ embedded = false }: { embedded?: boolean }) {
   const { context, query, data } = useRegionalAnalysis()
   const [timeSlot, setTimeSlot] = useState('all')
   const [dayFilter, setDayFilter] = useState('all')
@@ -49,8 +49,8 @@ export default function SpaceTimeAnalysis() {
     series: [{ name: '案件', type: 'line', data: months.map(item => item.case_count) },
       { name: '事件（单列）', type: 'line', data: months.map(item => item.event_count) }],
   }
-  return <div className="sta-page">
-    <div className="page-title"><h1>时空研判分析</h1><span className="sub">同范围案件分布与全库时间规律</span></div>
+  return <div className={`sta-page${embedded ? ' sta-page--embedded' : ''}`}>
+    {!embedded && <div className="page-title"><h1>时空研判分析</h1><span className="sub">同范围案件分布与全库时间规律</span></div>}
     <RegionalControls context={context} />
     {query.isError && <p role="alert">时空资料读取失败，未使用旧缓存或推断为空。<button onClick={() => void query.refetch()}>重试</button></p>}
     {query.isFetching && !data && <p role="status">正在读取授权区域资料…</p>}

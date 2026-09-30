@@ -1,16 +1,40 @@
 """Claim durable query jobs with freshly loaded owner permissions."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import update
+from sqlalchemy import update, and_, or_
 
 from app.agent_runtime.service import AgentRunService
 from app.config import settings
 from app.models.agent_run import AgentRun
 from app.services.intelligent_query_tasks import TASK_TYPE, execute_query
+from app.services.runtime_capabilities import query_creation_enabled
+
+
+def expire_abandoned_queries(db):
+    """System-only cleanup on the ordinary queue, including when Lab is off."""
+    now = datetime.now(timezone.utc)
+    predicate = or_(
+        and_(AgentRun.status == 'running', AgentRun.started_at <= now - timedelta(seconds=120)),
+        and_(AgentRun.status == 'queued', AgentRun.created_at <= now - timedelta(hours=24)),
+    )
+    ids = [row.id for row in db.query(AgentRun.id).filter(
+        AgentRun.task_type == TASK_TYPE, predicate).order_by(AgentRun.id).limit(100)]
+    count = 0
+    for run_id in ids:
+        changed = db.execute(update(AgentRun).where(AgentRun.id == run_id,
+            AgentRun.task_type == TASK_TYPE, predicate).execution_options(synchronize_session=False)
+            .values(status='expired', completed_at=now))
+        if changed.rowcount:
+            row = db.query(AgentRun).filter_by(id=run_id).populate_existing().one()
+            AgentRunService.append_event(db, row, event_type='query_expired',
+                                         status='expired', actor_type='system')
+            count += 1
+    db.commit()
+    return count
 
 
 async def process_next(db):
-    if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == 'off':
+    if not query_creation_enabled(settings):
         return None
     now = datetime.now(timezone.utc)
     expired = db.query(AgentRun.id).filter(AgentRun.task_type == TASK_TYPE,

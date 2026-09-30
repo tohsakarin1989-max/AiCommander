@@ -11,18 +11,21 @@ from typing import Any, Iterable
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilRecoveryRecord
+from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
 from app.models.map_foundation import OperationalArea
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_semantic_service import SEMANTIC_RULE_VERSION, TEXT_FIELDS, build_semantic_profile
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 from app.services.case_local_semantic_model import resolve_model_plan, extract as extract_local_semantics
+from app.services.case_source_service import CaseSourceService
+from app.models.case_source import DomainChange
 
 
-CASE_PROFILE_SCHEMA_VERSION = "4.1.0"
+CASE_PROFILE_SCHEMA_VERSION = "6.3.0"
 CASE_DICTIONARY_VERSION = SEMANTIC_RULE_VERSION
 ANALYSIS_RELEVANT_FIELDS = {
+    "operational_area_id",
     "case_number",
     "occurred_time",
     "location",
@@ -64,6 +67,9 @@ ANALYSIS_RELEVANT_FIELDS = {
     "persons",
     "evidence",
     "oil_recovery",
+    "tips",
+    "occurred_from", "occurred_to", "time_precision", "time_expression", "time_timezone", "discovered_at",
+    "oil_volume_unit", "security_level", "locations", "measurements", "source_links",
 }
 
 
@@ -78,9 +84,10 @@ class CasePipelineService:
         changed_fields: Iterable[str] | None = None,
     ) -> OutboxEvent | None:
         changed = set(changed_fields or ANALYSIS_RELEVANT_FIELDS)
-        if changed.isdisjoint(ANALYSIS_RELEVANT_FIELDS):
+        revision, change = CaseSourceService.capture_change(db, case)
+        if change is None and changed.isdisjoint(ANALYSIS_RELEVANT_FIELDS):
             return None
-        source_hash = CasePipelineService.source_hash(db, case)
+        source_hash = revision.source_hash
         dictionary_version = resolve_model_plan(db).version
         state = (
             db.query(CasePipelineState)
@@ -92,6 +99,7 @@ class CasePipelineService:
             .filter(
                 CaseAnalysisProfile.case_id == case.id,
                 CaseAnalysisProfile.source_hash == source_hash,
+                CaseAnalysisProfile.source_revision_id == revision.id,
                 CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
                 CaseAnalysisProfile.dictionary_version == dictionary_version,
                 CaseAnalysisProfile.is_current.is_(True),
@@ -110,7 +118,7 @@ class CasePipelineService:
             return None
         idempotency_key = hashlib.sha256(
             (
-                f"case:{case.id}:{source_hash}:{CASE_PROFILE_SCHEMA_VERSION}:"
+                f"case:{case.id}:revision:{revision.id}:{source_hash}:{CASE_PROFILE_SCHEMA_VERSION}:"
                 f"{dictionary_version}:after:{state.event_id if state else 'initial'}"
             ).encode()
         ).hexdigest()
@@ -129,6 +137,7 @@ class CasePipelineService:
             payload={
                 "case_id": case.id,
                 "source_hash": source_hash,
+                "source_revision_id": revision.id,
                 "changed_fields": sorted(changed.intersection(ANALYSIS_RELEVANT_FIELDS)),
                 "schema_version": CASE_PROFILE_SCHEMA_VERSION,
                 "dictionary_version": dictionary_version,
@@ -142,6 +151,8 @@ class CasePipelineService:
         if authority is not None:
             event.payload = {**event.payload, "road_authority": authority}
         db.add(event)
+        source_change = change or db.query(DomainChange).filter_by(source_revision_id=revision.id).first()
+        CaseSourceService.attach_delivery(db, event, source_change)
         # CasePipelineState.event_id 具有外键约束；先持久化 Outbox 主记录，
         # 保证 SQLite 测试与 PostgreSQL 生产环境采用相同的写入顺序。
         db.flush()
@@ -165,6 +176,10 @@ class CasePipelineService:
             state.completed_at = None
             state.last_error = None
         db.flush()
+        from app.services.chain_outbox_service import enqueue_chain_change
+        chain_event = enqueue_chain_change(db, case, source_hash=source_hash, source_event_id=event.id)
+        if chain_event is not None:
+            CaseSourceService.attach_delivery(db, chain_event, source_change)
         return event
 
     @staticmethod
@@ -192,6 +207,7 @@ class CasePipelineService:
                 already_built = db.query(CaseAnalysisProfile.id).filter(
                     CaseAnalysisProfile.case_id == int(event.aggregate_id),
                     CaseAnalysisProfile.source_hash == source_hash,
+                    CaseAnalysisProfile.source_revision_id == event.payload.get("source_revision_id"),
                     CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
                     CaseAnalysisProfile.dictionary_version == plan.version,
                 ).first()
@@ -199,9 +215,10 @@ class CasePipelineService:
                     and source_hash == event.payload.get("source_hash")
                     and plan.version == event.payload.get("dictionary_version"))
                 values = {name: getattr(source_case, name) for name in TEXT_FIELDS} if should_extract else {}
+                source_revision_id = event.payload.get("source_revision_id")
                 db.rollback()  # Claim was committed; release the snapshot read transaction.
                 if should_extract:
-                    model_output = extract_local_semantics(plan, values)
+                    model_output = extract_local_semantics(plan, values, source_revision_id=source_revision_id)
                 db.expire_all()
             # 所有案件派生 Worker 统一按 case -> state/profile -> snapshot 加锁，
             # 与案件更新事务保持一致，避免 PostgreSQL 双会话交叉等待。
@@ -256,6 +273,7 @@ class CasePipelineService:
                 .filter(
                     CaseAnalysisProfile.case_id == case.id,
                     CaseAnalysisProfile.source_hash == current_hash,
+                    CaseAnalysisProfile.source_revision_id == event.payload.get("source_revision_id"),
                     CaseAnalysisProfile.schema_version == CASE_PROFILE_SCHEMA_VERSION,
                     CaseAnalysisProfile.dictionary_version == dictionary_version,
                 )
@@ -313,10 +331,11 @@ class CasePipelineService:
                     case_id=case.id,
                     profile_version=(latest.profile_version + 1) if latest else 1,
                     source_hash=current_hash,
+                    source_revision_id=event.payload.get("source_revision_id"),
                     schema_version=CASE_PROFILE_SCHEMA_VERSION,
                     dictionary_version=dictionary_version,
                     payload=payload,
-                    quality_score=float(payload["quality"]["score"]),  # type: ignore[index]
+                    quality_score=None,
                     analysis_readiness=payload["overall_readiness"],  # type: ignore[index]
                     is_current=True,
                 )
@@ -459,111 +478,20 @@ class CasePipelineService:
 
     @staticmethod
     def source_hash(db: Session, case: Case) -> str:
-        payload = {
-            "case": {
-                key: CasePipelineService._json_value(getattr(case, key))
-                for key in sorted(ANALYSIS_RELEVANT_FIELDS)
-                if key not in {"vehicles", "persons", "evidence", "oil_recovery"}
-            },
-            "vehicles": [
-                CasePipelineService._model_values(
-                    item,
-                    (
-                        "vehicle_type",
-                        "road_vehicle_kind", "height_m", "gross_weight_t",
-                        "color",
-                        "brand",
-                        "model",
-                        "plate_number",
-                        "oil_volume",
-                        "water_cut",
-                        "custody_location",
-                        "current_location",
-                        "handling_status",
-                        "transferred_to_police",
-                        "transfer_time",
-                        "transfer_document_no",
-                    ),
-                )
-                for item in db.query(CaseVehicle).filter(CaseVehicle.case_id == case.id).order_by(CaseVehicle.id).all()
-            ],
-            "persons": [
-                CasePipelineService._model_values(
-                    item,
-                    (
-                        "name",
-                        "gender",
-                        "id_number",
-                        "home_address",
-                        "phone",
-                        "role",
-                        "handling_status",
-                    ),
-                )
-                for item in db.query(CasePerson).filter(CasePerson.case_id == case.id).order_by(CasePerson.id).all()
-            ],
-            "evidence": [
-                CasePipelineService._model_values(
-                    item,
-                    (
-                        "evidence_type",
-                        "title",
-                        "file_path",
-                        "requirement_key",
-                        "captured_at",
-                        "latitude",
-                        "longitude",
-                        "is_sensitive",
-                        "meta",
-                    ),
-                )
-                for item in db.query(CaseEvidence).filter(CaseEvidence.case_id == case.id).order_by(CaseEvidence.id).all()
-            ],
-            "oil_recovery": [
-                CasePipelineService._model_values(
-                    item,
-                    (
-                        "oil_nature",
-                        "volume_tons",
-                        "water_cut",
-                        "source",
-                        "receiver",
-                        "handled_at",
-                        "handling_method",
-                    ),
-                )
-                for item in db.query(OilRecoveryRecord).filter(OilRecoveryRecord.case_id == case.id).order_by(OilRecoveryRecord.id).all()
-            ],
-        }
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        return hashlib.sha256(encoded).hexdigest()
+        return CaseSourceService.source_hash(db, case)
 
     @staticmethod
     def build_profile_payload(db: Session, case: Case) -> dict[str, Any]:
+        current_source_hash = CasePipelineService.source_hash(db, case)
+        revision = CaseSourceService.latest_revision(db, case.id)
+        # A direct preview can observe unsaved/uncaptured edits. It must not bind
+        # those values to an older revision; normal workers require an exact hash.
+        if revision is not None and revision.source_hash != current_source_hash:
+            revision = None
         feature_profile = CaseQualityService.build_case_feature_profile(db, case)
         quality = feature_profile["quality"]
         readiness = feature_profile["analysis_readiness"]
-        gaps: list[dict[str, str]] = []
-        for item in quality.get("missing_required", []):
-            if isinstance(item, dict):
-                gaps.append(
-                    {
-                        "field": str(item.get("field") or "unknown"),
-                        "label": str(item.get("label") or item.get("field") or "待补充信息"),
-                        "reason": "关键字段缺失",
-                    }
-                )
-        for item in quality.get("warnings", []):
-            if len(gaps) >= 3:
-                break
-            if isinstance(item, dict):
-                gaps.append(
-                    {
-                        "field": str(item.get("field") or "unknown"),
-                        "label": str(item.get("message") or "信息存在矛盾"),
-                        "reason": "一致性待核验",
-                    }
-                )
+        gaps = quality.get("priority_gaps", [])[:3]
         statuses = [
             item.get("status")
             for item in readiness.values()
@@ -577,9 +505,14 @@ class CasePipelineService:
             "dictionary_version": CASE_DICTIONARY_VERSION,
             "case_id": case.id,
             "case_number": case.case_number,
-            "source_hash": CasePipelineService.source_hash(db, case),
+            "source_hash": current_source_hash,
+            "source_revision_id": revision.id if revision else None,
+            "source_clues": CasePipelineService.source_clues(db, case),
             "semantics": build_semantic_profile(
                 {field: getattr(case, field) for field in TEXT_FIELDS},
+                source_revision_id=revision.id if revision else None,
+                source_hash=revision.source_hash if revision else None,
+                source_payload=revision.payload if revision else None,
                 structured={
                     "vehicle_info": case.vehicle_info,
                     "involved_items": case.involved_items,
@@ -597,6 +530,12 @@ class CasePipelineService:
             "spatial_grid": CasePipelineService._spatial_grid(case.latitude, case.longitude),
             "standard": {
                 "occurred_time": CasePipelineService._json_value(case.occurred_time),
+                "occurred_from": CasePipelineService._json_value(case.occurred_from),
+                "occurred_to": CasePipelineService._json_value(case.occurred_to),
+                "time_precision": case.time_precision,
+                "time_expression": case.time_expression,
+                "time_timezone": case.time_timezone,
+                "discovered_at": CasePipelineService._json_value(case.discovered_at),
                 "location": CasePipelineService._normalize_text(case.location),
                 "case_type": CasePipelineService._normalize_text(case.case_type),
                 "oil_type": CasePipelineService._normalize_text(case.oil_type),
@@ -610,6 +549,7 @@ class CasePipelineService:
                 "latitude": case.latitude,
                 "longitude": case.longitude,
                 "oil_volume": case.oil_volume,
+                "oil_volume_unit": case.oil_volume_unit,
                 "oil_value": case.oil_value,
                 "water_cut": case.water_cut,
                 "upstream_source": case.upstream_source,
@@ -624,6 +564,26 @@ class CasePipelineService:
             "overall_readiness": overall,
             "boundary": "派生画像不改写案件原始事实；缺项只作录入提示。",
         }
+
+    @staticmethod
+    def source_clues(db: Session, case: Case) -> list[dict[str, Any]]:
+        """线索作为独立来源，不混入案情、语义事实或模型抽取原文。"""
+        return [
+            {
+                "source_ref": f"case_tip:{tip.id}",
+                "source_kind": "case_tip",
+                "reported_at": CasePipelineService._json_value(tip.reported_at),
+                "location": tip.location,
+                "content": tip.content,
+                "source_type": tip.source_type,
+                "verification_status": tip.verification_status or "pending",
+                "resolution": tip.resolution,
+                "prevention_actions": tip.prevention_actions,
+                "usable_as_fact": False,
+                "boundary": "线索及其核实记录仅作独立候选依据，不自动成为正式案件事实。",
+            }
+            for tip in db.query(CaseTip).filter(CaseTip.case_id == case.id).order_by(CaseTip.id).all()
+        ]
 
     @staticmethod
     def profile_to_dict(profile: CaseAnalysisProfile) -> dict[str, Any]:

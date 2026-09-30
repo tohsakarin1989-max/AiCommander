@@ -56,13 +56,13 @@ def test_expired_worker_lease_recovers_without_duplicate_results(db_session, res
 def test_obsolete_schema_event_is_not_processed_by_new_rule(db_session, result_data):
     prepare(db_session)
     enqueue_missing_results(db_session)
-    events = list(db_session.scalars(select(OutboxEvent)))
+    events = list(db_session.scalars(select(OutboxEvent).where(OutboxEvent.event_type == EVENT_TYPE)))
     for event in events:
         event.payload = {**event.payload, "schema_version": "obsolete"}
     db_session.commit()
     assert process_result_backfill(db_session)["failed"] == 0
     assert db_session.query(CaseResultSnapshot).count() == 0
-    assert set(db_session.scalars(select(OutboxEvent.status))) == {"superseded"}
+    assert set(db_session.scalars(select(OutboxEvent.status).where(OutboxEvent.event_type == EVENT_TYPE))) == {"superseded"}
 
 
 def test_registered_periodic_task_consumes_real_database_events(db_session, result_data, monkeypatch):

@@ -336,7 +336,7 @@ class WellAttentionService:
             defense_score = 90.0
         elif defense_status in {"partial", "部分覆盖"}:
             defense_score = 55.0
-        elif defense_status in {"covered", "已覆盖"} or nearby_tech:
+        elif defense_status in {"covered", "已覆盖"}:
             defense_score = max(5.0, 35.0 - min(len(nearby_tech), 3) * 10.0)
         else:
             defense_score = 0.0
@@ -358,17 +358,21 @@ class WellAttentionService:
         elif defense_score >= 55:
             reasons.append("井点已明确登记为防控未覆盖或部分覆盖。")
         if history_items:
-            reasons.append(f"1公里内近一年关联案件 {len(history_items)} 起。")
+            reasons.append(f"本次 {radius_km:g} 公里半径内空间邻近案件 {len(history_items)} 起，不代表设施涉案。")
         if not reasons:
-            reasons.append("暂无明显风险迹象，当前仅保留基础监测。")
+            reasons.append("现有资料不足以形成额外关注依据，不代表不存在问题。")
 
         data_gaps = []
         if output is None:
             data_gaps.append("缺少井点产量指标，无法确认高产井暴露度。")
         if not well.verified:
             data_gaps.append("井点坐标尚未人工校验。")
-        if not nearby_tech and not blind_spots and not defense_status:
+        if not blind_spots and defense_status not in {
+            "uncovered", "verified_gap", "未覆盖", "明确缺口", "partial", "部分覆盖", "covered", "已覆盖",
+        }:
             data_gaps.append("缺少井点周边防控覆盖核验结果，不能据此判定为监控盲区。")
+            if nearby_tech:
+                data_gaps.append("邻近已登记设备不等于有效覆盖，视场、遮挡及在线状态仍需核验。")
 
         return {
             "asset_id": well.id,

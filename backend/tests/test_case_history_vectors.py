@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from app.models.case_history_index import CaseHistoryEmbedding, CaseHistoryIndex
+from app.models.case_history_index import CaseHistoryEmbedding, CaseHistoryIndex, CaseHistoryFragment
 from app.services.case_history_index_service import CaseHistoryIndexService
 from app.services.case_history_vector_service import exact_distances, store_embedding
 from tests.test_case_history_index import db, make_case  # noqa: F401
@@ -43,16 +43,16 @@ def test_background_embedding_refresh_does_not_repeat_unchanged_inputs(db, monke
     db.commit()
     CaseHistoryIndexService.reconcile_batch(db)
     db.commit()
-    assert len(embedder.calls) == 1
-    assert len(list(db.scalars(select(CaseHistoryEmbedding)))) == 1
+    first_calls = len(embedder.calls)
+    assert first_calls == len(list(db.scalars(select(CaseHistoryFragment)))) == 3
     case.description = '新的原文'
     db.commit()
     CaseHistoryIndexService.reconcile_batch(db)
     db.commit()
-    assert len(embedder.calls) == 2
+    assert len(embedder.calls) == first_calls * 2
     db.delete(case)
     db.commit()
-    assert not list(db.scalars(select(CaseHistoryEmbedding)))
+    assert not list(db.scalars(select(CaseHistoryFragment)))
 
 
 def test_hybrid_retrieval_recalls_vector_only_match_and_marks_missing_vectors(db, monkeypatch):
@@ -62,13 +62,11 @@ def test_hybrid_retrieval_recalls_vector_only_match_and_marks_missing_vectors(db
         def encode(self, text):
             return [1., 0.]
     monkeypatch.setattr('app.services.case_history_retrieval.get_local_embedder', lambda: Embedder())
+    monkeypatch.setattr('app.services.local_embedding_service.get_local_embedder', lambda: Embedder())
     case = make_case(db)
     case.description, case.location = '历史记录采用另一套完全不同的用词', '未知'
     db.commit()
     CaseHistoryIndexService.reconcile_batch(db)
-    db.commit()
-    index = db.scalar(select(CaseHistoryIndex))
-    store_embedding(db, index, [1., 0.], 'test-vector-model')
     db.commit()
     db.info['authorized_area_ids'] = (1,)
     result = CaseHistoryRetrieval.search(db, query='ABC特殊查询XYZ')
@@ -77,13 +75,13 @@ def test_hybrid_retrieval_recalls_vector_only_match_and_marks_missing_vectors(db
     assert result['items'][0]['case_id'] == case.id
     assert result['items'][0]['lexical_rank'] is None
     assert result['items'][0]['semantic_rank'] == 1
-    assert result['coverage']['vector_sources'] == 1
+    assert result['coverage']['vector_sources'] == 3
     case.description = '向量尚未更新的新记录'
     db.commit()
     result = CaseHistoryRetrieval.search(db, query='ABC特殊查询XYZ')
     assert result['items'] == []
     assert result['semantic_index_state'] == result['state'] == 'partial'
-    assert result['coverage']['vector_missing'] == 1
+    assert result['coverage']['vector_missing'] == 3
     assert result['coverage']['complete'] is False
 
 

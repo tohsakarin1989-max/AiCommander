@@ -5,9 +5,10 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.services.case_import_table import FIELDS
+from app.services.case_intake_contract import normalize_intake
 
 TIME_ZONES = frozenset({"UTC", "Asia/Shanghai"})
-TIME_FIELDS = frozenset({"occurred_time", "report_time"})
+TIME_FIELDS = frozenset({"occurred_time", "report_time", "occurred_from", "occurred_to", "discovered_at"})
 NUMBER_FIELDS = frozenset({"latitude", "longitude", "water_cut", "oil_volume"})
 BOOL_FIELDS = frozenset({"police_reported", "case_filed"})
 
@@ -16,7 +17,11 @@ def allocation_order(row: dict[str, Any], time_zone: str, row_number: int) -> tu
     """Acquire date-prefix uniqueness locks in the same order across batches."""
     try:
         occurred = normalize_case_row(row, time_zone=time_zone)["occurred_time"]
-        return occurred.date(), row_number
+        zone = ZoneInfo(time_zone)
+        # Numbering uses the declared business timezone, not the embedded offset
+        # or normalized UTC day. Unknown occurrence uses the recording day only
+        # for the number prefix; it does not populate the occurrence field.
+        return (occurred.astimezone(zone) if occurred else datetime.now(zone)).date(), row_number
     except (ValueError, TypeError):
         # Invalid rows never acquire a case-number lock and retain source order.
         return date.max, row_number
@@ -74,8 +79,8 @@ def normalize_case_row(row: dict[str, Any], *, time_zone: str = "UTC") -> dict[s
     """Produce only allowlisted business arguments; never scope, IDs or commit flags."""
     if time_zone not in TIME_ZONES:
         raise ValueError("时区仅支持 UTC 或 Asia/Shanghai，请明确选择")
-    if _empty(row.get("occurred_time")) or _empty(row.get("description")) or not str(row["description"]).strip():
-        raise ValueError("缺少发生时间或描述")
+    if _empty(row.get("description")) or not str(row["description"]).strip():
+        raise ValueError("缺少描述；发生时间未知可留空")
     result: dict[str, Any] = {}
     for field in sorted(FIELDS - {"security_team"}):
         value = row.get(field)
@@ -101,7 +106,11 @@ def normalize_case_row(row: dict[str, Any], *, time_zone: str = "UTC") -> dict[s
         raise ValueError("报告单位与保卫队内容冲突，请确认后只保留一个值")
     if _empty(unit) and not _empty(team):
         result["report_unit"] = str(team)
-    return result
+    result["time_timezone"] = time_zone
+    if result.get("time_precision") is None:
+        result.pop("time_precision", None)
+    result["oil_volume_unit"] = {"吨": "tonne", "升": "liter", "千克": "kg", "立方米": "m3", "未知": "unknown"}.get(result.get("oil_volume_unit"), result.get("oil_volume_unit") or "unknown")
+    return normalize_intake(result)
 
 
 def case_row_preview(number: int, values: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +119,7 @@ def case_row_preview(number: int, values: dict[str, Any]) -> dict[str, Any]:
         "report_unit", "source_type", "description",
     )}
     for field in TIME_FIELDS:
-        preview[field] = preview[field].isoformat() if preview[field] is not None else None
+        if field in preview:
+            preview[field] = preview[field].isoformat() if preview[field] is not None else None
     preview["description"] = preview["description"][:120]
     return {"row": number, **preview}

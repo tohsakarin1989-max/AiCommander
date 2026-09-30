@@ -12,15 +12,20 @@ from sqlalchemy.orm import Session
 from app.services.case_result_service import CaseResultService
 from app.services.case_result_map import frozen_result_map_input
 from app.services.case_result_snapshot import RESULT_SCHEMA_VERSION, verify_snapshot
+from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION
 
 
 DOCUMENT_SCHEMA = "case-result-document-5.1.0-1"
 FIELD_LABELS = {
     "occurred_time": "案发时间（存储值）", "location": "地点", "case_type": "案件类型",
+    "occurred_from": "发生时间范围起点", "occurred_to": "发生时间范围终点",
+    "time_precision": "发生时间精度", "time_expression": "原始时间表达",
+    "time_timezone": "原始时间表达时区", "discovered_at": "发现时间",
     "oil_type": "油品", "oil_nature": "油品性质", "facility_type": "设施类型",
     "modus_operandi": "作案手法", "report_unit": "报案单位", "source_type": "案件来源",
     "upstream_source": "来源线索", "downstream_destination": "去向线索",
     "water_cut": "含水率（记录值）", "oil_volume": "涉油数量（记录值）",
+    "oil_volume_unit": "涉油数量单位（未知不换算）", "oil_measurements": "分阶段计量记录",
     "oil_value": "涉油价值（记录值）", "evidence_count": "证据记录数",
     "vehicle_count": "车辆记录数", "person_count": "人员记录数",
     "description": "案情描述", "vehicle_info": "车辆信息", "case_vehicles": "关联车辆记录", "involved_items": "涉案物品",
@@ -83,6 +88,11 @@ def _time_label(value: str, precision: str) -> str:
 
 def _semantic_details(semantics: dict) -> list[DocumentBlock]:
     blocks = []
+    if semantics.get("process"):
+        from app.services.case_process_document import process_blocks
+        blocks.extend(process_blocks(semantics["process"]))
+        if not semantics.get("model_extraction"):
+            blocks.append(DocumentBlock("paragraph", "深层模型理解未启用，当前使用本地规则。"))
     model = semantics.get("model_extraction")
     if model:
         state = {"ready": "已返回", "partial": "部分结果", "unavailable": "暂不可用", "not_enabled": "未启用"}.get(model["status"], "状态待核")
@@ -96,7 +106,7 @@ def _semantic_details(semantics: dict) -> list[DocumentBlock]:
             blocks.append(_source(item["reference"]))
         blocks.append(DocumentBlock("paragraph", f'模型提取版本：{model["version"]}'))
     events = semantics.get("event_fragments")
-    if events is not None:
+    if events is not None and not semantics.get("process"):
         blocks.append(DocumentBlock("heading", f'事件片段 {len(events["items"])} 项'))
         blocks.append(DocumentBlock("paragraph", events["boundary"]))
         if not model and events.get("deep_model_status") != "enabled":
@@ -161,7 +171,7 @@ def _semantic_details(semantics: dict) -> list[DocumentBlock]:
 
 def build_case_result_document(result: dict) -> CaseResultDocument:
     """纯转换；调用者须先授权。hash校验只证明内容一致，不证明可向用户交付。"""
-    if not verify_snapshot(result) or result["content"].get("schema_version") != RESULT_SCHEMA_VERSION:
+    if not verify_snapshot(result) or result["content"].get("schema_version") not in {RESULT_SCHEMA_VERSION, COMPOSITION_SCHEMA_VERSION}:
         raise ValueError("invalid_case_result_document_input")
     content = result["content"]
     created_at = result.get("created_at")
@@ -180,20 +190,49 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
     ]
     for ref in content["facts_summary"]["evidence_refs"]:
         blocks.append(DocumentBlock("source", ref))
+    if not content.get("composition"):
+        blocks.append(DocumentBlock("paragraph", "本版本为基础空间成果，未绑定当前道路组合；空间接近不表示道路可达，候选仅供历史参考。"))
     blocks.append(DocumentBlock("heading", "关键缺项"))
     for gap in content["information_gaps"]["profile"]:
         blocks.append(DocumentBlock("paragraph", f'{gap["label"]}：{gap.get("reason") or "待补充核对"}'))
     if not content["information_gaps"]["profile"]:
         blocks.append(DocumentBlock("paragraph", "当前成果未标记关键缺项，不等于全部信息已完整核实。"))
     blocks.append(DocumentBlock("heading", "待核验候选"))
+    if content.get("composition"):
+        reference = content["composition"]
+        blocks.append(DocumentBlock("table", "当前组合的冻结来源", (
+            ("基础成果", reference["base_result_id"]), ("道路附件", reference["road_artifact_id"]),
+            ("基础成果摘要", reference["base_content_sha256"]), ("道路附件摘要", reference["road_content_sha256"]),
+            ("候选来源", "道路前置设施比较；不混用原空间候选评分"),
+            ("道路条件时刻", content["road_versions"]["analysis_at"]),
+            ("路网版本", content["road_versions"]["network_id"]),
+            ("路网摘要", content["road_versions"]["graph_sha256"]),
+            ("通行规则版本", str(content["road_versions"]["policy_revision"])),
+            ("车型假设", _text(content["road_versions"]["vehicle"])),
+            ("算法与检索版本", _text(content.get("road_algorithm_versions"))),
+        )))
+        coverage = content["road_coverage"]
+        blocks.append(DocumentBlock("paragraph", f"授权设施召回 {coverage['recalled']} 个，完成比较 {coverage['compared']} 个；仅展示前三项，不代表全域最优。"))
+        if content["road_unresolved"]:
+            road_states = {"entrance_unknown": "入口或连接待核", "restricted": "通行受限",
+                "permission_unknown": "许可资料不足", "no_path_found": "未取得道路路径",
+                "calculation_failed": "计算失败", "not_calculated": "尚未计算", "network_missing": "路网缺失"}
+            blocks.append(DocumentBlock("table", "尚未形成比较的设施（不按低风险处理）", tuple(
+                (str(item["asset_id"]), road_states.get(item["state"], "资料待核"))
+                for item in content["road_unresolved"])))
     if not content["candidates"]:
         blocks.append(DocumentBlock("paragraph", "尚无可展示候选，不代表不存在相关线索。"))
+    if content.get("road_condition_comparison"):
+        from app.services.case_process_document import condition_blocks
+        blocks.extend(condition_blocks(content["road_condition_comparison"], content.get("road_ranking_changes")))
     for candidate in content["candidates"]:
         blocks.extend([
             DocumentBlock("heading", f'{candidate["rank"]}. {candidate["title"]}'),
             DocumentBlock("paragraph", candidate["claim"]),
             DocumentBlock("paragraph", f'规则支持度：{_text(candidate["score"])}，不是准确概率。'),
         ])
+        if content.get("composition"):
+            blocks.append(DocumentBlock("paragraph", f'可信入口参考道路距离：{candidate["road_distance_m"] / 1000:.2f} 公里；不是实际轨迹。'))
         for key, label in (("supporting_evidence", "支持证据"), ("counter_evidence", "反向证据"),
                            ("information_gaps", "信息缺口")):
             blocks.append(DocumentBlock("heading", label))
@@ -222,18 +261,19 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
         DocumentBlock("paragraph", f'分析状态（记录值）：{content["analysis_status"]}'),
     ])
     blocks.extend(DocumentBlock("paragraph", text) for text in content["boundary"])
-    return CaseResultDocument(DOCUMENT_SCHEMA, result["id"], result["content_sha256"], tuple(blocks))
+    reference = content.get("composition") or {}
+    return CaseResultDocument(DOCUMENT_SCHEMA, result["id"], result["content_sha256"], tuple(blocks),
+                              reference.get("road_artifact_id"), reference.get("road_content_sha256"))
 
 
 def load_case_result_document(db: Session, result_id: str, road_artifact_id: str | None = None) -> CaseResultDocument:
     """每次准备导出均重新读取并核对当前权限；不缓存已授权正文。"""
-    result = CaseResultService.read(db, result_id)
+    from app.services.case_result_composition import resolve_result_components
+    result, base, artifact = resolve_result_components(db, result_id, road_artifact_id)
     document = build_case_result_document(result)
-    if road_artifact_id is not None:
+    if artifact is not None and not result['content'].get('composition'):
         from app.services.case_road_document import attach_road_document, load_document_road
 
-        artifact = load_document_road(db, result_id, result['content_sha256'],
-                                     result['content']['versions']['map_snapshot_id'], road_artifact_id)
         from app.services.facility_document_map import resolve_facility_map_input
         map_spec = resolve_facility_map_input(db, artifact, case_id=result['content']['case_id'])
         document = attach_road_document(document, artifact, map_spec=map_spec)

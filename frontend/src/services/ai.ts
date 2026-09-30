@@ -1,6 +1,7 @@
 /**
  * AI 功能服务
- * 合并：圆桌会议、AI 助手、智能体、结论工厂
+ * 圆桌会议、证据问答和历史智能体记录。
+ * 新研判查询统一使用 intelligentQueries 服务。
  */
 import api from './api'
 import type {
@@ -10,9 +11,6 @@ import type {
   AnalysisResult,
   RankingResult,
   Conversation,
-  ChatRequest,
-  ChatResponse,
-  ConclusionDraft,
   EvidenceQaResponse,
   AgentTask,
   Conclusion,
@@ -30,8 +28,6 @@ export type {
   AnalysisResult,
   RankingResult,
   Conversation,
-  ChatRequest,
-  ChatResponse,
   AgentTask,
   Conclusion,
   ConclusionFilters,
@@ -144,12 +140,6 @@ export const aiApi = {
 
   // ---------- AI 助手 ----------
   assistant: {
-    /** 发送对话请求 */
-    chat: async (request: ChatRequest) => {
-      const response = await api.post<ChatResponse>('/assistant/chat', request)
-      return response.data
-    },
-
     /** 获取统计信息 */
     getStats: async () => {
       const response = await api.get<{
@@ -168,12 +158,6 @@ export const aiApi = {
 
   // ---------- 智能体 ----------
   agent: {
-    /** 执行智能体任务 */
-    run: async (query: string, caseIds?: number[]) => {
-      const response = await api.post<AgentTask>('/agents/run', { query, case_ids: caseIds || [] })
-      return response.data
-    },
-
     /** 获取任务列表 */
     list: async () => {
       const response = await api.get<AgentTask[]>('/agents/tasks')
@@ -181,53 +165,6 @@ export const aiApi = {
     },
   },
 
-  // ---------- 结论工厂 ----------
-  conclusion: {
-    /** 生成结论 */
-    generate: async (caseId: number) => {
-      const response = await api.post<Conclusion>('/conclusions/generate', { case_id: caseId })
-      return response.data
-    },
-
-    /** 从会议报告生成结论 */
-    generateFromMeeting: async (meetingId: string) => {
-      const response = await api.post<Conclusion>(`/conclusions/from-meeting/${meetingId}`)
-      return response.data
-    },
-
-    /** 将结论关联到会议 */
-    linkToMeeting: async (conclusionId: number, meetingId: string) => {
-      const response = await api.post<{ id: number; meeting_id: string; message: string }>(
-        `/conclusions/${conclusionId}/link-meeting`,
-        null,
-        { params: { meeting_id: meetingId } }
-      )
-      return response.data
-    },
-
-    /** 获取结论列表 */
-    list: async (filters?: ConclusionFilters) => {
-      const response = await api.get<Conclusion[]>('/conclusions', { params: filters })
-      return response.data
-    },
-
-    /** 获取结论详情 */
-    get: async (id: number) => {
-      const response = await api.get<Conclusion>(`/conclusions/${id}`)
-      return response.data
-    },
-
-    /** 提交审核反馈 */
-    review: async (id: number, data: { action: 'approve' | 'reject' | 'flag'; note?: string }) => {
-      const response = await api.post(`/conclusions/${id}/review`, data)
-      return response.data
-    },
-
-    draft: async (caseId: number): Promise<ConclusionDraft> => {
-      const response = await api.post<ConclusionDraft>('/conclusions/draft', { case_id: caseId })
-      return response.data
-    },
-  },
 }
 
 // 向后兼容：保留原有导出
@@ -243,4 +180,3 @@ export const meetingApi = {
 
 export const assistantApi = aiApi.assistant
 export const agentApi = aiApi.agent
-export const conclusionApi = aiApi.conclusion

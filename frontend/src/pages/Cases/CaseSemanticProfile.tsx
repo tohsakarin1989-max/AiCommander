@@ -1,5 +1,6 @@
 import type { CaseSemantics, SemanticReference } from '../../services/intelligenceFlow'
 import './CaseSemanticProfile.css'
+import CaseProcessView from './CaseProcessView'
 
 const fields: Record<string, string> = {
   description: '案情描述', location: '地点', modus_operandi: '作案手法',
@@ -48,7 +49,9 @@ export default function CaseSemanticProfile({ semantics, loading, error, updatin
       : <>
         <p className="case-semantics__note">本地规则整理的原文表述，不是核实结论。复杂语义仍需结合上下文判断。</p>
         {updating && <p role="status" className="case-semantics__warning">画像更新中，以下为上一次处理结果。</p>}
-        {semantics.event_fragments && <details>
+        {semantics.process && <CaseProcessView process={semantics.process} />}
+        {semantics.process && !semantics.model_extraction && <p>深层模型理解未启用，当前使用本地规则。</p>}
+        {!semantics.process && semantics.event_fragments && <details>
           <summary>事件片段 {semantics.event_fragments.items.length} 项</summary>
           <p>{semantics.event_fragments.boundary}</p>
           {!semantics.model_extraction && semantics.event_fragments.deep_model_status !== 'enabled' && <p>深层模型理解未启用，当前使用本地规则。</p>}

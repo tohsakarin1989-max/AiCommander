@@ -1,4 +1,4 @@
-"""Current facility and regional views; all endpoints are read-only."""
+"""Read-only views plus explicit source-bound recording subroutes."""
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -9,8 +9,11 @@ from app.database import get_db
 from app.models.map_foundation import OperationalArea
 from app.services.intelligent_query_tasks import _identity
 from app.services.facility_summary_service import read_dossier
+from app.api.facility_foundation import router as foundation_router
+from app.services.facility_execution_context import freeze_facility_context
 
 router = APIRouter()
+router.include_router(foundation_router)
 
 
 def _prepare(request, response, db, start_date, end_date, allowed_keys):
@@ -48,9 +51,24 @@ def _call(db, action, *args, **kwargs):
 @router.get('/assets/{asset_id}')
 def dossier(asset_id: int, request: Request, response: Response,
             start_date: datetime | None = Query(None), end_date: datetime | None = Query(None),
+            valid_at: datetime | None = Query(None), known_at: datetime | None = Query(None),
             db: Session = Depends(get_db)):
-    start, end = _prepare(request, response, db, start_date, end_date, ('start_date', 'end_date'))
-    return _call(db, read_dossier, asset_id, start_date=start, end_date=end)
+    start, end = _prepare(request, response, db, start_date, end_date, ('start_date', 'end_date', 'valid_at', 'known_at'))
+    context = _call(db, freeze_facility_context, valid_at=valid_at, known_at=known_at)
+    return _call(db, read_dossier, asset_id, start_date=start, end_date=end, context=context)
+
+
+@router.get('/readiness')
+def readiness(request: Request, response: Response,
+              operational_area_id: int | None = Query(None, ge=1),
+              page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+              db: Session = Depends(get_db)):
+    _prepare(request, response, db, None, None, ('operational_area_id', 'page', 'page_size'))
+    context = _call(db, freeze_facility_context, area_id=operational_area_id)
+    if context.role != 'admin':
+        raise HTTPException(403, '地图计算准备清单仅供管理员维护资料')
+    from app.services.facility_computability import list_readiness
+    return _call(db, list_readiness, area_id=operational_area_id, page=page, page_size=page_size, context=context)
 
 
 @router.get('/region')

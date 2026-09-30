@@ -10,6 +10,7 @@ from app.models.preprocess_job import PreprocessJob
 from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_quality_rules import time_precision
 from app.utils.logger import logger
 
 
@@ -72,12 +73,12 @@ class CasePreprocessService:
         )
 
         prompt = f"""
-你是一名涉油案件研判辅助助手。请对下面一条已侦破/已处置案件信息进行结构化预处理，目标是帮助人员复盘经验、发现相似条件和形成防控参考，而不是预测犯罪或直接派发任务。
+你是一名涉油案件研判辅助助手。请按已记录的案件阶段进行结构化预处理，不假定案件已侦破或已处置。目标是帮助人员复盘经验、发现相似条件和形成防控参考，而不是预测犯罪或直接派发任务。
 
 【案件基础字段】（可能不完整，仅供参考）：
 {meta_text}
 
-【标准化案件画像】（来自案件台账、车辆/人员/证据/质量评分，请优先使用其中的事实字段）：
+【标准化案件画像】（来自案件台账、车辆/人员/证据与资料检查，请优先使用其中的事实字段；兼容分数不代表置信度或办结状态）：
 {profile_text}
 
 【原始案情描述】：
@@ -111,7 +112,8 @@ class CasePreprocessService:
     "oil": {{
       "oil_type": "油品类型",
       "oil_nature": "油品性质",
-      "volume": 0,
+      "volume": null,
+      "volume_unit": "unknown",
       "value": 0,
       "water_cut": 0
     }},
@@ -192,8 +194,8 @@ class CasePreprocessService:
             key: value["status"]
             for key, value in profile["analysis_readiness"].items()
         }
-        vehicles = profile["vehicles"] or profile["legacy_vehicle_info"]
-        persons = profile["actors"]["persons"] or profile["actors"]["legacy_persons"]
+        vehicles = profile["vehicles"]
+        persons = profile["actors"]["persons"]
         vehicle_items = []
         for vehicle in vehicles:
             if not isinstance(vehicle, dict):
@@ -212,9 +214,9 @@ class CasePreprocessService:
                     known_roles.append(str(role))
 
         risk_factors = []
-        if quality["level"] == "low":
-            risk_factors.append("案件信息缺项较多，研判置信度受限")
-        if case.oil_volume and case.oil_volume >= 1:
+        if quality.get("priority_gaps"):
+            risk_factors.append("存在资料缺口，相关分析适用范围受限")
+        if getattr(case, "oil_volume_unit", None) == "tonne" and case.oil_volume and case.oil_volume >= 1:
             risk_factors.append("涉案油量较大")
         if profile["quality"]["facts"].get("reported_within_1h") is False:
             risk_factors.append("报送超出 1 小时要求")
@@ -241,7 +243,7 @@ class CasePreprocessService:
             if text
         ]
         readiness_v2 = {
-            "spacetime": readiness.get("spacetime", "partial"),
+            "spacetime": readiness.get("regional_analysis", "partial"),
             "similarity": "ready" if len(tags) >= 2 else "partial",
             "scene": "ready" if (case.location and (case.facility_type or scene_observations)) else "partial",
             "area_profile": "ready" if (case.latitude is not None and case.longitude is not None) else "missing_geo",
@@ -250,9 +252,9 @@ class CasePreprocessService:
         recommendations = []
         if quality.get("recommendations"):
             recommendations.append({
-                "action": "补齐案件信息后再生成高置信度研判",
+                "action": "按需补充影响当前分析的已知资料，未知信息保持未知",
                 "basis": quality.get("recommendations", [])[:3],
-                "priority": "high" if quality["level"] == "low" else "medium",
+                "priority": "medium",
                 "boundary": "仅供人工研判和防控参考",
             })
         if case.latitude is None or case.longitude is None:
@@ -277,6 +279,10 @@ class CasePreprocessService:
                 "summary": case.description or "暂无案情描述",
                 "case_type": case.case_type,
                 "time": case.occurred_time.isoformat() if case.occurred_time else None,
+                "time_precision": time_precision(case),
+                "occurred_from": profile["case"]["occurred_from"],
+                "occurred_to": profile["case"]["occurred_to"],
+                "time_expression": profile["case"]["time_expression"],
                 "location": case.location,
             },
             "geo": {
@@ -299,6 +305,7 @@ class CasePreprocessService:
                     "oil_type": case.oil_type,
                     "oil_nature": case.oil_nature,
                     "volume": case.oil_volume,
+                    "volume_unit": getattr(case, "oil_volume_unit", None) or "unknown",
                     "value": case.oil_value,
                     "water_cut": case.water_cut,
                 },
@@ -317,7 +324,7 @@ class CasePreprocessService:
                 "target_object": case.facility_type,
                 "modus_operandi": [case.modus_operandi] if case.modus_operandi else [],
                 "tools": [],
-                "time_pattern": [f"{case.occurred_time.hour:02d}:00"] if case.occurred_time else [],
+                "time_pattern": [f"{case.occurred_time.hour:02d}:00"] if case.occurred_time and time_precision(case) == "exact" else [],
                 "weather_pattern": [],
             },
             "actors": {
@@ -338,6 +345,7 @@ class CasePreprocessService:
                     "oil_type": case.oil_type,
                     "oil_nature": case.oil_nature,
                     "volume": case.oil_volume,
+                    "volume_unit": getattr(case, "oil_volume_unit", None) or "unknown",
                     "value": case.oil_value,
                     "water_cut": case.water_cut,
                     "facility_type": case.facility_type,
@@ -365,19 +373,22 @@ class CasePreprocessService:
                 {
                     "claim": factor,
                     "basis": ["案件质量画像", "案件结构化字段"],
-                    "confidence": round(max(0.35, min(0.75, quality["score"] / 100)), 2),
-                    "needs_verification": quality["level"] != "high",
+                    "confidence": None,
+                    "needs_verification": True,
                 }
                 for factor in risk_factors
             ],
             "risk": {
-                "level": "高风险" if quality["level"] == "low" else "中风险" if quality["level"] == "medium" else "低风险",
+                "level": "not_assessed",
+                "boundary": "资料缺口不是犯罪风险评分。",
                 "factors": risk_factors,
             },
             "recommendations": recommendations,
             "management": {
                 "report_quality_score": quality["score"],
                 "report_quality_level": quality["level"],
+                "score_purpose": quality["score_purpose"],
+                "priority_gaps": quality["priority_gaps"],
                 "missing_fields": [
                     item["label"]
                     for item in quality.get("missing_required", [])
@@ -391,8 +402,9 @@ class CasePreprocessService:
             },
             "analysis_readiness": readiness_v2,
             "legacy_analysis_readiness": readiness,
+            "capabilities": quality["capabilities"],
             "tags": list(dict.fromkeys(tags)),
-            "confidence": round(max(0.35, min(0.85, quality["score"] / 100)), 2),
+            "confidence": None,
         }
 
     @staticmethod

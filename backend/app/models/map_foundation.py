@@ -2,6 +2,7 @@
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.sql import func
 
@@ -158,6 +160,8 @@ class MapFeatureClaim(Base):
     error_code = Column(String(80), nullable=True)
     error_message = Column(Text, nullable=True)
     asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id", ondelete="SET NULL"), nullable=True)
+    source_identity_id = Column(Integer, ForeignKey("facility_source_identities.id", ondelete="RESTRICT"), nullable=True)
+    identity_decision_id = Column(Integer, ForeignKey("facility_identity_decisions.id", ondelete="RESTRICT"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -168,6 +172,9 @@ class JurisdictionAssetVersion(Base):
     __table_args__ = (
         UniqueConstraint("asset_id", "version", name="uq_jurisdiction_asset_version"),
         Index("ix_asset_versions_claim", "source_claim_id"),
+        Index("ix_asset_versions_temporal", "asset_id", "known_at", "valid_from"),
+        CheckConstraint("valid_to IS NULL OR (valid_from IS NOT NULL AND valid_to > valid_from)", name="ck_asset_version_interval"),
+        CheckConstraint("temporal_status IN ('declared','observed_only')", name="ck_asset_version_temporal_status"),
     )
 
     id = Column(Integer, primary_key=True)
@@ -184,7 +191,58 @@ class JurisdictionAssetVersion(Base):
     )
     snapshot = Column(JSON, nullable=False)
     change_type = Column(String(20), nullable=False)
+    valid_from = Column(DateTime(timezone=True), nullable=True)
+    valid_to = Column(DateTime(timezone=True), nullable=True)
+    known_at = Column(DateTime(timezone=True), nullable=True)
+    temporal_status = Column(String(20), nullable=False, default="observed_only", server_default="observed_only")
+    source_identity_id = Column(Integer, ForeignKey("facility_source_identities.id", ondelete="RESTRICT"), nullable=True)
+    identity_decision_id = Column(Integer, ForeignKey("facility_identity_decisions.id", ondelete="RESTRICT"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FacilitySourceIdentity(Base):
+    """One exact identity in a registered source, independent from its name."""
+
+    __tablename__ = "facility_source_identities"
+    __table_args__ = (
+        UniqueConstraint("source_id", "identity_key", name="uq_facility_source_identity"),
+        Index("ix_facility_identity_area_asset", "operational_area_id", "native_asset_id"),
+    )
+    id = Column(Integer, primary_key=True)
+    source_id = Column(Integer, ForeignKey("map_sources.id", ondelete="RESTRICT"), nullable=False)
+    operational_area_id = Column(Integer, ForeignKey("operational_areas.id", ondelete="RESTRICT"), nullable=False)
+    native_asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id", ondelete="RESTRICT"), nullable=False)
+    identity_key = Column(String(280), nullable=False)
+    source_record_id = Column(String(200), nullable=True)
+    asset_type = Column(String(50), nullable=False)
+    identity_kind = Column(String(30), nullable=False)  # exact_id | unidentified
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FacilityIdentityDecision(Base):
+    """Append-only explicit mapping; revocation blocks automatic remapping."""
+
+    __tablename__ = "facility_identity_decisions"
+    __table_args__ = (
+        UniqueConstraint("identity_id", "sequence", name="uq_facility_identity_decision_seq"),
+        UniqueConstraint("identity_id", "request_key", name="uq_facility_identity_decision_request"),
+        CheckConstraint("action IN ('bind','revoke')", name="ck_facility_identity_decision_action"),
+    )
+    id = Column(Integer, primary_key=True)
+    identity_id = Column(Integer, ForeignKey("facility_source_identities.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operational_area_id = Column(Integer, ForeignKey("operational_areas.id", ondelete="RESTRICT"), nullable=False)
+    target_asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id", ondelete="RESTRICT"), nullable=False)
+    sequence = Column(Integer, nullable=False)
+    action = Column(String(20), nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    note = Column(Text, nullable=False)
+    request_key = Column(String(80), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+@event.listens_for(FacilityIdentityDecision, "before_update")
+def _immutable_identity_decision(_mapper, _connection, _target):
+    raise ValueError("facility_identity_decision_is_immutable")
 
 
 class PublicMapBundle(Base):

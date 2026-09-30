@@ -98,9 +98,11 @@ def test_postgres_collision_classifier_is_constraint_specific(constraint, expect
 def test_allocation_order_uses_same_local_date_as_number_prefix():
     from datetime import date
     from app.services.case_import_values import allocation_order
-    assert allocation_order({'occurred_time': '2026-12-02T00:30:00+08:00', 'description': 'fixture'}, 'UTC', 3) == (date(2026, 12, 2), 3)
+    row = {'occurred_time': '2026-12-02T00:30:00+08:00', 'description': 'fixture'}
+    assert allocation_order(row, 'UTC', 3) == (date(2026, 12, 1), 3)
+    assert allocation_order(row, 'Asia/Shanghai', 3) == (date(2026, 12, 2), 3)
     assert allocation_order({'occurred_time': 'invalid', 'description': 'fixture'}, 'UTC', 2) == (date.max, 2)
-    # UTC chronology is reversed, but uniqueness prefixes use these source dates.
+    # Both batches use the declared UTC business day, matching CaseService.
     earlier_prefix = allocation_order({'occurred_time': '2026-12-01T23:00:00-12:00', 'description': 'fixture'}, 'UTC', 4)
     later_prefix = allocation_order({'occurred_time': '2026-12-02T00:00:00+14:00', 'description': 'fixture'}, 'UTC', 2)
-    assert earlier_prefix < later_prefix
+    assert later_prefix < earlier_prefix

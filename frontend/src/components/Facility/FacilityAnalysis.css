@@ -2,7 +2,7 @@
 .facility-dossier h2 small { display: block; font-size: 13px; font-weight: 400; margin-top: 8px; }
 .facility-dossier section { border-top: 1px solid var(--line, #ddd); margin-top: 22px; padding-top: 10px; }
 .facility-dossier p, .regional-analysis p { line-height: 1.65; }
-.facility-evidence { border-left: 2px solid var(--line, #ddd); padding: 8px 14px; margin: 10px 0; }
+.facility-evidence { border: 1px solid var(--line); border-radius: 4px; padding: 8px 14px; margin: 10px 0; }
 .facility-evidence a { display: inline-block; margin-right: 12px; }
 .facility-state { color: var(--ink-2, #64748b); }
 .regional-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0 20px; }
@@ -12,3 +12,29 @@
 .regional-facilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px; }
 .regional-facilities article { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 16px; overflow-wrap: anywhere; }
 .regional-pagination { display: flex; align-items: center; gap: 14px; margin: 16px 0; }
+.facility-time-controls { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+.facility-time-controls > div, .facility-readiness-links { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 12px; }
+.facility-time-controls label { display: flex; flex-direction: column; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.facility-time-controls input, .facility-readiness-area select { min-width: 0; max-width: 100%; padding: 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-1); background: var(--bg-1); }
+.facility-time-controls button, .map-readiness-panel button { white-space: nowrap; }
+.facility-time-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px 20px; }
+.facility-time-grid dt { color: var(--ink-2); font-size: 13px; }.facility-time-grid dd { margin: 4px 0; overflow-wrap: anywhere; }
+.facility-dossier pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; font-size: 12px; }
+.facility-current-boundary { padding: 12px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 4px; }
+.facility-identities, .facility-readiness-checks, .map-readiness-list { list-style: none; padding: 0; margin: 12px 0; }
+.facility-identities > li, .facility-readiness-checks > li { border-bottom: 1px solid var(--line); padding: 10px 0; }
+.facility-identities strong, .facility-readiness-checks strong { margin-right: 12px; }
+.facility-readiness-checks > li > span { color: var(--ink-2); }.facility-readiness-checks > li[data-state="ready"] > span { color: var(--ok); }
+.facility-readiness-checks > li[data-state="expired"] > span, .facility-readiness-checks > li[data-state="disconnected"] > span { color: var(--warn); }
+.map-readiness-panel { margin-bottom: 24px; padding: 20px; border: 1px solid var(--line); background: var(--bg-1); }
+.map-readiness-panel h2 { font-size: 19px; margin-top: 0; }.map-readiness-panel p { line-height: 1.65; }
+.facility-readiness-area { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.map-readiness-list > li { padding: 16px 0; border-top: 1px solid var(--line); }
+.map-readiness-list > li > div { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.map-readiness-list summary, .facility-dossier summary { cursor: pointer; }
+.map-readiness-panel .regional-pagination { flex-wrap: wrap; }
+#map-source-management, #internal-road-management, #offline-map-management { scroll-margin-top: 96px; }
+.facility-identity-actions, .facility-manual-link { margin-top: 12px; }
+.facility-identity-actions label, .facility-manual-link label { display: flex; flex-direction: column; gap: 6px; margin-block: 12px; }
+.facility-identity-actions input, .facility-identity-actions textarea, .facility-manual-link input, .facility-manual-link textarea, .facility-manual-link select { padding: 8px; color: var(--ink-1); background: var(--bg-1); border: 1px solid var(--line); border-radius: 4px; max-width: 100%; }
+.facility-identity-actions > div { display: flex; flex-wrap: wrap; gap: 10px; }

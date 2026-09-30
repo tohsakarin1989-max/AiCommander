@@ -88,7 +88,7 @@ def test_pending_case_changes_are_explicit_and_new_profile_replaces_latest(db_se
 def test_failure_after_freeze_rolls_back_derived_rows_and_retry_recovers(db_session, monkeypatch):
     case = _create_case(db_session)
     original = case.description
-    event = db_session.scalar(select(OutboxEvent))
+    event = db_session.scalar(select(OutboxEvent).where(OutboxEvent.event_type == 'case.analysis.requested'))
     freeze = CaseResultService.freeze_completed_inputs
 
     def fail_after_insert(*args, **kwargs):

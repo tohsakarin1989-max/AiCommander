@@ -15,6 +15,7 @@ class OutboxEvent(Base):
 
     id = Column(String(36), primary_key=True)
     event_type = Column(String(100), nullable=False)
+    domain_change_id = Column(Integer, ForeignKey("domain_changes.id", ondelete="SET NULL"), nullable=True)
     aggregate_type = Column(String(50), nullable=False)
     aggregate_id = Column(String(100), nullable=False)
     payload = Column(JSON, nullable=False)
@@ -59,6 +60,7 @@ class CaseAnalysisProfile(Base):
             "source_hash",
             "schema_version",
             "dictionary_version",
+            "source_revision_id",
             name="uq_case_profile_input_version",
         ),
         Index("ix_case_profiles_current", "case_id", "is_current"),
@@ -69,9 +71,10 @@ class CaseAnalysisProfile(Base):
     profile_version = Column(Integer, nullable=False)
     source_hash = Column(String(64), nullable=False)
     schema_version = Column(String(30), nullable=False)
+    source_revision_id = Column(Integer, ForeignKey("case_revisions.id", ondelete="CASCADE"), nullable=True)
     dictionary_version = Column(String(30), nullable=False)
     payload = Column(JSON, nullable=False)
-    quality_score = Column(Float, nullable=False)
+    quality_score = Column(Float, nullable=True)
     analysis_readiness = Column(String(30), nullable=False)
     is_current = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

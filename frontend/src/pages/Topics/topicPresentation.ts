@@ -1,4 +1,4 @@
-import type { TopicFilters } from '../../services/analysisTopics'
+import type { TopicFilters, TopicDefinitionRevision } from '../../services/analysisTopics'
 export const categoryNames: Record<string, string> = {
   method: '作案手法', oil: '油品', facility: '设施', place_condition: '地点条件', time_condition: '时间条件',
   tool: '工具', vehicle: '车辆', upstream_clue: '来源线索', downstream_clue: '去向线索',
@@ -14,6 +14,15 @@ export function filterLines(filters: TopicFilters): string[] {
   return [
     ...Object.entries(ordinary).filter(([, value]) => value != null).map(([key, value]) => `${names[key] || key}：${String(value)}`),
     ...(conditions || []).map(item => `${categoryNames[item.category] || item.category}：${item.value || '任一词项'}（${kindNames[item.kind] || item.kind}）`),
+  ]
+}
+export function definitionLines(item: TopicDefinitionRevision): string[] {
+  const definition = item.definition
+  const filters = filterLines(definition.filters)
+  return [
+    `第 ${item.revision} 版：${definition.question || definition.title}`,
+    definition.window.mode === 'rolling' ? `滚动窗口：${definition.window.days} 天，北京时间每日 ${definition.window.anchor_hour ?? 0} 时为锚点` : '固定时间窗口',
+    ...(filters.length ? filters : ['全部授权案件，未增加其他条件']),
   ]
 }
 export function topicError(error: unknown): string {

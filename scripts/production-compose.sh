@@ -7,6 +7,11 @@ production_env_value() {
 compose() {
     production_roads="$(production_env_value ENABLE_ROAD_ANALYSIS)"
     production_agents="$(production_env_value ENABLE_AGENT_LAB)"
+    production_queries="$(production_env_value ENABLE_INTELLIGENT_QUERY)"
+    case "$production_queries" in
+        ''|true|false) ;;
+        *) echo 'ENABLE_INTELLIGENT_QUERY 只能留空或为 true、false' >&2; return 1 ;;
+    esac
     case "${production_roads:-false}" in
         true|false) ;;
         *) echo 'ENABLE_ROAD_ANALYSIS 只能为 true 或 false' >&2; return 1 ;;
@@ -18,7 +23,8 @@ compose() {
     else
         set -- --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
     fi
-    if [ "$production_agents" = true ]; then
+    if [ "$production_agents" = true ] || [ "$production_queries" = true ]; then
+        # Shared queue worker does not enable experimental Lab or a model.
         set -- --profile agent-lab "$@"
     fi
     docker compose "$@"

@@ -55,20 +55,15 @@ def test_openai_agents_adapter_respects_global_local_only_policy(monkeypatch):
 
 
 def test_vector_search_filters_by_area_and_never_returns_raw_document(db, monkeypatch):
-    from sqlalchemy import select
-    from app.models.case_history_index import CaseHistoryIndex
     from app.services.case_history_index_service import CaseHistoryIndexService
-    from app.services.case_history_vector_service import store_embedding
     from types import SimpleNamespace
     first = make_case(db)
     second = make_case(db, 'OUTSIDE', area=2)
+    model = SimpleNamespace(state='ready', model_version='scope-fixture', encode=lambda _: [1., 0.])
+    monkeypatch.setattr('app.services.local_embedding_service.get_local_embedder', lambda: model)
     CaseHistoryIndexService.reconcile_batch(db)
     db.commit()
-    for row in db.scalars(select(CaseHistoryIndex)):
-        store_embedding(db, row, [1., 0.], 'scope-fixture')
-    db.commit()
-    monkeypatch.setattr('app.services.vector_db_service.get_local_embedder', lambda: SimpleNamespace(
-        state='ready', model_version='scope-fixture', encode=lambda _: [1., 0.]))
+    monkeypatch.setattr('app.services.vector_db_service.get_local_embedder', lambda: model)
     db.info['authorized_area_ids'] = (1,)
     service = VectorDBService()
     results = service.search_similar_cases('查询', operational_area_ids=[1, 2], db=db)

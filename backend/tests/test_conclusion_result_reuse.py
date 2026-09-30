@@ -1,5 +1,4 @@
-"""单案结论只排版已冻结成果；与会议生成路径保持独立。"""
-import asyncio
+"""旧工厂退役后，保留历史判断并验证统一成果只读和可选版本判断。"""
 from copy import deepcopy
 
 import pytest
@@ -19,10 +18,6 @@ from app.services.case_pipeline_service import (
 )
 from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
-from app.services.conclusion_factory_service import (
-    ConclusionFactoryService,
-    ConclusionResultPendingError,
-)
 from test_case_result_access import result_data  # noqa: F401
 
 
@@ -60,175 +55,87 @@ def forbid_analysis(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("结论草稿不得重跑模型、原文分析或相似检索")
 
-    for name in ("_get_llm", "_build_evidence"):
-        monkeypatch.setattr(ConclusionFactoryService, name, forbidden)
     for name in ("build_report", "build_experience_card", "find_similar_cases", "build_prevention_suggestions"):
         monkeypatch.setattr(CaseIntelligenceService, name, forbidden)
 
 
-def generate(db):
-    return asyncio.run(ConclusionFactoryService.generate_conclusion(db, 1))
+from app.services.legacy_conclusion_access import require_conclusion_result_access
+from app.services.result_catalog import read_result
+from app.services.result_judgment_service import record_judgment
+from test_result_materials_v65 import material_db, query_db, search_db, saved_case  # noqa: F401
 
 
-def test_reuses_frozen_facts_candidates_gaps_without_analysis_or_case_writes(
-    db_session, frozen_result, forbid_analysis,
-):
-    before = db_session.execute(Case.__table__.select()).mappings().all()
-    snapshot_count = len(list(db_session.scalars(select(CaseResultSnapshot.id))))
-    mutations = []
-
-    def observe(conn, cursor, statement, parameters, context, executemany):
-        sql = statement.lower().lstrip()
-        if sql.startswith(("update cases", "insert into cases", "delete from cases")):
-            mutations.append(statement)
-
-    event.listen(db_session.bind, "before_cursor_execute", observe)
-    try:
-        draft = generate(db_session)
-    finally:
-        event.remove(db_session.bind, "before_cursor_execute", observe)
-
-    assert draft.status == "needs_review"
-    assert draft.risk_level == "unknown"
-    evidence = draft.evidence
-    assert evidence["source_result"] == {
-        "result_id": frozen_result["id"],
-        "content_sha256": frozen_result["content_sha256"],
-        "schema_version": frozen_result["content"]["schema_version"],
-        "versions": frozen_result["content"]["versions"],
-    }
-    assert evidence["raw"]["case_result"] == frozen_result["content"]
-    assert "case_intelligence" not in evidence["raw"]
-    output = evidence["ai_output"]
-    assert output["model_status"] == "reused_case_result"
-    assert output["review_status"] == "pending_review"
-    assert output["confidence_available"] is False
-    assert "地点：合成地点" in output["facts"]
-    assert "缺少油品类型" in output["information_gaps"]
-    inference = output["inferences"][0]
-    original = frozen_result["content"]["candidates"][0]
-    assert inference["claim"] == original["claim"]
-    assert inference["basis"] == original["supporting_evidence"]
-    assert inference["counter_evidence"] == original["counter_evidence"]
-    assert inference["evidence_refs"] == original["evidence_refs"]
-    assert inference["score_kind"] == "rule_support_not_probability"
-    assert inference["is_official_fact"] is False
-    assert output["recommendations"] == []
-    assert not mutations
-    assert db_session.execute(Case.__table__.select()).mappings().all() == before
-    assert len(list(db_session.scalars(select(CaseResultSnapshot.id)))) == snapshot_count
+def saved_legacy(db, result, *, status='published'):
+    row = Conclusion(case_id=result['content']['case_id'], status=status,
+        summary='人工保留表述', evidence={'confidence_available': False, 'source_result': {'result_id': result['id'],
+            'content_sha256': result['content_sha256'], 'schema_version': result['content']['schema_version'],
+            'versions': deepcopy(result['content']['versions'])}})
+    db.add(row)
+    db.flush()
+    db.add(ConclusionReview(conclusion_id=row.id, action='approve', note='保留的历史人工记录'))
+    db.commit()
+    return row
 
 
-def test_repeated_request_returns_same_draft(db_session, frozen_result, forbid_analysis):
-    first = generate(db_session)
-    frozen_draft = deepcopy(first.evidence)
-    again = generate(db_session)
-    assert again.id == first.id
-    assert again.evidence == frozen_draft
-    assert len(list(db_session.scalars(select(Conclusion.id)))) == 1
+def test_frozen_reader_reuses_body_no_factory_or_new_conclusion(material_db, forbid_analysis):
+    case, result = saved_case(material_db)
+    original = case.description
+    first = read_result(material_db, 'case', result['id'])
+    assert read_result(material_db, 'case', result['id']) == first
+    assert first['body']['content'] == result['content']
+    assert first['judgments'] == []
+    assert material_db.query(Conclusion).count() == 0
+    assert case.description == original
 
 
-@pytest.mark.parametrize("status,action", [("published", "approve"), ("rejected", "reject"), ("flagged", "flag")])
-def test_repeated_request_does_not_reset_human_decision(
-    db_session, frozen_result, forbid_analysis, status, action,
-):
-    first = generate(db_session)
-    first.status = status
-    first.summary = "人工保留的表述，不应被重新生成覆盖"
-    review = ConclusionReview(conclusion_id=first.id, action=action, note="合成审核意见")
-    db_session.add(review)
-    db_session.commit()
-    again = generate(db_session)
-    assert again.id == first.id
-    assert again.status == status
-    assert again.summary == "人工保留的表述，不应被重新生成覆盖"
-    assert db_session.scalar(select(ConclusionReview.id)) == review.id
-    assert len(list(db_session.scalars(select(Conclusion.id)))) == 1
+@pytest.mark.parametrize('status,action', [('published', 'approve'), ('rejected', 'reject'), ('flagged', 'flag')])
+def test_history_status_reviews_and_summary_survive_repeat_read(material_db, status, action):
+    _, result = saved_case(material_db)
+    row = saved_legacy(material_db, result, status=status)
+    review = material_db.query(ConclusionReview).one()
+    review.action = action
+    material_db.commit()
+    original = deepcopy(row.evidence)
+    first = read_result(material_db, 'conclusion', str(row.id))
+    assert read_result(material_db, 'conclusion', str(row.id)) == first
+    assert first['body']['status'] == status
+    assert first['body']['historical_reviews'][0]['action'] == action
+    assert first['body']['historical_reviews'][0]['reviewer_state'] == 'legacy_not_recorded'
+    assert row.summary == '人工保留表述' and row.evidence == original
+    assert material_db.query(ConclusionReview).count() == 1
 
 
-def test_new_source_result_creates_separate_draft_and_keeps_published_history(
-    db_session, frozen_result, result_data, forbid_analysis,
-):
-    previous = generate(db_session)
-    previous.status = "published"
-    old_evidence = deepcopy(previous.evidence)
-    result_data[2].claim = "后来形成的另一条待判断候选"
-    db_session.commit()
-    changed, created = CaseResultService.create_current(db_session, 1)
-    db_session.commit()
-    assert created
-    current = generate(db_session)
-    assert current.id != previous.id
-    assert current.status == "needs_review"
-    assert current.evidence["source_result"]["result_id"] == changed["id"]
-    db_session.refresh(previous)
-    assert previous.status == "published" and previous.evidence == old_evidence
+def test_optional_judgment_does_not_create_factory_draft_or_reset_history(material_db):
+    case, result = saved_case(material_db)
+    legacy = saved_legacy(material_db, result)
+    request = dict(content_sha256=result['content_sha256'], decision='insufficient_evidence',
+        note='对该版保留信息不足判断', additional_sources=[], idempotency_key='old-to-new-decision')
+    first, _ = record_judgment(material_db, 'case', result['id'], **request)
+    material_db.commit()
+    retry, created = record_judgment(material_db, 'case', result['id'], **request)
+    assert retry.id == first.id and not created
+    assert legacy.status == 'published' and case.status == 'pending'
+    assert material_db.query(Conclusion).count() == 1
+    assert material_db.query(ConclusionReview).count() == 1
 
 
-def test_missing_result_waits_instead_of_generating(db_session, current_profile, forbid_analysis):
-    with pytest.raises(ConclusionResultPendingError, match="等待后台"):
-        generate(db_session)
-    assert list(db_session.scalars(select(Conclusion.id))) == []
-
-
-def test_changed_case_waits_instead_of_reusing_stale_result(db_session, frozen_result, forbid_analysis):
-    db_session.execute(Case.__table__.update().where(Case.id == 1).values(description="原案情后来修改"))
-    db_session.commit()
-    with pytest.raises(ConclusionResultPendingError, match="等待后台"):
-        generate(db_session)
-    assert list(db_session.scalars(select(Conclusion.id))) == []
-
-
-def test_result_without_candidates_never_invents_them(db_session, current_profile, forbid_analysis):
-    CaseResultService.freeze_completed_inputs(db_session, current_profile)
-    db_session.commit()
-    draft = generate(db_session)
-    assert draft.evidence["ai_output"]["inferences"] == []
-    assert draft.evidence["ai_output"]["recommendations"] == []
-    assert "当前成果未提供候选，不补造推断" in draft.summary
-    assert draft.evidence["raw"]["case_result"]["analysis_status"] == "not_generated"
-
-
-def test_scope_shrink_rechecks_every_source_even_when_draft_exists(
-    db_session, current_profile, result_data, forbid_analysis,
-):
-    result_data[2].evidence_refs = ["case:2"]
-    db_session.commit()
-    CaseResultService.create_current(db_session, 1)
-    db_session.commit()
-    draft = generate(db_session)
-    db_session.info["authorized_area_ids"] = (1,)
+@pytest.mark.parametrize('invalid', [None, {}, {'result_id': 'missing'}])
+def test_malformed_legacy_source_never_falls_back_to_unversioned_record(material_db, invalid):
+    _, result = saved_case(material_db)
+    row = saved_legacy(material_db, result)
+    row.evidence = {'source_result': invalid}
+    material_db.commit()
     with pytest.raises(CaseResultAccessError):
-        generate(db_session)
+        require_conclusion_result_access(material_db, row)
+    with pytest.raises(PermissionError):
+        read_result(material_db, 'conclusion', str(row.id))
+
+
+def test_source_revocation_blocks_historical_judgment_but_does_not_delete_it(material_db):
+    case, result = saved_case(material_db)
+    row = saved_legacy(material_db, result)
+    case.operational_area_id = 2
+    material_db.commit()
     with pytest.raises(CaseResultAccessError):
-        ConclusionFactoryService.require_conclusion_result_access(db_session, draft)
-    assert len(list(db_session.scalars(select(Conclusion.id)))) == 1
-
-
-def test_saved_result_reference_cannot_be_tampered(db_session, frozen_result, forbid_analysis):
-    draft = generate(db_session)
-    corrupt = deepcopy(draft.evidence)
-    corrupt["source_result"]["content_sha256"] = "tampered"
-    draft.evidence = corrupt
-    db_session.commit()
-    with pytest.raises(CaseResultAccessError):
-        generate(db_session)
-
-
-def test_read_only_area_cannot_generate_draft(db_session, frozen_result, forbid_analysis):
-    db_session.info["area_access_levels"] = {1: "read"}
-    with pytest.raises(AreaWriteAccessError):
-        generate(db_session)
-    assert list(db_session.scalars(select(Conclusion.id))) == []
-
-
-def test_unbound_session_cannot_use_frozen_case_result(db_session, frozen_result, forbid_analysis):
-    db_session.info.pop("authorized_area_ids")
-    with pytest.raises(CaseResultAccessError):
-        generate(db_session)
-    assert list(db_session.scalars(select(Conclusion.id))) == []
-
-
-def test_legacy_meeting_conclusion_reference_contract_is_unchanged(db_session):
-    legacy = Conclusion(case_id=1, meeting_id="historical-meeting", evidence={"raw": {"meeting": {}}})
-    ConclusionFactoryService.require_conclusion_result_access(db_session, legacy)
+        require_conclusion_result_access(material_db, row)
+    assert material_db.execute(ConclusionReview.__table__.select()).first() is not None

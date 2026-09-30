@@ -433,56 +433,6 @@ export const jurisdictionApi = {
     return response.data
   },
 
-  getCaseRiskContext: async (caseId: number): Promise<CaseRiskContext> => {
-    const response = await api.get<CaseRiskContext>(`/jurisdiction/cases/${caseId}/risk-context`)
-    return response.data
-  },
-
-  getCaseExperienceCard: async (caseId: number): Promise<CaseExperienceCard> => {
-    const response = await api.get<CaseExperienceCard>(`/jurisdiction/cases/${caseId}/experience-card`)
-    return response.data
-  },
-
-  getAssetRiskProfile: async (assetId: number): Promise<AssetRiskProfile> => {
-    const response = await api.get<AssetRiskProfile>(`/jurisdiction/assets/${assetId}/risk-profile`)
-    return response.data
-  },
-
-  getSimilarTargets: async (caseId: number, limit = 10): Promise<SimilarTargetsResponse> => {
-    const response = await api.get<SimilarTargetsResponse>('/jurisdiction/similar-targets', {
-      params: { case_id: caseId, limit },
-    })
-    return response.data
-  },
-
-  createPatrolPlan: async (payload: {
-    case_id?: number
-    asset_ids?: number[]
-    limit?: number
-  }): Promise<PatrolPlan> => {
-    const response = await api.post<PatrolPlan>('/jurisdiction/patrol-plan', payload)
-    return response.data
-  },
-
-  materializePatrolPlan: async (payload: {
-    case_id?: number
-    asset_ids?: number[]
-    limit?: number
-    officer_count?: number
-    officer_names?: string
-    created_by?: string
-  }): Promise<MaterializedPatrolPlan> => {
-    const response = await api.post<MaterializedPatrolPlan>('/jurisdiction/patrol-plan/materialize', payload)
-    return response.data
-  },
-
-  getRoundtableBriefing: async (caseId: number): Promise<RoundtableBriefing> => {
-    const response = await api.get<RoundtableBriefing>('/jurisdiction/roundtable-briefing', {
-      params: { case_id: caseId },
-    })
-    return response.data
-  },
-
   createFeedback: async (payload: {
     case_id?: number
     asset_id?: number
@@ -498,13 +448,6 @@ export const jurisdictionApi = {
 
   getEffectiveness: async (): Promise<EffectivenessSummary> => {
     const response = await api.get<EffectivenessSummary>('/jurisdiction/effectiveness')
-    return response.data
-  },
-
-  getPreventionWorkbench: async (caseId?: number): Promise<PreventionWorkbench> => {
-    const response = await api.get<PreventionWorkbench>('/jurisdiction/prevention-workbench', {
-      params: caseId ? { case_id: caseId } : undefined,
-    })
     return response.data
   },
 

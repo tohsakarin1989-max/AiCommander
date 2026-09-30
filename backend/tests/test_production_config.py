@@ -5,6 +5,23 @@ from pathlib import Path
 from app.config import Settings
 
 
+@pytest.mark.parametrize('environment', ['development', 'test'])
+def test_legacy_operations_cannot_be_reenabled_even_outside_production(monkeypatch, environment):
+    monkeypatch.delenv('ENABLE_LEGACY_OPERATIONS_MODULES', raising=False)
+    configured = Settings(_env_file=None, SECRET_KEY='isolated-settings-test', ENVIRONMENT=environment)
+    assert configured.ENABLE_LEGACY_OPERATIONS_MODULES is False
+    with pytest.raises(ValidationError, match='已退出运行'):
+        Settings(_env_file=None, SECRET_KEY='isolated-settings-test', ENVIRONMENT=environment,
+                 ENABLE_LEGACY_OPERATIONS_MODULES=True)
+
+
+@pytest.mark.parametrize('mode', ['shadow', 'assist'])
+def test_disabled_agent_rejects_active_mode(mode):
+    with pytest.raises(ValidationError, match='启用 Agent 运行模式前'):
+        Settings(_env_file=None, SECRET_KEY='isolated-settings-test', ENVIRONMENT='test',
+                 ENABLE_AGENT_LAB=False, AGENT_MODE=mode)
+
+
 def test_local_embedding_runtime_is_opt_in_and_model_mount_is_read_only():
     import yaml
 

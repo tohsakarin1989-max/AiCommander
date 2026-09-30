@@ -120,6 +120,10 @@ def test_background_releases_transaction_and_reuses_frozen_result(db_session, mo
     assert result["status"] == "completed" and len(calls) == 1
     profile = db_session.query(CaseAnalysisProfile).one()
     assert profile.payload["semantics"]["model_extraction"]["items"][0]["value"] == "夜间"
+    candidate = profile.payload["semantics"]["model_extraction"]["items"][0]
+    assert candidate["reference"]["source_revision_id"] == profile.source_revision_id
+    assert candidate["reference"]["snapshot_path"] == ["case", "description"]
+    assert candidate["judgment_status"] == "model_candidate" and not candidate["is_official_fact"]
     assert profile.dictionary_version == local.resolve_model_plan(db_session).version
     assert len(profile.dictionary_version) <= 30
     assert case.description.startswith("夜间发现")

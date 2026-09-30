@@ -2,64 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List, Optional
+from typing import Optional
 from app.database import get_db
-from app.services.assistant_service import AssistantService
 from app.services.case_knowledge_service import CaseKnowledgeService
 
 router = APIRouter()
 
 
-class ChatMessage(BaseModel):
-    role: str  # "user" or "assistant"
-    content: str
-    timestamp: Optional[str] = None
-
-
-class ChatRequest(BaseModel):
-    query: str
-    conversation_history: Optional[List[ChatMessage]] = None
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: List[dict] = []
-    context_used: Optional[dict] = None
-    error: Optional[str] = None
-
-
 class EvidenceQaRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     case_id: Optional[int] = Field(None, gt=0)
-
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat(
-    request: ChatRequest,
-    db: Session = Depends(get_db)
-):
-    """智能助手聊天接口"""
-    try:
-        # 转换对话历史格式
-        history = None
-        if request.conversation_history:
-            history = [
-                {
-                    "role": msg.role,
-                    "content": msg.content
-                }
-                for msg in request.conversation_history
-            ]
-        
-        result = await AssistantService.chat(
-            db=db,
-            user_query=request.query,
-            conversation_history=history
-        )
-        
-        return ChatResponse(**result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"处理请求失败: {str(e)}")
 
 
 @router.get("/stats")

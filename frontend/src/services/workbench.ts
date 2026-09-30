@@ -22,6 +22,8 @@ export interface DailyWorkbench {
     analysis_ready: number
   }
   cases: DailyWorkbenchCase[]
+  changes?: Array<{ topic_id: string; title: string; revision: number; summary: string
+    items: Array<{ code: string; message: string; evidence_refs: string[] }>; target_path: string }>
   pagination: { limit: number; offset: number; returned: number; total: number }
 }
 

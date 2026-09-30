@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import conclusions, meeting_templates, meetings, reports
+from app.api import results, meeting_templates, meetings, reports
 from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.database import Base, get_db
@@ -21,7 +21,9 @@ from app.models.case import Case
 from app.models.map_foundation import OperationalArea
 from app.models.meeting import AnalysisResult, Meeting, MeetingConversation, Ranking
 from app.models.report import Report
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from app.models.user import User
+from app.models.map_foundation import UserAreaScope
+from app.services.case_pipeline_service import CasePipelineService
 from app.services import meeting_service
 from app.tasks import meeting_tasks
 
@@ -33,10 +35,11 @@ def legacy_meeting(monkeypatch):
     factory = sessionmaker(bind=engine, autoflush=False)
     with factory() as db:
         db.add(OperationalArea(id=1, code="LEGACY-MEET", name="合成会议辖区"))
+        db.add(User(id=1, username='meeting-test', display_name='合成验证', password_hash='not-a-login', role='admin'))
         db.add_all([
             AIModel(id=index, name=f"合成模型{index}", provider="openai", model_name="synthetic",
                     api_key="synthetic-no-network", role="moderator" if index == 1 else "analyst",
-                    is_active=True, config={})
+                    is_active=True, config={'api_base': 'http://127.0.0.1:9999/v1'})
             for index in (1, 2, 3)
         ])
         db.flush()
@@ -44,6 +47,11 @@ def legacy_meeting(monkeypatch):
                     occurred_time=datetime(2026, 9, 1, 2), location="合成井场",
                     description="已处置合成案件，井场发现油桶和软管，需复核现场照明条件。"))
         db.commit()
+        db.add(UserAreaScope(user_id=1, operational_area_id=1, access_level='write'))
+        db.info.update(authorized_area_ids=None, principal_user_id=1)
+        event = CasePipelineService.enqueue_case_change(db, db.get(Case, 1))
+        db.commit()
+        CasePipelineService.process_event(db, event.id)
 
     state = {"failure": None, "calls": [], "progress": []}
 
@@ -54,9 +62,7 @@ def legacy_meeting(monkeypatch):
 
         async def ainvoke(self, prompt):
             self.call_count += 1
-            stage = "format" if self.model_id == 1 and self.call_count == 1 else (
-                "final" if self.model_id == 1 else "analysis" if self.call_count == 1 else "ranking"
-            )
+            stage = "final" if self.model_id == 1 else "analysis" if self.call_count == 1 else "ranking"
             state["calls"].append((self.model_id, stage))
             if state["failure"] == stage:
                 raise RuntimeError("synthetic_provider_unavailable")
@@ -94,15 +100,20 @@ def legacy_meeting(monkeypatch):
     monkeypatch.setattr(meeting_tasks.run_meeting_task, "delay", unavailable_queue)
     monkeypatch.setattr("app.database.SessionLocal", factory)
     monkeypatch.setattr(settings, "ENABLE_LEGACY_EXTERNAL_GEO", False)
+    monkeypatch.setattr(settings, 'TRUSTED_LOCAL_MODEL_HOSTS', '127.0.0.1')
     app = FastAPI()
+    @app.middleware('http')
+    async def auth(request, call_next):
+        request.state.principal = SimpleNamespace(user_id=1, role='admin')
+        return await call_next(request)
     for module, prefix in ((meetings, "meetings"), (meeting_templates, "meeting-templates"),
-                           (conclusions, "conclusions"), (reports, "reports")):
+                           (results, "results"), (reports, "reports")):
         app.include_router(module.router, prefix=f"/api/{prefix}")
 
     def database():
         with factory() as db:
             db.info.update(authorized_area_ids=(1,), area_access_levels={1: "write"},
-                           default_operational_area_id=1)
+                           default_operational_area_id=1, principal_user_id=1)
             yield db
 
     app.dependency_overrides[get_db] = database
@@ -154,15 +165,14 @@ def test_template_to_three_stage_meeting_report_and_manual_conclusion(legacy_mee
     assert report.status_code == 200
     assert "现场照明" in report.json()["content"]["summary"]
     assert client.get(f"/api/reports/{report.json()['id']}").status_code == 200
-    monkeypatch.setattr(ConclusionFactoryService, "_get_llm", lambda db: None)
-    conclusion = client.post(f"/api/conclusions/from-meeting/{meeting_id}")
-    assert conclusion.status_code == 200, conclusion.text
-    assert conclusion.json()["status"] == "needs_review"
-    assert "现场照明" in conclusion.json()["summary"]
-    approved = client.post(f"/api/conclusions/{conclusion.json()['id']}/review", json={"action": "approve"})
-    assert approved.status_code == 200
-    assert approved.json()["status"] == "published"
-    assert {stage for _, stage in state["calls"]} == {"format", "analysis", "ranking", "final"}
+    path = f"/api/results/meeting/{report.json()['id']}"
+    material = client.get(path).json()
+    assert material['body']['source_state'] == 'frozen'
+    assert '现场照明' in material['body']['content']['summary']
+    judged = client.post(path + '/judgments', json={'content_sha256': material['content_sha256'],
+        'decision': 'retain_reference', 'note': '仅保留讨论参考', 'idempotency_key': 'meeting-decision'})
+    assert judged.status_code == 201 and len(judged.json()['judgments']) == 1
+    assert {stage for _, stage in state["calls"]} == {"analysis", "ranking", "final"}
     assert len(state["progress"]) == 6
     assert client.delete(f"/api/meeting-templates/{template_id}").status_code == 200
 
@@ -175,8 +185,7 @@ def test_meeting_conversation_datetime_contract(legacy_meeting):
     assert len(response.json()) == 6
 
 
-@pytest.mark.parametrize("llm_mode", ["missing", "failed"])
-def test_meeting_conclusion_fallback_accepts_structured_report(legacy_meeting, monkeypatch, llm_mode):
+def test_meeting_reader_never_calls_model_again(legacy_meeting, monkeypatch):
     client, _, _ = legacy_meeting
     meeting_id = create_meeting(client)
 
@@ -184,14 +193,14 @@ def test_meeting_conclusion_fallback_accepts_structured_report(legacy_meeting, m
         async def ainvoke(self, prompt):
             raise RuntimeError("synthetic_provider_unavailable")
 
-    monkeypatch.setattr(ConclusionFactoryService, "_get_llm", lambda db: None if llm_mode == "missing" else FailedModel())
-    response = client.post(f"/api/conclusions/from-meeting/{meeting_id}")
+    monkeypatch.setattr(ModelFactory, 'create_llm', lambda *args, **kwargs: FailedModel())
+    report = client.get(f'/api/meetings/{meeting_id}/report').json()
+    response = client.get(f"/api/results/meeting/{report['id']}")
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "needs_review"
-    assert response.json()["summary"].startswith("合成会议综合报告")
+    assert response.json()['body']['content']['summary'].startswith('合成会议综合报告')
 
 
-@pytest.mark.parametrize("stage", ["format", "analysis", "ranking", "final", "analysis_json", "ranking_json", "final_json", "final_empty_json"])
+@pytest.mark.parametrize("stage", ["analysis", "ranking", "final", "analysis_json", "ranking_json", "final_json", "final_empty_json"])
 def test_failed_meeting_stage_never_publishes_completed_report(legacy_meeting, stage):
     client, factory, state = legacy_meeting
     state["failure"] = stage

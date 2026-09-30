@@ -28,29 +28,12 @@ def _bigram_similarity(s1: str, s2: str) -> float:
 
 def _extract_plates(case) -> Set[str]:
     """从案件提取所有车牌号集合"""
-    plates: Set[str] = set()
-    # 直接车辆信息字段
-    if isinstance(case.vehicle_info, dict) and case.vehicle_info.get("plate_number"):
-        plates.add(case.vehicle_info["plate_number"])
-    # features.actors.facts.known_vehicles
-    if isinstance(case.features, dict):
-        actors = case.features.get("actors", {})
-        if isinstance(actors, dict):
-            facts = actors.get("facts", {})
-            if isinstance(facts, dict):
-                for veh in (facts.get("known_vehicles") or []):
-                    if isinstance(veh, dict) and veh.get("plate"):
-                        plates.add(veh["plate"])
-    return plates
+    return {row.plate_number for row in case.vehicles if row.plate_number}
 
 
 def _extract_person_names(case) -> Set[str]:
-    """从案件 involved_persons 提取姓名集合"""
-    names: Set[str] = set()
-    for person in (case.involved_persons or []):
-        if isinstance(person, dict) and person.get("name"):
-            names.add(person["name"])
-    return names
+    """只读取正式明细，不把模型提及或归档 JSON 混作人员事实。"""
+    return {row.name for row in case.persons if row.name}
 
 
 def _dominant_relation_type(relation_types: List[str]) -> str:
@@ -83,9 +66,10 @@ class GraphService:
                 "occurred_time": c.occurred_time.isoformat() if c.occurred_time else None,
                 "oil_type": c.oil_type,
                 "oil_volume": c.oil_volume,
+                "oil_volume_unit": c.oil_volume_unit,
                 "facility_type": c.facility_type,
-                "involved_persons_count": len(c.involved_persons or []),
-                "has_vehicle": bool(c.vehicle_info),
+                "involved_persons_count": len(c.persons),
+                "has_vehicle": bool(c.vehicles),
             }
             for c in cases
         ]

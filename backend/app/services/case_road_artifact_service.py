@@ -26,7 +26,7 @@ def _encoded(content):
     return encoded
 
 
-def _authorize_content(db, content):
+def _authorize_content(db, content, *, check_baseline=True):
     schema = content.get('schema_version')
     if schema == 'case-road-comparison-4.2.0-1':
         operation, calculation = 'comparison', content.get('matrix')
@@ -60,6 +60,21 @@ def _authorize_content(db, content):
     binding = resolve_network(db, calculation['network_id'], analysis_at=at, vehicle=vehicle)
     if binding.graph_sha256 != calculation['graph_sha256'] or binding.policy_revision != calculation['policy_revision']:
         raise ValueError('road_artifact_network_changed')
+    if operation == 'facility' and check_baseline:
+        baseline = (content.get('result', {}).get('ranking_changes') or {}).get('baseline')
+        if baseline:
+            # Reauthorize the immediate comparison source without recursively
+            # walking its older ranking history. Only this parent's own data are
+            # quoted by the child; older deltas are never copied into it.
+            row = db.get(CaseRoadArtifact, baseline['artifact_id'], populate_existing=True)
+            if (row is None or row.case_id != source['content']['case_id'] or row.operation != 'facility'
+                    or row.content_sha256 != baseline['content_sha256']
+                    or hashlib.sha256(_encoded(row.content).encode()).hexdigest() != row.content_sha256):
+                raise PermissionError('facility_comparison_baseline_unavailable')
+            prior = row.content.get('calculation') or {}
+            if (prior.get('user_id'), prior.get('scope')) != (calculation.get('user_id'), calculation.get('scope')):
+                raise PermissionError('facility_comparison_baseline_scope_changed')
+            _authorize_content(db, row.content, check_baseline=False)
     return source['content']['case_id'], operation, binding.network_id
 
 
@@ -74,6 +89,12 @@ def freeze_road_artifact(db, content):
     encoded = _encoded(content)
     frozen = json.loads(encoded)
     case_id, operation, network_id = _authorize_content(db, frozen)
+    if operation == 'facility' and frozen['pool']['versions'].get('source_revision_id') is not None:
+        # A completed comparison may wait before persistence. Bind new revision-
+        # aware publication again here; ordinary historical reads stay read-only
+        # and do not demand that their source remains the latest revision.
+        from app.services.facility_candidate_pool import require_current_pool_source
+        require_current_pool_source(db, frozen['pool'])
     digest = hashlib.sha256(encoded.encode()).hexdigest()
     dialect = db.get_bind().dialect.name
     if dialect not in ('sqlite', 'postgresql'):
@@ -91,6 +112,9 @@ def freeze_road_artifact(db, content):
             CaseRoadArtifact.content_sha256 == digest))
     if identifier is None:
         raise PermissionError('road_artifact_not_available')
+    if operation == 'facility':
+        # Separate immutable child; does not enqueue another road calculation.
+        CaseResultService.freeze_composition(db, identifier)
     return {'id': identifier, 'content_sha256': digest, 'created': created}
 
 

@@ -44,6 +44,8 @@ export const toolNames: Record<string, string> = {
   find_case_profiles: '案件语义画像',
   find_history: '历史案件与经验参考',
   aggregate_case_profiles: '全库画像条件统计',
+  read_case_process: '案件过程依据', explain_case_result: '已有成果解释',
+  read_facility_dossier: '设施综合档案', read_facility_at: '历史有效生产资料', compare_coverage_scenario: '资源覆盖方案比较',
 }
 export const statusNames: Record<string, string> = {
   queued: '排队中', running: '正在查询', completed: '查询完成',
@@ -51,7 +53,7 @@ export const statusNames: Record<string, string> = {
 }
 export function failureText(code?: string | null): string {
   const messages: Record<string, string> = {
-    query_model_unavailable: '内网模型不可用，请联系管理员检查配置；案件和地图功能仍可使用。',
+    query_model_unavailable: '内网模型不可用，自然语言规划尚未启用；可以新建查询并选择常用业务预设，案件和地图功能仍可使用。',
     query_timeout: '查询超时，已取得的结果保留在下方。',
     query_step_limit: '已达到本次查询步骤上限，可缩小问题范围后重新查询。',
     query_partial_results: '检索、统计或画像资料尚不完整，以下仅为当前取得的部分结果。',

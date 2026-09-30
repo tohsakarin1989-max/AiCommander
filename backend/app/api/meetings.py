@@ -70,6 +70,9 @@ async def create_meeting(
             analyst_model_ids=meeting.analyst_model_ids
         )
         db.add(meeting_record)
+        db.flush()
+        from app.services.meeting_frozen_service import freeze_meeting_inputs
+        freeze_meeting_inputs(db, meeting_record)
         db.commit()
         db.refresh(meeting_record)
         
@@ -101,8 +104,15 @@ async def create_meeting(
             "message": "会议已创建，正在后台处理中，请稍后查看结果"
         }
     except AreaWriteAccessError:
+        db.rollback()
         raise
+    except PermissionError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail='会议输入不存在或当前不可访问') from None
     except ValueError as e:
+        db.rollback()
+        if str(e) == 'meeting_result_not_ready':
+            raise HTTPException(status_code=409, detail='等待案件后台成果形成后再发起可选会议') from None
         messages = {
             "meeting_cases_required": "至少选择一个案件",
             "meeting_case_not_found_or_out_of_scope": "案件不存在或不在当前授权范围",
@@ -111,7 +121,8 @@ async def create_meeting(
         }
         raise HTTPException(status_code=400, detail=messages.get(str(e), str(e))) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail='会议创建失败，请检查模型配置及后台状态') from None
 
 
 async def _run_meeting_sync(
@@ -224,6 +235,8 @@ def get_meeting_report(meeting_id: str, db: Session = Depends(get_db)):
 @router.get("/{meeting_id}/analyses")
 def get_meeting_analyses(meeting_id: str, db: Session = Depends(get_db)):
     """获取会议第一阶段的分析结果（所有LLM的独立回答）"""
+    if MeetingService.get_meeting(db, meeting_id) is None:
+        raise HTTPException(404, '会议不存在或来源不可访问')
     analyses = db.query(AnalysisResult).filter(
         AnalysisResult.meeting_id == meeting_id,
         AnalysisResult.round_number == 1  # 第一阶段
@@ -242,6 +255,8 @@ def get_meeting_analyses(meeting_id: str, db: Session = Depends(get_db)):
 @router.get("/{meeting_id}/rankings")
 def get_meeting_rankings(meeting_id: str, db: Session = Depends(get_db)):
     """获取会议第二阶段的排名结果"""
+    if MeetingService.get_meeting(db, meeting_id) is None:
+        raise HTTPException(404, '会议不存在或来源不可访问')
     rankings = db.query(Ranking).filter(
         Ranking.meeting_id == meeting_id
     ).order_by(Ranking.created_at).all()

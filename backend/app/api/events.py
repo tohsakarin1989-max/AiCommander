@@ -5,17 +5,17 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from app.utils.datetimes import utc_datetime
 from app.database import AreaWriteAccessError, get_db, require_area_write_access
 from app.models.case import Case
 from app.models.event import Event, AreaProfile, EventRelation, AnalysisSession, EVENT_TYPES, RELATION_TYPES
 from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_service import CaseService
 from app.services.relation_analysis_service import RelationAnalysisService
-from app.services.area_analysis_service import AreaAnalysisService
 
 router = APIRouter()
 
@@ -317,58 +317,6 @@ class EventResponse(BaseModel):
         from_attributes = True
 
 
-class AreaAnalysisRequest(BaseModel):
-    """区域分析请求"""
-    area_name: str = Field(..., description="区域名称")
-    radius_km: float = Field(5.0, description="分析半径(km)")
-    days_back: int = Field(365, description="回溯天数")
-
-
-class AreaAnalysisResponse(BaseModel):
-    """区域分析响应"""
-    area_name: str
-    events: List[Dict[str, Any]]
-    timeline: Any
-    relations: List[Dict[str, Any]]
-    risk_assessment: Dict[str, Any]
-    suggestions: List[Dict[str, Any]]
-    patrol_suggestions: Any
-
-
-class AreaRiskRankingItem(BaseModel):
-    """区域风险排名项"""
-    area_name: str
-    event_count: int
-    last_event: Optional[datetime]
-    type_counts: Dict[str, int]
-    risk_score: float
-    risk_level: str
-    days_since_last: Optional[int]
-
-
-class AreaHotspotResponse(BaseModel):
-    """事件热点区域"""
-    area_name: str
-    event_count: int
-    last_event: Optional[datetime]
-    center_latitude: Optional[float]
-    center_longitude: Optional[float]
-    type_counts: Dict[str, int]
-    risk_score: float
-    risk_level: str
-    days_since_last: Optional[int]
-
-
-class RefreshAreaProfileResponse(BaseModel):
-    """刷新区域档案响应"""
-    message: str
-    profile_id: int
-    area_name: str
-    risk_level: str
-    risk_score: float
-    total_events: int
-
-
 class CorrelationAnalysisRequest(BaseModel):
     """关联分析请求"""
     event_ids: List[int] = Field(..., description="要分析的事件ID列表")
@@ -472,19 +420,20 @@ async def list_events(
     event_type: Optional[str] = None,
     village_name: Optional[str] = None,
     days_back: Optional[int] = None,
+    operational_area_id: Optional[int] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     """获取事件列表"""
-    query = db.query(Event)
+    _require_event_scope(db, operational_area_id)
+    query = _filter_events(db.query(Event), operational_area_id=operational_area_id,
+                          start_date=start_date, end_date=end_date, days_back=days_back)
 
     if event_type:
         query = query.filter(Event.event_type == event_type)
     if village_name:
         query = query.filter(Event.village_name.ilike(f"%{village_name}%"))
-    if days_back:
-        cutoff = datetime.now() - timedelta(days=days_back)
-        query = query.filter(Event.occurred_time >= cutoff)
-
     events = query.order_by(Event.occurred_time.desc()).offset(skip).limit(limit).all()
     return events
 
@@ -501,10 +450,13 @@ async def get_event(event_id: int, db: Session = Depends(get_db)):
 @router.post("/{event_id:int}/convert-to-case")
 async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
     """将事件转为案件，并回写事件关联案件 ID"""
-    event = db.query(Event).filter(Event.id == event_id).first()
+    event = db.query(Event).filter(Event.id == event_id).with_for_update().first()
     if not event:
         raise HTTPException(status_code=404, detail="事件不存在")
+    require_area_write_access(db, event.operational_area_id)
     if event.related_case_id:
+        if CaseService.get_case(db, event.related_case_id) is None:
+            raise HTTPException(status_code=404, detail="关联案件不可访问")
         return {
             "case_id": event.related_case_id,
             "event_id": event.id,
@@ -524,21 +476,29 @@ async def convert_event_to_case(event_id: int, db: Session = Depends(get_db)):
     case = CaseService.create_case(
         db=db,
         case_number=None,
-        occurred_time=event.occurred_time,
+        occurred_time=utc_datetime(event.occurred_time),
         location=event.location,
         latitude=event.latitude,
         longitude=event.longitude,
         case_type=EVENT_TYPES.get(event.event_type, event.event_type),
         description="\n".join(part for part in description_parts if part),
         oil_type=event.oil_type,
-        oil_volume=None,  # 案件数量按吨使用，升数缺少密度依据时保留原文待核定。
+        oil_volume=event.oil_volume_liters,
+        oil_volume_unit="liter" if event.oil_volume_liters is not None else "unknown",
         vehicle_info={"vehicles": event.vehicles} if event.vehicles else None,
         operational_area_id=event.operational_area_id,
+        source_links=[{"source_type": "event", "source_id": event.id,
+                       "source_snapshot": {column.name: getattr(event, column.name) for column in Event.__table__.columns}}],
+        commit=False,
     )
 
     event.related_case_id = case.id
     event.handling_result = event.handling_result or "已转案件"
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(event)
 
     return {
@@ -588,57 +548,6 @@ async def delete_event(event_id: int, db: Session = Depends(get_db)):
     return {"message": "事件已删除"}
 
 
-# ==================== 区域分析 ====================
-
-@router.post("/area/analyze", response_model=AreaAnalysisResponse)
-async def analyze_area(
-    request: AreaAnalysisRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    分析指定区域的事件聚集情况
-
-    这是核心分析功能，实现用户描述的研判逻辑：
-    - 分析某村屯周边的事件分布
-    - 识别事件之间的关联
-    - 评估区域风险
-    - 给出巡逻建议
-    """
-    result = AreaAnalysisService.analyze_area(
-        db=db,
-        area_name=request.area_name,
-        radius_km=request.radius_km,
-        time_range_days=request.days_back
-    )
-
-    return _serialize_area_analysis(result)
-
-
-@router.get("/area/risk-ranking", response_model=List[AreaRiskRankingItem])
-async def get_area_risk_ranking(
-    limit: int = 10,
-    db: Session = Depends(get_db)
-):
-    """获取区域风险排名"""
-    result = AreaAnalysisService.get_area_risk_ranking(db, limit=limit)
-    return result
-
-
-@router.get("/area/hotspots", response_model=List[AreaHotspotResponse])
-async def get_hotspots(
-    days_back: int = 90,
-    min_events: int = 2,
-    db: Session = Depends(get_db)
-):
-    """获取事件热点区域"""
-    result = AreaAnalysisService.identify_hotspots(
-        db=db,
-        days_back=days_back,
-        min_events=min_events
-    )
-    return result
-
-
 # ==================== 区域档案 ====================
 
 @router.get("/areas", response_model=List[AreaProfileResponse])
@@ -668,112 +577,6 @@ async def get_area_profile(area_id: int, db: Session = Depends(get_db)):
     if not profile:
         raise HTTPException(status_code=404, detail="区域档案不存在")
     return profile
-
-
-@router.post("/areas/{area_name}/refresh", response_model=RefreshAreaProfileResponse)
-async def refresh_area_profile(
-    area_name: str,
-    radius_km: float = 5.0,
-    db: Session = Depends(get_db)
-):
-    """
-    刷新区域档案
-
-    重新计算该区域的统计数据和风险评估
-    """
-    operational_area_id = _resolve_event_area(db)
-
-    # 先进行区域分析
-    analysis = AreaAnalysisService.analyze_area(
-        db=db,
-        area_name=area_name,
-        radius_km=radius_km
-    )
-
-    # 查找或创建区域档案
-    profile = db.query(AreaProfile).filter(
-        AreaProfile.operational_area_id == operational_area_id,
-        AreaProfile.area_name == area_name,
-    ).first()
-
-    if not profile:
-        profile = AreaProfile(
-            operational_area_id=operational_area_id,
-            area_name=area_name,
-        )
-        db.add(profile)
-
-    # 更新统计数据
-    profile.radius_km = radius_km
-    profile.total_events = len(analysis.get("events", []))
-
-    events = analysis.get("events", [])
-    now = datetime.now()
-    profile.events_last_30_days = sum(
-        1 for e in events
-        if (days_since := _event_days_since(_event_value(e, "occurred_time"), now)) is not None
-        and days_since <= 30
-    )
-    profile.events_last_90_days = sum(
-        1 for e in events
-        if (days_since := _event_days_since(_event_value(e, "occurred_time"), now)) is not None
-        and days_since <= 90
-    )
-
-    # 更新风险评估
-    risk = analysis.get("risk_assessment", {})
-    profile.risk_level = risk.get("level", "low")
-    profile.risk_score = risk.get("score", 0)
-    profile.risk_factors = risk.get("factors", [])
-    profile.risk_updated_at = datetime.now()
-
-    # 更新建议
-    profile.suggested_actions = analysis.get("suggestions", [])
-    profile.patrol_suggestions = analysis.get("patrol_suggestions", [])
-
-    # 计算中心点
-    if events:
-        lats = [
-            _event_value(e, "latitude")
-            for e in events
-            if _event_value(e, "latitude") is not None
-        ]
-        lngs = [
-            _event_value(e, "longitude")
-            for e in events
-            if _event_value(e, "longitude") is not None
-        ]
-        if lats and lngs:
-            profile.center_latitude = sum(lats) / len(lats)
-            profile.center_longitude = sum(lngs) / len(lngs)
-
-    # 事件类型统计
-    type_counts = {}
-    for e in events:
-        t = _event_value(e, "event_type", "unknown")
-        type_counts[t] = type_counts.get(t, 0) + 1
-    profile.event_types_count = type_counts
-
-    times = [
-        _event_value(e, "occurred_time")
-        for e in events
-        if _event_value(e, "occurred_time")
-    ]
-    if times:
-        profile.first_event_time = min(times)
-        profile.last_event_time = max(times)
-
-    db.commit()
-    db.refresh(profile)
-
-    return {
-        "message": "区域档案已更新",
-        "profile_id": profile.id,
-        "area_name": area_name,
-        "risk_level": profile.risk_level,
-        "risk_score": profile.risk_score,
-        "total_events": profile.total_events
-    }
 
 
 # ==================== 关联分析 ====================
@@ -915,44 +718,80 @@ async def confirm_correlation(
 
 # ==================== 统计和概览 ====================
 
+def _require_event_scope(db: Session, operational_area_id: Optional[int]) -> None:
+    if operational_area_id is None:
+        return
+    authorized = db.info.get("authorized_area_ids", ())
+    if authorized is not None and operational_area_id not in authorized:
+        raise HTTPException(404, "事件范围不存在或不可访问")
+
+def _filter_events(query, *, operational_area_id=None, start_date=None, end_date=None,
+                   days_back=None, cutoff=None):
+    def utc(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
+    start_date, end_date = utc(start_date), utc(end_date)
+    if start_date and end_date and start_date >= end_date:
+        raise HTTPException(422, "起始时间必须早于截止时间")
+    if operational_area_id is not None:
+        if operational_area_id <= 0:
+            raise HTTPException(422, "辖区编号无效")
+        query = query.filter(Event.operational_area_id == operational_area_id)
+    if days_back is not None and not 1 <= days_back <= 36500:
+        raise HTTPException(422, "回溯天数无效")
+    if start_date:
+        query = query.filter(Event.occurred_time >= start_date)
+    elif days_back:
+        query = query.filter(Event.occurred_time >= (cutoff or datetime.utcnow()) - timedelta(days=days_back))
+    if end_date:
+        query = query.filter(Event.occurred_time < end_date)
+    return query
+
 @router.get("/statistics")
 async def get_event_statistics(
     days_back: int = 30,
+    all_history: bool = False,
+    operational_area_id: Optional[int] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
-    """获取事件统计数据"""
-    cutoff = datetime.now() - timedelta(days=days_back)
-
-    # 总事件数
-    total = db.query(func.count(Event.id)).scalar()
-    recent = db.query(func.count(Event.id)).filter(Event.occurred_time >= cutoff).scalar()
-
-    # 按类型统计
-    type_stats = db.query(
-        Event.event_type,
-        func.count(Event.id)
-    ).filter(
-        Event.occurred_time >= cutoff
-    ).group_by(Event.event_type).all()
-
-    # 按村屯统计
-    village_stats = db.query(
-        Event.village_name,
-        func.count(Event.id)
-    ).filter(
-        Event.occurred_time >= cutoff,
-        Event.village_name.isnot(None)
-    ).group_by(Event.village_name).order_by(func.count(Event.id).desc()).limit(10).all()
-
-    # 高风险区域
-    high_risk_areas = db.query(AreaProfile).filter(
-        AreaProfile.risk_level.in_(["high", "critical"])
-    ).order_by(AreaProfile.risk_score.desc()).limit(5).all()
+    """Whole authorized filtered event set; never infer totals from page length."""
+    if "authorized_area_ids" not in db.info:
+        raise HTTPException(404, "统计范围不可访问")
+    _require_event_scope(db, operational_area_id)
+    cutoff = datetime.utcnow()
+    effective_days = None if all_history or start_date or end_date else days_back
+    try:
+        query = _filter_events(db.query(Event), operational_area_id=operational_area_id,
+                               start_date=start_date, end_date=end_date,
+                               days_back=effective_days, cutoff=cutoff)
+        total = db.query(func.count(Event.id)).scalar()
+        recent = query.with_entities(func.count(Event.id)).scalar()
+        type_stats = query.with_entities(Event.event_type, func.count(Event.id)).group_by(Event.event_type).all()
+        village_stats = (query.with_entities(Event.village_name, func.count(Event.id))
+                         .filter(Event.village_name.isnot(None)).group_by(Event.village_name)
+                         .order_by(func.count(Event.id).desc()).limit(10).all())
+        linked_cases = (query.join(Case, Case.id == Event.related_case_id)
+                        .with_entities(func.count(func.distinct(Case.id))).scalar())
+        historical = db.query(AreaProfile).filter(AreaProfile.risk_level.in_(["high", "critical"]))
+        if operational_area_id is not None:
+            historical = historical.filter(AreaProfile.operational_area_id == operational_area_id)
+        high_risk_areas = historical.order_by(AreaProfile.risk_score.desc()).limit(5).all()
+    except SQLAlchemyError:
+        raise HTTPException(503, "事件统计暂不可用，不能据此判断为零") from None
 
     return {
         "total_events": total,
         "recent_events": recent,
         "days_back": days_back,
+        "filtered_events": recent,
+        "linked_case_count": linked_cases,
+        "complete": True,
+        "cutoff": cutoff.replace(tzinfo=timezone.utc),
+        "scope": {"operational_area_id": operational_area_id, "start_date": start_date,
+                  "end_date": end_date, "days_back": effective_days,
+                  "time_field": "occurred_time", "end_exclusive": True},
+        "counting_rule": "事件按ID统计，关联案件按当前授权案件ID去重；二者不相加。旧区域档案为独立历史层。",
         "by_type": {t: c for t, c in type_stats},
         "by_village": {v: c for v, c in village_stats if v},
         "high_risk_areas": [{

@@ -1,8 +1,22 @@
+import { Link, useLocation } from 'react-router-dom'
 import RegionalAnalysisView from '../../components/Facility/RegionalAnalysisView'
+import SpaceTimeAnalysis from '../Cases/SpaceTimeAnalysis'
 import './AreaAnalysis.css'
 
+export function regionalViewPath(search: string, hash: string, view: 'conditions' | 'time') {
+  const params = new URLSearchParams(search)
+  params.set('regional_view', view)
+  return `/area-analysis?${params}${hash}`
+}
+
 export default function AreaAnalysis() {
-  return <div className="page"><div className="page-title"><h1>区域综合研判</h1><span className="sub">设施条件对照 · 案件与事件时间线</span></div>
-    <RegionalAnalysisView />
+  const { search, hash } = useLocation()
+  const view = new URLSearchParams(search).get('regional_view') === 'time' ? 'time' : 'conditions'
+  return <div className="page region-workspace"><div className="page-title"><h1>区域综合研判</h1></div>
+    <nav className="regional-view-navigation" aria-label="区域研判视图">
+      <Link className="btn-ghost" to={regionalViewPath(search, hash, 'conditions')} aria-current={view === 'conditions' ? 'page' : undefined}>设施条件与时间线</Link>
+      <Link className="btn-ghost" to={regionalViewPath(search, hash, 'time')} aria-current={view === 'time' ? 'page' : undefined}>时间规律</Link>
+    </nav>
+    {view === 'time' ? <SpaceTimeAnalysis embedded /> : <RegionalAnalysisView />}
   </div>
 }

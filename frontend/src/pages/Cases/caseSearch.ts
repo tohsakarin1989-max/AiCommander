@@ -4,6 +4,14 @@ import type { Case } from '../../types'
 export const caseDetailKey = (userId: number | undefined, sessionEpoch: number, caseId: number | null) =>
   ['cases', 'detail', userId, sessionEpoch, caseId] as const
 
+/** Returning to the list clears only the open dossier, never its search or area scope. */
+export function returnToCaseListParams(previous: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(previous)
+  next.delete('caseId')
+  next.delete('case_view')
+  return next
+}
+
 export function visibleCaseDetail(query: { data?: Case; isSuccess: boolean }): Case | null {
   // React Query retains old data on a failed refetch; never show it after access denial.
   return query.isSuccess ? query.data ?? null : null

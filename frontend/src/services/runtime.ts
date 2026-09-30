@@ -5,6 +5,9 @@ export interface RuntimeFeatures {
   bonus_accounting: boolean
   agent_lab: boolean
   showcase: boolean
+  intelligent_query?: boolean
+  query_history?: boolean
+  query_cancel?: boolean
 }
 
 export interface RuntimeStatus {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from copy import deepcopy
 from hashlib import sha256
 import json
 from typing import Any, Dict, Iterable, Optional
@@ -15,11 +16,17 @@ from app.models.jurisdiction import JurisdictionAsset
 from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_history_compat import build_legacy_similar_cases
+from app.services.case_history_retrieval import _asset_access
+from app.services.case_result_access import CaseResultAccessError
+from app.services.case_result_service import CaseResultService
+from app.services.case_result_document import build_case_result_document
 
 
 ASSET_TYPES = {"experience_card", "case_report"}
 ASSET_STATUSES = {"draft", "confirmed", "archived"}
-GENERATOR_VERSION = "2.6.0"
+GENERATOR_VERSION = "6.5-frozen-experience-1"
+REPORT_LAYOUT_VERSION = "frozen-case-result-with-experience-1"
 VOLATILE_KEYS = {
     "generated_at",
     "reviewed_at",
@@ -76,13 +83,11 @@ class KnowledgeAssetService:
         generated_by: Optional[int] = None,
     ) -> KnowledgeAsset:
         case = KnowledgeAssetService._case(db, case_id)
-        KnowledgeAssetService._ensure_case_quality(db, case)
+        result = KnowledgeAssetService._current_result(db, case_id)
         analysis_days = 365
-        source_data_version = KnowledgeAssetService._experience_source_version(
-            db, case, analysis_days
-        )
-        # 旧版经验卡存放在 Case.features 中，生成动作会更新其中的 generated_at。
-        # 版本签名只绑定业务源数据和生成器版本，避免“生成本身”制造新版本。
+        source_data_version = result['content_sha256']
+        # Generation only lays out a saved result. It neither modifies the
+        # legacy Case.features card nor re-extracts text or nearby facilities.
         source_signature = _digest(
             {
                 "asset_type": "experience_card",
@@ -99,8 +104,23 @@ class KnowledgeAssetService:
         if existing:
             return existing
 
-        card = CaseIntelligenceService.build_experience_card(db, case_id)
-        card = _json_value(card)
+        content = result['content']
+        frozen_fields = ((content.get('semantics') or {}).get('source_snapshot') or {}).get('fields', [])
+        excerpts = [item['text'] for item in frozen_fields if isinstance(item, dict) and isinstance(item.get('text'), str)]
+        card = {
+            'schema_version': 'frozen-experience-6.5-1',
+            'title': f'经验卡 {case.case_number}',
+            'summary': content['facts_summary']['label'] + ('：' + '\n'.join(excerpts) if excerpts else '；冻结来源未记录可摘录文本。'),
+            'facts_summary': deepcopy(content['facts_summary']),
+            'semantics': deepcopy(content.get('semantics') or {}),
+            'process': deepcopy((content.get('semantics') or {}).get('process')),
+            'applicability': {'recorded_conditions': deepcopy(content['related_conditions']),
+                'boundary': '只适用于人工确认的相似条件；否定、不确定、差异条件必须单独核对，不自动移植当前案件事实。'},
+            'information_gaps': deepcopy(content['information_gaps']),
+            'candidate_references': deepcopy(content['candidates']),
+            'frozen_result': {'id': result['id'], 'content_sha256': result['content_sha256']},
+            'boundary': content['boundary'],
+        }
         card["manual_review_status"] = "draft"
         card["scope"] = {
             "days": analysis_days,
@@ -150,7 +170,6 @@ class KnowledgeAssetService:
         generated_by: Optional[int] = None,
     ) -> KnowledgeAsset:
         case = KnowledgeAssetService._case(db, case_id)
-        KnowledgeAssetService._ensure_case_quality(db, case)
         selected_ids = list(dict.fromkeys(experience_asset_ids))
         if len(selected_ids) > 10:
             raise KnowledgeAssetError("too_many_experience_assets")
@@ -172,18 +191,22 @@ class KnowledgeAssetService:
                 for item in source_assets
             ):
                 raise KnowledgeAssetError("experience_asset_not_reusable")
+            if any(not _asset_access(db, item) for item in source_assets):
+                raise KnowledgeAssetError("experience_asset_not_found")
+
+        result = KnowledgeAssetService._current_result(db, case.id)
 
         source_data_version = KnowledgeAssetService.case_data_version(db, case)
-        scope_data_version = KnowledgeAssetService._report_scope_version(db, days)
+        scope_data_version = result["content_sha256"]
         source_signature = _digest(
             {
                 "asset_type": "case_report",
                 "source_data_version": source_data_version,
                 "scope_data_version": scope_data_version,
-                "source_asset_signatures": [item.source_signature for item in source_assets],
-                "days": days,
-                "limit": limit,
-                "generator_version": GENERATOR_VERSION,
+                "source_asset_versions": [KnowledgeAssetService._experience_reference(item)
+                                          for item in source_assets],
+                "result_id": result["id"],
+                "generator_version": REPORT_LAYOUT_VERSION,
             }
         )
         existing = KnowledgeAssetService._same_asset(
@@ -195,14 +218,8 @@ class KnowledgeAssetService:
         if existing:
             return existing
 
-        report = _json_value(
-            CaseIntelligenceService.build_report(
-                db,
-                case_id=case.id,
-                days=days,
-                limit=limit,
-            )
-        )
+        # Layout only: neither quality refresh nor raw-case analysis belongs here.
+        report = KnowledgeAssetService._frozen_report(result, case.case_number)
         reused = [
             KnowledgeAssetService._reused_experience_payload(db, item)
             for item in source_assets
@@ -240,7 +257,11 @@ class KnowledgeAssetService:
         content = {
             "report": report,
             "reused_experience": reused,
-            "scope": {"days": days, "data_version": scope_data_version},
+            "frozen_result": {"id": result["id"], "content_sha256": result["content_sha256"],
+                              "versions": deepcopy(result["content"]["versions"])},
+            "scope": {"data_version": scope_data_version, "mode": "frozen_result",
+                      "legacy_requested_days": days, "legacy_requested_limit": limit,
+                      "boundary": "沿用冻结成果范围；旧 days/limit 参数不触发重算或改变成果范围。"},
             "manual_review_required": True,
             "boundary": [
                 "历史经验仅作为引用来源，不自动复制旧案结论。",
@@ -318,11 +339,17 @@ class KnowledgeAssetService:
                 content = asset.content or {}
                 scope = content.get("scope") or {}
                 scope_days = int(scope.get("days") or 365)
-                current_source_version = (
-                    KnowledgeAssetService._experience_source_version(
-                        db, case, scope_days
-                    )
-                )
+                if content.get('frozen_result'):
+                    try:
+                        current_result = KnowledgeAssetService._current_result(db, case.id)
+                    except KnowledgeAssetError:
+                        raise KnowledgeAssetError('source_changed_since_generation') from None
+                    current_source_version = current_result['content_sha256']
+                    if current_result['id'] != content['frozen_result']['id']:
+                        raise KnowledgeAssetError('source_changed_since_generation')
+                    KnowledgeAssetService._require_frozen_references(db, asset)
+                else:
+                    current_source_version = KnowledgeAssetService._experience_source_version(db, case, scope_days)
                 if (
                     scope.get("data_version") != current_source_version
                     or asset.source_data_version != current_source_version
@@ -335,11 +362,17 @@ class KnowledgeAssetService:
             if asset.asset_type == "case_report":
                 content = asset.content or {}
                 scope = content.get("scope") or {}
-                scope_days = int(scope.get("days") or 365)
-                if scope.get("data_version") != KnowledgeAssetService._report_scope_version(
-                    db, scope_days
-                ):
-                    raise KnowledgeAssetError("source_changed_since_generation")
+                if content.get("frozen_result"):
+                    current = KnowledgeAssetService._current_result(db, asset.source_case_id)
+                    frozen = content["frozen_result"]
+                    if (current["id"], current["content_sha256"]) != (frozen["id"], frozen["content_sha256"]):
+                        raise KnowledgeAssetError("source_changed_since_generation")
+                    KnowledgeAssetService._require_frozen_references(db, asset)
+                else:
+                    # Historical draft semantics remain readable/reviewable.
+                    scope_days = int(scope.get("days") or 365)
+                    if scope.get("data_version") != KnowledgeAssetService._report_scope_version(db, scope_days):
+                        raise KnowledgeAssetError("source_changed_since_generation")
                 reused_ids = [
                     item.get("asset_id")
                     for item in content.get("reused_experience", [])
@@ -357,6 +390,11 @@ class KnowledgeAssetService:
                     )
                     if confirmed_count != len(set(reused_ids)):
                         raise KnowledgeAssetError("source_changed_since_generation")
+                    if content.get("frozen_result"):
+                        for ref in content.get("reused_experience", []):
+                            source = KnowledgeAssetService._asset(db, ref["asset_id"])
+                            if ref.get("source_version") != KnowledgeAssetService._experience_reference(source):
+                                raise KnowledgeAssetError("source_changed_since_generation")
         elif status == "archived" and asset.status not in {"draft", "confirmed"}:
             raise KnowledgeAssetError("invalid_asset_transition")
 
@@ -368,6 +406,9 @@ class KnowledgeAssetService:
         content = dict(asset.content or {})
         content["manual_review_status"] = status
         asset.content = content
+        if asset.asset_type == 'experience_card':
+            from app.services.case_history_fragments import invalidate_experience_fragments
+            invalidate_experience_fragments(db, asset.source_case_id)
         db.commit()
         db.refresh(asset)
         return asset
@@ -394,10 +435,21 @@ class KnowledgeAssetService:
             query = query.filter(KnowledgeAsset.status == status)
         assets = query.order_by(
             KnowledgeAsset.created_at.desc(), KnowledgeAsset.id.desc()
-        ).limit(limit).all()
+        ).yield_per(100)
+        items = []
+        for asset in assets:
+            try:
+                item = KnowledgeAssetService.asset_payload(db, asset)
+            except KnowledgeAssetError as exc:
+                if str(exc) != "knowledge_asset_not_found":
+                    raise
+                continue
+            items.append(item)
+            if len(items) >= limit:
+                break
         return {
-            "items": [KnowledgeAssetService.asset_payload(db, item) for item in assets],
-            "total": len(assets),
+            "items": items,
+            "total": len(items), "total_kind": "returned_accessible",
         }
 
     @staticmethod
@@ -409,7 +461,7 @@ class KnowledgeAssetService:
         limit: int = 8,
     ) -> Dict[str, Any]:
         target = KnowledgeAssetService._case(db, case_id)
-        similar = CaseIntelligenceService.find_similar_cases(
+        similar = build_legacy_similar_cases(
             db, case_id, days=days, limit=200
         )
         items = []
@@ -428,7 +480,7 @@ class KnowledgeAssetService:
                 .order_by(KnowledgeAsset.version.desc())
                 .first()
             )
-            if not asset:
+            if not asset or not _asset_access(db, asset):
                 continue
             latest_reuse = (
                 db.query(KnowledgeReuseRecord)
@@ -440,6 +492,7 @@ class KnowledgeAssetService:
                 .first()
             )
             warnings = list(candidate.get("duplicate_warnings") or [])
+            warnings.extend(candidate.get("warnings") or [])
             warnings.append("历史经验仅证明旧案做法，当前案件仍需核对时间、地点和证据差异。")
             items.append(
                 {
@@ -454,6 +507,11 @@ class KnowledgeAssetService:
                     "applicability_reasons": candidate.get("reasons") or [],
                     "mismatch_risks": warnings,
                     "shared_tags": candidate.get("shared_tags") or [],
+                    "score_kind": candidate.get("score_kind"),
+                    "different_conditions": candidate.get("different_conditions") or [],
+                    "unmatched_query_conditions": candidate.get("unmatched_query_conditions") or [],
+                    "versions": {"case": candidate.get("versions"),
+                                 "experience": KnowledgeAssetService._experience_reference(asset)},
                     "evidence_refs": asset.evidence_refs or [],
                     "latest_decision": latest_reuse.decision if latest_reuse else None,
                     "already_reused": bool(
@@ -468,6 +526,10 @@ class KnowledgeAssetService:
             "target_case_number": target.case_number,
             "items": items,
             "manual_selection_required": True,
+            "state": similar["state"],
+            "coverage": similar["coverage"],
+            "recommendation_candidate_limit": 200,
+            "query_context": similar.get("query_context"),
             "boundary": "只推荐已人工确认的历史经验；相似不等于同案，不复制旧结论，引用后仍需人工复核。",
         }
 
@@ -550,18 +612,33 @@ class KnowledgeAssetService:
             db.query(KnowledgeReuseRecord)
             .filter(KnowledgeReuseRecord.target_case_id == target_case_id)
             .order_by(KnowledgeReuseRecord.created_at.desc(), KnowledgeReuseRecord.id.desc())
-            .limit(limit)
-            .all()
+            .yield_per(100)
         )
+        items = []
+        for record in records:
+            try:
+                item = KnowledgeAssetService.reuse_payload(db, record)
+            except KnowledgeAssetError as exc:
+                if str(exc) != "knowledge_asset_not_found":
+                    raise
+                continue
+            items.append(item)
+            if len(items) >= limit:
+                break
         return {
             "target_case_id": target_case_id,
-            "items": [KnowledgeAssetService.reuse_payload(db, item) for item in records],
-            "total": len(records),
+            "items": items,
+            "total": len(items), "total_kind": "returned_accessible",
         }
 
     @staticmethod
     def asset_payload(db: Session, asset: KnowledgeAsset) -> Dict[str, Any]:
+        if asset.asset_type == "experience_card" and not _asset_access(db, asset):
+            raise KnowledgeAssetError("knowledge_asset_not_found")
+        KnowledgeAssetService._require_frozen_references(db, asset)
         case = db.query(Case).filter(Case.id == asset.source_case_id).first()
+        if case is None:
+            raise KnowledgeAssetError("knowledge_asset_not_found")
         return {
             "id": asset.id,
             "asset_type": asset.asset_type,
@@ -584,6 +661,8 @@ class KnowledgeAssetService:
     @staticmethod
     def reuse_payload(db: Session, record: KnowledgeReuseRecord) -> Dict[str, Any]:
         source = db.query(KnowledgeAsset).filter(KnowledgeAsset.id == record.source_asset_id).first()
+        if source is None or not _asset_access(db, source):
+            raise KnowledgeAssetError("knowledge_asset_not_found")
         source_case = (
             db.query(Case).filter(Case.id == source.source_case_id).first()
             if source
@@ -651,7 +730,8 @@ class KnowledgeAssetService:
                     db, case
                 ),
                 "feature_tags": tags,
-                "similar_cases": similar,
+                "similar_cases": {key: similar.get(key) for key in ("items", "coverage", "state")},
+                "retrieval_version": (similar.get("query_context") or {}).get("retrieval_version"),
                 "days": days,
             }
         )
@@ -823,7 +903,77 @@ class KnowledgeAssetService:
                 "由研判人员主动选入本次报告，仍需逐项核对当前案件差异。",
             ],
             "evidence_refs": asset.evidence_refs or [],
+            "source_version": KnowledgeAssetService._experience_reference(asset),
         }
+
+    @staticmethod
+    def _experience_reference(asset: KnowledgeAsset) -> dict:
+        return {"id": asset.id, "version": asset.version, "source_signature": asset.source_signature,
+                "content_hash": _digest(asset.content), "evidence_hash": _digest(asset.evidence_refs)}
+
+    @staticmethod
+    def _current_result(db: Session, case_id: int) -> dict:
+        try:
+            result = CaseResultService.latest(db, case_id)
+        except CaseResultAccessError:
+            raise KnowledgeAssetError("frozen_result_unavailable") from None
+        if result.get("freshness") != "current":
+            raise KnowledgeAssetError("frozen_result_stale")
+        return result
+
+    @staticmethod
+    def _require_frozen_references(db: Session, asset: KnowledgeAsset) -> None:
+        content = asset.content or {}
+        frozen = content.get("frozen_result")
+        if not frozen:
+            return
+        try:
+            result = CaseResultService.read(db, frozen["id"])
+            if (result["content_sha256"] != frozen["content_sha256"]
+                    or result["content"]["case_id"] != asset.source_case_id):
+                raise CaseResultAccessError()
+            for ref in content.get("reused_experience", []):
+                source = db.query(KnowledgeAsset).filter(KnowledgeAsset.id == ref["asset_id"]).first()
+                if source is None or not _asset_access(db, source):
+                    raise CaseResultAccessError()
+                # Later edits to a source card cannot erase the access checks
+                # for evidence already quoted in this frozen historical report.
+                frozen_source = KnowledgeAsset(source_case_id=ref["source_case_id"],
+                                                evidence_refs=ref["evidence_refs"])
+                if source.source_case_id != ref["source_case_id"] or not _asset_access(db, frozen_source):
+                    raise CaseResultAccessError()
+        except (CaseResultAccessError, KeyError, TypeError):
+            raise KnowledgeAssetError("knowledge_asset_not_found") from None
+
+    @staticmethod
+    def _frozen_report(result: dict, case_number: str) -> dict:
+        document = build_case_result_document(result)
+        lines = []
+        sections = []
+        for block in document.blocks:
+            if block.kind == "heading":
+                lines.append(f"## {block.text}")
+            elif block.kind == "table":
+                lines.append(block.text)
+                lines.extend(f"- {key}：{value}" for key, value in block.rows)
+            elif block.kind == "map":
+                lines.append(f"冻结地图依据：{block.text}")
+            else:
+                lines.append(block.text)
+            sections.append({"title": block.text, "type": block.kind,
+                             "items": [f"{key}：{value}" for key, value in block.rows]})
+        refs = list(result["content"]["facts_summary"]["evidence_refs"])
+        for candidate in result["content"]["candidates"]:
+            refs.extend(candidate["evidence_refs"])
+        markdown = "\n\n".join(lines)
+        return {"title": f"{case_number} 冻结成果与经验参考", "markdown": markdown,
+                "sections": sections, "generation_mode": "frozen_result_layout",
+                "versions": {**deepcopy(result["content"]["versions"]),
+                    **({"composition": deepcopy(result["content"]["composition"]),
+                        "road_versions": deepcopy(result["content"]["road_versions"])}
+                       if result["content"].get("composition") else {})},
+                "ai_output": {"markdown": markdown,
+                              "evidence_refs": [{"id": ref} for ref in dict.fromkeys(refs)]}}
 
     @staticmethod
     def _record_reuse(
@@ -915,4 +1065,7 @@ class KnowledgeAssetService:
         asset = db.query(KnowledgeAsset).filter(KnowledgeAsset.id == asset_id).first()
         if not asset:
             raise KnowledgeAssetError("knowledge_asset_not_found")
+        if asset.asset_type == "experience_card" and not _asset_access(db, asset):
+            raise KnowledgeAssetError("knowledge_asset_not_found")
+        KnowledgeAssetService._require_frozen_references(db, asset)
         return asset

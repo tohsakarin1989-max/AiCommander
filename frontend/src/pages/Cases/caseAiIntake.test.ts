@@ -11,16 +11,16 @@ describe('caseAiIntake', () => {
     case_fields: {
       occurred_time: '2026-05-06T02:30:00',
       report_time: '2026-05-06T03:00:00',
-      report_unit: '敖南保卫班',
+      report_unit: '合成保卫班',
       location: '三号井场',
       oil_volume: 1.2,
       water_cut: 8,
       vehicle_handling: '移交公安',
       person_handling: '移交公安',
       police_reported: true,
-      police_officer: '姚警官',
-      police_phone: '18846680071',
-      security_officers: ['张伟', '王艳龙'],
+      police_officer: '测试甲',
+      police_phone: '000-00000',
+      security_officers: ['测试乙', '测试丙'],
     },
     field_sources: {},
     entities: {
@@ -44,9 +44,9 @@ describe('caseAiIntake', () => {
 
     expect(result.patch.location).toBe('三号井场')
     expect(result.patch.description).toBe('三号井场查获车辆盗运原油。')
-    expect(result.patch.report_unit).toBe('敖南保卫班')
-    expect(result.patch.police_phone).toBe('18846680071')
-    expect(result.patch.security_officers).toEqual(['张伟', '王艳龙'])
+    expect(result.patch.report_unit).toBe('合成保卫班')
+    expect(result.patch.police_phone).toBe('000-00000')
+    expect(result.patch.security_officers).toEqual(['测试乙', '测试丙'])
     expect(result.patch.oil_volume).toBe(1.2)
     expect(result.shouldOpenAdvancedFields).toBe(true)
     expect(result.writableCandidates.map(item => item.field)).toContain('location')

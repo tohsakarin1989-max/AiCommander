@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import cases, patrols
+from app.api import cases
 from app.database import Base, get_db
-from app.models.case import CasePerson, CaseVehicle
+from app.models.case import Case, CasePerson, CaseVehicle
 from app.services.preprocess_service import CasePreprocessService
 
 
@@ -27,7 +27,6 @@ def _session() -> Session:
 def _client(db_session: Session) -> TestClient:
     app = FastAPI()
     app.include_router(cases.router, prefix="/api/cases")
-    app.include_router(patrols.router, prefix="/api/patrols")
 
     def override_get_db():
         yield db_session
@@ -278,10 +277,10 @@ def test_case_profile_uses_structured_vehicle_person_and_evidence():
     assert profile["vehicles"][0]["plate_number"] == "辽A12345"
     assert profile["actors"]["persons"][0]["name"] == "王某"
     assert profile["quality"]["facts"]["vehicle_count"] == 1
-    assert profile["analysis_readiness"]["spacetime"]["status"] == "ready"
-    assert profile["analysis_readiness"]["gang"]["status"] == "ready"
-    assert profile["analysis_readiness"]["patrol"]["status"] == "ready"
-    assert profile["analysis_readiness"]["roundtable"]["status"] in {"ready", "partial"}
+    assert profile["analysis_readiness"]["regional_analysis"]["data_state"] == "ready"
+    assert profile["analysis_readiness"]["history_retrieval"]["data_state"] == "ready"
+    assert profile["analysis_readiness"]["road_comparison"]["runtime_state"] == "not_checked"
+    assert not {"gang", "patrol", "roundtable"} & set(profile["analysis_readiness"])
 
 
 def test_case_tip_ledger_can_attach_to_case():
@@ -494,14 +493,5 @@ def test_case_driven_patrol_plan_uses_quality_and_case_fields():
         assert response.status_code == 200
 
     response = client.get("/api/patrols/case-driven-plan", params={"days": 30})
-
-    assert response.status_code == 200
-    plan = response.json()
-    assert plan["area_count"] >= 1
-    top_area = plan["areas"][0]
-    assert top_area["area_name"] == "三号井场东侧"
-    assert top_area["case_count"] == 2
-    assert "被盗原油" in top_area["oil_natures"]
-    assert top_area["recommended_windows"]
-    assert top_area["patrol_focus"]
-    assert plan["data_quality"]["missing_geo_case_count"] == 0
+    assert response.status_code == 404
+    assert db.query(Case).count() == 2

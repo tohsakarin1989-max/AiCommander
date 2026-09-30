@@ -12,7 +12,8 @@ from app.models.conclusion import Conclusion
 from app.services.case_processing_card_service import CaseProcessingCardService
 from app.services.case_profile_service import CaseProfileService
 from app.services.case_result_service import CaseResultService
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from test_conclusion_result_reuse import saved_legacy
+from app.api.cases import get_case_profile
 from test_conclusion_result_reuse import current_profile, result_data  # noqa: F401
 
 
@@ -71,16 +72,16 @@ def test_actual_quality_gap_and_existing_conclusion_still_need_judgment(db_sessi
     profile = CaseProfileService.build_case_profile(db_session, daily_case.id, include_similar=False)
     processing = CaseProcessingCardService.build_processing_card(db_session, daily_case.id)
     assert profile["availability"]["needs_human_review"] is True
-    assert {item["key"] for item in processing["gap_groups"]} == {"quality", "report"}
+    assert {item["key"] for item in processing["gap_groups"]} == {"quality"}
     assert profile["knowledge_refs"]["conclusions"][0]["summary"] == "已有历史草稿"
 
 
-def test_existing_conclusion_alone_still_marks_review_needed(db_session, daily_case):
+def test_old_factory_draft_does_not_require_another_review(db_session, daily_case):
     db_session.add(Conclusion(case_id=daily_case.id, status="draft", summary="已有草稿", evidence={}))
     db_session.commit()
     profile = CaseProfileService.build_case_profile(db_session, daily_case.id, include_similar=False)
-    assert profile["availability"]["needs_human_review"] is True
-    assert CaseProcessingCardService.build_processing_card(db_session, daily_case.id)["manual_review_required"] is True
+    assert profile["availability"]["needs_human_review"] is False
+    assert CaseProcessingCardService.build_processing_card(db_session, daily_case.id)["manual_review_required"] is False
 
 
 def test_revoked_source_hides_reused_conclusion_and_all_derived_counts(
@@ -91,7 +92,7 @@ def test_revoked_source_hides_reused_conclusion_and_all_derived_counts(
     db_session.commit()
     CaseResultService.create_current(db_session, 1)
     db_session.commit()
-    draft = asyncio.run(ConclusionFactoryService.generate_conclusion(db_session, 1))
+    draft = saved_legacy(db_session, CaseResultService.latest(db_session, 1), status="flagged")
     first = CaseProfileService.build_case_profile(db_session, 1, include_similar=False)
     assert first["knowledge_refs"]["conclusions"][0]["id"] == draft.id
     assert first["knowledge_refs"]["conclusions"][0]["confidence"] is None
@@ -139,3 +140,48 @@ def test_profile_and_processing_card_read_never_mutate_original_case(db_session,
     assert mutations == []
     assert daily_case.features == original_features
     assert db_session.execute(Case.__table__.select()).mappings().all() == before
+
+
+def test_daily_profile_skips_duplicate_legacy_similarity(db_session, daily_case, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("日常资料聚合不应重复检索历史案件")
+
+    monkeypatch.setattr(CaseProfileService, "_safe_similar_cases", forbidden)
+    profile = get_case_profile(daily_case.id, db=db_session, include_similar=False)
+    assert profile["similar_cases"]["state"] == "not_requested"
+    assert profile["similar_cases"]["items"] == []
+    assert profile["case"]["id"] == daily_case.id
+    assert "evidence" in profile["related"]
+    assert "reports" in profile["knowledge_refs"]
+
+
+def test_profile_legacy_default_no_longer_repeats_history_search(db_session, daily_case, monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("兼容GET不应重新搜索")
+    monkeypatch.setattr(CaseProfileService, "_safe_similar_cases", forbidden)
+    result = get_case_profile(daily_case.id, db=db_session)["similar_cases"]
+    assert result["state"] == "not_requested"
+    assert result["items"] == []
+
+
+def test_lightweight_profile_missing_case_remains_not_found(db_session):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as error:
+        get_case_profile(99999, db=db_session, include_similar=False)
+    assert error.value.status_code == 404
+
+
+def test_profile_database_failure_is_explicit_and_sanitized(db_session, monkeypatch):
+    from fastapi import HTTPException
+    from sqlalchemy.exc import SQLAlchemyError
+
+    def unavailable(*args, **kwargs):
+        raise SQLAlchemyError("internal-sensitive-query")
+
+    monkeypatch.setattr(CaseProfileService, "build_case_profile", unavailable)
+    with pytest.raises(HTTPException) as error:
+        get_case_profile(1, db=db_session)
+    assert error.value.status_code == 503
+    assert "不能据此判断" in error.value.detail
+    assert "internal-sensitive-query" not in error.value.detail

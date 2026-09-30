@@ -10,7 +10,10 @@ export function useCaseWorkspace(caseId?: number) {
     enabled: !!caseId && !!user,
     retry: false,
     gcTime: 0,
-    refetchInterval: current => workspaceRefreshInterval(current.state.data),
+    refetchInterval: current => workspaceRefreshInterval(current.state.data,
+      current.state.dataUpdateCount, typeof document !== 'undefined' && document.hidden,
+      current.state.status === 'error'),
+    refetchIntervalInBackground: false,
   })
   return { ...query, workspace: visibleWorkspace(query, caseId) }
 }

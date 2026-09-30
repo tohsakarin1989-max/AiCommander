@@ -23,9 +23,12 @@ FIELDS = frozenset({
     "oil_type", "oil_volume", "oil_nature", "water_cut", "facility_type",
     "facility_owner", "modus_operandi", "vehicle_handling", "person_handling",
     "oil_handling", "operation_role", "current_stage",
+    "oil_volume_unit", "occurred_from", "occurred_to", "time_precision", "time_expression", "discovered_at",
 })
 ALIASES = {
     "案发时间": "occurred_time", "发生时间": "occurred_time",
+    "开始时间": "occurred_from", "结束时间": "occurred_to", "时间精度": "time_precision",
+    "原始时间描述": "time_expression", "发现时间": "discovered_at", "油量单位": "oil_volume_unit",
     "案情描述": "description", "案件描述": "description", "简要案情": "description",
     "发生地点": "location", "案发地点": "location", "地点": "location",
     "经度": "longitude", "纬度": "latitude", "案件类型": "case_type",
@@ -170,8 +173,8 @@ def parse_case_table(
     mapping = {name: target for name, target in mapping.items() if target in FIELDS}
     if not inspect_only and len(mapping.values()) != len(set(mapping.values())):
         raise ValueError("字段映射冲突：多列对应同一案件字段")
-    if not inspect_only and not {"occurred_time", "description"} <= set(mapping.values()):
-        raise ValueError("缺少必需列: occurred_time, description（案发时间、案情描述）")
+    if not inspect_only and "description" not in set(mapping.values()):
+        raise ValueError("缺少必需列: description（案情描述）；发生时间未知可留空")
     if not records and not inspect_only:
         raise ValueError("文件中没有数据")
     rows = tuple(ImportRow(number, {

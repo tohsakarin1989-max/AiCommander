@@ -9,12 +9,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import cases, deployment, events, gangs, key_locations, patrols, personnel
+from app.api import cases, deployment, events
 from app.config import settings
 from app.database import Base, get_db
 from app.models.case import Case
 from app.models.map_foundation import OperationalArea
-from app.models.patrol import AreaRiskAssessment
+from copy import deepcopy
+from app.models.patrol import PatrolRecord
+from app.models.personnel import SecurityPersonnel
+from app.models.key_location import KeyLocation
 
 
 @pytest.fixture
@@ -28,9 +31,7 @@ def legacy_business(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_VECTOR_DB", False)
     monkeypatch.setattr(settings, "ENABLE_LEGACY_EXTERNAL_GEO", False)
     app = FastAPI()
-    for module, prefix in ((cases, "cases"), (events, "events"), (gangs, "gangs"),
-                           (deployment, "deployment"),
-                           (personnel, "personnel"), (key_locations, "key-locations"), (patrols, "patrols")):
+    for module, prefix in ((cases, "cases"), (events, "events"), (deployment, "deployment")):
         app.include_router(module.router, prefix=f"/api/{prefix}")
 
     def database():
@@ -56,7 +57,7 @@ def post_case(client, **overrides):
     return response.json()
 
 
-def test_case_crud_number_statistics_and_persisted_condition_group(legacy_business):
+def test_case_crud_number_statistics_survive_group_retirement(legacy_business):
     client, factory = legacy_business
     first = post_case(client)
     second = post_case(client, longitude=124.001)
@@ -70,16 +71,8 @@ def test_case_crud_number_statistics_and_persisted_condition_group(legacy_busine
     assert updated.status_code == 200, updated.text
     assert client.get(f"/api/cases/{first['id']}").json()["location"] == "合成井场东侧"
     assert client.get("/api/cases/statistics").json()["resolved_cases"] == 1
-    clustered = client.post("/api/gangs/identify", json={"case_ids": [first["id"], second["id"]]})
-    assert clustered.status_code == 200, clustered.text
-    assert len(clustered.json()) == 1
-    assert set(clustered.json()[0]["case_ids"]) == {first["id"], second["id"]}
-    assert client.get("/api/gangs/quick-identify").json()["total_gangs"] == 1
-    assert client.get("/api/gangs/0/relations").status_code == 200
-    timeline = client.post("/api/gangs/timeline", json=[first["id"], second["id"]])
-    assert timeline.status_code == 200, timeline.text
-    assert {item["case_id"] for item in timeline.json()} == {first["id"], second["id"]}
-    assert client.get("/api/gangs/statistics").status_code == 200
+    assert client.post("/api/gangs/identify", json={"case_ids": [first["id"], second["id"]]}).status_code == 404
+    assert client.get("/api/gangs/statistics").status_code == 404
     assert client.delete(f"/api/cases/{second['id']}").status_code == 200
     assert client.get(f"/api/cases/{second['id']}").status_code == 404
     assert client.get("/api/cases/statistics").json()["total_cases"] == 1
@@ -108,7 +101,8 @@ def test_event_crud_conversion_is_idempotent_and_preserves_source_facts(legacy_b
     assert case["operational_area_id"] == 1
     assert case["location"] == "合成事件井场"
     assert "已核实" in case["description"] and "软管" in case["description"]
-    assert case["oil_volume"] is None  # 升不能直接填入按吨使用的案件字段。
+    assert case["oil_volume"] == 10
+    assert case["oil_volume_unit"] == "liter"  # 保存原始体积，不冒充吨数。
     assert "10升" in case["description"] and "吨数待核定" in case["description"]
     assert client.get(f"/api/events/{event_id}").json()["oil_volume_liters"] == 10
     with factory() as db:
@@ -120,79 +114,30 @@ def test_event_crud_conversion_is_idempotent_and_preserves_source_facts(legacy_b
     assert client.get(f"/api/cases/{case_id}").status_code == 200
 
 
-@pytest.mark.parametrize("path,payload,updated,query", [
-    ("personnel", {"name": "合成人员", "badge_number": "SYN-001", "department": "合成班组"},
-     {"department": "合成新班组"}, "department=合成新班组"),
-    ("key-locations", {"name": "合成重点井场", "location_type": "well", "latitude": 45, "longitude": 124},
-     {"risk_level": 3}, "location_type=well"),
+@pytest.mark.parametrize("path,model,payload", [
+    ("personnel", SecurityPersonnel, {"name": "合成人员", "badge_number": "SYN-001"}),
+    ("key-locations", KeyLocation, {"name": "合成旧重点部位", "location_type": "well"}),
+    ("patrols", PatrolRecord, {"patrol_number": "SYN-001", "area_name": "合成历史区域",
+                              "status": "completed", "findings": "保留历史人工记录"}),
 ])
-def test_legacy_reference_registry_lifecycle(legacy_business, path, payload, updated, query):
-    client, _ = legacy_business
-    created = client.post(f"/api/{path}", json=payload)
-    assert created.status_code == 200, created.text
-    item_id = created.json()["id"]
-    response = client.put(f"/api/{path}/{item_id}", json=updated)
-    assert response.status_code == 200, response.text
-    assert all(response.json()[key] == value for key, value in updated.items())
-    assert [item["id"] for item in client.get(f"/api/{path}?{query}").json()] == [item_id]
-    assert client.delete(f"/api/{path}/{item_id}").status_code == 200
-    assert client.get(f"/api/{path}").json() == []
-    assert client.put(f"/api/{path}/{item_id}", json=updated).status_code == 404
-
-
-def test_legacy_patrol_plan_start_complete_updates_risk_and_history(legacy_business):
+def test_retired_operations_have_no_runtime_routes_and_preserve_history(legacy_business, path, model, payload):
     client, factory = legacy_business
-    created = client.post("/api/patrols/", json={"area_name": "合成井场", "officer_names": "合成人员"})
-    assert created.status_code == 200, created.text
-    patrol_id = created.json()["id"]
-    assert created.json()["status"] == "planned"
-    assert created.json()["patrol_number"].startswith("XL-")
-    started = client.post(f"/api/patrols/{patrol_id}/start")
-    assert started.status_code == 200 and started.json()["start_time"]
-    completed = client.post(f"/api/patrols/{patrol_id}/complete", json={
-        "findings": "合成检查已完成", "effectiveness_score": 0, "evidence_photos": ["synthetic-photo"],
-    })
-    assert completed.status_code == 200, completed.text
-    assert completed.json()["status"] == "completed"
-    assert completed.json()["end_time"]
-    assert completed.json()["effectiveness_score"] == 0
-    assert completed.json()["risk_after"] == 45  # 无案件基础风险40，低效果评分加5。
-    assert len(client.get("/api/patrols/?status=completed").json()) == 1
     with factory() as db:
-        risk = db.query(AreaRiskAssessment).one()
-        assert risk.risk_score == 45 and risk.risk_level == "medium"
-        assert risk.patrol_count_30d == 1
-        assert "评分：0" in risk.risk_history[-1]["reason"]
-    assert client.get("/api/patrols/areas/risks").status_code == 200
-
-
-def test_legacy_patrol_effectiveness_adjustment_updates_risk_level(legacy_business):
-    client, factory = legacy_business
-    patrol_id = client.post("/api/patrols/", json={"area_name": "合成降险井场"}).json()["id"]
-    assert client.post(f"/api/patrols/{patrol_id}/start").status_code == 200
-    response = client.post(f"/api/patrols/{patrol_id}/complete", json={"effectiveness_score": 90})
-    assert response.status_code == 200, response.text
-    assert response.json()["risk_after"] == 35
+        record = model(**payload)
+        db.add(record)
+        db.commit()
+        before = deepcopy({column.name: getattr(record, column.name) for column in model.__table__.columns})
+        item_id = record.id
+    for method, suffix in [("get", ""), ("post", ""), ("put", f"/{item_id}"),
+                           ("delete", f"/{item_id}"), ("post", f"/{item_id}/start")]:
+        response = client.request(method, f"/api/{path}{suffix}", json=payload)
+        assert response.status_code == 404
     with factory() as db:
-        assert db.query(AreaRiskAssessment).one().risk_level == "low"
+        record = db.query(model).one()
+        assert {column.name: getattr(record, column.name) for column in model.__table__.columns} == before
 
 
-@pytest.mark.parametrize("terminal,action", [("cancelled", "start"), ("cancelled", "complete"),
-                                              ("completed", "start"), ("completed", "cancel")])
-def test_legacy_patrol_terminal_state_cannot_be_rewritten(legacy_business, terminal, action):
-    client, _ = legacy_business
-    patrol_id = client.post("/api/patrols/", json={"area_name": "合成终态井场"}).json()["id"]
-    if terminal == "cancelled":
-        assert client.post(f"/api/patrols/{patrol_id}/cancel").status_code == 200
-    else:
-        assert client.post(f"/api/patrols/{patrol_id}/start").status_code == 200
-        assert client.post(f"/api/patrols/{patrol_id}/complete", json={}).status_code == 200
-    response = client.post(f"/api/patrols/{patrol_id}/{action}", json={})
-    assert response.status_code == 409, response.text
-    assert client.get(f"/api/patrols/{patrol_id}").json()["status"] == terminal
-
-
-def test_event_area_analysis_to_persisted_relation_and_human_confirmation(legacy_business):
+def test_retired_area_scoring_preserves_event_relations_and_human_confirmation(legacy_business):
     client, _ = legacy_business
     event_ids = []
     for index in range(2):
@@ -205,11 +150,9 @@ def test_event_area_analysis_to_persisted_relation_and_human_confirmation(legacy
         assert response.status_code == 200, response.text
         event_ids.append(response.json()["id"])
     area = client.post("/api/events/area/analyze", json={"area_name": "合成关联村"})
-    assert area.status_code == 200, area.text
-    assert len(area.json()["events"]) == 2
-    assert area.json()["risk_assessment"]
-    assert client.get("/api/events/area/risk-ranking").status_code == 200
-    assert client.post("/api/events/areas/合成关联村/refresh").status_code == 200
+    assert area.status_code == 404, area.text
+    assert client.get("/api/events/area/risk-ranking").status_code == 404
+    assert client.post("/api/events/areas/合成关联村/refresh").status_code == 404
     analysis = client.post("/api/events/correlations/analyze", json={"event_ids": event_ids})
     assert analysis.status_code == 200, analysis.text
     assert {item["relation_type"] for item in analysis.json()["relations"]} == {"spatial_cluster", "vehicle_link"}
@@ -264,6 +207,8 @@ def test_model_intake_cannot_reintroduce_unverified_oil_mass(inferred_tons):
             }))
 
     result = CaseAutomationService.structure_case_text("现场发现原油10升，尚未检斤", llm=IncorrectModel())
-    assert result["case_fields"].get("oil_volume") is None
+    assert result["case_fields"]["oil_volume"] == 10
+    assert result["case_fields"]["oil_volume_unit"] == "liter"
     assert "10升" in result["case_fields"]["description"]
-    assert all(item["field"] != "oil_volume" for item in result["candidates"])
+    quantities = [item for item in result["candidates"] if item["field"] == "oil_volume"]
+    assert len(quantities) == 1 and quantities[0]["value"] == 10

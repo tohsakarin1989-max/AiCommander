@@ -10,6 +10,7 @@ import app.models  # noqa: F401
 from app.api import case_intelligence, knowledge
 from app.database import Base, get_db
 from app.models.case import Case, CaseEvidence
+from app.services.case_pipeline_service import CasePipelineService
 
 
 def _session() -> Session:
@@ -29,6 +30,7 @@ def _client(db_session: Session) -> TestClient:
     app.include_router(knowledge.router, prefix="/api/knowledge")
 
     def override_get_db():
+        db_session.info["authorized_area_ids"] = None  # Isolated legacy API fixture only.
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
@@ -78,8 +80,19 @@ def test_experience_card_is_persisted_as_reviewable_case_asset():
     assert case.features is None
 
     saved = client.post(f"/api/knowledge/cases/{case.id}/experience-assets")
-    assert saved.status_code == 201
-    assert saved.json()["content"]["source_case_id"] == case.id
+    assert saved.status_code == 409  # This operation cannot create a missing analysis.
+    event = CasePipelineService.enqueue_case_change(db, case)
+    db.commit()
+    assert event is not None
+    assert CasePipelineService.process_event(db, event.id)['status'] == 'completed'
+    saved = client.post(f"/api/knowledge/cases/{case.id}/experience-assets")
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["source_case_id"] == case.id
+    assert saved.json()["content"]["frozen_result"]["id"]
     assert saved.json()["status"] == "draft"
     refreshed = db.query(Case).filter(Case.id == case.id).first()
-    assert refreshed.features["intelligence"]["experience_card"]["source_case_id"] == case.id
+    # New versioned assets do not overwrite the legacy card stored on the case.
+    assert refreshed.features is None
+    history = client.get("/api/knowledge/assets", params={"case_id": case.id})
+    assert history.status_code == 200
+    assert any(item["id"] == saved.json()["id"] for item in history.json()["items"])

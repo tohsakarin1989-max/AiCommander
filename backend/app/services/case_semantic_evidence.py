@@ -13,6 +13,8 @@ SOURCE_FIELDS = frozenset({
     # Search evidence may cite these literal metadata fields. They are not
     # included in case_semantic_service.TEXT_FIELDS for semantic extraction.
     "case_number", "case_type", "source_type", "report_unit", "oil_nature",
+    # Literal case fields used by the legacy tag adapter, never derived features.
+    "security_level", "source_detail", "vehicle_handling", "oil_handling",
 })
 ASSERTION_KINDS = frozenset({"stated", "negated", "uncertain", "inferred"})
 

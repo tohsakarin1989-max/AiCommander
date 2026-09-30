@@ -7,7 +7,7 @@ import pytest
 from app.models.conclusion import Conclusion
 from app.services.case_knowledge_service import CaseKnowledgeService
 from app.services.case_result_service import CaseResultService
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from test_conclusion_result_reuse import saved_legacy
 from test_conclusion_result_reuse import current_profile, result_data  # noqa: F401
 
 
@@ -21,7 +21,9 @@ def test_revoked_result_cannot_enter_legacy_knowledge_response(
     db_session.commit()
     CaseResultService.create_current(db_session, 1)
     db_session.commit()
-    draft = asyncio.run(ConclusionFactoryService.generate_conclusion(db_session, 1))
+    draft = saved_legacy(db_session, CaseResultService.latest(db_session, 1), status="flagged")
+    draft.summary = marker
+    db_session.commit()
     reader = getattr(CaseKnowledgeService, method)
     before = reader(db_session, marker, case_id=1)
     assert marker in json.dumps({key: value for key, value in before.items() if key != "query"}, ensure_ascii=False)

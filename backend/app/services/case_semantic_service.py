@@ -1,7 +1,6 @@
 """本地词项语义基线：只整理有原文出处的表述，不生成案情事实。"""
 from __future__ import annotations
 
-import re
 from typing import Any, Mapping
 
 from app.services.case_semantic_evidence import (
@@ -10,9 +9,13 @@ from app.services.case_semantic_evidence import (
 from app.services.case_semantic_time import extract_time_intervals
 from app.services.case_semantic_structured import extract_structured_sources
 from app.services.case_event_fragments import build_event_fragments
+from app.services.case_process_service import build_process
+from app.services.case_semantic_mentions import (
+    CLAUSE, NEGATED, UNCERTAIN, extract_term_assertions,
+)
 
 
-SEMANTIC_RULE_VERSION = "local-events-5.1.0-1"
+SEMANTIC_RULE_VERSION = "local-events-6.3-1"
 TEXT_FIELDS = (
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "upstream_source", "downstream_destination",
@@ -27,66 +30,33 @@ TERMS = {
     "place_condition": {"井场": "井场", "村屯": "村屯", "河边": "临水", "河岸": "临水", "路口": "路口"},
     "time_condition": {"夜间": "夜间", "夜里": "夜间", "凌晨": "凌晨", "白天": "白天"},
 }
-UNCERTAIN = re.compile(
-    r"可能|疑似|不详|不确定|不能确定|无法确定|不能排除|不排除|未排除|并非没有|不是没有|"
-    r"没有证据|未证实|否认|假设|如果|是否|\?|？|忽略|指令|提示词|system|assistant|[“”\"「」]",
-    re.IGNORECASE,
-)
-NEGATED = re.compile(r"未发现|未见|未查获|未使用|未携带|没有|不存在|不是|并非")
-CLAUSE = re.compile(r"[^，,。；;！!\n]+")
-
-
-def _mention_kind(text: str, start: int, end: int) -> str:
-    if UNCERTAIN.search(text):
-        return "uncertain"
-    if not NEGATED.search(text):
-        return "stated"
-    before, after = text[:start].strip(), text[end:].strip()
-    # 仅接受直接否定该词项的简式；“原油没有丢失”是否定丢失，不能转成否定原油。
-    direct_prefix = re.search(r"(?:未发现|未见|未查获|未使用|未携带|没有(?:发现)?|不存在|不是|并非)$", before)
-    if (direct_prefix and not after) or (after in {"未见", "未发现", "不存在"} and not before):
-        return "negated"
-    return "uncertain"
 
 
 def build_semantic_profile(
     values: Mapping[str, str | None], *, structured: dict[str, Any] | None = None,
+    source_revision_id: int | None = None, source_hash: str | None = None,
+    source_payload: dict[str, Any] | None = None,
 ) -> dict:
     sources = freeze_sources(values)
-    assertions = []
-    gaps = []
+    mentions = extract_term_assertions(values, TERMS)
+    assertions = mentions["assertions"]
+    gaps = mentions["information_gaps"]
     time_intervals = []
     for source in sources:
         intervals, time_gaps = extract_time_intervals(source)
         time_intervals.extend(intervals)
         gaps.extend(time_gaps)
-        for clause in CLAUSE.finditer(source.text):
-            fragment = clause.group()
-            # 转折后不继承前半句的否定作用范围；保留原文字偏移。
-            parts = re.finditer(r"(?:(?!但是|但|然而|不过).)+", fragment)
-            for part in parts:
-                start = clause.start() + part.start()
-                text = part.group()
-                for category, terms in TERMS.items():
-                    pattern = "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
-                    for match in re.finditer(pattern, text):
-                        if len(assertions) >= 200:
-                            gaps.append({"code": "extraction_limit", "field": source.field})
-                            break
-                        reference = TextReference(source.field, source.sha256, start, start + len(text), text)
-                        assertion = grounded_assertion(
-                            source, reference, category=category,
-                            normalized_value=terms[match.group()],
-                            kind=_mention_kind(text, match.start(), match.end()),
-                        )
-                        assertion["mention_span"] = [start + match.start(), start + match.end()]
-                        assertions.append(assertion)
     for field in ("upstream_source", "downstream_destination"):
         value = values.get(field)
         missing = not value or value.strip() in {"", "无", "暂无", "未知", "不详", "待查", "未查明"}
         if missing or UNCERTAIN.search(value):
             gaps.append({"code": "lineage_not_established", "field": field})
         if not missing:
+            if len(assertions) >= 200:
+                gap = {"code": "extraction_limit", "field": field}
+                if gap not in gaps:
+                    gaps.append(gap)
+                continue
             source = next(item for item in sources if item.field == field)
             ref = TextReference(field, source.sha256, 0, len(source.text), source.text)
             assertions.append(grounded_assertion(
@@ -104,13 +74,17 @@ def build_semantic_profile(
         for (category, value), kinds in sorted(grouped.items())
         if {"stated", "negated"} <= kinds
     ]
+    fragments = build_event_fragments(sources, assertions, time_intervals, gaps)
+    process = build_process(sources, assertions, time_intervals, fragments, gaps,
+                            source_revision_id=source_revision_id, source_hash=source_hash,
+                            source_payload=source_payload)
     return {
         "rule_version": SEMANTIC_RULE_VERSION, "method": "local_dictionary_rules",
         "source_snapshot": snapshot_payload(sources), "assertions": assertions,
         "time_intervals": time_intervals,
         "structured_sources": structured_result,
         "potential_conflicts": conflicts, "information_gaps": gaps,
-        "event_fragments": build_event_fragments(sources, assertions, time_intervals, gaps),
+        "event_fragments": fragments, "process": process,
         "boundary": [
             "词项及句内标记仅整理原文表述，不代表事实已核实。",
             "本地规则尚不能完整解析复杂否定、指代、时间区间及上下游关系。",

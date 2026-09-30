@@ -59,16 +59,22 @@ def _resource_request(url: str, snapshot_id: str) -> tuple[str, tuple]:
 class CaseMapRenderResources:
     """一个渲染任务一个实例；不得跨用户缓存已授权字节。"""
 
-    def __init__(self, db: Session, result_id: str):
+    def __init__(self, db: Session, result_id: str, *, material_reader=None, snapshot_id=None):
         self.db = db
         self.result_id = result_id
-        result = CaseResultService.read(db, result_id)
-        self.snapshot_id = result["content"]["versions"]["map_snapshot_id"]
+        # The callback is constructed by the backend, never accepted from HTTP.
+        # It shares the strict local-resource gateway with other frozen types.
+        self.material_reader = material_reader
+        result = self._read_result()
+        self.snapshot_id = snapshot_id if material_reader else result["content"]["versions"]["map_snapshot_id"]
         self.content_sha256 = result["content_sha256"]
         if not self.snapshot_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,36}", self.snapshot_id):
             raise MapRenderResourceError("map_render_snapshot_required")
         self.requests = 0
         self.bytes_read = 0
+
+    def _read_result(self):
+        return self.material_reader() if self.material_reader else CaseResultService.read(self.db, self.result_id)
 
     def read(self, url: str) -> tuple[bytes, str]:
         # 失败请求同样消耗预算，避免坏包或异常样式无限重试。
@@ -76,7 +82,7 @@ class CaseMapRenderResources:
         if self.requests > MAX_REQUESTS or self.bytes_read >= MAX_TOTAL_BYTES:
             raise MapRenderResourceError("map_render_budget_exceeded")
         kind, args = _resource_request(url, self.snapshot_id)
-        current = CaseResultService.read(self.db, self.result_id)
+        current = self._read_result()
         if current["content_sha256"] != self.content_sha256:
             raise MapRenderResourceError("map_render_result_changed")
         try:

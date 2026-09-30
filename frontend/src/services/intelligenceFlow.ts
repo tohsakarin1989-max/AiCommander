@@ -1,9 +1,11 @@
 import api from './api'
+import type { CaseProcess } from './caseProcess'
 
 export type SemanticReference = {
   field: string; source_sha256: string; start: number; end: number; quote: string
 }
 export type CaseSemantics = {
+  process?: CaseProcess
   rule_version: string
   method: string
   assertions: Array<{

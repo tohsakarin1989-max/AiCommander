@@ -6,6 +6,7 @@ import api from './api'
 import type {
   BonusAssessment,
   Case,
+  CaseSourceRevisionDetail,
   CaseAutomationWorkbench,
   CaseCreate,
   CaseUpdatePayload,
@@ -35,6 +36,9 @@ import type {
   CaseDiagram,
   CaseProcessingCard,
   CaseProfile,
+  CaseLocation,
+  CaseMeasurement,
+  CaseSources,
 } from '../types'
 
 export interface CaseImportError {
@@ -92,6 +96,25 @@ export interface CaseImportOptions {
 }
 
 export const caseApi = {
+  getCaseSources: async (id: number, signal?: AbortSignal): Promise<CaseSources> =>
+    (await api.get(`/cases/${id}/sources`, { signal })).data,
+  getCaseSourceRevision: async (id: number, revision: number, signal?: AbortSignal): Promise<CaseSourceRevisionDetail> =>
+    (await api.get(`/cases/${id}/sources/${encodeURIComponent(revision)}`, { signal })).data,
+  getSourceReference: async (caseId: number, reference: number, signal?: AbortSignal): Promise<{ id: number; availability: string; locator: { title?: string }; evidence?: { media_type?: string; sha256?: string } }> =>
+    (await api.get(`/cases/${caseId}/source-references/${reference}`, { signal })).data,
+  uploadEvidenceFile: async (caseId: number, file: File): Promise<{ reference_id: number; reused: boolean }> => {
+    const data = new FormData(); data.append('file', file)
+    return (await api.post(`/cases/${caseId}/evidence-files`, data, { headers: { 'Content-Type': 'multipart/form-data' } })).data
+  },
+  downloadEvidenceFile: async (caseId: number, reference: number): Promise<Blob> =>
+    (await api.get(`/cases/${caseId}/source-references/${reference}/file`, { responseType: 'blob' })).data,
+  revokeEvidenceFile: async (caseId: number, reference: number): Promise<void> => {
+    await api.post(`/cases/${caseId}/source-references/${reference}/revoke`)
+  },
+  getCaseLocations: async (id: number, signal?: AbortSignal): Promise<CaseLocation[]> =>
+    (await api.get(`/cases/${id}/locations`, { signal })).data,
+  getCaseMeasurements: async (id: number, signal?: AbortSignal): Promise<CaseMeasurement[]> =>
+    (await api.get(`/cases/${id}/measurements`, { signal })).data,
   getCasePage: async (params: CasePageParams = {}, signal?: AbortSignal): Promise<CasePage> => {
     const response = await api.get<CasePage>('/cases/page', {
       params, signal, paramsSerializer: { indexes: null },
@@ -154,7 +177,7 @@ export const caseApi = {
     missing_location?: boolean
     operational_area_id?: number
   }): Promise<Case[]> => {
-    const response = await api.get<Case[]>('/cases', {
+    const response = await api.get<Case[]>('/cases/', {
       paramsSerializer: { indexes: null },
       params: {
         skip: params?.skip ?? 0,
@@ -238,8 +261,8 @@ export const caseApi = {
     return response.data
   },
 
-  getCaseProfile: async (caseId: number): Promise<CaseProfile> => {
-    const response = await api.get<CaseProfile>(`/cases/${caseId}/profile`)
+  getCaseProfile: async (caseId: number, params?: { include_similar?: boolean }): Promise<CaseProfile> => {
+    const response = await api.get<CaseProfile>(`/cases/${caseId}/profile`, { params })
     return response.data
   },
 
@@ -320,7 +343,7 @@ export const caseApi = {
   },
 
   getChainLinks: async (caseId: number, includeRejected = false): Promise<ChainLink[]> => {
-    const response = await api.get<ChainLink[]>('/chain-links', {
+    const response = await api.get<ChainLink[]>('/chain-links/', {
       params: { case_id: caseId, include_rejected: includeRejected },
     })
     return response.data

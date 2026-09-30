@@ -5,7 +5,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "5.4.0-stable"
+    APP_VERSION: str = "6.5.0-stable"
     ALEMBIC_TARGET: str = "head"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     ENABLE_BONUS_ACCOUNTING: bool = False
     AUTO_CREATE_TABLES: bool = True
     ENABLE_AGENT_LAB: bool = False
+    # None preserves the old opt-in; explicit flags decouple business queries.
+    ENABLE_INTELLIGENT_QUERY: Optional[bool] = None
     ENABLE_SHOWCASE: bool = False
     AGENT_MODE: Literal["off", "shadow", "assist"] = "off"
     AGENT_MUTATIONS_ENABLED: bool = False
@@ -62,7 +64,8 @@ class Settings(BaseSettings):
     ENABLE_LEGACY_PUBLIC_MAP_SYNC: bool = False
     ENABLE_LEGACY_EXTERNAL_GEO: bool = False
     ENABLE_LEGACY_PATROL_MATERIALIZATION: bool = False
-    ENABLE_LEGACY_OPERATIONS_MODULES: bool = True
+    # Accepted only as false for old deployment files; retired routes cannot reopen.
+    ENABLE_LEGACY_OPERATIONS_MODULES: bool = False
     MODEL_DATA_EGRESS_POLICY: Literal["local_only", "external_redacted_only"] = "local_only"
     TRUSTED_LOCAL_MODEL_HOSTS: str = "localhost,127.0.0.1,::1"
     
@@ -70,7 +73,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
 
-    @field_validator("AGENT_MODEL_ID", "CASE_SEMANTIC_MODEL_ID", mode="before")
+    @field_validator("AGENT_MODEL_ID", "CASE_SEMANTIC_MODEL_ID", "ENABLE_INTELLIGENT_QUERY", mode="before")
     @classmethod
     def empty_agent_model_id_is_unset(cls, value):
         return None if value == "" else value
@@ -88,6 +91,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_security(self):
+        if self.ENABLE_LEGACY_OPERATIONS_MODULES:
+            raise ValueError("旧巡逻、调度人员和重点部位模块已退出运行，请移除旧开启配置")
         if self.AGENT_MUTATIONS_ENABLED and (
             not self.ENABLE_AGENT_LAB or self.AGENT_MODE != "assist"
         ):
@@ -145,8 +150,6 @@ class Settings(BaseSettings):
             raise ValueError("生产环境必须启用安全会话 Cookie")
         if self.AUTO_CREATE_TABLES:
             raise ValueError("生产环境必须关闭 AUTO_CREATE_TABLES 并使用 Alembic")
-        if self.ENABLE_LEGACY_OPERATIONS_MODULES:
-            raise ValueError("生产环境必须关闭未纳入厂区隔离的旧巡逻、人员和重点部位模块")
         if (
             self.ENABLE_LEGACY_PUBLIC_MAP_SYNC
             or self.ENABLE_LEGACY_EXTERNAL_GEO

@@ -16,6 +16,7 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.models.map_foundation import OperationalArea
 from app.services.case_history_retrieval import CaseHistoryRetrieval, HistoryUnavailable
 from app.services.case_knowledge_service import CaseKnowledgeService
+from tests.history_index_helpers import build_history_index
 
 
 @pytest.fixture
@@ -45,6 +46,7 @@ def corpus(db_session, monkeypatch):
     db_session.add(Case(case_number="HIDDEN", occurred_time=datetime(2026, 9, 1),
                         location="秘密测试区域", description="夜间打孔盗油使用软管。", operational_area_id=2))
     db_session.commit()
+    build_history_index(db_session)
     return old
 
 
@@ -60,7 +62,8 @@ def test_old_cases_are_recalled_across_all_authorized_history_without_writes(db_
     assert result["items"][0]["case_number"] == "OLD-MATCH"
     assert result["items"][0]["shared_conditions"]
     assert result["coverage"]["authorized_cases"] == 621
-    assert result["coverage"]["scanned_cases"] == 621
+    assert result["coverage"]["indexed_cases"] == 621
+    assert result["coverage"]["scanned_cases"] == 1
     assert result["coverage"]["complete"] is True
     assert result["coverage"]["recency_limit"] is None
     assert not {"insert", "update", "delete"}.intersection(statements)
@@ -83,7 +86,8 @@ def test_legacy_search_and_citations_share_all_history_and_keep_case_filter(db_s
     assert not writes
     assert result['items'][0]['source_type'] == 'case_profile'
     assert result['items'][0]['source_id'] == corpus.id
-    assert result['history']['coverage']['scanned_cases'] == 621
+    assert result['history']['coverage']['indexed_cases'] == 621
+    assert result['history']['coverage']['scanned_cases'] == 1
     assert result['history']['coverage']['recency_limit'] is None
     assert 'HIDDEN' not in json.dumps(result)
     assert CaseKnowledgeService.citation_assist(db_session, '打孔盗油软管')['citations'][0]['route'] == f'/cases?caseId={corpus.id}'
@@ -105,6 +109,7 @@ def test_legacy_partial_empty_result_is_not_a_completed_no_match(db_session, cor
 def test_legacy_metadata_search_is_current_and_does_not_create_assertions(db_session, corpus):
     corpus.report_unit = '专用测试单位甲'
     db_session.commit()
+    build_history_index(db_session, [corpus])
     result = CaseKnowledgeService.search(db_session, '专用测试单位甲', case_id=corpus.id)
     assert result['items'][0]['case_id'] == corpus.id
     assert not result['items'][0]['shared_conditions']
@@ -112,6 +117,9 @@ def test_legacy_metadata_search_is_current_and_does_not_create_assertions(db_ses
     version = result['items'][0]['versions']['source_text_hash']
     corpus.report_unit = '单位已变更'
     db_session.commit()
+    pending = CaseHistoryRetrieval.search(db_session, query=corpus.case_number, filters={'case_id': corpus.id})
+    assert pending['items'] == [] and pending['state'] == 'partial'
+    build_history_index(db_session, [corpus])
     updated = CaseHistoryRetrieval.search(db_session, query=corpus.case_number, filters={'case_id': corpus.id})
     assert updated['items'][0]['versions']['source_text_hash'] != version
 
@@ -137,6 +145,7 @@ def test_negated_action_is_not_a_positive_match(db_session):
     db_session.add(Case(case_number="NEGATED", occurred_time=datetime(2020, 1, 1),
                         location="未知", description="未转运。", operational_area_id=1))
     db_session.commit()
+    build_history_index(db_session)
     assert CaseHistoryRetrieval.search(db_session, query="转运")["items"] == []
     result = CaseHistoryRetrieval.search(db_session, query="未转运")
     assert result["items"][0]["shared_conditions"] == [["action", "转运", "negated"]]
@@ -151,6 +160,7 @@ def test_only_confirmed_experience_with_accessible_evidence_is_returned(db_sessi
     assert not CaseHistoryRetrieval.search(db_session, query="特殊储存")["items"]
     asset.status = "confirmed"
     db_session.commit()
+    build_history_index(db_session, [corpus])
     result = CaseHistoryRetrieval.search(db_session, query="特殊储存")
     assert result["items"][0]["source_type"] == "experience_card"
     asset.evidence_refs = [{"id": "case:999999"}]

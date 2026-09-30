@@ -24,7 +24,7 @@ def _brief(db, row):
         'scope_policy_version', 'evidence_refs', 'information_gaps')}
 
 
-def freeze_references(db, aggregate, args, *, deadline):
+def freeze_references(db, aggregate, args, *, deadline, include_context=True):
     references = {'case_results': [], 'roads': [], 'briefs': [], 'maps': []}
     areas = set()
     for source in aggregate['source_manifest']:
@@ -58,10 +58,14 @@ def freeze_references(db, aggregate, args, *, deadline):
                     artifact = read_road_artifact(db, road.id)
                 except (PermissionError, ValueError):
                     continue
+                from app.services.topic_changes import road_business_state
                 references['roads'].append({'id': road.id, 'case_id': member['case_id'],
-                                           'content_sha256': artifact['content_sha256']})
+                    'content_sha256': artifact['content_sha256'],
+                    'business_state': road_business_state(artifact['content'])})
                 break
             break
+    if not include_context:
+        return references
     for area in sorted(areas):
         if monotonic() >= deadline:
             raise ValueError('topic_scan_incomplete')

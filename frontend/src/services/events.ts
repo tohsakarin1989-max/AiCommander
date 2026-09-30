@@ -7,8 +7,6 @@ import type {
   Event,
   AreaProfile,
   EventRelation,
-  AreaAnalysisRequest,
-  AreaAnalysisResponse,
   EventStatistics,
   MapEventData,
   EventCreateData,
@@ -17,11 +15,15 @@ import type {
   AreaListParams,
   CorrelationListParams,
   MapDataParams,
-  AreaRiskRankingItem,
-  AreaHotspot,
-  RefreshAreaProfileResult,
   CorrelationAnalysisResponse,
 } from '../types'
+
+export type EventScope = { operational_area_id?: number; start_date?: string; end_date?: string }
+export type ScopedEventStatistics = EventStatistics & {
+  filtered_events?: number; linked_case_count?: number; complete?: boolean; cutoff?: string;
+  scope?: EventScope & { days_back?: number | null; time_field: string; end_exclusive: boolean };
+  counting_rule?: string;
+}
 
 // ==================== 事件 API（命名空间风格） ====================
 
@@ -38,7 +40,7 @@ export const eventApi = {
     return response.data
   },
 
-  list: async (params?: EventListParams): Promise<Event[]> => {
+  list: async (params?: EventListParams & EventScope): Promise<Event[]> => {
     const response = await api.get('/events/', { params })
     return response.data
   },
@@ -66,27 +68,6 @@ export const eventApi = {
     return response.data
   },
 
-  // ---------- 区域分析 ----------
-  analyzeArea: async (request: AreaAnalysisRequest): Promise<AreaAnalysisResponse> => {
-    const response = await api.post('/events/area/analyze', request)
-    return response.data
-  },
-
-  getAreaRiskRanking: async (limit: number = 10): Promise<AreaRiskRankingItem[]> => {
-    const response = await api.get('/events/area/risk-ranking', { params: { limit } })
-    return response.data
-  },
-
-  getHotspots: async (
-    daysBack: number = 90,
-    minEvents: number = 2
-  ): Promise<AreaHotspot[]> => {
-    const response = await api.get('/events/area/hotspots', {
-      params: { days_back: daysBack, min_events: minEvents },
-    })
-    return response.data
-  },
-
   // ---------- 区域档案 ----------
   listAreaProfiles: async (params?: AreaListParams): Promise<AreaProfile[]> => {
     const response = await api.get('/events/areas', { params })
@@ -95,16 +76,6 @@ export const eventApi = {
 
   getAreaProfile: async (areaId: number): Promise<AreaProfile> => {
     const response = await api.get(`/events/areas/${areaId}`)
-    return response.data
-  },
-
-  refreshAreaProfile: async (
-    areaName: string,
-    radiusKm: number = 5.0
-  ): Promise<RefreshAreaProfileResult> => {
-    const response = await api.post(`/events/areas/${encodeURIComponent(areaName)}/refresh`, null, {
-      params: { radius_km: radiusKm },
-    })
     return response.data
   },
 
@@ -127,8 +98,8 @@ export const eventApi = {
   },
 
   // ---------- 统计和地图 ----------
-  getStatistics: async (daysBack: number = 30): Promise<EventStatistics> => {
-    const response = await api.get('/events/statistics', { params: { days_back: daysBack } })
+  getStatistics: async (scope: number | (EventScope & { all_history?: boolean; days_back?: number }) = 30): Promise<ScopedEventStatistics> => {
+    const response = await api.get('/events/statistics', { params: typeof scope === 'number' ? { days_back: scope } : scope })
     return response.data
   },
 
@@ -157,18 +128,10 @@ export const updateEvent = eventApi.update
 export const deleteEvent = eventApi.delete
 /** @deprecated 请使用 eventApi.convertToCase */
 export const convertEventToCase = eventApi.convertToCase
-/** @deprecated 请使用 eventApi.analyzeArea */
-export const analyzeArea = eventApi.analyzeArea
-/** @deprecated 请使用 eventApi.getAreaRiskRanking */
-export const getAreaRiskRanking = eventApi.getAreaRiskRanking
-/** @deprecated 请使用 eventApi.getHotspots */
-export const getHotspots = eventApi.getHotspots
 /** @deprecated 请使用 eventApi.listAreaProfiles */
 export const listAreaProfiles = eventApi.listAreaProfiles
 /** @deprecated 请使用 eventApi.getAreaProfile */
 export const getAreaProfile = eventApi.getAreaProfile
-/** @deprecated 请使用 eventApi.refreshAreaProfile */
-export const refreshAreaProfile = eventApi.refreshAreaProfile
 /** @deprecated 请使用 eventApi.analyzeCorrelations */
 export const analyzeCorrelations = eventApi.analyzeCorrelations
 /** @deprecated 请使用 eventApi.listCorrelations */

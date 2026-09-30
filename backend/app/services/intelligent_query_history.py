@@ -31,12 +31,22 @@ def validate_history_query_evidence(db, result):
             if 'authorized_area_ids' not in db.info:
                 raise ValueError('missing_scope')
             data = card['data']
-            if data['schema_version'] != 'case-history-5.1-1' or not isinstance(data['items'], list):
+            if data['schema_version'] not in {'case-history-5.1-1', 'case-history-6.3-1'} or not isinstance(data['items'], list):
                 raise ValueError('invalid_history_contract')
             source = data.get('source_case_id')
             if source is not None and _source_hash(_case(db, source)) != data['query_context']['source_text_hash']:
                 raise ValueError('source_changed')
+            if source is not None and data['schema_version'] == 'case-history-6.3-1':
+                from sqlalchemy import func
+                from app.models.case_source import CaseRevision
+                revision_id = db.scalar(select(func.max(CaseRevision.id)).where(CaseRevision.case_id == source))
+                if revision_id != data['query_context'].get('source_revision_id'):
+                    raise ValueError('source_revision_changed')
             for item in data['items']:
+                if data['schema_version'] == 'case-history-6.3-1':
+                    from app.services.case_history_fragment_search import validate_fragment_item
+                    validate_fragment_item(db, item)
+                    continue
                 case = _case(db, item['case_id'])
                 versions = item['versions']
                 if item['source_type'] == 'case':

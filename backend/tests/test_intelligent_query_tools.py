@@ -11,7 +11,9 @@ from tests.test_case_search_page import search_db, add_case  # noqa: F401
 
 def test_catalog_has_only_registered_read_tools():
     assert set(tool_catalog()) == {'find_cases', 'find_places', 'count_cases',
-                                   'compare_periods', 'summarize_results', 'find_road_results', 'find_case_profiles', 'find_history', 'aggregate_case_profiles'}
+                                   'compare_periods', 'summarize_results', 'find_road_results', 'find_case_profiles', 'find_history', 'aggregate_case_profiles',
+                                   'read_case_process', 'explain_case_result', 'read_facility_dossier', 'read_facility_at',
+                                   'compare_coverage_scenario', 'find_business_results', 'read_business_result'}
 
 
 @pytest.mark.parametrize('tool,args', [

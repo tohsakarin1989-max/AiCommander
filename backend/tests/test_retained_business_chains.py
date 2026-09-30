@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401
 from app import database
 from app.agent_runtime.runtime import AgentRunExecutor
-from app.api import agent_runs, auth, graphs, jurisdiction, knowledge, map_foundation, situation, workbench
+from app.api import agent_runs, auth, cases, graphs, jurisdiction, knowledge, map_foundation, situation, workbench
 from app.config import settings
 from app.models.agent_run import AgentRun
 from app.models.case import Case, CaseEvidence
@@ -27,6 +27,8 @@ from app.models.map_foundation import JurisdictionAssetVersion, MapFeatureClaim,
 from app.models.user import User
 from app.security import AuthMiddleware
 from app.services.auth_service import AuthService
+from app.services.case_pipeline_service import CasePipelineService
+from tests.history_index_helpers import build_history_index
 
 
 @pytest.fixture
@@ -70,7 +72,7 @@ def retained_chain(monkeypatch):
                                 requirement_key="scene_photo"))
         db.commit()
     api = FastAPI()
-    for module, prefix in ((auth, "auth"), (knowledge, "knowledge"), (workbench, "workbench"),
+    for module, prefix in ((auth, "auth"), (cases, "cases"), (knowledge, "knowledge"), (workbench, "workbench"),
                            (graphs, "graphs"), (situation, "situation"),
                            (jurisdiction, "jurisdiction"), (agent_runs, "agent-runs")):
         api.include_router(module.router, prefix=f"/api/{prefix}")
@@ -104,6 +106,16 @@ def _case_facts(factory):
                 for c in db.query(Case).order_by(Case.id)]
 
 
+def _complete_background_profile(factory, case_id):
+    with factory() as db:
+        target = db.query(Case).filter(Case.id == case_id).one()
+        target.quality_issues = None
+        event = CasePipelineService.enqueue_case_change(db, target)
+        db.commit()
+        assert event is not None
+        assert CasePipelineService.process_event(db, event.id)['status'] == 'completed'
+
+
 def _stage(client, case_id):
     response = client.get("/api/workbench/today")
     assert response.status_code == 200, response.text
@@ -121,6 +133,8 @@ def test_experience_reuse_report_workbench_and_read_only_graph_situation_chain(r
         "task_type": "experience_generate", "source_type": "case", "source_id": 1,
         "entry_path": "/case-intelligence?caseId=1",
     }, 409)
+    assert client.post("/api/knowledge/cases/1/experience-assets").status_code == 409
+    _complete_background_profile(scope.factory, 1)
     generated = _post(client, "/api/knowledge/cases/1/experience-assets", expected=201)
     assert _stage(client, 1) == "experience_review"
     task = _post(client, "/api/workbench/sessions", {
@@ -130,14 +144,20 @@ def test_experience_reuse_report_workbench_and_read_only_graph_situation_chain(r
     assert task["entry_path"] == "/case-intelligence"
     _post(client, f"/api/knowledge/assets/{generated['id']}/review", {"status": "confirmed", "note": "人工核验"})
     assert _stage(client, 1) == "completed"
+    with scope.factory() as db:
+        build_history_index(db)
     recommended = client.get("/api/knowledge/cases/2/reuse-recommendations").json()
     assert generated["id"] in {item["asset_id"] for item in recommended["items"]}
     _post(client, "/api/knowledge/reuse-decisions", {
         "source_asset_id": generated["id"], "target_case_id": 2,
         "decision": "accepted", "purpose": "同类地点条件参考，逐项核验证据",
     }, 201)
+    # Neither report nor optional experience generation may start missing analysis.
+    assert client.post("/api/knowledge/cases/2/report-snapshots", json={}).status_code == 409
+    _complete_background_profile(scope.factory, 2)
     target_experience = _post(client, "/api/knowledge/cases/2/experience-assets", expected=201)
     _post(client, f"/api/knowledge/assets/{target_experience['id']}/review", {"status": "confirmed"})
+    # Reports now format the existing automatic result; they never run analysis.
     report = _post(client, "/api/knowledge/cases/2/report-snapshots", {
         "experience_asset_ids": [generated["id"]], "days": 365,
     }, 201)
@@ -165,6 +185,15 @@ def test_experience_reuse_report_workbench_and_read_only_graph_situation_chain(r
     assert _case_facts(scope.factory) == facts
     with scope.factory() as db:
         assert (db.query(KnowledgeAsset).count(), db.query(KnowledgeReuseRecord).count()) == before
+
+
+def test_legacy_automation_uses_real_request_scope_not_background_bypass(retained_chain):
+    # Real login middleware/get_db binds the analyst scope; no dependency override.
+    response = retained_chain.analyst.get("/api/cases/2/automation-workbench")
+    assert response.status_code == 200, response.text
+    assert response.json()["case_id"] == 2
+    assert "RETAINED-3" not in response.text
+    assert retained_chain.analyst.get("/api/cases/3/automation-workbench").status_code == 404
 
 
 def test_map_source_template_preview_ingest_conflict_reingest_and_scope_chain(retained_chain):
@@ -258,4 +287,6 @@ def test_agent_off_queue_failure_and_deterministic_core_remain_usable(retained_c
         assert db.query(AgentRun).count() == 2
     assert scope.analyst.get("/api/workbench/today").status_code == 200
     assert scope.analyst.get("/api/graphs/evidence/1").status_code == 200
+    assert scope.analyst.post("/api/knowledge/cases/1/experience-assets").status_code == 409
+    _complete_background_profile(scope.factory, 1)
     _post(scope.analyst, "/api/knowledge/cases/1/experience-assets", expected=201)

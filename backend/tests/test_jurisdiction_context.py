@@ -437,15 +437,16 @@ def test_case_risk_context_uses_nearest_assets(api_db_session: Session):
 
     response = client.get(f"/api/jurisdiction/cases/{case.id}/risk-context")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["case_id"] == case.id
+    assert response.status_code == 404
+    # The internal spatial-only Lab adapter remains, without the old score.
+    payload = JurisdictionService.build_case_risk_context(api_db_session, case.id)
     assert payload["has_geo"] is True
     assert payload["nearest"]["road"]["asset"]["name"] == "南区便道"
     assert payload["nearest"]["production_target"]["asset"]["name"] == "南区12号井"
-    assert payload["risk_score"] > 0
-    assert any("道路" in condition for condition in payload["risk_conditions"])
-    assert any("技防" in action or "监控" in action for action in payload["prevention_opportunities"])
+    assert payload["risk_score"] is None
+    assert payload["risk_conditions"] == []
+    assert payload["prevention_opportunities"] == []
+    assert "不代表道路可达" in payload["boundary"]
 
 
 def test_similar_targets_explain_matching_conditions(api_db_session: Session):
@@ -462,12 +463,8 @@ def test_similar_targets_explain_matching_conditions(api_db_session: Session):
         params={"case_id": case.id, "limit": 3},
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["case_id"] == case.id
-    assert payload["items"][0]["asset"]["id"] == similar["id"]
-    assert payload["items"][0]["similarity_score"] >= 60
-    assert payload["items"][0]["reasons"]
+    assert response.status_code == 404
+    assert similar['id'] in {item['id'] for item in client.get('/api/jurisdiction/assets').json()}
 
 
 def test_case_experience_card_extracts_reusable_lessons(api_db_session: Session):
@@ -479,13 +476,9 @@ def test_case_experience_card_extracts_reusable_lessons(api_db_session: Session)
 
     response = client.get(f"/api/jurisdiction/cases/{case.id}/experience-card")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["case_id"] == case.id
-    assert payload["time_pattern"]["period"] == "凌晨"
-    assert "夜间车辆靠近盗油" in payload["modus_tags"]
-    assert payload["spatial_conditions"]
-    assert payload["reusable_lessons"]
+    assert response.status_code == 404
+    api_db_session.refresh(case)
+    assert not (case.features or {}).get('intelligence', {}).get('experience_card')
 
 
 def test_asset_risk_profile_links_cases_and_environment(api_db_session: Session):
@@ -496,10 +489,10 @@ def test_asset_risk_profile_links_cases_and_environment(api_db_session: Session)
 
     response = client.get(f"/api/jurisdiction/assets/{asset['id']}/risk-profile")
 
-    assert response.status_code == 200
-    payload = response.json()
+    assert response.status_code == 404
+    payload = JurisdictionService.build_asset_risk_profile(api_db_session, asset['id'])
     assert payload["asset"]["id"] == asset["id"]
-    assert payload["risk_score"] >= 30
+    assert payload["risk_score"] is None
     assert payload["related_cases"][0]["id"] == case.id
     assert payload["risk_reasons"]
 
@@ -551,12 +544,8 @@ def test_patrol_plan_roundtable_and_feedback_close_loop(api_db_session: Session)
     )
     effectiveness = client.get("/api/jurisdiction/effectiveness")
 
-    assert plan.status_code == 200
-    assert plan.json()["control_points"]
-    assert plan.json()["time_windows"]
-    assert briefing.status_code == 200
-    assert "议题" in briefing.json()["agenda"][0]
-    assert briefing.json()["tasks"]
+    assert plan.status_code == 404
+    assert briefing.status_code == 404
     assert feedback.status_code == 200
     assert feedback.json()["effectiveness_score"] == 82
     assert effectiveness.status_code == 200
@@ -574,17 +563,11 @@ def test_prevention_workbench_aggregates_full_decision_context(api_db_session: S
 
     response = client.get("/api/jurisdiction/prevention-workbench", params={"case_id": case.id})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["case_id"] == case.id
-    assert payload["experience_card"]["case_id"] == case.id
-    assert payload["similar_targets"]["items"]
-    assert payload["patrol_plan"]["control_points"]
-    assert payload["roundtable_briefing"]["tasks"]
-    assert "data_quality" in payload
+    assert response.status_code == 404
+    assert api_db_session.query(PatrolRecord).count() == 0
 
 
-def test_materialize_patrol_plan_creates_patrol_records(api_db_session: Session, monkeypatch):
+def test_retired_materialization_stays_blocked_even_with_legacy_flag(api_db_session: Session, monkeypatch):
     from app.api import jurisdiction
 
     monkeypatch.setattr(jurisdiction.settings, "ENABLE_LEGACY_PATROL_MATERIALIZATION", True)
@@ -605,15 +588,8 @@ def test_materialize_patrol_plan_creates_patrol_records(api_db_session: Session,
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["created_count"] >= 1
-    assert payload["patrol_records"][0]["status"] == "planned"
-    assert payload["patrol_records"][0]["patrol_type"] == "targeted"
-    patrols = api_db_session.query(PatrolRecord).all()
-    assert len(patrols) == payload["created_count"]
-    assert patrols[0].related_case_ids == [case.id]
-    assert patrols[0].area_coordinates[0]["asset_id"] is not None
+    assert response.status_code == 404
+    assert api_db_session.query(PatrolRecord).count() == 0
 
     duplicate = client.post(
         "/api/jurisdiction/patrol-plan/materialize",
@@ -624,10 +600,8 @@ def test_materialize_patrol_plan_creates_patrol_records(api_db_session: Session,
         },
     )
 
-    assert duplicate.status_code == 200
-    assert duplicate.json()["created_count"] == 0
-    assert duplicate.json()["skipped_count"] == payload["created_count"]
-    assert api_db_session.query(PatrolRecord).count() == payload["created_count"]
+    assert duplicate.status_code == 404
+    assert api_db_session.query(PatrolRecord).count() == 0
 
 
 @pytest.mark.asyncio

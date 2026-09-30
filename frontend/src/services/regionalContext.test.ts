@@ -19,6 +19,20 @@ describe('区域选择与条件接续', () => {
     const next = writeRegionalContext(new URLSearchParams('operational_area_id=1&assetId=2&caseId=3&eventId=4&start_date=2026-09-01'), { operational_area_id: 9 })
     expect(next.toString()).toBe('start_date=2026-09-01&operational_area_id=9')
   })
+  it('保留双时间和原成果引用，但不把引用变为活动报告或权限', () => {
+    const params = new URLSearchParams('assetId=8&caseId=9&case_view=relations&valid_at=2026-08-01T00%3A00%3A00Z&known_at=2026-09-01T08%3A00%3A00%2B08%3A00&mapSnapshot=map-6&resultRef=case-result-7&resultId=other&token=secret')
+    const next = new URLSearchParams(regionalContextPath('/cases/map', params).split('?')[1])
+    expect(parseRegionalContext(next)).toMatchObject({ validAt: '2026-08-01T00:00:00.000Z', knownAt: '2026-09-01T00:00:00.000Z', mapSnapshot: 'map-6', resultRef: 'case-result-7' })
+    expect(next.get('case_view')).toBe('relations'); expect(next.has('token')).toBe(false); expect(next.has('resultId')).toBe(false)
+    const cleared = writeRegionalContext(next, { valid_at: null, known_at: null })
+    expect(cleared.has('valid_at')).toBe(false); expect(cleared.has('known_at')).toBe(false)
+    expect(cleared.get('caseId')).toBe('9'); expect(cleared.get('mapSnapshot')).toBe('map-6')
+    const otherArea = writeRegionalContext(next, { operational_area_id: 3 })
+    expect(otherArea.has('mapSnapshot')).toBe(false); expect(otherArea.has('resultRef')).toBe(false)
+  })
+  it.each(['valid_at=2026-09-01', 'known_at=bad', 'valid_at=2026-02-30T00:00:00Z', 'known_at=2026-09-01T24:00:00Z', 'valid_at=2026-09-01T00:00:00Z&valid_at=2026-08-01T00:00:00Z', 'mapSnapshot=https://example.com', 'resultRef=bad%20reference'])('错误条件不回退当下：%s', search => {
+    expect(parseRegionalContext(new URLSearchParams(search)).error).toBeTruthy()
+  })
   it.each(['assetId=0', 'assetId=1bad', 'eventId=-1', 'assetId=2&assetId=3', 'operational_area_id=2&operational_area_id=3', 'start_date=bad', 'start_date=2026-10-01&end_date=2026-09-01'])('拒绝非法条件而不扩大范围：%s', query => {
     expect(parseRegionalContext(new URLSearchParams(query)).error).toBeTruthy()
   })

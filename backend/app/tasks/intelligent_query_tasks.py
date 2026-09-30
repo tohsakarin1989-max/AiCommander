@@ -3,7 +3,7 @@ import asyncio
 
 from app.config import settings
 from app.database import SessionLocal
-from app.services.intelligent_query_worker import process_next
+from app.services.intelligent_query_worker import process_next, expire_abandoned_queries
 from app.tasks.celery_app import celery_app
 
 
@@ -12,3 +12,9 @@ from app.tasks.celery_app import celery_app
 def process_query():
     with SessionLocal() as db:
         return asyncio.run(process_next(db))
+
+
+@celery_app.task(name='aicommander.queries.expire', ignore_result=True)
+def expire_queries():
+    with SessionLocal() as db:
+        return expire_abandoned_queries(db)

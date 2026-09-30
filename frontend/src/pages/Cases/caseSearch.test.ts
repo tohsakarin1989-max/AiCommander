@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail } from './caseSearch'
+import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail, returnToCaseListParams } from './caseSearch'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import type { Case } from '../../types'
 
 describe('case search contracts', () => {
+  it('窄屏返回列表只关闭档案，不丢筛选、重复状态或授权范围', () => {
+    const original = new URLSearchParams('caseId=25&case_view=sources&keyword=井场&statuses=pending&statuses=resolved&operational_area_id=3&start_date=2026-09-01')
+    const next = returnToCaseListParams(original)
+    expect(next.has('caseId')).toBe(false); expect(next.has('case_view')).toBe(false)
+    for (const key of ['keyword', 'statuses', 'operational_area_id', 'start_date']) expect(next.getAll(key)).toEqual(original.getAll(key))
+    expect(original.get('caseId')).toBe('25')
+  })
   it('invalidates deep links with cases and hides cached data after a denied refetch', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const key = caseDetailKey(1, 1, 125)

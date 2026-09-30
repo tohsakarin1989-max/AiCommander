@@ -5,11 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
-from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
-from app.services.case_pipeline_service import (
-    CASE_PROFILE_SCHEMA_VERSION, CasePipelineService,
-)
-from app.services.case_local_semantic_model import resolve_model_plan
+from app.models.case_pipeline import CasePipelineState
+from app.services.case_saved_profile import read_saved_profile
 from app.services.case_result_access import CaseResultAccessError
 from app.services.case_result_service import CaseResultService
 
@@ -25,22 +22,7 @@ class CaseWorkspaceService:
             raise CaseResultAccessError()
         state = db.scalar(select(CasePipelineState).where(CasePipelineState.case_id == case_id)
                           .execution_options(populate_existing=True))
-        profile = db.scalar(select(CaseAnalysisProfile).where(
-            CaseAnalysisProfile.case_id == case_id, CaseAnalysisProfile.is_current.is_(True),
-        ).order_by(CaseAnalysisProfile.profile_version.desc()).limit(1)
-            .execution_options(populate_existing=True))
-        current_profile = profile is not None and (
-            profile.source_hash == CasePipelineService.source_hash(db, case)
-            and profile.schema_version == CASE_PROFILE_SCHEMA_VERSION
-            and profile.dictionary_version == resolve_model_plan(db).version
-        )
-        profile_data = None if profile is None else {
-            "id": profile.id, "version": profile.profile_version,
-            "schema_version": profile.schema_version,
-            "dictionary_version": profile.dictionary_version,
-            "source_hash": profile.source_hash, "created_at": profile.created_at,
-            "payload": profile.payload,
-        }
+        profile = read_saved_profile(db, case)
         try:
             result = CaseResultService.latest(db, case_id)
         except CaseResultAccessError:
@@ -48,8 +30,27 @@ class CaseWorkspaceService:
             result = None
         result_status = ("unavailable" if result is None else
                          "updating" if result.get("freshness") == "pending_update" else "ready")
+        from app.config import settings
+        from app.services.case_automation_service import CaseAutomationService
+        from app.services.case_knowledge_service import CaseKnowledgeService
+        from app.services.case_processing_card_service import CaseProcessingCardService
+        from app.services.case_profile_service import CaseProfileService
+
+        # Reuse the already-read versions in all compatibility sections. Database
+        # failures propagate; no fallback can turn a failed read into empty facts.
+        detail = CaseProfileService.build_case_profile(db, case_id, include_similar=False,
+                                                       saved_profile=profile)
+        result_module = {"status": result_status, "data": result}
+        automation = CaseAutomationService.build_automation_workbench(
+            db, case, include_bonus=settings.ENABLE_BONUS_ACCOUNTING,
+            profile=detail, result_module=result_module,
+        )
+        processing = CaseProcessingCardService.build_processing_card(
+            db, case_id, profile=detail, bonus_assessment=automation.get("bonus_assessment"),
+        )
+        diagram = CaseKnowledgeService.build_case_diagram(db, case_id, profile=detail)
         return {
-            "schema_version": "case-workspace-5.0-1",
+            "schema_version": "case-workspace-6.0-1",
             "generated_at": datetime.now(timezone.utc),
             "case_id": case.id,
             "case": {"id": case.id, "case_number": case.case_number,
@@ -57,9 +58,12 @@ class CaseWorkspaceService:
             "pipeline": {"status": state.status if state else "not_started",
                          "requested_at": state.requested_at if state else None,
                          "completed_at": state.completed_at if state else None},
-            "profile": {"status": "ready" if current_profile else
-                        "updating" if profile is not None else "unavailable", "data": profile_data},
-            "result": {"status": result_status, "data": result},
+            "profile": profile,
+            "result": result_module,
+            "detail_profile": {"status": "ready", "data": detail},
+            "processing_card": {"status": "ready", "data": processing},
+            "automation_workbench": {"status": "ready", "data": automation},
+            "diagram": {"status": "ready", "data": diagram},
             "links": {
                 "case": f"/cases?caseId={case.id}",
                 "analysis": f"/case-intelligence?caseId={case.id}",

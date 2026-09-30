@@ -7,11 +7,14 @@ export type CaseResultCandidate = {
   score_components: Record<string, unknown>
   evidence_refs: string[]; supporting_evidence: string[]; counter_evidence: string[]
   information_gaps: string[]; boundary: string; status: string; is_official_fact: false
+  asset_id?: number; road_distance_m?: number
 }
 
 export type CaseResult = {
   id: string; created_at: string; content_sha256: string
   freshness?: 'current' | 'pending_update'
+  composition_status?: 'ready' | 'road_not_ready'
+  composition_information_gaps?: string[]
   content: {
     schema_version: string; case_id: number
     versions: {
@@ -24,6 +27,18 @@ export type CaseResult = {
     candidates: CaseResultCandidate[]
     information_gaps: { profile: Array<{ label: string; reason?: string }>; analysis: string[] }
     analysis_status: string; boundary: string[]
+    candidate_source?: string
+    composition?: {
+      base_result_id: string; base_content_sha256: string
+      road_artifact_id: string; road_content_sha256: string
+      branch: { principal_user_id: number; area_ids: number[] | null; purpose: string }
+    }
+    road_versions?: { network_id: string; analysis_at: string; [key: string]: unknown }
+    road_map?: {
+      map_snapshot_id: string; production_asset_ids: number[]
+      reference_points: Array<{ id: string; rank: number; latitude: number; longitude: number; title: string }>
+      warnings: string[]
+    }
   }
 }
 

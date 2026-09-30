@@ -18,6 +18,7 @@ from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_quality_service import CaseQualityService
 from app.services.jurisdiction_service import PRODUCTION_TARGET_TYPES, JurisdictionService
 from app.utils.geo import haversine_km
+from app.agent_runtime.execution_contract import ToolDeclaration
 
 
 class AgentToolNotAllowed(ValueError):
@@ -93,6 +94,15 @@ class AgentToolRegistry:
     @property
     def allowed_tools(self) -> tuple[str, ...]:
         return tuple(self._tools)
+
+    def declarations(self) -> dict:
+        # Lab-only declarations never enter the ordinary assistant catalog.
+        parameters = {'type': 'object', 'additionalProperties': False,
+            'properties': {'case_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                           'asset_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                           'query': {'type': 'string'}}}
+        return {name: ToolDeclaration(name, 'lab-tools-6.4-1', parameters,
+                'agent_lab', effect='candidate_only').public() for name in self._tools}
 
     def execute(
         self,

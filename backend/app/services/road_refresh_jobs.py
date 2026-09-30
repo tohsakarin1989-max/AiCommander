@@ -80,7 +80,7 @@ def _refresh_request(db, request, network_id, *, history_change=None):
                 and set(scope).isdisjoint(history_change['area_ids'])):
             return 'history_scope_unaffected'
     result = CaseResultService.read(db, request['result_id'])
-    latest = CaseResultService.latest(db, result['content']['case_id'])
+    latest = CaseResultService.latest_base(db, result['content']['case_id'])
     if latest['id'] != request['result_id'] or latest['freshness'] != 'current':
         return 'stale_result'
     previous_job = db.scalar(select(OutboxEvent).where(

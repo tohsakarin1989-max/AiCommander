@@ -60,6 +60,10 @@ def test_frozen_truck_conditions_reach_job_and_manual_route_without_car_fallback
         assert _case_calculation(db, result_id, datetime.now(timezone.utc)).vehicle.model_dump() == vehicle
     else:
         assert calculation is None and outcome['outcome'] == 'vehicle_information_missing'
+        from app.services.case_road_status import automatic_comparison_status
+        state = automatic_comparison_status(db, result_id)
+        assert state['status'] == 'information_missing'
+        assert any('车辆总重' in text for text in state['information_dependencies'])
         with pytest.raises(HTTPException) as error:
             _case_calculation(db, result_id, datetime.now(timezone.utc))
         assert error.value.status_code == 422

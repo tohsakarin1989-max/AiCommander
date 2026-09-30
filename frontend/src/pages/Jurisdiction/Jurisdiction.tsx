@@ -15,7 +15,6 @@ import {
   Row,
   Select,
   Space,
-  Spin,
   Statistic,
   Table,
   Tag,
@@ -33,11 +32,8 @@ import {
   jurisdictionApi,
   mapFoundationApi,
   snapshotLayersToAssets,
-  type CaseRiskContext,
   type JurisdictionAsset,
   type JurisdictionAssetCreate,
-  type JurisdictionDistance,
-  type PatrolPlan,
 } from '../../services'
 import JurisdictionAssetMap from './JurisdictionAssetMap'
 import MapDataGovernance from './MapDataGovernance'
@@ -197,22 +193,9 @@ function sourceLabel(source?: string | null): string {
   return SOURCE_LABELS[source] ?? source
 }
 
-function nearestEntries(context?: CaseRiskContext): Array<[string, JurisdictionDistance]> {
-  if (!context) return []
-  return Object.entries(context.nearest).filter(
-    (entry): entry is [string, JurisdictionDistance] => Boolean(entry[1])
-  )
-}
-
 function renderStringList(items?: string[], empty = '暂无数据') {
   if (!items || items.length === 0) return <Empty description={empty} />
-  return (
-    <List
-      size="small"
-      dataSource={items}
-      renderItem={item => <List.Item>{item}</List.Item>}
-    />
-  )
+  return <List size="small" dataSource={items} renderItem={item => <List.Item>{item}</List.Item>} />
 }
 
 const assetColumns: ColumnsType<JurisdictionAsset> = [
@@ -253,10 +236,10 @@ const assetColumns: ColumnsType<JurisdictionAsset> = [
     ),
   },
   {
-    title: '风险',
+    title: '人工登记等级',
     dataIndex: 'risk_level',
     width: 90,
-    render: (value?: number | null) => <Tag>{value ?? 1} 级</Tag>,
+    render: (value?: number | null) => <Tag>{value == null ? '未登记' : `${value} 级`}</Tag>,
   },
 ]
 
@@ -268,9 +251,7 @@ export default function Jurisdiction() {
   const [form] = Form.useForm<AssetFormValues>()
   const [editForm] = Form.useForm<AssetFormValues>()
   const queryClient = useQueryClient()
-  const [caseIdInput, setCaseIdInput] = useState<number | null>(null)
   const activeCaseId = regional.caseId
-  const setActiveCaseId = (id: number | null) => regional.update({ caseId: id })
   const selectedAssetId = regional.assetId
   const setSelectedAssetId = (id: number | null) => regional.update({ assetId: id })
   const [editingAsset, setEditingAsset] = useState<JurisdictionAsset | null>(null)
@@ -314,36 +295,6 @@ export default function Jurisdiction() {
     staleTime: 60_000,
   })
 
-  const contextQuery = useQuery({
-    queryKey: ['jurisdiction-risk-context', activeCaseId],
-    queryFn: () => jurisdictionApi.getCaseRiskContext(activeCaseId as number),
-    enabled: activeCaseId != null,
-  })
-
-  const similarQuery = useQuery({
-    queryKey: ['jurisdiction-similar-targets', activeCaseId],
-    queryFn: () => jurisdictionApi.getSimilarTargets(activeCaseId as number, 8),
-    enabled: activeCaseId != null,
-  })
-
-  const experienceQuery = useQuery({
-    queryKey: ['jurisdiction-experience-card', activeCaseId],
-    queryFn: () => jurisdictionApi.getCaseExperienceCard(activeCaseId as number),
-    enabled: activeCaseId != null,
-  })
-
-  const patrolPlanQuery = useQuery<PatrolPlan>({
-    queryKey: ['jurisdiction-patrol-plan', activeCaseId],
-    queryFn: () => jurisdictionApi.createPatrolPlan({ case_id: activeCaseId as number, limit: 6 }),
-    enabled: false,
-  })
-
-  const briefingQuery = useQuery({
-    queryKey: ['jurisdiction-roundtable-briefing', activeCaseId],
-    queryFn: () => jurisdictionApi.getRoundtableBriefing(activeCaseId as number),
-    enabled: activeCaseId != null,
-  })
-
   const effectivenessQuery = useQuery({
     queryKey: ['jurisdiction-effectiveness'],
     queryFn: jurisdictionApi.getEffectiveness,
@@ -353,11 +304,6 @@ export default function Jurisdiction() {
     queryKey: ['jurisdiction-data-quality', activeAreaId],
     queryFn: () => jurisdictionApi.getDataQuality(activeAreaId as number),
     enabled: activeAreaId != null,
-  })
-
-  const workbenchQuery = useQuery({
-    queryKey: ['jurisdiction-prevention-workbench', activeCaseId],
-    queryFn: () => jurisdictionApi.getPreventionWorkbench(activeCaseId ?? undefined),
   })
 
   const invalidateJurisdiction = () => {
@@ -442,7 +388,6 @@ export default function Jurisdiction() {
     },
   })
 
-  const context = contextQuery.data
   const assets = regional.ready && !assetsQuery.isError ? assetsQuery.data ?? [] : []
   const snapshotAssets = useMemo(
     () => regional.ready && !snapshotLayersQuery.isError && snapshotLayersQuery.data
@@ -456,9 +401,7 @@ export default function Jurisdiction() {
   const layerCounts = summary?.by_layer ?? {}
   const publicReferenceCount = layerCounts.public_map_reference ?? assets.filter(asset => assetLayer(asset) === 'public').length
   const businessAssetCount = layerCounts.oil_business_asset ?? assets.filter(asset => assetLayer(asset) === 'business').length
-  const derivedConditionCount = (context?.risk_conditions.length ?? 0) + (context?.prevention_opportunities.length ?? 0)
   const dataQuality = dataQualityQuery.data
-  const workbench = workbenchQuery.data
   const availableAssetTypes = useMemo(
     () => Array.from(new Set(displayedAssets.map(asset => asset.asset_type))).sort(),
     [displayedAssets]
@@ -486,14 +429,6 @@ export default function Jurisdiction() {
       verified: Boolean(asset.verified),
       tags: asset.tags ?? [],
     })
-  }
-
-  const runCaseAnalysis = () => {
-    if (!caseIdInput) {
-      message.warning('请输入案件 ID')
-      return
-    }
-    setActiveCaseId(caseIdInput)
   }
 
   return (
@@ -536,7 +471,7 @@ export default function Jurisdiction() {
         </Col>
         <Col xs={24} md={6}>
           <Card className="jurisdiction-card">
-            <Statistic title="派生条件" value={derivedConditionCount} prefix={<RadarChartOutlined />} />
+            <Statistic title="当前显示要素" value={displayedAssets.length} prefix={<RadarChartOutlined />} />
           </Card>
         </Col>
       </Row>
@@ -648,15 +583,10 @@ export default function Jurisdiction() {
         </Col>
 
         <Col xs={24} lg={7}>
-          <Card title="预防工作台总览" className="jurisdiction-card">
-            <Space direction="vertical" size={12} style={{ width: '100%' }}>
-              <Statistic title="相似风险点" value={workbench?.similar_targets?.items.length ?? 0} />
-              <Statistic title="关注点位" value={workbench?.patrol_plan?.control_points.length ?? 0} />
-              <Statistic title="复盘事项" value={workbench?.roundtable_briefing?.tasks.length ?? 0} />
-              <div className="jurisdiction-muted">
-                {activeCaseId ? `当前案件：${activeCaseId}` : '未选择案件时展示基础巡防建议'}
-              </div>
-            </Space>
+          <Card title="案件与设施研判" className="jurisdiction-card">
+            <p>地图只维护来源与位置。案件依据请在案件工作界面查看；点击设施可打开综合档案。</p>
+            <p>旧风险评分与自动经验卡已停用，缺资料不等于没有技防，空间接近不等于涉案。</p>
+            <a href={activeCaseId ? `/cases?caseId=${activeCaseId}` : '/cases'}>打开案件工作界面</a>
           </Card>
         </Col>
       </Row>
@@ -751,180 +681,6 @@ export default function Jurisdiction() {
       </Row>
 
       <Row gutter={[16, 16]} className="jurisdiction-section">
-        <Col xs={24} lg={9}>
-          <Card title="案件空间上下文" className="jurisdiction-card">
-            <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
-              <InputNumber
-                min={1}
-                style={{ width: '100%' }}
-                placeholder="输入案件 ID"
-                value={caseIdInput}
-                onChange={value => setCaseIdInput(value)}
-              />
-              <Button type="primary" onClick={runCaseAnalysis}>分析</Button>
-            </Space.Compact>
-
-            {contextQuery.isFetching && <Spin />}
-            {!context && !contextQuery.isFetching && (
-              <Empty description="输入案件 ID 后生成地图参考、业务资产和现场条件画像" />
-            )}
-            {context && (
-              <div className="risk-context">
-                <Progress percent={context.risk_score} status={context.risk_score >= 70 ? 'exception' : 'active'} />
-                <div className="context-title">{context.case_number}</div>
-                <List
-                  size="small"
-                  dataSource={nearestEntries(context)}
-                  renderItem={([key, item]) => (
-                    <List.Item>
-                      <span>{typeLabel(key)}</span>
-                      <strong>{item.asset.name} · {item.distance_km.toFixed(2)} km</strong>
-                    </List.Item>
-                  )}
-                />
-              </div>
-            )}
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={7}>
-          <Card title="风险条件" className="jurisdiction-card">
-            {context ? (
-              <List
-                size="small"
-                dataSource={context.risk_conditions}
-                renderItem={item => <List.Item>{item}</List.Item>}
-              />
-            ) : <Empty description="暂无案件画像" />}
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={8}>
-          <Card title="相似风险点" className="jurisdiction-card">
-            {similarQuery.isFetching && <Spin />}
-            {similarQuery.data && similarQuery.data.items.length > 0 ? (
-              <List
-                dataSource={similarQuery.data.items}
-                renderItem={item => (
-                  <List.Item className="similar-item">
-                    <div>
-                      <div className="similar-title">
-                        {item.asset.name}
-                        <Tag color={item.similarity_score >= 70 ? 'red' : 'orange'}>
-                          {item.similarity_score}%
-                        </Tag>
-                      </div>
-                      <div className="jurisdiction-muted">{item.reasons.slice(0, 2).join('；')}</div>
-                    </div>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Empty description="暂无相似目标，需先补齐案件坐标和周边生产目标/防控设施" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 16]} className="jurisdiction-section">
-        <Col xs={24} lg={8}>
-          <Card title="阶段2 · 案件经验卡" className="jurisdiction-card">
-            {experienceQuery.isFetching && <Spin />}
-            {experienceQuery.data ? (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div className="context-title">{experienceQuery.data.case_number}</div>
-                <Space wrap>
-                  <Tag color="blue">{experienceQuery.data.time_pattern.period}</Tag>
-                  {experienceQuery.data.modus_tags.map(tag => (
-                    <Tag key={tag}>{tag}</Tag>
-                  ))}
-                </Space>
-                <div>
-                  <div className="jurisdiction-subtitle">可复用经验</div>
-                  {renderStringList(experienceQuery.data.reusable_lessons)}
-                </div>
-              </Space>
-            ) : (
-              <Empty description="先输入案件 ID 生成经验卡" />
-            )}
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={8}>
-          <Card title="设施综合档案" className="jurisdiction-card">
-            <p>点击地图或台账要素查看生产资料、分类案件关联、事件、道路和资料缺口。</p>
-            <p>空间邻近、候选与明确关联分别显示，不按邻近案数生成风险分。</p>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={8}>
-          <Card title="阶段4 · 防控参考草案" className="jurisdiction-card">
-            <Button disabled={!canWrite || activeCaseId == null} onClick={() => void patrolPlanQuery.refetch()}>按需生成防控参考</Button>
-            {!canWrite && <Alert type="info" message="只读账号不触发部署参考生成，可查看其他已生成的研判依据" />}
-            {patrolPlanQuery.isFetching && <Spin />}
-            {patrolPlanQuery.data ? (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div className="jurisdiction-subtitle">控点</div>
-                <List
-                  size="small"
-                  dataSource={patrolPlanQuery.data.control_points}
-                  renderItem={item => (
-                    <List.Item>
-                      <span>{item.asset.name}</span>
-                      <Tag>优先级 {item.priority}</Tag>
-                    </List.Item>
-                  )}
-                />
-                <div className="jurisdiction-subtitle">控时</div>
-                <Space wrap>
-                  {patrolPlanQuery.data.time_windows.map(item => (
-                    <Tag color="red" key={item.period}>{item.period}</Tag>
-                  ))}
-                </Space>
-                {renderStringList(patrolPlanQuery.data.tactics)}
-                <Alert
-                  type="info"
-                  showIcon
-                  message="当前仅输出防控参考，不在本项目内生成处置闭环。"
-                />
-              </Space>
-            ) : (
-              <Empty description="输入案件 ID 后生成防控参考" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={[16, 16]} className="jurisdiction-section">
-        <Col xs={24} lg={12}>
-          <Card title="阶段5 · 研判复盘简报" className="jurisdiction-card">
-            {briefingQuery.isFetching && <Spin />}
-            {briefingQuery.data ? (
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={12}>
-                  <div className="jurisdiction-subtitle">复盘议题</div>
-                  {renderStringList(briefingQuery.data.agenda)}
-                </Col>
-                <Col xs={24} md={12}>
-                  <div className="jurisdiction-subtitle">建议清单</div>
-                  <List
-                    size="small"
-                    dataSource={briefingQuery.data.tasks}
-                    renderItem={item => (
-                      <List.Item>
-                        <span>{String(item.title ?? '建议事项')}</span>
-                        <Tag>{String(item.owner ?? '待分配')}</Tag>
-                      </List.Item>
-                    )}
-                  />
-                </Col>
-              </Row>
-            ) : (
-              <Empty description="输入案件 ID 后生成研判复盘简报" />
-            )}
-          </Card>
-        </Col>
-
         <Col xs={24} lg={12}>
           <Card title="阶段6 · 建议采纳反馈" className="jurisdiction-card">
             <Row gutter={[16, 16]}>

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import settings
 from app.database import get_db
 from app.services.case_knowledge_service import CaseKnowledgeService
+from app.services.case_history_retrieval import HistoryUnavailable
 from app.services.knowledge_asset_service import KnowledgeAssetError, KnowledgeAssetService
 
 
@@ -90,7 +91,13 @@ def _reviewer_label(principal) -> str:
     )
 
 
-def _raise_asset_error(exc: KnowledgeAssetError) -> None:
+def _raise_asset_error(exc: KnowledgeAssetError | HistoryUnavailable | SQLAlchemyError) -> None:
+    if isinstance(exc, HistoryUnavailable):
+        raise HTTPException(404, "历史参考不可访问或来源已失效",
+                            headers={"Cache-Control": "no-store"}) from None
+    if isinstance(exc, SQLAlchemyError):
+        raise HTTPException(503, "知识资产或历史检索暂不可用，不能据此判断没有相关资料",
+                            headers={"Cache-Control": "no-store"}) from None
     code = str(exc)
     if code == "case_not_found":
         raise HTTPException(status_code=404, detail="案件不存在")
@@ -98,6 +105,10 @@ def _raise_asset_error(exc: KnowledgeAssetError) -> None:
         raise HTTPException(status_code=404, detail="知识资产不存在")
     if code == "source_changed_since_generation":
         raise HTTPException(status_code=409, detail="源案件已变化，请重新生成后复核")
+    if code == "frozen_result_unavailable":
+        raise HTTPException(status_code=409, detail="当前没有可访问的冻结案件成果，请等待后台成果生成后再整理报告；本操作不重新研判案情")
+    if code == "frozen_result_stale":
+        raise HTTPException(status_code=409, detail="当前冻结成果已过期，请等待后台更新后再整理报告；不会复用旧结论或同步重算")
     if code == "experience_asset_not_reusable":
         raise HTTPException(status_code=422, detail="只能引用已确认且未归档的经验资产")
     if code == "cannot_reuse_same_case":
@@ -119,21 +130,27 @@ def _raise_asset_error(exc: KnowledgeAssetError) -> None:
 
 @router.get("/experience-cards")
 def list_experience_cards(
-    status: str = "confirmed",
-    limit: int = 50,
+    status: Literal["confirmed", "draft", "archived"] = "confirmed",
+    limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    return CaseKnowledgeService.list_experience_cards(db, status=status, limit=limit)
+    try:
+        return CaseKnowledgeService.list_experience_cards(db, status=status, limit=limit)
+    except (HistoryUnavailable, SQLAlchemyError) as exc:
+        _raise_asset_error(exc)
 
 
 @router.get("/experience-cards/search")
 def search_experience_cards(
-    q: str,
-    status: str = "confirmed",
-    limit: int = 20,
+    q: str = Query(..., max_length=2000),
+    status: Literal["confirmed", "draft", "archived"] = "confirmed",
+    limit: int = Query(20, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    return CaseKnowledgeService.search_experience_cards(db, q, status=status, limit=limit)
+    try:
+        return CaseKnowledgeService.search_experience_cards(db, q, status=status, limit=limit)
+    except (HistoryUnavailable, SQLAlchemyError) as exc:
+        _raise_asset_error(exc)
 
 
 @router.get("/assets")
@@ -153,7 +170,7 @@ def list_knowledge_assets(
             status=status_value,
             limit=limit,
         )
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -175,7 +192,7 @@ def generate_experience_asset(
             generated_by=_principal_user_id(principal),
         )
         return KnowledgeAssetService.asset_payload(db, asset)
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -201,7 +218,7 @@ def generate_report_snapshot(
             generated_by=_principal_user_id(principal),
         )
         return KnowledgeAssetService.asset_payload(db, asset)
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -224,7 +241,7 @@ def review_knowledge_asset(
             note=payload.note,
         )
         return KnowledgeAssetService.asset_payload(db, asset)
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -240,7 +257,7 @@ def get_reuse_recommendations(
         return KnowledgeAssetService.reuse_recommendations(
             db, case_id, days=days, limit=limit
         )
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -267,7 +284,7 @@ def record_reuse_decision(
             status.HTTP_201_CREATED if created else status.HTTP_200_OK
         )
         return KnowledgeAssetService.reuse_payload(db, record)
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -281,7 +298,7 @@ def list_reuse_records(
         return KnowledgeAssetService.list_reuse_records(
             db, target_case_id=target_case_id, limit=limit
         )
-    except KnowledgeAssetError as exc:
+    except (KnowledgeAssetError, HistoryUnavailable, SQLAlchemyError) as exc:
         _raise_asset_error(exc)
 
 
@@ -307,6 +324,8 @@ def update_experience_card_status(
             raise HTTPException(status_code=404, detail="案件不存在")
         if message == "experience_card_not_found":
             raise HTTPException(status_code=404, detail="经验卡不存在")
+        if message == "experience_asset_version_required":
+            raise HTTPException(status_code=409, detail="请打开当前经验卡的具体资产版本进行确认，旧案件入口不能代确认新内容")
         if message == "invalid_experience_status":
             raise HTTPException(status_code=422, detail="经验卡状态必须为 draft/confirmed/archived")
         raise HTTPException(status_code=400, detail=message)

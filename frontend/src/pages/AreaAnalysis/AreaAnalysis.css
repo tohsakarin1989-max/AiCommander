@@ -1,3 +1,19 @@
+.regional-view-navigation {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: var(--gap);
+}
+.regional-view-navigation [aria-current="page"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.region-workspace .sta-page--embedded {
+  height: auto;
+  padding: 0;
+}
+
 /* =========================================================
    AREA ANALYSIS PAGE — 区域研判分析
    Design system: docs/design-reference/aicommand/shell.css + pages.css

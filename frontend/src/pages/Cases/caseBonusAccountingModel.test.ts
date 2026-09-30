@@ -44,6 +44,9 @@ const assessment = (caseId: number, patch: Partial<BonusAssessment> = {}): Bonus
 })
 
 describe('caseBonusAccountingModel', () => {
+  it('发生时间未知时不制造当前季度，也不解引用空周期', () => {
+    expect(buildBonusManagementDisplay({ status: 'unknown_period', period_type: 'unknown', pricing_basis: '发生时间待明确', case_amount_status: 'not_calculated', selected_case_amount: 0, period: null, quarter: null, annual: null })).toBeNull()
+  })
   it('infers material gate status from case quality gaps before assessment is loaded', () => {
     const clean = baseCase(1, {
       quality_issues: { score: 90, level: 'high', category_scores: {}, missing_required: [], warnings: [], recommendations: [], facts: {} },

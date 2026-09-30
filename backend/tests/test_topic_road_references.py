@@ -40,7 +40,8 @@ def topic_road(ready, result_data):
     road = freeze_road_artifact(db, content)
     db.commit()
     topic = topics.create_topic(db, '冻结道路专题', {'operational_area_id': 1})
-    topics.refresh_topic(db, topic['id'])
+    outcome = topics.refresh_topic(db, topic['id'])
+    assert outcome['status'] == 'updated', outcome
     return db, topic['id'], source, road
 
 
@@ -73,3 +74,18 @@ def test_topic_cannot_serve_a_frozen_road_after_passage_permission_is_revoked(to
     for read in (topics.read_topic, topics.read_topic_views, build_topic_document):
         with pytest.raises((PermissionError, ValueError)):
             read(db, identifier, revision=1)
+
+
+def test_retired_network_produces_unavailable_basis_change_not_new_route(topic_road):
+    from app.models.road_network import RoadNetworkVersion
+    from app.services.daily_workbench_service import DailyWorkbenchService
+    db, identifier, _, _ = topic_road
+    db.get(RoadNetworkVersion, 'graph-1').status = 'retired'
+    db.commit()
+    topics.request_refresh(db, identifier)
+    assert topics.refresh_topic(db, identifier)['status'] == 'updated'
+    value = topics.read_topic(db, identifier)['snapshot']
+    message = next(item for item in value['changes']['meaningful_items'] if item['code'] == 'road_basis_unavailable')
+    assert message['evidence_refs'] == ['case:1']
+    assert topics.read_topic_views(db, identifier, revision=value['revision'])['roads'] == []
+    assert DailyWorkbenchService.daily(db)['changes'][0]['topic_id'] == identifier

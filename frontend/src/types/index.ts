@@ -16,6 +16,48 @@ export type PersonRole = '内部员工' | '司机' | '加油员' | '其他'
 export type CaseQualityLevel = 'high' | 'medium' | 'low'
 export type CaseSourceType = '巡逻发现' | '群众举报' | '领导指派' | '公安机关线索' | '技防预警' | '红色网格上报' | '作业区反馈' | '其他'
 export type OilNature = '被盗原油' | '落地原油' | '收缴油品' | '回收原油' | '其他'
+export type OilVolumeUnit = 'tonne' | 'liter' | 'kg' | 'm3' | 'unknown'
+export type TimePrecision = 'exact' | 'interval' | 'unknown'
+export interface CaseTime {
+  occurred_time?: string | null
+  occurred_from?: string | null
+  occurred_to?: string | null
+  time_precision?: TimePrecision
+  time_expression?: string | null
+  time_timezone?: string | null
+  discovered_at?: string | null
+}
+export interface CaseLocation {
+  id?: number; case_id?: number
+  role: 'incident' | 'discovery' | 'mentioned' | 'source_candidate' | 'custody'
+  description?: string | null
+  geometry?: { type: string; coordinates: unknown } | null
+  precision: 'exact' | 'area' | 'unknown'
+  source_note?: string | null
+}
+export interface CaseMeasurement {
+  id?: number; case_id?: number
+  value: number; unit: OilVolumeUnit
+  stage: 'involved' | 'seized' | 'transferred' | 'recovered' | 'unknown'
+  method?: string | null; measured_at?: string | null
+  water_cut?: number | null; water_cut_basis?: string | null; source_note?: string | null
+}
+export interface CaseSourceRevision {
+  id: number; revision: number; source_hash: string; actor_id?: number | null; created_at: string
+}
+export interface CaseSourceRevisionDetail extends CaseSourceRevision {
+  payload: {
+    case: Partial<Case>
+    locations?: CaseLocation[]
+    measurements?: CaseMeasurement[]
+    [key: string]: unknown
+  }
+}
+export interface CaseSources {
+  case_id: number; current_revision_id: number | null
+  revisions: CaseSourceRevision[]; references: Array<Record<string, unknown>>
+  next_before_revision?: number | null; boundary?: string
+}
 
 export interface Person {
   name?: string
@@ -41,6 +83,11 @@ export interface VehicleInfo {
 }
 
 export interface CaseQuality {
+  rule_version?: string
+  validation?: { status: 'valid' | 'invalid'; can_save: boolean; errors: Array<{ field: string; label: string; message: string }>; warnings: Array<{ field: string; message: string }> }
+  completeness?: { status: 'sufficient' | 'partial'; stage: string; gaps: CasePriorityGap[]; timeliness?: Record<string, unknown> }
+  capabilities?: Record<string, { label: string; status: 'ready' | 'partial' | 'missing'; data_state: 'ready' | 'partial' | 'missing'; runtime_state: 'not_checked'; assessment_scope: 'input_data_only'; blockers: string[]; next_actions: string[] }>
+  priority_gaps?: CasePriorityGap[]
   score: number
   level: CaseQualityLevel
   category_scores: Record<string, number>
@@ -48,6 +95,10 @@ export interface CaseQuality {
   warnings: Array<{ field: string; message: string }>
   recommendations: string[]
   facts: Record<string, unknown>
+}
+
+export interface CasePriorityGap {
+  field: string; label: string; reason: string; category: string; affected_capabilities: string[]
 }
 
 export interface CaseQualityPreview extends CaseQuality {
@@ -67,6 +118,7 @@ export interface CaseVehicle {
   model?: string
   plate_number?: string
   oil_volume?: number
+  oil_volume_unit?: OilVolumeUnit
   water_cut?: number
   custody_location?: string
   current_location?: string
@@ -97,6 +149,8 @@ export interface CasePerson {
 export interface CaseEvidence {
   id: number
   case_id: number
+  source_reference_id?: number | null
+  evidence_object_id?: number | null
   evidence_type?: string
   title?: string
   file_path?: string
@@ -396,6 +450,7 @@ export interface BonusManagementPeriodMetrics {
 }
 
 export interface BonusManagementContext {
+  status?: 'unknown_period' | string
   period_type: 'quarter' | string
   rules_version?: string
   pricing_basis: string
@@ -407,9 +462,9 @@ export interface BonusManagementContext {
     quarter: number
     quarter_label: string
     annual_label: string
-  }
-  quarter: BonusManagementPeriodMetrics
-  annual: BonusManagementPeriodMetrics
+  } | null
+  quarter: BonusManagementPeriodMetrics | null
+  annual: BonusManagementPeriodMetrics | null
 }
 
 export interface BonusAssessment {
@@ -499,10 +554,11 @@ export interface CaseAutomationWorkbench {
 
 export interface CaseTip {
   id: number
+  operational_area_id?: number
   case_id?: number
   reporter_name?: string
   reporter_contact?: string
-  reported_at?: string
+  reported_at?: string | null
   location?: string
   content?: string
   source_type?: CaseSourceType | string
@@ -606,12 +662,11 @@ export interface CaseFeatures {
   confidence?: number
 }
 
-export interface Case {
+export interface Case extends CaseTime {
   updated_at?: string | null
   id: number
   operational_area_id?: number | null
   case_number: string
-  occurred_time: string
   location?: string
   latitude?: number
   longitude?: number
@@ -623,6 +678,7 @@ export interface Case {
   // 涉油案件特征
   oil_type?: OilType
   oil_volume?: number
+  oil_volume_unit?: OilVolumeUnit
   oil_value?: number
   facility_type?: FacilityType
   facility_owner?: string
@@ -657,9 +713,8 @@ export interface Case {
   status: CaseStatus
 }
 
-export interface CaseCreate {
+export interface CaseCreate extends CaseTime {
   operational_area_id?: number
-  occurred_time: string
   location?: string
   latitude?: number
   longitude?: number
@@ -670,6 +725,7 @@ export interface CaseCreate {
   loss_amount?: number
   oil_type?: OilType
   oil_volume?: number
+  oil_volume_unit?: OilVolumeUnit
   oil_value?: number
   facility_type?: FacilityType
   facility_owner?: string
@@ -697,6 +753,8 @@ export interface CaseCreate {
   current_stage?: string
   initial_vehicles?: Array<Partial<CaseVehicle>>
   initial_persons?: Array<Partial<CasePerson>>
+  initial_locations?: CaseLocation[]
+  initial_measurements?: CaseMeasurement[]
 }
 
 export type CaseUpdatePayload = Partial<Omit<CaseCreate,
@@ -1593,6 +1651,12 @@ export interface ChainLink {
   link_type: ChainLinkType
   status: ChainLinkStatus
   confidence: number
+  score_kind?: 'rule_support'
+  freshness?: 'current' | 'source_changed' | 'legacy_unversioned' | 'algorithm_changed' | 'source_unavailable'
+  source_change_warning?: string | null
+  source_hash_a?: string | null
+  source_hash_b?: string | null
+  algorithm_version?: string | null
   distance_km: number
   time_diff_days: number
   reasoning?: string
@@ -1859,7 +1923,7 @@ export interface GangProfile {
   oil_types: string[]
   geographic_center?: { latitude: number; longitude: number }
   time_span_days: number
-  risk_score: number
+  risk_score: number | null
 }
 
 export interface GangAnalysisRequest {
@@ -1889,7 +1953,7 @@ export interface GangRelations {
 export interface GangStatistics {
   total_gangs: number
   total_cases_in_gangs: number
-  high_risk_gangs: number
+  high_risk_gangs: number | null
   average_gang_size: number
   top_gangs: GangProfile[]
 }

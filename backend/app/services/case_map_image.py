@@ -27,15 +27,13 @@ class CaseMapImageError(ValueError):
 
 
 def render_case_map_image(db, result_id: str, *, road_artifact_id: str | None = None) -> bytes:
-    artifact = None
+    from app.services.case_result_composition import resolve_result_components
+    source, base, artifact = resolve_result_components(db, result_id, road_artifact_id)
     map_spec = None
-    if road_artifact_id:
+    if artifact:
         from app.services.case_road_document import decode_road_geometry, load_document_road
         from app.services.facility_document_map import resolve_facility_map_input
 
-        source = CaseResultService.read(db, result_id)
-        artifact = load_document_road(db, result_id, source['content_sha256'],
-                                     source['content']['versions']['map_snapshot_id'], road_artifact_id)
         map_spec = resolve_facility_map_input(db, artifact, case_id=source['content']['case_id'])
     context = (load_result_map_context(db, result_id, map_spec=map_spec)
                if map_spec is not None else load_result_map_context(db, result_id))
@@ -56,8 +54,8 @@ def render_case_map_image(db, result_id: str, *, road_artifact_id: str | None = 
     try:
         image = _render(db, context, resources)
         if artifact:
-            current = load_document_road(db, result_id, context['content_sha256'],
-                                         context['map']['map_snapshot_id'], road_artifact_id)
+            current = load_document_road(db, base['id'], base['content_sha256'],
+                                         context['map']['map_snapshot_id'], artifact['id'])
             if current['content_sha256'] != artifact['content_sha256']:
                 raise CaseMapImageError('road_artifact_changed')
         return image
@@ -65,7 +63,7 @@ def render_case_map_image(db, result_id: str, *, road_artifact_id: str | None = 
         SLOTS.release()
 
 
-def _render(db, context, resources) -> bytes:
+def _render(db, context, resources, *, material_reader=None) -> bytes:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -121,7 +119,7 @@ def _render(db, context, resources) -> bytes:
     except Exception:
         raise CaseMapImageError("map_renderer_unavailable") from None
     # 图片生成后重新授权，撤权时不交付旧图片。
-    result = CaseResultService.read(db, context["result_id"])
+    result = material_reader() if material_reader else CaseResultService.read(db, context["result_id"])
     if result["content_sha256"] != context["content_sha256"]:
         raise CaseMapImageError("map_result_changed")
     if not image.startswith(b"\x89PNG\r\n\x1a\n") or len(image) > 8 * 1024 * 1024:

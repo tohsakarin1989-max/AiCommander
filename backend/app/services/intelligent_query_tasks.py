@@ -25,6 +25,9 @@ from app.services.intelligent_query_context import freeze_context, result_hash
 from app.services.intelligent_query_roads import validate_road_query_evidence
 from app.services.intelligent_query_history import validate_history_query_evidence
 from app.services.intelligent_query_initial_context import freeze_initial_context, require_source_case_version
+from app.services.intelligent_query_business import validate_business_query_evidence
+from app.services.intelligent_query_presets import QueryPreset
+from app.agent_runtime.execution_contract import TaskEnvelope
 
 
 TASK_TYPE = 'intelligent_query'
@@ -83,6 +86,7 @@ def _view(row):
     return {'id': row.id, 'status': row.status, 'query': row.query,
             'created_at': row.created_at, 'completed_at': row.completed_at,
             'result': row.result_summary, 'result_kind': 'historical_query_snapshot',
+            'preset': (row.input_payload or {}).get('preset'),
             'followup_context': (row.input_payload or {}).get('followup_context'),
             'initial_context': (row.input_payload or {}).get('initial_context')}
 
@@ -105,13 +109,19 @@ def _validate_context(db, row, user):
             raise PermissionError('query_context_changed')
         validate_road_query_evidence(db, parent.result_summary)
         validate_history_query_evidence(db, parent.result_summary)
+        validate_business_query_evidence(db, parent.result_summary)
     return context
 
 
-def create_query(db, question, parent_query_id=None, initial_context=None, *, topic_source=None):
+def create_query(db, question, parent_query_id=None, initial_context=None, preset=None, *, topic_source=None):
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise ValueError('invalid_query_question')
     user = _identity(db)
+    selected_preset = QueryPreset.model_validate(preset).model_dump(mode='json') if preset is not None else None
+    if selected_preset and initial_context is None and parent_query_id is None:
+        case_id = selected_preset['arguments'].get('case_id')
+        if case_id is not None:
+            initial_context = {'source_case_id': case_id}
     if parent_query_id is not None and initial_context is not None:
         raise ValueError('query_context_conflict')
     if topic_source is not None:
@@ -133,6 +143,7 @@ def create_query(db, question, parent_query_id=None, initial_context=None, *, to
         _validate_context(db, parent, user)
         validate_road_query_evidence(db, parent.result_summary)
         validate_history_query_evidence(db, parent.result_summary)
+        validate_business_query_evidence(db, parent.result_summary)
         context = freeze_context(parent)
     # Serialize each owner's admission before checking pending capacity. A no-op
     # UPDATE obtains the same lock on SQLite and PostgreSQL without broker I/O.
@@ -142,9 +153,21 @@ def create_query(db, question, parent_query_id=None, initial_context=None, *, to
     if pending >= 4:
         db.rollback()
         raise ValueError('query_capacity_reached')
-    row = AgentRun(id=str(uuid4()), task_type=TASK_TYPE, query=question.strip(),
+    run_id = str(uuid4())
+    stamp = _stamp(db, user, 'membership-v2')
+    bindings = {key: value for key, value in (context or initial or {}).items()
+                if key in {'source_case', 'topic_source', 'parent_query_id', 'parent_result_hash'}}
+    envelope = TaskEnvelope(run_id, 'deterministic_preset' if selected_preset else 'intranet_model', user.id, stamp,
+                            source_bindings=bindings).public()
+    if selected_preset:
+        from app.services.intelligent_query_context import inherit, empty_conditions
+        from app.services.intelligent_query_presets import PRESETS
+        inherit(PRESETS[selected_preset['name']], selected_preset['arguments'],
+                (context or initial or {}).get('conditions', empty_conditions()), question=question)
+    row = AgentRun(id=run_id, task_type=TASK_TYPE, query=question.strip(),
         case_ids=[], asset_ids=[], mode='shadow', status='queued', created_by=user.id,
-        data_version=_stamp(db, user, 'membership-v2'), input_payload={'scope_contract': 'membership-v2',
+        data_version=stamp, input_payload={'scope_contract': 'membership-v2', 'task_envelope': envelope,
+            **({'preset': selected_preset} if selected_preset else {}),
             **({'followup_context': context} if context else {}),
             **({'initial_context': initial} if initial else {})},
         runtime_state={}, result_summary={})
@@ -162,6 +185,7 @@ def read_query(db, run_id):
     _validate_context(db, row, user)
     validate_road_query_evidence(db, row.result_summary)
     validate_history_query_evidence(db, row.result_summary)
+    validate_business_query_evidence(db, row.result_summary)
     return _view(row)
 
 
@@ -203,6 +227,7 @@ def finish_query(db, run_id, attempt, result):
     _validate_context(db, row, user)
     validate_road_query_evidence(db, result)
     validate_history_query_evidence(db, result)
+    validate_business_query_evidence(db, result)
     if result.get('status') not in FINAL_RUN_STATUSES:
         raise ValueError('invalid_query_result_status')
     now = datetime.now(timezone.utc)
@@ -213,6 +238,31 @@ def finish_query(db, run_id, attempt, result):
         .values(status=result['status'], result_summary=jsonable_encoder(result), completed_at=now))
     if changed.rowcount:
         db.refresh(row)
+        partial_scans = [card for card in result.get('cards', [])
+                         if card.get('tool') == 'aggregate_case_profiles'
+                         and not (card.get('data') or {}).get('coverage', {}).get('complete', True)]
+        if partial_scans and result['status'] == 'degraded':
+            from copy import deepcopy
+            from app.services.profile_aggregate_jobs import create_aggregate_job
+            updated_result = deepcopy(result)
+            for card in updated_result['cards']:
+                if card not in partial_scans:
+                    continue
+                try:
+                    card['continuation'] = create_aggregate_job(db, card['evidence']['filters'], query_id=run_id)
+                except ValueError as error:
+                    if str(error) != 'topic_capacity_reached':
+                        raise
+                    card['continuation'] = {'status': 'unavailable', 'error_code': 'background_capacity_reached'}
+            row.result_summary = jsonable_encoder(updated_result)
+        usage = result.get('usage')
+        if usage is not None:
+            AgentRunService.record_usage(db, row, provider=result.get('execution_mode', 'intranet_model'),
+                model_name=row.model_name or ('not_used' if not usage['model_requests'] else 'configured_query_model'),
+                status='completed' if usage['token_state'] != 'unavailable' else 'usage_unavailable',
+                request_count=usage['model_requests'], input_tokens=usage.get('input_tokens') or 0,
+                output_tokens=usage.get('output_tokens') or 0, duration_ms=usage['duration_ms'],
+                error_code='token_usage_unavailable' if usage['token_state'] == 'unavailable' else None)
         _event(db, row, 'query_finished')
     db.commit()
     return changed.rowcount == 1
@@ -250,14 +300,41 @@ async def execute_query(db, run_id, *, model=None):
         except (ValueError, PermissionError):
             return True
 
+    # Never share the worker's active SQL connection with the cancellation
+    # watcher. StaticPool in-memory test DBs cannot supply another connection;
+    # they retain statement deadlines and between-step cancellation.
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool, SingletonThreadPool
+    engine = db.get_bind()
+    if hasattr(engine, 'pool') and not isinstance(engine.pool, (StaticPool, SingletonThreadPool)):
+        owner = db.info['principal_user_id']
+        def cancellation_probe():
+            with Session(engine) as probe:
+                probe.info['principal_user_id'] = owner
+                candidate, user = _owned(probe, run_id)
+                return (candidate.status != 'running' or candidate.attempt_count != attempt
+                        or candidate.data_version != _current_stamp(probe, user, candidate))
+        db.info['execution_cancel_probe'] = cancellation_probe
+    row = db.query(AgentRun).filter_by(id=run_id).one()
+    envelope = row.input_payload.get('task_envelope')
     try:
-        selected_model = model if model is not None else create_query_model(db)
-    except ValueError:
-        result = {'status': 'degraded', 'cards': [], 'trace': [],
-                  'error_code': 'query_model_unavailable'}
-    else:
-        result = await run_query(db, question, selected_model, cancelled=cancelled,
-                                 context=request['followup_context'] or request['initial_context'])
+        if request.get('preset'):
+            from app.services.intelligent_query_presets import run_preset
+            result = await run_preset(db, question, request['preset'], cancelled=cancelled,
+                context=request['followup_context'] or request['initial_context'], envelope=envelope)
+        else:
+            try:
+                selected_model = model if model is not None else create_query_model(db)
+            except ValueError:
+                from app.services.intelligent_query_answers import compose_answer
+                result = {'status': 'degraded', 'cards': [], 'trace': [],
+                          'execution_mode': 'intranet_model', 'task_envelope': envelope,
+                          'answer': compose_answer([]), 'error_code': 'query_model_unavailable'}
+            else:
+                result = await run_query(db, question, selected_model, cancelled=cancelled,
+                    context=request['followup_context'] or request['initial_context'], envelope=envelope)
+    finally:
+        db.info.pop('execution_cancel_probe', None)
     if result['status'] == 'cancelled':
         # The worker has already claimed this attempt. Revoked/disabled users
         # must not prevent a system-only terminal transition (no data returned).

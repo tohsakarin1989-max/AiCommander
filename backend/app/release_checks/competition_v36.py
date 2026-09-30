@@ -254,10 +254,8 @@ def run_rehearsal_rounds(
         started = time.perf_counter()
         case_time = datetime.now(timezone.utc)
         occurred_time = window.current_start + timedelta(hours=1, minutes=sequence)
-        if db.get_bind().dialect.name == "sqlite":
-            # SQLite 不保留时区；显式使用无时区 UTC 以模拟数据库回读行为。
-            case_time = case_time.replace(tzinfo=None)
-            occurred_time = occurred_time.replace(tzinfo=None)
+        # The case service normalizes aware inputs before persistence. Stripping
+        # UTC here would reinterpret the synthetic instant as local time.
         case = CaseService.create_case(
             db=db,
             case_number=f"V36-DEMO-{rehearsal_started:%Y%m%d%H%M%S}-{sequence:02d}",

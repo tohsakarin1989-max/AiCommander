@@ -21,7 +21,7 @@ from app.models.patrol import AreaRiskAssessment
 from app.models.report import Report
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_result_service import CaseResultService
-from app.services.conclusion_factory_service import ConclusionFactoryService
+from test_conclusion_result_reuse import saved_legacy
 
 
 def _session() -> Session:
@@ -32,7 +32,9 @@ def _session() -> Session:
     )
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return session_local()
+    db = session_local()
+    db.info['authorized_area_ids'] = None  # Explicit unrestricted synthetic principal.
+    return db
 
 
 def _client(db_session: Session) -> TestClient:
@@ -76,7 +78,7 @@ def _seed_work_items(db: Session) -> Case:
     db.add(
         Conclusion(
             case_id=case.id,
-            status="needs_review",
+            status="flagged",
             risk_level="high",
             summary="该结论缺少事实引用，需要人工复核。",
         )
@@ -323,10 +325,10 @@ def test_suggestions_hides_experience_exception_details(monkeypatch):
     client = _client(db)
     case = _seed_work_items(db)
 
-    def broken_existing_experience_card(_case):
+    def broken_existing_experience_card(_db, _case):
         raise RuntimeError("experience-secret-token")
 
-    monkeypatch.setattr(suggestions, "_existing_experience_card", broken_existing_experience_card)
+    monkeypatch.setattr(suggestions, "read_experience_state", broken_existing_experience_card)
 
     response = client.get("/api/suggestions/", params={"limit": 50})
 
@@ -464,7 +466,7 @@ def test_conclusion_reference_revocation_removes_item_and_summary(monkeypatch):
     db.info.update(authorized_area_ids=(1, 2), area_access_levels={1: "write"})
     CaseResultService.create_current(db, 1)
     db.commit()
-    draft = asyncio.run(ConclusionFactoryService.generate_conclusion(db, 1))
+    draft = saved_legacy(db, CaseResultService.latest(db, 1), status="flagged")
     client = _client(db)
     before = client.get("/api/suggestions/", params={"workflow": "conclusion_review"}).json()
     assert before["total"] == 1

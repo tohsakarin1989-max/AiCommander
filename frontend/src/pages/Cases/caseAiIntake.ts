@@ -2,12 +2,14 @@ import type { AiIntakeCandidate, CaseCreate, CaseStructurePreview } from '../../
 
 export const CASE_AI_INTAKE_FORM_FIELDS = new Set([
   'occurred_time',
+  'occurred_from', 'occurred_to', 'time_precision', 'time_expression', 'time_timezone', 'discovered_at',
   'report_time',
   'location',
   'case_type',
   'description',
   'oil_type',
   'oil_volume',
+  'oil_volume_unit',
   'oil_value',
   'oil_nature',
   'water_cut',
@@ -82,6 +84,7 @@ export function buildCaseAiIntakeApplication(
   const referenceCandidates = (preview.candidates || []).filter(item =>
     !CASE_AI_INTAKE_FORM_FIELDS.has(item.field),
   )
+  if (patch.occurred_time && !patch.time_precision) patch.time_precision = 'exact'
 
   return {
     patch: patch as Partial<CaseCreate>,

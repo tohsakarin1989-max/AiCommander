@@ -274,12 +274,6 @@ const Meetings: React.FC = () => {
   })
 
   // ——— Mutations ———
-  const generateConclusionMutation = useMutation({
-    mutationFn: (id: string) => aiApi.conclusion.generateFromMeeting(id),
-    onSuccess: () => message.success('结论生成成功，可在结论工厂中查看'),
-    onError: (err: any) => message.error(err?.response?.data?.detail || '结论生成失败'),
-  })
-
   const useTemplateMutation = useMutation({
     mutationFn: (id: number) => aiApi.template.use(id),
     onSuccess: (data) => {
@@ -367,7 +361,7 @@ const Meetings: React.FC = () => {
 
   return (
     <div className="page page-roundtable">
-      {!canWrite && <Alert type="info" message="只读账号可查看会议记录，不能发起会议或生成结论" />}
+      {!canWrite && <Alert type="info" message="只读账号可查看会议记录和已有材料，不能发起会议" />}
       {modelsError && <Alert type="error" message="可用会议模型读取失败，请稍后重试" />}
       {selectedQuery.isError && <Alert type="error" message="会议详情读取失败或当前账号无权访问" />}
       {reportError && <Alert type="error" message="综合报告读取失败，请稍后重试" />}
@@ -643,13 +637,12 @@ const Meetings: React.FC = () => {
                     详情
                   </button>
                   {isSelDone && (
-                    <button
+                    <a
                       className="btn-accent-sm"
-                      onClick={() => selectedMeeting && generateConclusionMutation.mutate(selectedMeeting)}
-                      disabled={!canWrite || generateConclusionMutation.isPending}
+                      href={`/reports?meetingId=${encodeURIComponent(selectedMeeting || '')}`}
                     >
-                      {generateConclusionMutation.isPending ? '生成中…' : '生成结论'}
-                    </button>
+                      阅读已有会议材料
+                    </a>
                   )}
                 </div>
                 <div className="card-body" style={{ padding: '14px 18px' }}>
@@ -1090,9 +1083,7 @@ const Meetings: React.FC = () => {
                         <div style={{ textAlign: 'center', marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--line)' }}>
                           <Button
                             icon={<FileAddOutlined />}
-                            onClick={() => selectedMeeting && generateConclusionMutation.mutate(selectedMeeting)}
-                            disabled={!canWrite}
-                            loading={generateConclusionMutation.isPending}
+                            href={`/reports?meetingId=${encodeURIComponent(selectedMeeting || '')}`}
                             style={{
                               background: "var(--accent)",
                               border: 'none',
@@ -1105,7 +1096,7 @@ const Meetings: React.FC = () => {
                               borderRadius: 0,
                             }}
                           >
-                            从此会议生成案件结论
+                            在统一材料中阅读与判断
                           </Button>
                         </div>
                       </div>

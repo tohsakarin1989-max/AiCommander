@@ -114,7 +114,7 @@ window.renderFrozenMap = async (input) => {
     map.addLayer({ id: 'saved-road', source: 'saved-road', type: 'line',
       paint: { 'line-color': '#0369a1', 'line-width': 4 } });
   }
-  const notes = [`地图版本：${basemap.version}；红点：案件记录位置；蓝点：引用设施；${spec.schema === 'case-facility-map-5.2-1' ? '绿色编号：本轮选定的可信入口。' : '橙色：待核验候选范围。'}`,
+  const notes = [`地图版本：${basemap.version}；${spec.schema === 'business-material-map-6.5-1' ? '红点：冻结案件位置；蓝点：冻结设施或独立事件。' : `红点：案件记录位置；蓝点：引用设施；${spec.schema === 'case-facility-map-5.2-1' ? '绿色编号：本轮选定的可信入口。' : '橙色：待核验候选范围。'}`}`,
     ...entrances.map(p => p.title),
     ...spec.candidates.map(c => `${c.rank}. ${c.title}（待核验）`), ...spec.warnings,
     `来源：${basemap.attribution || '见成果来源记录'}。范围不代表实际路线或已确认事实。`];

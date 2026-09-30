@@ -98,7 +98,8 @@ def process_request(db, event_id):
             OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='completed',
                                      error='road_job_vehicle_information_missing')
             db.commit()
-            return {'event_id': event_id, 'status': 'completed', 'outcome': 'vehicle_information_missing'}
+            return {'event_id': event_id, 'status': 'completed', 'outcome': 'vehicle_information_missing',
+                    'information_dependencies': ["明确对应同一辆车的车型记录", "货车高度（米）与车辆总重（吨）"]}
         job = enqueue_comparison(db, result_id=payload['result_id'],
             analysis_at=datetime.now(timezone.utc),
             vehicle=vehicle,

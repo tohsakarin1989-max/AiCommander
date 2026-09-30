@@ -36,7 +36,10 @@ def automatic_comparison_status(db, result_id):
         if job.status in ('pending', 'retry', 'processing'):
             return {**base, 'status': 'processing', 'poll_after_seconds': 10}
         if job.status == 'completed' and job.error in ('road_job_information_missing', 'road_job_vehicle_information_missing'):
-            return {**base, 'status': 'information_missing'}
+            dependencies = (["明确对应同一辆车的车型记录", "货车高度（米）和车辆总重（吨），不能用载油量替代",
+                             "核对不同车辆来源是否冲突"] if job.error == 'road_job_vehicle_information_missing' else
+                            ["有效案件记录位置", "当前授权地图中的生产设施与来源"])
+            return {**base, 'status': 'information_missing', 'information_dependencies': dependencies}
         if job.status != 'completed':
             return {**base, 'status': 'unavailable'}
     identifier = db.scalar(select(CaseRoadArtifact.id).where(

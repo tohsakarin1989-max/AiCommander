@@ -1,18 +1,11 @@
 """旧向量接口兼容层：只读统一历史索引，不再创建或读取 Chroma。"""
-import heapq
 import math
-import time
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.models.case import Case
-from app.models.case_history_index import CaseHistoryIndex
-from app.services.case_history_index_service import cached_features
-from app.services.case_history_retrieval import source_values, business_conditions, compare
-from app.services.case_history_vector_service import exact_distances
-from app.services.case_semantic_evidence import freeze_sources, snapshot_payload
-from app.services.case_semantic_service import TEXT_FIELDS, build_semantic_profile
-from app.services.local_embedding_service import LocalEmbeddingError, get_local_embedder
+from app.services.case_history_retrieval import source_values
+from app.services.local_embedding_service import get_local_embedder
 
 
 class VectorDBService:
@@ -79,67 +72,23 @@ class VectorDBService:
             raise ValueError('invalid_vector_scope')
         if not self.is_available(db):
             return []
-        model = get_local_embedder()
-        started = time.monotonic()
-        try:
-            vector = model.encode(query_text)
-        except LocalEmbeddingError:
-            self.status = {'state': 'unavailable', 'complete': False, 'model_version': model.model_version}
-            return []
-        conditions = business_conditions(build_semantic_profile({'description': query_text}))
-        with db.no_autoflush:
-            query = db.query(Case)
-            if areas is not None:
-                query = query.filter(Case.operational_area_id.in_(areas))
-            if exclude is not None:
-                query = query.filter(Case.id != exclude)
-            upper = query.with_entities(func.max(Case.id)).scalar()
-            total = query.filter(Case.id <= upper).count() if upper is not None else 0
-            cursor, scanned, missing = 0, 0, 0
-            heap = []
-            while upper is not None and cursor < upper:
-                if time.monotonic() - started > 5:
-                    break
-                cases = (query.filter(Case.id > cursor, Case.id <= upper).order_by(Case.id).limit(100)
-                         .execution_options(populate_existing=True).all())
-                if not cases:
-                    break
-                sources = {(case.id, 'case', str(case.id)): snapshot_payload(freeze_sources(source_values(case)))['sha256']
-                           for case in cases}
-                distances = exact_distances(db, sources=sources, vector=vector, model_version=model.model_version)
-                indexes = {row.case_id: row for row in db.scalars(select(CaseHistoryIndex).where(
-                    CaseHistoryIndex.case_id.in_([case.id for case in cases]), CaseHistoryIndex.source_type == 'case')
-                    .execution_options(populate_existing=True))}
-                for case in cases:
-                    key = (case.id, 'case', str(case.id))
-                    distance = distances.get(key)
-                    scanned += 1
-                    if distance is None:
-                        missing += 1
-                        continue
-                    similarity = max(-1., min(1., 1 - distance))
-                    if similarity < min_similarity:
-                        continue
-                    cached = cached_features(indexes.get(case.id), sources[key])
-                    candidate_conditions = cached[1] if cached else business_conditions(build_semantic_profile(
-                        {field: getattr(case, field) for field in TEXT_FIELDS}))
-                    comparison = compare(query_text, conditions, '', candidate_conditions)
-                    if comparison['different_conditions'] and not comparison['shared_conditions']:
-                        continue
-                    item = {'case_id': case.id, 'similarity': round(similarity, 6), 'distance': distance,
-                            'score_kind': 'cosine_similarity_not_probability',
-                            'shared_conditions': comparison['shared_conditions'],
-                            'different_conditions': comparison['different_conditions'],
-                            'metadata': {'case_id': case.id, 'operational_area_id': case.operational_area_id},
-                            'versions': {'source_hash': sources[key], 'model_version': model.model_version}}
-                    entry = (similarity, -case.id, item)
-                    if len(heap) < top_k:
-                        heapq.heappush(heap, entry)
-                    elif entry[:2] > heap[0][:2]:
-                        heapq.heapreplace(heap, entry)
-                cursor = cases[-1].id
-            complete = scanned == total and missing == 0
-            self.status = {'state': 'ready' if complete else 'partial', 'complete': complete,
-                           'authorized_cases': total, 'scanned_cases': scanned, 'missing_vectors': missing,
-                           'model_version': model.model_version, 'recency_limit': None}
-            return [item for _, _, item in sorted(heap, key=lambda row: row[:2], reverse=True)]
+        from app.services.case_history_fragment_search import search_fragments
+        result = search_fragments(db, query=query_text, source_case_id=exclude, limit=top_k,
+            source_types={'case'}, candidate_area_ids=areas, semantic_only=True,
+            min_similarity=min_similarity, embedding_model=get_local_embedder())
+        coverage = result['coverage']
+        missing = coverage['vector_missing'] + coverage['missing_index_cases']
+        self.status = {'state': result['semantic_index_state'] if result['semantic_index_state'] == 'unavailable'
+                       else 'ready' if coverage['complete'] else 'partial',
+                       'complete': coverage['complete'], 'authorized_cases': coverage['authorized_cases'],
+                       'scanned_cases': coverage['scanned_cases'], 'missing_vectors': missing,
+                       'model_version': result['query_context']['embedding_model_version'],
+                       'recency_limit': None, 'retrieval_mode': 'fragment_index', 'coverage': coverage}
+        return [{'case_id': item['case_id'], 'similarity': item['semantic_similarity'],
+                 'distance': item['semantic_distance'], 'score_kind': 'cosine_similarity_not_probability',
+                 'shared_conditions': item['shared_conditions'], 'different_conditions': item['different_conditions'],
+                 'metadata': {'case_id': item['case_id'], 'operational_area_id': item['operational_area_id']},
+                 'versions': {'source_hash': item['versions']['source_text_hash'],
+                              'model_version': item['versions']['embedding_model_version']},
+                 'fragment': item['fragment'], 'evidence_refs': item['evidence_refs']}
+                for item in result['items'] if item['semantic_similarity'] is not None]

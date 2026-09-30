@@ -13,6 +13,7 @@ from app.services.automation_alert_service import AutomationAlertService
 
 
 router = APIRouter()
+SIMULATION_RETIRED = "已停止向业务库生成模拟告警；请使用 /showcase 隔离展示，历史告警仍可查看。"
 
 
 class AutomationAlertCreate(BaseModel):
@@ -93,16 +94,12 @@ def list_alerts(
 @router.post("/", response_model=AutomationAlertResponse)
 def create_alert(payload: AutomationAlertCreate, db: Session = Depends(get_db)):
     """创建数智自动化告警。"""
+    if payload.is_simulated:
+        raise HTTPException(status_code=410, detail=SIMULATION_RETIRED)
     try:
         return AutomationAlertService.create_alert(db, payload.model_dump(exclude_none=True))
     except ValueError as exc:
         _handle_error(exc)
-
-
-@router.post("/simulated", response_model=List[AutomationAlertResponse])
-def seed_simulated_alerts(db: Session = Depends(get_db)):
-    """写入或返回内置模拟告警，用于真实设备接入前联调。"""
-    return AutomationAlertService.seed_simulated_alerts(db)
 
 
 @router.get("/{alert_id:int}", response_model=AutomationAlertResponse)

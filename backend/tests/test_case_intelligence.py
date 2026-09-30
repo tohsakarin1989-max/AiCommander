@@ -1,4 +1,5 @@
 from copy import deepcopy
+from collections import Counter
 from datetime import datetime, timedelta
 
 import pytest
@@ -13,8 +14,7 @@ from app.api import case_intelligence, cases
 from app.database import Base, get_db
 from app.models.case import Case, CaseVehicle
 from app.models.jurisdiction import JurisdictionAsset
-from app.services.assistant_service import AssistantService
-from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_intelligence_service import CaseIntelligenceService, _WorkbenchInputs
 
 
 def _session() -> Session:
@@ -25,7 +25,9 @@ def _session() -> Session:
     )
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return session_local()
+    db = session_local()
+    db.info["authorized_area_ids"] = None  # Explicit full scope for this isolated fixture.
+    return db
 
 
 def _client(db_session: Session) -> TestClient:
@@ -154,6 +156,9 @@ def _seed(db: Session) -> Case:
     _add_asset(db, "南区便道", "road", 39.9007, 116.4001)
     _add_asset(db, "东湾村", "village", 39.9100, 116.4070)
     _add_asset(db, "远端监控点", "camera", 39.9300, 116.4300)
+    # Explicit background preparation; reading the workbench must not build an index.
+    from tests.history_index_helpers import build_history_index
+    build_history_index(db)
     return base
 
 
@@ -172,15 +177,132 @@ def test_case_intelligence_workbench_builds_full_explainable_chain():
     assert payload["selected_case"]["case_number"] == "INT-001"
     assert payload["feature_tags"]["tags"]
     labels = {tag["label"] for tag in payload["feature_tags"]["tags"]}
-    assert {"凌晨时段", "道路通达", "油桶装载痕迹", "抽油泵工具"}.issubset(labels)
+    assert {"凌晨时段", "邻近已登记道路", "油桶装载痕迹", "抽油泵工具"}.issubset(labels)
     assert payload["similar_cases"]["items"][0]["case"]["case_number"] == "INT-002"
     assert payload["scene_analysis"]["reusable_rules"]
-    assert payload["area_profiles"]["items"]
+    assert payload["area_profiles"]["state"] == "retired"
+    assert payload["area_profiles"]["items"] == []
+    assert payload["area_profiles"]["profile_count"] is None
     assert payload["prevention_suggestions"]["items"]
     assert "不自动创建执行任务" in payload["prevention_suggestions"]["boundary"]
     assert "不做犯罪预测" in payload["report"]["markdown"]
     section_types = {section["type"] for section in payload["report"]["sections"]}
     assert {"facts", "patterns", "gaps", "prevention_reference"}.issubset(section_types)
+    assert payload["context_pack"]["scope"] == payload["scope"]
+    assert payload["context_pack"]["selected_case"] == payload["selected_case"]
+
+
+def _without_generation_times(value):
+    if isinstance(value, dict):
+        return {key: _without_generation_times(item) for key, item in value.items()
+                if key not in {"generated_at", "start_date"}}
+    if isinstance(value, list):
+        return [_without_generation_times(item) for item in value]
+    return value
+
+
+@pytest.mark.parametrize("days,limit,radius,similar_count,area_count", [
+    (365, 8, 1.5, 1, 1),
+    (60, 5, 2.0, 3, 2),
+])
+def test_workbench_reuses_only_equal_inputs_without_changing_analysis(
+    monkeypatch, days, limit, radius, similar_count, area_count,
+):
+    db = _session()
+    case = _seed(db)
+    calls = Counter()
+
+    def observe(name):
+        original = getattr(CaseIntelligenceService, name)
+
+        def spy(*args, **kwargs):
+            calls[name] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(CaseIntelligenceService, name, staticmethod(spy))
+
+    for name in ("find_similar_cases", "analyze_spatiotemporal_patterns", "build_area_risk_profiles"):
+        observe(name)
+
+    reused = CaseIntelligenceService.build_workbench(
+        db, case.id, days=days, limit=limit, radius_km=radius,
+    )
+    assert calls == {
+        "find_similar_cases": similar_count,
+        "analyze_spatiotemporal_patterns": 1,
+        "build_area_risk_profiles": area_count,
+    }
+
+    # Execute the same calculations afresh, as the previous nested call tree did.
+    # Window, display count and radius differences must survive the optimization.
+    def uncached(self, name, **parameters):
+        method = getattr(CaseIntelligenceService, name)
+        nested = {"_inputs": self} if name in self._NESTED else {}
+        return method(self.db, **parameters, **nested)
+
+    monkeypatch.setattr(_WorkbenchInputs, "call", uncached)
+    calls.clear()
+    uncached_result = CaseIntelligenceService.build_workbench(
+        db, case.id, days=days, limit=limit, radius_km=radius,
+    )
+    assert calls == {
+        "find_similar_cases": 8,
+        "analyze_spatiotemporal_patterns": 4,
+        "build_area_risk_profiles": 2,
+    }
+    assert _without_generation_times(reused) == _without_generation_times(uncached_result)
+
+
+def test_workbench_reuse_does_not_survive_the_call_or_authorization_change():
+    db = _session()
+    case = _seed(db)
+    first = CaseIntelligenceService.build_workbench(db, case.id)
+    case.location = "更新后的合成地点"
+    db.commit()
+    second = CaseIntelligenceService.build_workbench(db, case.id)
+    assert first["selected_case"]["location"] != second["selected_case"]["location"]
+    assert second["context_pack"]["selected_case"]["location"] == "更新后的合成地点"
+
+    db.info["authorized_area_ids"] = ()
+    with pytest.raises(ValueError, match="case_not_found"):
+        CaseIntelligenceService.build_workbench(db, case.id)
+
+
+def test_global_report_does_not_add_its_area_notes_to_shared_statistics():
+    db = _session()
+    _seed(db)
+    expected = CaseIntelligenceService.analyze_spatiotemporal_patterns(db, days=60)
+    workbench = CaseIntelligenceService.build_workbench(db, days=60)
+    assert workbench["spatiotemporal"] == expected
+    patterns = next(section["items"] for section in workbench["report"]["sections"]
+                    if section["type"] == "patterns")
+    assert not any(item.startswith("重点关注区域：") for item in patterns)
+    gaps = next(section["items"] for section in workbench["report"]["sections"] if section["type"] == "gaps")
+    assert any("旧区域风险评分已停用" in item for item in gaps)
+    assert not any(item.startswith("重点关注区域：") for item in expected["insights"])
+
+
+def test_context_compatibility_route_formats_workbench_once(monkeypatch):
+    db = _session()
+    client = _client(db)
+    base = _seed(db)
+    original = CaseIntelligenceService._build_llm_context_from_workbench
+    formatted = []
+
+    def observe(workbench):
+        formatted.append(workbench["scope"])
+        return original(workbench)
+
+    monkeypatch.setattr(CaseIntelligenceService, "_build_llm_context_from_workbench", observe)
+    parameters = {"case_id": base.id, "days": 60, "limit": 5}
+    response = client.get("/api/case-intelligence/workbench", params=parameters)
+    assert response.status_code == 200
+    assert len(formatted) == 1
+    formatted.clear()
+    compatibility = client.get("/api/case-intelligence/llm-context", params=parameters)
+    assert compatibility.status_code == 200
+    assert len(formatted) == 1
+    assert _without_generation_times(response.json()["context_pack"]) == _without_generation_times(compatibility.json())
 
 
 def test_prevention_suggestions_accept_legacy_string_quality_gaps():
@@ -218,9 +340,11 @@ def test_similarity_uses_conditions_not_same_vehicle_or_person_as_core_anchor():
     assert similar["items"]
     top = similar["items"][0]
     assert top["case"]["case_number"] == "INT-002"
-    assert any("空间环境" in reason or "车辆类型" in reason or "工具" in reason for reason in top["reasons"])
+    assert top["reasons"] and top["versions"] and top["evidence_refs"]
+    assert top["components"] == {} and top["distance_km"] is None
     assert top["duplicate_warnings"] == []
-    assert "不把同人同车重复出现作为核心依据" in similar["principle"]
+    assert "检索支持度不是概率" in similar["principle"]
+    assert similar["coverage"]["complete"] is True
 
 
 def test_manual_tag_overrides_are_persisted_in_case_features():
@@ -262,8 +386,7 @@ def test_global_spatiotemporal_and_area_profiles_work_without_selected_case():
     assert workbench.status_code == 200
     assert workbench.json()["scope"]["mode"] == "global"
     assert workbench.json()["spatiotemporal"]["case_count"] == 3
-    assert profiles.status_code == 200
-    assert profiles.json()["items"][0]["case_count"] >= 1
+    assert profiles.status_code == 404
 
 
 def test_llm_context_pack_separates_facts_inferences_suggestions_and_gaps():
@@ -285,21 +408,6 @@ def test_llm_context_pack_separates_facts_inferences_suggestions_and_gaps():
     assert payload["evidence_index"]
     assert "不得把防控参考写成已执行任务" in "；".join(payload["system_boundary"])
     assert "事实依据" in payload["llm_prompt"]
-
-
-def test_assistant_context_uses_case_intelligence_workbench():
-    db = _session()
-    base = _seed(db)
-
-    context = AssistantService._gather_context(db, f"请分析 {base.case_number} 的相似条件")
-
-    intelligence = context["case_intelligence"]
-    assert intelligence["selected_case"]["case_number"] == base.case_number
-    assert intelligence["top_tags"]
-    assert intelligence["similar_cases"][0]["case_number"] == "INT-002"
-    assert intelligence["similar_cases"][0]["score"] > 0
-    assert intelligence["suggestions"][0]["basis"]
-    assert "不自动创建执行任务" in intelligence["boundary"]
 
 
 @pytest.mark.parametrize("stored_card", [False, True])

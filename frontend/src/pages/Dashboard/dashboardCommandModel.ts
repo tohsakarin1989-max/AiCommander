@@ -333,6 +333,7 @@ export function buildWeeklyTrend(cases: Case[], now = new Date()): TrendBucket[]
   }))
 
   cases.forEach(caseItem => {
+    if (!caseItem.occurred_time || caseItem.time_precision === 'unknown' || caseItem.time_precision === 'interval') return
     const occurred = new Date(caseItem.occurred_time)
     if (Number.isNaN(occurred.getTime())) return
     const diffDays = Math.floor((now.getTime() - occurred.getTime()) / DAY_MS)

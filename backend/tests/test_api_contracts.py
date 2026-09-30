@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import agents, cases, conclusions, events, graphs, patrols, suggestions
+from app.api import agents, cases, events, graphs, suggestions
 from app.database import Base
 from app.database import get_db
 from app.models.case import CasePerson, CaseVehicle
@@ -37,9 +37,7 @@ def api_db_session() -> Session:
 def _build_client(db_session: Session) -> TestClient:
     app = FastAPI()
     app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
-    app.include_router(conclusions.router, prefix="/api/conclusions", tags=["conclusions"])
     app.include_router(events.router, prefix="/api/events", tags=["events"])
-    app.include_router(patrols.router, prefix="/api/patrols", tags=["patrols"])
     app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
     app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
     app.include_router(suggestions.router, prefix="/api/suggestions", tags=["suggestions"])
@@ -78,20 +76,9 @@ def _add_event(
     return event
 
 
-def test_generate_conclusion_accepts_json_body_and_waits_for_current_result(api_db_session: Session):
+def test_retired_conclusion_writer_is_not_registered(api_db_session):
     client = _build_client(api_db_session)
-    case = CaseService.create_case(
-        db=api_db_session,
-        case_number=None,
-        occurred_time=datetime(2025, 1, 1, 10, 0, 0),
-        description="用于接口契约测试的案件",
-    )
-    api_db_session.info["authorized_area_ids"] = None
-
-    response = client.post("/api/conclusions/generate", json={"case_id": case.id})
-
-    assert response.status_code == 409
-    assert "等待后台" in response.json()["detail"]
+    assert client.post("/api/conclusions/generate", json={"case_id": 1}).status_code == 404
     assert api_db_session.query(Conclusion).count() == 0
 
 
@@ -194,7 +181,7 @@ def test_case_update_replaces_bonus_drafts_and_clears_nullable_fields(api_db_ses
     assert persons == []
 
 
-def test_case_update_rejects_required_nulls_and_ignores_null_bonus_drafts(api_db_session: Session):
+def test_case_update_accepts_unknown_time_and_ignores_null_bonus_drafts(api_db_session: Session):
     client = _build_client(api_db_session)
     case = CaseService.create_case(
         db=api_db_session,
@@ -205,7 +192,10 @@ def test_case_update_rejects_required_nulls_and_ignores_null_bonus_drafts(api_db
     )
 
     required_null = client.put(f"/api/cases/{case.id}", json={"occurred_time": None})
-    assert required_null.status_code == 422
+    assert required_null.status_code == 200
+    assert required_null.json()["occurred_time"] is None
+    assert required_null.json()["time_precision"] == "unknown"
+    assert client.put(f"/api/cases/{case.id}", json={"case_number": None}).status_code == 422
 
     draft_null = client.put(f"/api/cases/{case.id}", json={"initial_vehicles": None})
     assert draft_null.status_code == 200
@@ -214,29 +204,8 @@ def test_case_update_rejects_required_nulls_and_ignores_null_bonus_drafts(api_db
     assert vehicles[0].plate_number == "黑E12345"
 
 
-def test_review_conclusion_accepts_json_body(api_db_session: Session):
-    client = _build_client(api_db_session)
-    conclusion = Conclusion(
-        case_id=1,
-        status="needs_review",
-        confidence=0.6,
-        risk_level="medium",
-        summary="待审核结论",
-        evidence={},
-    )
-    api_db_session.add(conclusion)
-    api_db_session.commit()
-    api_db_session.refresh(conclusion)
-
-    response = client.post(
-        f"/api/conclusions/{conclusion.id}/review",
-        json={"action": "approve"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "published"
-    assert payload["review_action"] == "approve"
+# Human decision success, version conflict and readonly scope contracts moved to
+# test_conclusion_result_api against /api/results/{kind}/{id}/judgments.
 
 
 def test_hotspot_evolution_route_is_reachable(api_db_session: Session):
@@ -251,6 +220,7 @@ def test_hotspot_evolution_route_is_reachable(api_db_session: Session):
 
 
 def test_event_static_routes_are_reachable(api_db_session: Session):
+    api_db_session.info["authorized_area_ids"] = None  # Explicit isolated all-area fixture.
     client = _build_client(api_db_session)
 
     areas = client.get("/api/events/areas")
@@ -260,13 +230,13 @@ def test_event_static_routes_are_reachable(api_db_session: Session):
     map_data = client.get("/api/events/map-data")
 
     assert areas.status_code == 200
-    assert risk_ranking.status_code == 200
-    assert hotspots.status_code == 200
+    assert risk_ranking.status_code == 404
+    assert hotspots.status_code == 404
     assert stats.status_code == 200
     assert map_data.status_code == 200
 
 
-def test_event_area_analyze_serializes_service_models(api_db_session: Session):
+def test_event_area_scoring_retired_but_records_remain(api_db_session: Session):
     client = _build_client(api_db_session)
     event = _add_event(
         api_db_session,
@@ -280,14 +250,11 @@ def test_event_area_analyze_serializes_service_models(api_db_session: Session):
         json={"area_name": "分析村", "radius_km": 5, "days_back": 30},
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["area_name"] == "分析村"
-    assert payload["events"][0]["id"] == event.id
-    assert payload["events"][0]["event_number"] == event.event_number
+    assert response.status_code == 404
+    assert api_db_session.get(type(event), event.id).event_number == "EVT-AREA-001"
 
 
-def test_event_area_risk_ranking_route_uses_service(api_db_session: Session):
+def test_event_area_risk_ranking_is_retired(api_db_session: Session):
     client = _build_client(api_db_session)
     _add_event(
         api_db_session,
@@ -298,13 +265,10 @@ def test_event_area_risk_ranking_route_uses_service(api_db_session: Session):
 
     response = client.get("/api/events/area/risk-ranking")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload[0]["area_name"] == "高风险村"
-    assert payload[0]["risk_score"] > 0
+    assert response.status_code == 404
 
 
-def test_event_hotspots_route_identifies_recent_area(api_db_session: Session):
+def test_event_weighted_hotspots_are_retired(api_db_session: Session):
     client = _build_client(api_db_session)
     _add_event(api_db_session, event_number="EVT-HOT-001", village_name="热点村")
     _add_event(
@@ -317,13 +281,10 @@ def test_event_hotspots_route_identifies_recent_area(api_db_session: Session):
 
     response = client.get("/api/events/area/hotspots?days_back=30&min_events=2")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload[0]["area_name"] == "热点村"
-    assert payload[0]["event_count"] == 2
+    assert response.status_code == 404
 
 
-def test_refresh_area_profile_handles_model_events(api_db_session: Session):
+def test_refresh_area_profile_does_not_create_new_scores(api_db_session: Session):
     client = _build_client(api_db_session)
     _add_event(
         api_db_session,
@@ -345,11 +306,7 @@ def test_refresh_area_profile_handles_model_events(api_db_session: Session):
 
     response = client.post("/api/events/areas/档案村/refresh")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["area_name"] == "档案村"
-    assert payload["total_events"] == 2
-    assert payload["risk_score"] > 0
+    assert response.status_code == 404
 
 
 def test_event_correlations_analyze_normalizes_event_id_shape(api_db_session: Session):
@@ -403,15 +360,14 @@ def test_create_event_generates_incrementing_numbers(api_db_session: Session):
     assert first.json()["event_number"] != second.json()["event_number"]
 
 
-def test_patrol_static_routes_are_reachable(api_db_session: Session):
+def test_patrol_static_routes_are_absent(api_db_session: Session):
     client = _build_client(api_db_session)
 
     risks = client.get("/api/patrols/areas/risks")
     schedule = client.get("/api/patrols/smart-schedule")
 
-    assert risks.status_code == 200
-    assert schedule.status_code == 200
-    assert "recommended_windows" in schedule.json()
+    assert risks.status_code == 404
+    assert schedule.status_code == 404
 
 
 def test_graph_serial_accepts_frontend_request_shape(api_db_session: Session):
@@ -429,22 +385,17 @@ def test_graph_serial_accepts_frontend_request_shape(api_db_session: Session):
     assert "nodes" in response.json()
 
 
-def test_agent_run_accepts_frontend_request_shape(api_db_session: Session, monkeypatch):
+def test_legacy_agent_run_is_retired_even_when_agent_lab_is_enabled(api_db_session: Session, monkeypatch):
     monkeypatch.setattr(agents.settings, "ENABLE_AGENT_LAB", True)
     monkeypatch.setattr(agents.settings, "AGENT_MODE", "shadow")
     client = _build_client(api_db_session)
 
     response = client.post("/api/agents/run", json={"query": "研判最近案件"})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["query"] == "研判最近案件"
-    assert payload["result"]["steps"]
-    assert "facts" in payload["result"]
-    assert "自动侦查" not in payload["result"]["result"]
+    assert response.status_code == 404
 
 
-def test_legacy_agent_route_is_hidden_when_agent_lab_is_off(api_db_session: Session, monkeypatch):
+def test_legacy_agent_route_reports_retirement_when_agent_lab_is_off(api_db_session: Session, monkeypatch):
     monkeypatch.setattr(agents.settings, "ENABLE_AGENT_LAB", False)
     monkeypatch.setattr(agents.settings, "AGENT_MODE", "off")
 

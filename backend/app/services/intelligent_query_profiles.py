@@ -23,7 +23,9 @@ def profile_results(db, args):
             partial = True
             row['information_gaps'] = ['标准画像尚未生成，不代表没有相关线索。']
             continue
-        if profile.source_hash != CasePipelineService.source_hash(db, case):
+        from app.services.case_saved_profile import read_saved_profile
+        saved = read_saved_profile(db, case)
+        if saved['status'] != 'ready':
             partial = True
             row['information_gaps'] = ['案件已更新，画像等待后台更新；不使用过期画像描述当前案件。']
             continue

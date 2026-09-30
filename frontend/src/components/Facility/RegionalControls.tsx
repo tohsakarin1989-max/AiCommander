@@ -22,7 +22,7 @@ export default function RegionalControls({ context }: { context: ReturnType<type
     </div>
     <p>当前时间窗（北京时间，起含止不含）：{windowTime(context.startDate)} — {windowTime(context.endDate)}。调整日期按当日零时取值。</p>
     <nav className="regional-links" aria-label="同条件区域视图">
-      {[['/cases/map', '案件与设施地图'], ['/area-analysis', '设施条件对照与时间线'], ['/cases/spacetime', '时空规律'], ['/jurisdiction', '辖区底座'], ['/events', '独立事件']].map(([path, label]) =>
+      {[['/cases/map', '案件与设施地图'], ['/area-analysis', '区域综合研判'], ['/jurisdiction', '辖区底座'], ['/events', '独立事件']].map(([path, label]) =>
         <Link key={path} to={regionalContextPath(path, context.params)}>{label}</Link>)}
     </nav>
     {context.error && <p role="alert">{context.error}</p>}

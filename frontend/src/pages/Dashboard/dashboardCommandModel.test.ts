@@ -26,6 +26,10 @@ const baseStatistics = {
 }
 
 describe('dashboardCommandModel', () => {
+  it('时间未知和区间记录不伪造一个精确周点', () => {
+    const cases = [baseCase(1, { occurred_time: null, time_precision: 'unknown' }), baseCase(2, { occurred_time: '2026-05-09T00:00:00Z', time_precision: 'interval', occurred_from: '2026-05-01T00:00:00Z', occurred_to: '2026-05-09T00:00:00Z' })]
+    expect(buildWeeklyTrend(cases, new Date('2026-05-10T00:00:00Z')).every(item => item.count === 0)).toBe(true)
+  })
   it('builds seven weekly trend buckets from real case dates', () => {
     const cases = [
       baseCase(1, { occurred_time: '2026-05-09T00:00:00.000Z' }),

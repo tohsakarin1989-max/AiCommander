@@ -119,7 +119,7 @@ class CaseResultService:
         return result_id, created_id is not None
 
     @staticmethod
-    def latest(db: Session, case_id: int) -> dict:
+    def latest_base(db: Session, case_id: int) -> dict:
         """只读当前画像/地图匹配成果；不在GET中生成或更新记录。"""
         if "authorized_area_ids" not in db.info:
             raise CaseResultAccessError()
@@ -128,7 +128,8 @@ class CaseResultService:
             .join(CaseAnalysisProfile, CaseAnalysisProfile.id == CaseResultSnapshot.case_profile_id)
             .outerjoin(CaseAnalysisRun, CaseAnalysisRun.id == run_ref)
             .outerjoin(MapSnapshot, MapSnapshot.id == CaseAnalysisRun.map_snapshot_id)
-            .where(CaseResultSnapshot.case_id == case_id, CaseAnalysisProfile.is_current.is_(True))
+            .where(CaseResultSnapshot.case_id == case_id, CaseAnalysisProfile.is_current.is_(True),
+                   CaseResultSnapshot.content["schema_version"].as_string() == "case-result-4.1.0-1")
             .where(or_(run_ref.is_(None), MapSnapshot.status == "current"))
             .order_by(run_ref.is_not(None).desc(), CaseResultSnapshot.created_at.desc(), CaseResultSnapshot.id.desc())
             .limit(1))
@@ -145,11 +146,68 @@ class CaseResultService:
             raise CaseResultAccessError()
         # 保存后新画像尚在排队时不把旧版本冒充最新；历史编号仍可查看。
         versions = result["content"]["versions"]
+        from app.services.case_source_service import CaseSourceService
+        revision = CaseSourceService.latest_revision(db, case.id)
         current = (CasePipelineService.source_hash(db, case) == versions["case_source_hash"]
+                   and versions.get("source_revision_id") == (revision.id if revision else None)
                    and versions["profile_schema"] == CASE_PROFILE_SCHEMA_VERSION
                    and versions["dictionary_version"] == resolve_model_plan(db).version)
         result["freshness"] = "current" if current else "pending_update"
         return result
+
+    @staticmethod
+    def latest(db: Session, case_id: int) -> dict:
+        """Select a readable current branch, without generating or scheduling work."""
+        from app.services.case_result_composition import (
+            COMPOSITION_SCHEMA_VERSION, branch_for, is_current_composition,
+        )
+        base = CaseResultService.latest_base(db, case_id)
+        try:
+            branch = branch_for(db)
+        except PermissionError:
+            branch = None
+        if branch is not None and base["freshness"] == "current":
+            ids = db.scalars(select(CaseResultSnapshot.id).where(
+                CaseResultSnapshot.case_id == case_id,
+                CaseResultSnapshot.content["schema_version"].as_string() == COMPOSITION_SCHEMA_VERSION,
+                CaseResultSnapshot.content["composition"]["base_result_id"].as_string() == base["id"],
+                CaseResultSnapshot.content["composition"]["branch"]["principal_user_id"].as_integer() == branch["principal_user_id"],
+            ).order_by(CaseResultSnapshot.created_at.desc(), CaseResultSnapshot.id.desc()))
+            for identifier in ids:
+                try:
+                    result = CaseResultService.read(db, identifier)
+                    if is_current_composition(db, result, base):
+                        return {**result, "freshness": "current", "composition_status": "ready"}
+                except (PermissionError, ValueError, KeyError, TypeError):
+                    continue
+        # The base remains useful, but its geometric candidates are explicitly
+        # not represented as a completed road-informed current composition.
+        return {**base, "composition_status": "road_not_ready",
+                "candidate_source": "legacy_spatial_base",
+                "composition_information_gaps": ["当前授权及条件下尚无可用道路组合成果；基础空间候选仅供历史参考。"]}
+
+    @staticmethod
+    def freeze_composition(db: Session, artifact_id: str) -> tuple[str, bool]:
+        """Called after an attachment is frozen; no enqueue, commit or source write."""
+        from app.services.case_result_composition import assemble_composition, branch_for
+        from app.services.case_road_artifact_service import read_road_artifact
+        artifact = read_road_artifact(db, artifact_id)
+        base = CaseResultService.read(db, artifact["content"]["result_id"])
+        snapshot = assemble_composition(base, artifact, branch_for(db))
+        require_result_access(db, snapshot)
+        result_id, created = CaseResultService._persist(db, snapshot)
+        if created:
+            from app.models.case_pipeline import OutboxEvent
+            # A completed audit event is not a road request and has no consumer
+            # that could enqueue the same attachment again.
+            db.add(OutboxEvent(id=str(uuid4()), event_type="case.result.composed",
+                aggregate_type="case_result", aggregate_id=result_id,
+                idempotency_key=f"case.result.composed:{snapshot['content_sha256']}",
+                status="completed", attempts=0,
+                payload={"result_id": result_id, "base_result_id": base["id"],
+                         "road_artifact_id": artifact_id}))
+            db.flush()
+        return result_id, created
 
     @staticmethod
     def read(db: Session, result_id: str) -> dict:

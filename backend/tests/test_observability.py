@@ -171,10 +171,22 @@ def test_case_pipeline_health_degrades_for_stale_pending_event(monkeypatch, db_s
     assert payload["affects_core_readiness"] is False
 
 
-def test_http_error_keeps_detail_and_adds_error_envelope():
-    client = TestClient(app)
-
-    response = client.get("/api/cases/999999", headers={"X-Request-Id": "req-test-error"})
+def test_http_error_keeps_detail_and_adds_error_envelope(monkeypatch):
+    # Never access the configured application database from an HTTP error test.
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base, get_db
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    def isolated_db():
+        with Session(engine) as db:
+            yield db
+    monkeypatch.setitem(app.dependency_overrides, get_db, isolated_db)
+    try:
+        response = TestClient(app).get("/api/cases/999999", headers={"X-Request-Id": "req-test-error"})
+    finally:
+        engine.dispose()
 
     assert response.status_code == 404
     assert response.headers["X-Request-Id"] == "req-test-error"
@@ -189,7 +201,7 @@ def test_validation_error_keeps_fastapi_detail_shape():
 
     response = client.post(
         "/api/cases/",
-        json={"description": "缺少 occurred_time"},
+        json={"description": "合成非法日期", "occurred_time": "not-a-date"},
         headers={"X-Request-Id": "req-test-validation"},
     )
 

@@ -2,13 +2,82 @@
 import re
 
 from app.models.case import Case
-from app.models.case_insight import CaseHypothesis
+from app.models.case_insight import CaseHypothesis, CaseAnalysisRun
 from app.models.case_pipeline import CaseAnalysisProfile
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.map_foundation import MapSnapshot, MapSnapshotFeature
+from app.models.case_result import CaseResultSnapshot
+from app.services.case_result_service import CaseResultService
 
 
-def result_content(db, run):
+def result_content(db, run, *, matched_run_only=False):
+    """Current consumers prefer exactly the same frozen result as the case page.
+
+    Pre-snapshot historical runs remain readable and explicitly labeled; failure
+    to authorize a frozen result never falls through to legacy run text.
+    """
+    snapshots = db.query(CaseResultSnapshot).filter(CaseResultSnapshot.case_id == run.case_id)
+    if matched_run_only:
+        snapshots = snapshots.filter(CaseResultSnapshot.content['versions']['analysis_run_id'].as_string() == run.id)
+    exists = snapshots.first()
+    if exists:
+        try:
+            if matched_run_only:
+                # A date-filtered request names historical runs. It must never
+                # silently switch from that run to a newer case composition.
+                from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION
+                result = None
+                for row in snapshots.order_by(
+                    (CaseResultSnapshot.content['schema_version'].as_string() == COMPOSITION_SCHEMA_VERSION).desc(),
+                    CaseResultSnapshot.created_at.desc(), CaseResultSnapshot.id.desc()):
+                    try:
+                        result = CaseResultService.read(db, row.id)
+                        break
+                    except PermissionError:
+                        continue
+                if result is None:
+                    raise PermissionError('query_result_unavailable')
+            else:
+                result = CaseResultService.latest(db, run.case_id)
+        except PermissionError:
+            return {'summary': None, 'hypotheses': [], 'content_state': 'unavailable',
+                    'information_gaps': ['当前冻结成果不可交付；不使用其他来源绕过权限。']}
+        content = result['content']
+        from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION
+        ready = ((result.get('composition_status') == 'ready' and result.get('freshness') == 'current')
+                 or (matched_run_only and content['schema_version'] == COMPOSITION_SCHEMA_VERSION))
+        source_run = db.query(CaseAnalysisRun).filter_by(id=content['versions']['analysis_run_id']).first()
+        return {'result_id': result['id'], 'content_sha256': result['content_sha256'],
+                'run_id': content['versions']['analysis_run_id'],
+                'completed_at': source_run.completed_at if source_run else None,
+                'status': content['analysis_status'],
+                'algorithm_version': ((content.get('road_algorithm_versions') or {}).get('scorer')
+                                      if ready else content['versions'].get('algorithm_version')),
+                'road_algorithm_versions': content.get('road_algorithm_versions'),
+                'road_versions': content.get('road_versions'),
+                'evidence_ref': f"case_result:{result['id']}",
+                'case_profile_id': content['versions']['case_profile_id'],
+                'map_snapshot_id': content['versions']['map_snapshot_id'],
+                'result_created_at': result['created_at'],
+                'summary': ('历史冻结道路组合；不代表当前条件' if matched_run_only else '道路前置设施候选') if ready else '基础成果；道路组合未就绪',
+                'is_current_composition': ready and not matched_run_only,
+                'candidate_source': content.get('candidate_source', 'legacy_spatial_base'),
+                'hypotheses': [{**item, 'hypothesis_type': item['category'], 'rule_support': item['score']}
+                               for item in content['candidates']] if ready else [],
+                'content_state': 'ready' if ready else 'partial',
+                'information_gaps': [*content['information_gaps']['analysis'],
+                                     *result.get('composition_information_gaps', [])],
+                'versions': content['versions'], 'composition': content.get('composition')}
+    historical = _legacy_result_content(db, run)
+    return {**historical, 'run_id': run.id, 'status': run.status, 'completed_at': run.completed_at,
+            'algorithm_version': run.algorithm_version, 'case_profile_id': run.case_profile_id,
+            'map_snapshot_id': run.map_snapshot_id, 'evidence_ref': f'case_analysis_run:{run.id}',
+            'candidate_source': 'historical_run_without_snapshot',
+            'is_current_composition': False,
+            'information_gaps': [*historical['information_gaps'], '历史运行尚未形成统一冻结成果；不是当前道路组合。']}
+
+
+def _legacy_result_content(db, run):
     # Deliberately query instead of Session.get: cached ORM objects do not prove
     # current authorization after a scope change within the same session.
     profile = db.query(CaseAnalysisProfile.id).filter(

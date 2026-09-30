@@ -1,6 +1,7 @@
 """One version signature for automatic facility comparison and upgrades."""
 
-SCORING_INPUT_VERSION = 'facility-scoring-inputs-5.2-1'
+SCORING_INPUT_VERSION = 'facility-scoring-inputs-6.3-1'
+SUPPORTED_SCORING_INPUTS = frozenset({'facility-scoring-inputs-5.2-1', SCORING_INPUT_VERSION})
 
 
 def current_versions() -> dict[str, str]:
@@ -9,7 +10,8 @@ def current_versions() -> dict[str, str]:
     from app.services.facility_candidate_pool import RECALL_VERSION
     from app.services.facility_history_conditions import VERSION as HISTORY_VERSION
     from app.services.facility_production_conditions import VERSION as PRODUCTION_VERSION
-    from app.services.scorers.facility_roads_v52 import VERSION as SCORER_VERSION
+    from app.services.scorers.facility_roads_v63 import VERSION as SCORER_VERSION
+    from app.services.facility_conditions_v63 import VERSION as CONDITIONS_VERSION
 
     return {
         "recall": RECALL_VERSION,
@@ -18,4 +20,5 @@ def current_versions() -> dict[str, str]:
         "production": PRODUCTION_VERSION,
         "scorer": SCORER_VERSION,
         "scoring_inputs": SCORING_INPUT_VERSION,
+        "conditions": CONDITIONS_VERSION,
     }

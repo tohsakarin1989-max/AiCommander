@@ -19,6 +19,19 @@ def _well(name: str, latitude: float, longitude: float, output: float, region: s
     )
 
 
+def test_nearby_camera_is_not_verified_coverage():
+    from app.models.case import Case
+    well = _well('合成井', 46.65, 125.1, 1, '合成区域')
+    camera = JurisdictionAsset(id=2, name='合成设备', asset_type='camera',
+                               latitude=46.65, longitude=125.1001)
+    case = Case(id=3, case_number='SYN-NEAR', latitude=46.65, longitude=125.1001,
+                occurred_time=datetime.now(timezone.utc))
+    result = WellAttentionService._build_well_profile(well, [], [case], [camera],
+        datetime.now(timezone.utc), 3.0, 1)
+    assert any('邻近已登记设备不等于有效覆盖' in gap for gap in result['data_gaps'])
+    assert any('3 公里' in reason and '空间邻近' in reason for reason in result['reasons'])
+
+
 def test_recent_trace_can_raise_well_attention_without_historical_case(db_session):
     target = _well("北一-12井", 46.6500, 125.1000, 18.5, "萨中作业区")
     other = _well("北二-07井", 46.7100, 124.8800, 8.0, "喇嘛甸作业区")
