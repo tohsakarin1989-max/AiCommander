@@ -1,6 +1,8 @@
 # AiCommander Phase A Workflow Closure Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **历史设计参考（2026-06-05）**：当前 AGENTS 引用本文是为了核对相关业务边界，不表示重新执行这份计划。只有用户明确要求恢复本计划时，才结合当前代码与已完成证据选择尚需实施的步骤；不强制调用已缺失的 superpowers 子技能。原计划中的只读 GET、显式写入口、人工事实/奖金复核及验收约束继续有效。
+>
+> 本文保留的 Commit 步骤仅在用户已明确授权相应提交时执行；阅读计划、完成检查或记录结果本身不授权提交、推送或发布。不得覆盖当前任务范围外的已有改动。
 
 **Goal:** Build the Phase A minimum workflow loop: case entry readiness -> deterministic background review -> read-only suggestion queue -> safe action routing.
 
@@ -1248,7 +1250,7 @@ Open and manually verify:
 
 - [ ] **Step 6: Commit verification notes if a tracked doc is updated**
 
-If verification notes are added to a tracked file, commit them:
+只有用户已明确授权提交，且验证记录确需修改该受跟踪文件时，才执行以下提交示例：
 
 ```bash
 git add docs/superpowers/plans/2026-06-05-aicommander-phase-a-workflow-closure.md

@@ -19,7 +19,7 @@ def test_retry_api_success_and_rejected_scope(search_db):
         path = f"/api/case-imports/batches/{batch_id}"
         assert client.get(path).json()["rows"][0]["time_zone"] == "Asia/Shanghai"
         assert client.post(path + "/retry", json={"rows": [{"row": 2, "revision": 0, "changes": {"commit": True}}]}).status_code == 422
-        payload = {"rows": [{"row": 2, "revision": 0, "changes": {"longitude": "125"}}]}
+        payload = {"rows": [{"row": 2, "revision": 0, "changes": {"longitude": "125", "latitude": "47"}}]}
         assert client.post(path + "/retry", json=payload).json()["created"] == 1
         assert client.post(path + "/retry", json=payload).json()["created"] == 0
         assert client.get(path).json()["rows"] == []

@@ -8,6 +8,7 @@ import type { QueryTask } from '../../services/intelligentQueries'
 
 const state = vi.hoisted(() => ({
   params: new URLSearchParams(), question: '查看当前案件', hookIndex: 0,
+  queryEnabled: true,
   task: undefined as QueryTask | undefined, error: undefined as unknown,
   mutations: [] as Array<{ mutationFn: (...args: any[]) => unknown; onSuccess?: (...args: any[]) => unknown }>,
   submitted: [] as unknown[], queries: [] as Array<{ enabled: boolean }>,
@@ -17,7 +18,9 @@ vi.mock('react', async original => {
   return { ...actual, useState: (value: unknown) => actual.useState(state.hookIndex++ === 0 ? state.question : value) }
 })
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: 'analyst' }, sessionEpoch: 4 }) }))
-vi.mock('react-router-dom', () => ({ useSearchParams: () => [state.params, vi.fn()], useNavigate: () => vi.fn() }))
+vi.mock('../../config/useRuntimeFeatures', () => ({ useRuntimeFeatures: () => ({ availability: { intelligent_query: state.queryEnabled ? 'enabled' : 'disabled' } }) }))
+vi.mock('react-router-dom', () => ({ useSearchParams: () => [state.params, vi.fn()], useNavigate: () => vi.fn(),
+  Link: ({ to, children }: { to: string; children: ReactNode }) => <a href={to}>{children}</a> }))
 vi.mock('../../services/intelligentQueries', async original => ({
   ...await original<typeof import('../../services/intelligentQueries')>(),
   intelligentQueriesApi: { create: vi.fn(), read: vi.fn(), cancel: vi.fn(), document: vi.fn() },
@@ -54,8 +57,19 @@ const context = { schema_version: 'query-initial-context-5.0-1',
 
 describe('助手继承案件选择', () => {
   beforeEach(() => {
+    state.queryEnabled = true
     state.params = new URLSearchParams(); state.task = undefined; state.error = undefined
     state.question = '查看当前案件'; state.mutations = []; state.submitted = []; state.queries = []; vi.clearAllMocks()
+  })
+
+  it('停止新查询仍读取已有任务，不再提交问题', () => {
+    state.queryEnabled = false
+    state.params = new URLSearchParams(`query=${id}`)
+    const page = render()
+    expect(page.html).toContain('已有任务仍可按权限读取、导出和取消')
+    expect(state.queries[state.queries.length - 1]?.enabled).toBe(true)
+    page.submit()
+    expect(state.submitted).toEqual([])
   })
 
   it('展示初始条件但不自动创建，用户提交时才带入同一条件', async () => {

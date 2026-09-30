@@ -3,12 +3,14 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { analysisTopicsApi as api } from '../../services/analysisTopics'
-import type { TopicFilters } from '../../services/analysisTopics'
+import type { TopicFilters, TopicOptions, TopicSourceContext } from '../../services/analysisTopics'
 import { ProfileAggregateContent } from '../Assistant/ProfileAggregateContent'
 import { queryIdValid, rowsOf } from '../Assistant/queryPresentation'
 import { TopicForm } from './TopicForm'
 import { TopicLinkedViews } from './TopicViews'
-import { categoryNames, filterLines, kindNames, topicError, topicState } from './topicPresentation'
+import { TopicBusinessContext } from './TopicBusinessContext'
+import { resultPath } from '../../services/results'
+import { categoryNames, definitionLines, filterLines, kindNames, topicError, topicState } from './topicPresentation'
 import './Topics.css'
 
 const tabs = { overview: '总体与变化', groups: '条件案组', map: '地图与时间线', materials: '已有成果与周期材料' }
@@ -24,6 +26,10 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const id = params.get('topic') || ''
+  const sourceKind = params.get('source'), sourceId = params.get('sourceId')
+  const sourceValid = !id && ['case', 'facility'].includes(sourceKind || '') && !!sourceId && /^[1-9]\d*$/.test(sourceId) && Number.isSafeInteger(Number(sourceId))
+  const sourceContext: TopicSourceContext | undefined = sourceValid ? { kind: sourceKind as 'case' | 'facility', id: Number(sourceId) } : undefined
+  const sourceInvalid = !id && (params.has('source') || params.has('sourceId')) && !sourceValid
   const revision = revisionValue(params.get('revision'))
   const invalid = Boolean(id && !queryIdValid(id) || params.has('revision') && !revision)
   const [listPage, setListPage] = useState(1)
@@ -31,21 +37,22 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
   const [historyPage, setHistoryPage] = useState(1)
   const [tab, setTab] = useState<keyof typeof tabs>('overview')
   const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [question, setQuestion] = useState('')
   const [notes, setNotes] = useState('')
   const [evidenceId, setEvidenceId] = useState<number | null>(null)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
   const abort = useRef<AbortController | null>(null)
-  const currentSelection = `${identity}:${id}:${revision ?? 'latest'}`
+  const currentSelection = `${identity}:${id}:${revision ?? 'latest'}:${sourceKind}:${sourceId}`
   const selection = useRef(currentSelection)
   selection.current = currentSelection
   const live = useRef(true)
   useEffect(() => { live.current = true; return () => { live.current = false; abort.current?.abort() } }, [])
   useEffect(() => {
-    setPage(1); setHistoryPage(1); setEvidenceId(null); setNotice(''); setQuestion(''); setExporting(false)
+    setPage(1); setHistoryPage(1); setEvidenceId(null); setNotice(''); setQuestion(''); setExporting(false); setEditing(false)
     abort.current?.abort(); abort.current = null
-  }, [id, revision])
+  }, [id, revision, sourceKind, sourceId])
   const list = useQuery({ queryKey: ['analysis-topics', identity, listPage],
     queryFn: ({ signal }) => api.list(listPage, signal), enabled: allowed, retry: false })
   const detail = useQuery({ queryKey: ['analysis-topic', identity, id, revision, page],
@@ -63,28 +70,38 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
     enabled: !!snapshot && tab !== 'overview', retry: false })
   const history = useQuery({ queryKey: ['topic-history', identity, id, snapshot?.id, historyPage],
     queryFn: ({ signal }) => api.history(id, historyPage, signal), enabled: !!topic && !!snapshot, retry: false })
+  const definitions = useQuery({ queryKey: ['topic-definitions', identity, id, topic?.definition_revision],
+    queryFn: ({ signal }) => api.definitions(id, signal), enabled: !!topic && editing, retry: false })
   const evidence = useQuery({ queryKey: ['topic-evidence', identity, id, snapshot?.id, evidenceId],
     queryFn: ({ signal }) => api.evidence(id, snapshot!.revision, evidenceId!, signal),
     enabled: !!snapshot && evidenceId != null, retry: false })
-  const create = useMutation({ mutationFn: ({ title, filters }: { title: string; filters: TopicFilters; source: string }) => api.create(title, filters),
+  const create = useMutation({ mutationFn: ({ title, filters, options }: { title: string; filters: TopicFilters; options: TopicOptions; source: string }) =>
+    options.source_context ? api.fromContext(title, { ...options, filters, source_context: options.source_context }) : api.create(title, filters, options),
     onSuccess: (result, variables) => {
       if (!live.current || selection.current !== variables.source) return
       setShowForm(false); setParams({ topic: result.id }); void list.refetch()
     } })
+  const revise = useMutation({ mutationFn: ({ title, filters, options }: { title: string; filters: TopicFilters; options: TopicOptions; source: string }) =>
+    api.update(id, { title, question: options.question, question_kind: options.question_kind, filters, window: options.window, expected_definition_revision: topic?.definition_revision }),
+    onSuccess: (_result, variables) => {
+      if (!live.current || selection.current !== variables.source) return
+      setEditing(false); setNotice('关注条件已保存新版本，旧成果保持不变。'); void detail.refetch(); void list.refetch()
+    } })
   const action = useMutation({
-    mutationFn: async ({ kind, source }: { kind: 'pause' | 'notes' | 'refresh' | 'question'; source: string }) => {
+    mutationFn: async ({ kind, source }: { kind: 'pause' | 'notes' | 'refresh' | 'question' | 'cancel'; source: string }) => {
       if (source !== selection.current || !topic) throw new Error('selection_changed')
       if (kind === 'refresh') return api.refresh(id)
+      if (kind === 'cancel') return api.cancel(id)
       if (kind === 'question') return api.question(id, snapshot!.revision, question.trim())
       return api.update(id, kind === 'notes' ? { notes } : { paused: !topic.paused })
     },
     onSuccess: (result, variables) => {
       if (!live.current || selection.current !== variables.source) return
       if (variables.kind === 'question') navigate(`/assistant?query=${result.id}`)
-      else { setNotice(variables.kind === 'refresh' ? '已请求更新，当前仍显示选定版本。完成后可切换最新成果。' : '设置已保存。'); void detail.refetch(); void list.refetch() }
+      else { setNotice(variables.kind === 'refresh' ? '已请求更新，当前仍显示选定版本。完成后可切换最新成果。' : variables.kind === 'cancel' ? '已请求取消本轮，持续关注设置不变。' : '设置已保存。'); void detail.refetch(); void list.refetch() }
     },
   })
-  function run(kind: 'pause' | 'notes' | 'refresh' | 'question') { setNotice(''); action.mutate({ kind, source: currentSelection }) }
+  function run(kind: 'pause' | 'notes' | 'refresh' | 'question' | 'cancel') { setNotice(''); action.mutate({ kind, source: currentSelection }) }
   async function download(format: 'docx' | 'pdf') {
     if (!snapshot || exporting) return
     const source = currentSelection
@@ -105,11 +122,12 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
   const evidenceData = !evidence.error && evidence.data?.snapshot_id === snapshot?.id && evidence.data?.content_sha256 === snapshot?.content_sha256 ? evidence.data : undefined
   const totalPages = snapshot ? Math.max(1, Math.ceil(Math.max(Number(snapshot.aggregate.total), Number(snapshot.aggregate.pattern_total)) / 20)) : 1
   return <main className="page-scrollable topics">
-    <header className="page-title"><h1>专题研判</h1><span className="sub">保存条件，复用依据</span></header>
-    <p className="topic-intro">从全部授权历史案件中观察共同条件与变化。专题只保存分析条件和成果引用，不生成正式串并案关系。</p>
+    <header className="page-title"><h1>专题研判</h1><span className="sub">保存问题，持续关注变化</span></header>
+    <p className="topic-intro">关注案件、设施或一组业务条件。后台续算并保留每版依据，只有实质变化才提示，不生成正式串并案关系。</p>
     <div className="topic-actions"><button className="btn-primary" onClick={() => setShowForm(v => !v)}>{showForm ? '收起新专题' : '新建专题'}</button>
       <Link to="/assistant">从研判助手保存条件</Link></div>
-    {showForm && <section className="topic-section"><TopicForm pending={create.isPending} onCreate={(title, filters) => create.mutate({ title, filters, source: currentSelection })} />
+    {sourceInvalid && <p role="alert">带入的业务对象无效，未退回全库范围。请从案件或设施重新打开。</p>}
+    {(showForm || sourceContext) && !sourceInvalid && <section className="topic-section"><TopicForm key={`${sourceKind}:${sourceId}`} sourceContext={sourceContext} pending={create.isPending} onCreate={(title, filters, options) => create.mutate({ title, filters, options, source: currentSelection })} />
       {create.error && <p role="alert">{topicError(create.error)}</p>}</section>}
     <div className="topic-layout"><aside aria-label="已保存专题">
       <h2>我的专题</h2>
@@ -127,12 +145,27 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
       {id && detail.isPending && !invalid && <p role="status">正在读取专题与当前权限…</p>}
       {detail.error && <p role="alert">{topicError(detail.error)} <button className="btn-ghost" onClick={() => void detail.refetch()}>重新读取</button></p>}
       {topic && <>
-        <h2>{topic.title}</h2><p role="status">{topicState[topic.refresh_state] || '状态待确认'}</p>
-        <details><summary>当前专题条件（同时满足）</summary><ul>{filterLines(topic.filters).map(line => <li key={line}>{line}</li>)}</ul>
-          {!filterLines(topic.filters).length && <p>全部授权案件，不限制案发时间。</p>}</details>
+        <h2>{snapshot?.definition?.title || topic.title}</h2><p role="status">{topicState[topic.refresh_state] || '状态待确认'}</p>
+        <p>{snapshot?.definition?.question || topic.question}</p>
+        <details><summary>正在阅读版本的条件（同时满足）</summary><ul>{filterLines(snapshot?.definition?.resolved_filters || snapshot?.definition?.filters || topic.filters).map(line => <li key={line}>{line}</li>)}</ul>
+          {snapshot?.definition?.window.mode === 'rolling' && <p>最近 {snapshot.definition.window.days} 天，统计截止固定为 {snapshot.definition.as_of}。</p>}
+          {!filterLines(snapshot?.definition?.filters || topic.filters).length && <p>没有额外案件条件，范围仍受所选对象及当前权限限定。</p>}</details>
+        {topic.refresh_progress && <section role="status" className="topic-progress"><h3>后台处理进度</h3>
+          <p>{topic.refresh_progress.scanned_cases} / {topic.refresh_progress.total_cases} 起案件；阶段：{({ cases: '案件', events: '事件', sources: '来源', finalize: '冻结成果', validating: '版本复核' } as Record<string, string>)[topic.refresh_progress.phase] || topic.refresh_progress.phase}。</p>
+          <p>条件第 {topic.refresh_progress.definition_revision} 版，截止 {topic.refresh_progress.as_of}；已完成批次可继续处理，无需一直打开页面。</p>
+          {['queued', 'running'].includes(topic.refresh_progress.state) && <button className="btn-ghost" disabled={action.isPending} onClick={() => run('cancel')}>取消本轮处理</button>}
+        </section>}
         <div className="topic-actions"><button className="btn-ghost" disabled={action.isPending || topic.paused} onClick={() => run('refresh')}>检查资料变化</button>
           <button className="btn-ghost" disabled={action.isPending} onClick={() => run('pause')}>{topic.paused ? '恢复自动更新' : '暂停自动更新'}</button>
           <button className="btn-ghost" onClick={() => { setParams({ topic: id }); void detail.refetch(); void history.refetch() }}>查看最新成果</button></div>
+        <button className="btn-ghost" onClick={() => setEditing(value => !value)}>{editing ? '收起条件修订' : '修改持续关注条件'}</button>
+        {editing && topic.definition_revision && <section className="topic-section"><p>修订当前第 {topic.definition_revision} 版定义，不改写正在阅读的历史成果。</p>
+          <TopicForm key={topic.definition_revision} initial={{ revision: topic.definition_revision, title: topic.title, question: topic.question || topic.title,
+            filters: topic.filters, window: topic.window || { mode: 'fixed' }, question_kind: topic.question_kind }} sourceContext={topic.source_context || undefined}
+            pending={revise.isPending} onCreate={(title, filters, options) => revise.mutate({ title, filters, options, source: currentSelection })} />
+          {revise.error && <p role="alert">条件保存未完成，可能已有更新；请重新读取当前定义，不会覆盖别人修改。</p>}
+          <details><summary>历次关注条件</summary>{definitions.error ? <p role="alert">条件历史暂不可读。</p> : <ul>{definitions.data?.items.map(item => <li key={item.revision}>{definitionLines(item).map((line, index) => <p key={index}>{line}</p>)}</li>)}</ul>}</details>
+        </section>}
         {action.error && action.variables?.source === currentSelection && <p role="alert">{topicError(action.error)}</p>}
         {notice && <p role="status">{notice}</p>}
         {!snapshot && <p>尚未形成可用成果。后台会处理已保存的请求；等待时间较长时请管理员检查专题 Worker，案件录入不受影响。</p>}
@@ -147,7 +180,9 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
           <nav className="topic-tabs" aria-label="专题成果视图">{Object.entries(tabs).map(([key, title]) => <button className="btn-ghost" key={key}
             aria-pressed={tab === key} onClick={() => setTab(key as keyof typeof tabs)}>{title}</button>)}</nav>
           {tab === 'overview' ? <>
+            <TopicBusinessContext snapshot={snapshot} />
             <ProfileAggregateContent data={snapshot.aggregate} />
+            {Array.isArray(snapshot.changes.meaningful_items) && <ul>{rowsOf(snapshot.changes.meaningful_items).map((item, index) => <li key={index}>{String(item.message || '')}</li>)}</ul>}
             <h3>与上一成果的变化</h3><ul>{[['added_case_ids', '新增来源'], ['updated_case_ids', '资料更新'], ['entered_group', '新入案组'], ['left_group', '移出案组']].map(([key, name]) =>
               <li key={key}>{name}：{Array.isArray(snapshot.changes[key]) ? (snapshot.changes[key] as unknown[]).length : '未提供'} 起</li>)}</ul>
             {snapshot.changes.comparison_state === 'restricted' && <p>部分历史来源已受限，变化不能作为完整对比。</p>}
@@ -172,7 +207,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
                   <small>{item.evidence_ref}</small></li>)}</ul>
               </section>}{evidenceData.information_gaps?.map(gap => <p key={gap}>{gap}</p>)}</>}
           </details>
-          <div className="topic-actions"><button className="btn-ghost" disabled={exporting} onClick={() => void download('docx')}>导出本版 Word</button>
+          <div className="topic-actions"><Link to={resultPath('topic', snapshot.id)}>在统一材料中阅读与判断</Link><button className="btn-ghost" disabled={exporting} onClick={() => void download('docx')}>导出本版 Word</button>
             <button className="btn-ghost" disabled={exporting} onClick={() => void download('pdf')}>导出本版 PDF</button>{exporting && <span role="status">正在生成材料…</span>}</div>
           <form className="topic-form" onSubmit={e => { e.preventDefault(); if (question.trim()) run('question') }}>
             <label>带着专题条件继续追问<textarea value={question} maxLength={2000} rows={2} onChange={e => setQuestion(e.target.value)} /></label>

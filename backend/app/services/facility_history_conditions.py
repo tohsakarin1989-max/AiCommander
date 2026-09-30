@@ -7,7 +7,7 @@ from app.services.case_history_retrieval import CaseHistoryRetrieval, source_val
 from app.services.case_semantic_evidence import freeze_sources, snapshot_payload
 from app.services.case_semantic_service import TERMS
 
-VERSION = "facility-history-5.2-1"
+VERSION = "facility-history-6.3-1"
 
 
 def history_context(db, source: dict) -> dict:
@@ -16,6 +16,8 @@ def history_context(db, source: dict) -> dict:
     query = "。".join(str(standard.get(key) or "") for key in ("modus_operandi", "facility_type", "oil_type", "location"))[:2000]
     result = {"version": VERSION, "state": "information_missing", "records": [],
               "boundary": "历史相似条件用于设施类型参照，不证明这些历史案件涉及本设施。"}
+    if "time_precision" in standard and standard["time_precision"] != "exact":
+        return {**result, "reason": "案件时间未明确到可比较时点，未用存储时间作精确历史截止"}
     occurred = standard.get("occurred_time")
     try:
         before = datetime.fromisoformat(occurred.replace("Z", "+00:00"))
@@ -26,12 +28,14 @@ def history_context(db, source: dict) -> dict:
         return {**result, "reason": "案件未形成可检索的明确条件"}
     found = CaseHistoryRetrieval.search(db, query=query, source_case_id=content["case_id"],
                                       filters={"end_date": before}, limit=20)
-    records, omitted = [], 0
+    records, omitted, seen_cases = [], 0, set()
     for item in found["items"]:
         # Confirmed experience cards remain available in v5.1 history UI. Do not
         # reinterpret an experience summary as a formal facility association.
         if item["source_type"] != "case":
             continue
+        if item["case_id"] in seen_cases:
+            continue  # Multiple matched fragments are still one historical case.
         case = db.query(Case).populate_existing().filter_by(id=item["case_id"]).first()
         if case is None:
             raise PermissionError("facility_history_access_changed")
@@ -48,13 +52,18 @@ def history_context(db, source: dict) -> dict:
         if len(json.dumps(values, ensure_ascii=False).encode()) > 64_000:
             omitted += 1
             continue
-        shared = [row for row in item["shared_conditions"] if row[2] == "stated"]
+        # A matched process fragment and its parent case remain different
+        # evidence layers. Formal oil/facility fields come from the validated
+        # parent index; they are not invented members of the matched event.
+        shared = [row for row in item.get("source_shared_conditions", item["shared_conditions"]) if row[2] == "stated"]
         if not any(row[0] in {"method", "place_condition", "upstream_clue", "downstream_clue", "action"} for row in shared):
             continue
+        seen_cases.add(case.id)
         records.append({"case_id": case.id, "source_text_hash": signature, "source_fields": values,
                         "occurred_time": case.occurred_time.isoformat() if case.occurred_time else None,
                         "versions": item["versions"], "shared_conditions": shared,
-                        "different_conditions": item["different_conditions"]})
+                        "different_conditions": item.get("source_different_conditions", item["different_conditions"]),
+                        "references": item.get("evidence_refs", []), "fragment": item.get("fragment")})
     return {**result, "state": found["state"], "coverage": found["coverage"],
             "retrieval_version": found["query_context"]["retrieval_version"],
             "query_sha256": found["query_context"]["query_sha256"], "before": before.isoformat(),

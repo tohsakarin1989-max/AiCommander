@@ -15,10 +15,13 @@ def test_runtime_features_reflect_actual_settings_without_secrets(db_session, mo
     payload = runtime.runtime_status(db_session).model_dump()
 
     assert payload["features"] == {
-        "legacy_operations": enabled,
+        "legacy_operations": False,
         "bonus_accounting": enabled,
         "agent_lab": enabled,
         "showcase": enabled,
+        "intelligent_query": bool(enabled and runtime.settings.AGENT_MODE != 'off'),
+        "query_history": True,
+        "query_cancel": True,
     }
     assert all(isinstance(value, bool) for value in payload["features"].values())
     assert "SECRET_KEY" not in payload

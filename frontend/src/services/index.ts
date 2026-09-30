@@ -42,12 +42,8 @@ export {
   updateEvent,
   deleteEvent,
   convertEventToCase,
-  analyzeArea,
-  getAreaRiskRanking,
-  getHotspots,
   listAreaProfiles,
   getAreaProfile,
-  refreshAreaProfile,
   analyzeCorrelations,
   listCorrelations,
   confirmCorrelation,
@@ -92,18 +88,6 @@ export type {
   OperationalArea,
   PublicMapBundle,
 } from './mapFoundation'
-
-// 巡逻服务
-export { patrolApi } from './patrols'
-
-// 团伙分析
-export { gangApi } from './gangs'
-
-// 保卫人员管理
-export { personnelApi } from './personnel'
-
-// 重要部位管理
-export { keyLocationApi } from './key_locations'
 
 // 辖区风险底座
 export { jurisdictionApi } from './jurisdiction'

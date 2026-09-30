@@ -4,6 +4,7 @@ This module does not call models or accept executable expressions. Callers must
 bind the current principal's read scope before every execution, including replay.
 """
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -14,6 +15,8 @@ from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_search_service import CaseSearchService
 from app.services.map_place_service import search_places
 from app.services.intelligent_query_results import result_content
+from app.services.intelligent_query_business import BUSINESS_TOOLS, execute_business_tool
+from app.agent_runtime.execution_contract import ToolDeclaration
 
 
 Label = Annotated[str, Field(min_length=1, max_length=120)]
@@ -139,11 +142,18 @@ TOOLS = {
     'find_case_profiles': FindCaseProfiles,
     'find_history': FindHistory,
     'aggregate_case_profiles': AggregateProfiles,
+    **BUSINESS_TOOLS,
 }
 
 
 def tool_catalog() -> dict:
     return {name: schema.model_json_schema() for name, schema in TOOLS.items()}
+
+
+def tool_declarations() -> dict:
+    return {name: ToolDeclaration(name, 'query-tools-6.4-1', schema.model_json_schema(),
+            'intelligent_query', effect='derived_read' if name == 'compare_coverage_scenario' else 'read_only').public()
+            for name, schema in TOOLS.items()}
 
 
 def _cases(db, args):
@@ -195,13 +205,24 @@ def _results(db, args):
         query = query.filter(CaseAnalysisRun.completed_at < args.completed_before.astimezone(timezone.utc))
     statuses = dict(query.with_entities(CaseAnalysisRun.status, func.count(CaseAnalysisRun.id))
                     .group_by(CaseAnalysisRun.status).all())
-    return {'total': sum(statuses.values()), 'by_status': statuses, 'items': [
-        {'run_id': row.id, 'case_id': row.case_id, 'status': row.status,
-         'completed_at': row.completed_at, 'algorithm_version': row.algorithm_version,
-         'case_profile_id': row.case_profile_id, 'map_snapshot_id': row.map_snapshot_id,
-         'evidence_ref': f'case_analysis_run:{row.id}', **result_content(db, row)}
-        for row in query.order_by(CaseAnalysisRun.completed_at.desc(), CaseAnalysisRun.id)
-        .limit(args.limit).all()]}
+    last_completed = func.max(CaseAnalysisRun.completed_at)
+    cases_page = query.with_entities(CaseAnalysisRun.case_id).group_by(CaseAnalysisRun.case_id).order_by(
+        last_completed.desc(), CaseAnalysisRun.case_id).limit(args.limit).all()
+    selected = [query.filter(CaseAnalysisRun.case_id == row.case_id).order_by(
+        CaseAnalysisRun.completed_at.desc(), CaseAnalysisRun.id).first() for row in cases_page]
+    historical_window = args.completed_after is not None or args.completed_before is not None
+    return {'total': sum(statuses.values()), 'by_status': statuses,
+        'count_basis': 'completed_analysis_runs_not_unique_cases',
+        'content_basis': ('frozen_result_of_matched_historical_run' if historical_window else
+                          'current_frozen_result_per_matching_case_with_explicit_legacy_fallback'),
+        'time_basis': 'matched_analysis_run_completed_at',
+        'case_total': query.with_entities(CaseAnalysisRun.case_id).distinct().count(),
+        'items': [
+        {'case_id': row.case_id,
+         'matched_run': {'run_id': row.id, 'completed_at': row.completed_at,
+                         'evidence_ref': f'case_analysis_run:{row.id}'},
+         **result_content(db, row, matched_run_only=historical_window)}
+        for row in selected]}
 
 
 def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lambda: False) -> dict:
@@ -217,7 +238,16 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
     gaps = []
     road_partial = False
     with db.no_autoflush:
-        if tool == 'find_cases':
+        if tool in BUSINESS_TOOLS:
+            data = execute_business_tool(db, tool, args)
+            return {'tool': tool, 'state': data['state'], 'data': data,
+                    'information_gaps': data.get('information_gaps', []),
+                    'evidence': {'source': tool, 'filters': args.model_dump(mode='json'),
+                        'scope': None if allowed is None else sorted(allowed),
+                        'queried_at': datetime.now(timezone.utc).isoformat(), 'tool_version': 'query-business-6.4-1',
+                        'refs': data.get('evidence_refs', [])},
+                    'boundary': '复用当前授权业务资料与冻结成果；情景是假设而非事实，不更新原始资料或生成执行任务。'}
+        elif tool == 'find_cases':
             data, source = _cases(db, args), 'cases'
         elif tool == 'count_cases':
             data, source = {'count': _count(db, args.model_dump())}, 'cases'
@@ -244,7 +274,10 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
             gaps.append('本批表述按案件去重计数，肯定、否定和不确定分别统计；不是全库规律或已确认事实。')
         elif tool == 'aggregate_case_profiles':
             from app.services.profile_aggregate import aggregate_results
-            data, road_partial = aggregate_results(db, args, deadline=deadline, cancelled=cancelled)
+            # Reserve the remainder for answer publication and durable continuation;
+            # never consume the entire interactive lease on a whole-corpus scan.
+            scan_deadline = min(deadline, monotonic() + 5) if deadline is not None else monotonic() + 5
+            data, road_partial = aggregate_results(db, args, deadline=scan_deadline, cancelled=cancelled)
             source = 'authorized_case_profile_aggregate'
             gaps.append(data['boundary'])
             if not data['coverage']['complete']:
@@ -254,10 +287,13 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
         elif tool == 'find_history':
             from app.services.case_history_retrieval import CaseHistoryRetrieval
             data = CaseHistoryRetrieval.search(db, query=args.query, source_case_id=args.source_case_id,
-                filters=args.model_dump(exclude={'query', 'source_case_id', 'limit'}), limit=args.limit)
+                filters=args.model_dump(exclude={'query', 'source_case_id', 'limit'}), limit=args.limit,
+                deadline=deadline, cancelled=cancelled)
             source = 'authorized_case_history_and_confirmed_experience'
             road_partial = not data['coverage']['complete']
             gaps.append(data['boundary'])
+            if data.get('index_state') in {'pending', 'partial'}:
+                gaps.append('部分当前资料尚未完成片段索引，缺失或过期索引不能解释为没有匹配资料。')
             if data['semantic_index_state'] == 'not_enabled':
                 gaps.append('语义向量能力未启用，当前为结构条件与内网词项检索。')
             elif data['semantic_index_state'] == 'unavailable':
@@ -265,9 +301,9 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
             elif data['semantic_index_state'] == 'partial':
                 gaps.append('部分资料尚无当前版本向量，联合检索不完整。')
             if road_partial:
-                gaps.append('检索预算内未遍历全部候选范围，当前结果不能作为全库最优或全库无匹配的结论。')
+                gaps.append('当前片段索引或召回覆盖不完整，结果不能作为全库最优或全库无匹配的结论。')
         else:
-            data, source = _results(db, args), 'case_analysis_runs'
+            data, source = _results(db, args), 'current_case_results_with_labeled_historical_runs'
             gaps.append('汇总已有成果及可核验候选；规则支持度不是准确概率，历史候选不转为正式事实。')
             if any(item['content_state'] != 'ready' for item in data['items']):
                 gaps.append('部分成果内容不可读取、证据不可核验或超过展示上限，已返回可用部分。')
@@ -284,7 +320,7 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
                          'scope': None if allowed is None else sorted(allowed),
                          'queried_at': datetime.now(timezone.utc).isoformat(),
                          'tool_version': ('profile-aggregate-5.3-1' if tool == 'aggregate_case_profiles' else
-                             'v5.1-history-read-1' if tool == 'find_history' else
+                             'v6.3-history-fragments-read-1' if tool == 'find_history' else
                              'v4.3-profile-read-1' if tool == 'find_case_profiles' else
                              'v4.3-road-read-1' if tool == 'find_road_results' else 'v4.0-read-tools-2')},
             'boundary': '内网只读查询；案件按案发时间、成果按完成时间，时间区间左闭右开；不是新增事实或执行指令。'}

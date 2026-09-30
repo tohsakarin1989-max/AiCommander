@@ -14,23 +14,26 @@ class CaseProcessingCardService:
     """把单案质量、奖金、经验卡、报告/结论缺口归并成一张人工处理卡。"""
 
     @staticmethod
-    def build_processing_card(db: Session, case_id: int) -> Dict[str, Any]:
+    def build_processing_card(db: Session, case_id: int, *, profile: Dict[str, Any] | None = None,
+                              bonus_assessment: Dict[str, Any] | None = None) -> Dict[str, Any]:
         case = CaseProfileService.get_case(db, case_id)
-        profile = CaseProfileService.build_case_profile(db, case_id, include_similar=False)
-        gap_groups = CaseProcessingCardService._gap_groups(db, case, profile)
+        if profile is None:
+            profile = CaseProfileService.build_case_profile(db, case_id, include_similar=False)
+        gap_groups = CaseProcessingCardService._gap_groups(db, case, profile, bonus_assessment=bonus_assessment)
         priority = CaseProcessingCardService._priority(gap_groups)
         actions = CaseProcessingCardService._actions(case, gap_groups)
+        quality_pending = profile.get("quality", {}).get("state") == "not_generated"
         return {
             "case_id": case.id,
             "case_number": case.case_number,
-            "status": "needs_review" if gap_groups else "ready",
+            "status": "needs_review" if gap_groups else "awaiting_profile" if quality_pending else "ready",
             "priority": priority,
             "gap_groups": gap_groups,
             "impacted_modules": sorted({module for group in gap_groups for module in group.get("impacted_modules", [])}),
             "suggested_actions": actions,
             "manual_review_required": bool(gap_groups),
             "profile_snapshot": {
-                "quality_score": profile.get("quality", {}).get("score") or profile.get("quality", {}).get("quality_score"),
+                "quality_score": profile.get("quality", {}).get("score", profile.get("quality", {}).get("quality_score")),
                 "has_evidence": profile.get("availability", {}).get("has_evidence"),
                 "has_confirmed_experience": profile.get("availability", {}).get("has_confirmed_experience"),
             },
@@ -38,7 +41,8 @@ class CaseProcessingCardService:
         }
 
     @staticmethod
-    def _gap_groups(db: Session, case: Case, profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _gap_groups(db: Session, case: Case, profile: Dict[str, Any], *,
+                    bonus_assessment: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
         groups: List[Dict[str, Any]] = []
         quality_gaps = profile.get("quality_gaps") or []
         if quality_gaps:
@@ -51,7 +55,7 @@ class CaseProcessingCardService:
                 "route": f"/cases?caseId={case.id}",
             })
 
-        bonus_group = CaseProcessingCardService._bonus_group(db, case)
+        bonus_group = CaseProcessingCardService._bonus_group(db, case, bonus=bonus_assessment)
         if bonus_group:
             groups.append(bonus_group)
 
@@ -73,29 +77,30 @@ class CaseProcessingCardService:
             })
 
         conclusions = profile.get("knowledge_refs", {}).get("conclusions") or []
-        if any(item.get("status") in {"draft", "needs_review", "flagged"} for item in conclusions):
+        if any(item.get("status") == "flagged" for item in conclusions):
             groups.append({
                 "key": "report",
-                "label": "报告/结论复核缺口",
+                "label": "历史人工标记（可选）",
                 "severity": "medium",
                 "items": [
                     {
                         "field": "conclusion_review",
-                        "label": "结论待人工复核",
-                        "reason": "结论草稿或风险结论发布前需要核对事实引用。",
+                        "label": "历史人工标记",
+                        "reason": "保留已明确标记的历史意见；不是案件完成所必需的审批。",
                     }
                 ],
                 "impacted_modules": ["分析报告", "情报结论", "待办中心"],
-                "route": f"/conclusions?caseId={case.id}",
+                "route": f"/reports?kind=conclusion&subject_kind=case&subject_id={case.id}",
             })
         return groups
 
     @staticmethod
-    def _bonus_group(db: Session, case: Case) -> Dict[str, Any] | None:
+    def _bonus_group(db: Session, case: Case, *, bonus: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
         if not settings.ENABLE_BONUS_ACCOUNTING:
             return None
         try:
-            bonus = CaseAutomationService.build_bonus_assessment(db, case)
+            if bonus is None:
+                bonus = CaseAutomationService.build_bonus_assessment(db, case)
         except Exception:
             return {
                 "key": "bonus",

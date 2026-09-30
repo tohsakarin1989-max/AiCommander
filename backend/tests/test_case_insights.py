@@ -36,6 +36,9 @@ def db_session(monkeypatch) -> Session:
 
 
 def _case(db: Session, number: str, lat: float | None = 46.6, lon: float | None = 125.1):
+    area = MapFoundationService.ensure_default_area(db)
+    db.commit()
+    db.info["default_operational_area_id"] = area.id
     case = CaseService.create_case(
         db=db,
         case_number=number,
@@ -162,7 +165,7 @@ def test_deterministic_case_map_fusion_returns_at_most_three_explainable_candida
     assert result["status"] == "completed"
     run = db_session.query(CaseAnalysisRun).one()
     hypotheses = db_session.query(CaseHypothesis).order_by(CaseHypothesis.rank).all()
-    assert run.algorithm_version == "dual-domain-3.4.0"
+    assert run.algorithm_version == "dual-domain-6.0.0-1"
     assert run.map_snapshot_id == snapshot.id
     assert 1 <= len(hypotheses) <= 3
     for hypothesis in hypotheses:

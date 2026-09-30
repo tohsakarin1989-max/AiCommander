@@ -3,15 +3,13 @@ from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Eva
 from app.models.report import Report
 from app.models.case import Case
 from app.ai.meeting_manager import MeetingManager
-from app.services.case_service import CaseService
-from app.services.case_quality_service import CaseQualityService
 from app.services.system_config_service import SystemConfigService
 from app.database import require_area_write_access
-from app.config import settings
 from typing import List, Optional, Dict
 import asyncio
 import json
 from app.utils.logger import logger
+from app.services.intelligent_query_context import result_hash
 
 
 async def _default_progress_callback(meeting_id: str, stage: int, stage_name: str,
@@ -44,6 +42,12 @@ class MeetingService:
         ).count()
         if count != len(analyst_model_ids):
             raise ValueError("请选择有效且启用的分析员模型")
+        # Frozen results still contain sensitive internal evidence. Protocol
+        # compatibility is not permission to export it to a public provider.
+        from app.ai.model_factory import ModelFactory
+        for model in db.query(AIModel).filter(AIModel.id.in_([moderator_model_id, *analyst_model_ids])):
+            ModelFactory._assert_data_egress_allowed(
+                model, provider=(model.provider or '').lower(), data_classification='raw')
 
     @staticmethod
     def bind_existing_meeting_scope(
@@ -100,9 +104,7 @@ class MeetingService:
         # 检查圆桌会议配置
         meeting_provider = SystemConfigService.get_config_value(db, "meeting_api_provider", "direct")
         if meeting_provider == "openrouter":
-            meeting_api_key = SystemConfigService.get_config_value(db, "meeting_api_key", "")
-            if not meeting_api_key:
-                logger.warning("圆桌会议配置为OpenRouter模式，但未配置API密钥，将使用Direct模式")
+            raise ValueError('冻结案件资料只能使用已登记的可信内网模型，不支持外部会议代理')
         else:
             logger.info(f"圆桌会议使用Direct模式，直接使用AI模型配置中的API密钥")
 
@@ -172,93 +174,11 @@ class MeetingService:
             db.commit()
         
         try:
-            # 获取案件数据，并优先使用预处理后的结构化特征
-            cases = CaseService.get_cases_by_ids(db, case_ids)
-            case_data = []
-            for c in cases:
-                # 计算附近案件数量（1km 内），用于空间串并案提示
-                nearby_cases = CaseService.get_nearby_cases(
-                    db, center_case_id=c.id, radius_km=1.0
-                )
-
-                # 如果有预处理features，则优先从中取summary等
-                features = c.features or {}
-                basic = features.get("basic", {}) if isinstance(features, dict) else {}
-                geo = features.get("geo", {}) if isinstance(features, dict) else {}
-                oil = features.get("oil", {}) if isinstance(features, dict) else {}
-                oil_facts = oil.get("facts", {}) if isinstance(oil, dict) else {}
-                profile = CaseQualityService.build_case_feature_profile(db, c)
-
-                summary = basic.get("summary") or (c.description or "")
-
-                case_data.append(
-                    {
-                        "case_number": c.case_number,
-                        "occurred_time": basic.get("time") or str(c.occurred_time),
-                        "location": basic.get("location") or c.location,
-                        "latitude": geo.get("latitude", c.latitude),
-                        "longitude": geo.get("longitude", c.longitude),
-                        "case_type": basic.get("case_type") or c.case_type,
-                        "description": summary,
-                        "involved_persons": c.involved_persons,
-                        "involved_items": c.involved_items,
-                        "loss_amount": c.loss_amount,
-                        "nearby_case_count": len(nearby_cases),
-                        "management": profile["management"],
-                        "quality": profile["quality"],
-                        "vehicles": profile["vehicles"],
-                        "persons": profile["actors"]["persons"],
-                        "evidence_count": len(profile["evidence"]),
-                        # 涉油特征（如果有）
-                        "oil_type": oil_facts.get("oil_type") or c.oil_type,
-                        "oil_nature": c.oil_nature,
-                        "oil_volume": oil_facts.get("volume") or c.oil_volume,
-                        "water_cut": c.water_cut,
-                        "facility_type": oil_facts.get("facility_type") or c.facility_type,
-                        "modus_operandi": c.modus_operandi,
-                        "analysis_readiness": (
-                            features.get("analysis_readiness", {})
-                            if isinstance(features, dict)
-                            else {}
-                        ),
-                    }
-                )
-            
-            # 获取地理线索分析（热点、串案等）
-            from app.services.geo_analysis_service import GeoAnalysisService
-            geo_clues = GeoAnalysisService.generate_geographic_clues(db, case_ids)
-            
-            # 获取地图MCP数据（位置信息、周边POI等）
-            map_mcp_data = {}
-            try:
-                from app.services.map_mcp_service import MapMCPService
-                if not settings.ENABLE_LEGACY_EXTERNAL_GEO:
-                    raise RuntimeError("内网已关闭外部地图直连")
-                # 为每个案件获取MCP数据
-                for case in cases:
-                    if case.latitude and case.longitude:
-                        location_info = await MapMCPService.get_location_info(
-                            case.latitude, case.longitude
-                        )
-                        nearby_pois = await MapMCPService.search_nearby_pois(
-                            case.latitude,
-                            case.longitude,
-                            keywords="加油站|油库|输油管线|储油设施",
-                            radius=2000
-                        )
-                        map_mcp_data[case.id] = {
-                            "location_info": location_info,
-                            "nearby_pois": nearby_pois
-                        }
-            except Exception as e:
-                logger.warning(f"获取地图MCP数据失败（可忽略）: {str(e)}")
-            
-            # 格式化案件信息（包含地理线索和MCP数据）
-            case_info = await manager.moderator.format_case_information(
-                case_data, 
-                geo_clues=geo_clues,
-                map_mcp_data=map_mcp_data
-            )
+            from app.services.meeting_frozen_service import freeze_meeting_inputs
+            frozen = freeze_meeting_inputs(db, meeting)
+            # Deterministic serialization; no fresh extraction/geography and no
+            # model is asked to manufacture the source summary or references.
+            case_info = json.dumps(frozen, ensure_ascii=False, sort_keys=True)
             
             # 记录主持人发言
             conversation = MeetingConversation(
@@ -350,10 +270,16 @@ class MeetingService:
             db.add(final_ranking)
             
             # 保存报告
+            from app.services.meeting_frozen_service import read_meeting_inputs
+            if read_meeting_inputs(db, meeting_id) != frozen:
+                raise PermissionError('meeting_sources_changed')
             report = Report(
                 meeting_id=meeting_id,
                 report_type="comprehensive",
-                content=final_report,
+                content={**final_report, 'source_manifest': frozen['sources'],
+                         'input_sha256': result_hash(frozen),
+                         'result_kind': 'model_discussion',
+                         'boundary': frozen['boundary']},
                 consensus_points=final_report.get("consensus_points", []),
                 disagreement_points=final_report.get("disagreement_points", []),
                 model_contributions=final_report.get("model_contributions", {})
@@ -400,7 +326,14 @@ class MeetingService:
     @staticmethod
     def get_meeting(db: Session, meeting_id: str) -> Optional[Meeting]:
         """获取会议"""
-        return db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        if meeting:
+            from app.services.meeting_frozen_service import require_meeting_sources
+            try:
+                require_meeting_sources(db, meeting)
+            except (PermissionError, ValueError):
+                return None
+        return meeting
     
     @staticmethod
     def get_meetings(
@@ -409,7 +342,8 @@ class MeetingService:
         limit: int = 100
     ) -> List[Meeting]:
         """获取会议列表"""
-        return db.query(Meeting).order_by(Meeting.created_at.desc()).offset(skip).limit(limit).all()
+        return [row for row in db.query(Meeting).order_by(Meeting.created_at.desc()).offset(skip).limit(limit)
+                if MeetingService.get_meeting(db, row.meeting_id) is not None]
     
     @staticmethod
     def get_meeting_conversations(
@@ -417,6 +351,8 @@ class MeetingService:
         meeting_id: str
     ) -> List[MeetingConversation]:
         """获取会议对话记录"""
+        if MeetingService.get_meeting(db, meeting_id) is None:
+            return []
         return db.query(MeetingConversation).filter(
             MeetingConversation.meeting_id == meeting_id
         ).order_by(MeetingConversation.round_number, MeetingConversation.created_at).all()
@@ -427,7 +363,9 @@ class MeetingService:
         meeting_id: str
     ) -> Optional[Report]:
         """获取会议报告"""
-        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        meeting = MeetingService.get_meeting(db, meeting_id)
         if not meeting or not meeting.final_report_id:
             return None
-        return db.query(Report).filter(Report.id == meeting.final_report_id).first()
+        from app.services.meeting_frozen_service import report_sources_visible
+        report = db.query(Report).filter(Report.id == meeting.final_report_id).first()
+        return report if report and report_sources_visible(db, report) else None

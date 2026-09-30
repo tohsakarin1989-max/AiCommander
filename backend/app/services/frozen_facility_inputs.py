@@ -3,9 +3,9 @@ from copy import deepcopy
 
 from app.services.case_road_artifact_service import read_road_artifact
 from app.services.facility_candidate_pool import require_current_pool_source
-from app.services.facility_analysis_versions import SCORING_INPUT_VERSION
+from app.services.facility_analysis_versions import SUPPORTED_SCORING_INPUTS
 from app.services.frozen_insight_inputs import capture_inputs, checksum
-from app.services.scorers.facility_roads_v52 import FacilityEvidence, VERSION
+from app.services.scorers.facility_roads_v63 import FacilityEvidence, VERSION
 from app.services.scorers.registry import resolve_facility_scorer
 
 
@@ -16,7 +16,7 @@ def capture_facility_inputs(db, artifact_id):
         raise ValueError('facility_evaluation_artifact_required')
     pool, result = content['pool'], content['result']
     if ('scoring_evidence' not in result or 'scorer_checksum' not in result
-            or result.get('scoring_input_version') != SCORING_INPUT_VERSION):
+            or result.get('scoring_input_version') not in SUPPORTED_SCORING_INPUTS):
         raise ValueError('facility_evaluation_inputs_not_recorded')
     require_current_pool_source(db, pool)
     envelope = capture_inputs(db, case_id=_case_id(db, content['result_id']), profile_id=pool['versions']['case_profile_id'],
@@ -68,7 +68,7 @@ def replay_facility_inputs(envelope, *, current=False):
     if checksum(envelope['payload']) != envelope['checksum']:
         raise ValueError('frozen_input_checksum_mismatch')
     data = envelope['payload']['facility_evaluation']
-    if data['input_schema'] != SCORING_INPUT_VERSION:
+    if data['input_schema'] not in SUPPORTED_SCORING_INPUTS:
         raise ValueError('frozen_facility_input_schema_unavailable')
     version = VERSION if current else data['algorithm_version']
     scorer, code_hash = resolve_facility_scorer(version)

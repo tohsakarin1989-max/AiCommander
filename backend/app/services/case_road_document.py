@@ -62,6 +62,9 @@ def attach_road_document(document, artifact, *, map_spec=None):
         ))]
     if facility:
         result = content['result']
+        if result.get('condition_comparison'):
+            from app.services.case_process_document import condition_blocks
+            blocks.extend(condition_blocks(result['condition_comparison'], result.get('ranking_changes')))
         coverage = result['coverage']
         blocks.append(DocumentBlock('paragraph', f"道路前置来源候选：召回 {coverage['recalled']} 个，完成比较 {coverage['compared']} 个。"))
         if not coverage['complete']:

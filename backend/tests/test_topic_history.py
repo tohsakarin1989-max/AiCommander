@@ -40,7 +40,8 @@ def test_topic_reuses_old_history_and_confirmed_experience_without_extraction(qu
     assert read['snapshot']['aggregate']['total'] == 1  # old reference is not a period member
     history = topics.read_topic_views(query_db, topic['id'], revision=1)['history']
     assert history['state'] == 'ready'
-    assert history['result']['coverage']['scanned_cases'] == 2
+    # v6.3 fragment recall excludes the source period cases before scanning.
+    assert history['result']['coverage']['scanned_cases'] == 1
     assert any(item['case_id'] == old.id and item['source_type'] == 'case' for item in history['result']['items'])
     assert any(item['source_id'] == asset.id and item['source_type'] == 'experience_card' for item in history['result']['items'])
     assert 'source_text' not in history['result']
@@ -56,7 +57,7 @@ def test_topic_reuses_old_history_and_confirmed_experience_without_extraction(qu
         build_topic_document(query_db, topic['id'], 1)
 
 
-def test_reuse_only_missing_index_is_partial_lexical_not_fresh_extraction(query_db, monkeypatch):
+def test_reuse_only_missing_index_is_explicitly_missing_not_fresh_extraction(query_db, monkeypatch):
     add_case(query_db, 'MISSING', description='特殊软管资料')
     def forbidden(*args, **kwargs):
         raise AssertionError('no extraction')
@@ -67,8 +68,8 @@ def test_reuse_only_missing_index_is_partial_lexical_not_fresh_extraction(query_
     assert result['coverage']['complete'] is False
     assert result['state'] == 'partial'
     assert result['coverage']['missing_derived_sources'] == 1
-    assert result['items'][0]['profile_state'] == 'lexical_only'
-    assert not result['items'][0]['shared_conditions']
+    assert result['items'] == []
+    assert result['coverage']['missing_index_cases'] == 1
     assert not query_db.new and not query_db.dirty
 
 
@@ -76,6 +77,8 @@ def test_topic_history_rechecks_old_source_outside_current_period(query_db):
     seed(query_db)
     old = add_case(query_db, 'OLD', occurred_time=datetime(2000, 1, 1), description='井场软管。')
     profile(query_db, old)
+    CaseHistoryIndexService.rebuild_case(query_db, old)
+    query_db.commit()
     topic = topics.create_topic(query_db, '本期', {'start_date': '2026-09-01T00:00:00Z'})
     topics.refresh_topic(query_db, topic['id'])
     assert 'OLD' in json.dumps(topics.read_topic_views(query_db, topic['id'], revision=1))

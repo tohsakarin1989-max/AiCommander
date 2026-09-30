@@ -16,6 +16,7 @@ from app.services import intelligent_query_tasks as tasks
 from tests.test_intelligent_query_tasks import query_db, search_db  # noqa: F401
 from tests.test_case_search_page import add_case
 from tests.test_query_followup import call, model_for, FINISH
+from tests.history_index_helpers import build_history_index
 
 
 def history_cases(db):
@@ -23,6 +24,7 @@ def history_cases(db):
     other = add_case(db, 'OTHER', description='未转运。', occurred_time=datetime(2026, 1, 1))
     add_case(db, 'HIDDEN', description='夜间打眼盗油使用胶管。', operational_area_id=2)
     db.commit()
+    build_history_index(db)
     return old, other
 
 
@@ -46,7 +48,7 @@ def test_tool_uses_same_authorized_retrieval_and_does_not_write(search_db):
     assert card['state'] == 'ready'
     assert 'HIDDEN' not in str(card)
     assert not {'insert', 'update', 'delete'}.intersection(statements)
-    assert card['evidence']['tool_version'] == 'v5.1-history-read-1'
+    assert card['evidence']['tool_version'] == 'v6.3-history-fragments-read-1'
 
 
 @pytest.mark.parametrize('args', [
@@ -146,6 +148,7 @@ def test_cached_experience_rechecks_manual_state_content_refs_and_current_scope(
         source_signature='a' * 64, source_data_version='b' * 64, status='confirmed')
     search_db.add(asset)
     search_db.commit()
+    build_history_index(search_db)
     search_db.info['authorized_area_ids'] = (1,)
     result = {'cards': [execute_tool(search_db, 'find_history', {'query': '特殊储存'})]}
     validate_history_query_evidence(search_db, result)

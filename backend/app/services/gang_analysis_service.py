@@ -293,7 +293,8 @@ class GangAnalysisService:
             "oil_types": [],
             "geographic_center": None,
             "time_span_days": 0,
-            "risk_score": 0,
+            "risk_score": None,
+            "risk_score_status": "retired",
         }
 
         # 统计时间模式
@@ -420,10 +421,8 @@ class GangAnalysisService:
         if times:
             profile["time_span_days"] = (max(times) - min(times)).days
 
-        # 计算风险评分（基于案件数量、活跃度等）
-        case_count = len(case_features_list)
-        recency_bonus = 20 if profile["time_span_days"] < 30 else 10 if profile["time_span_days"] < 60 else 0
-        profile["risk_score"] = min(100, case_count * 15 + recency_bonus)
+        # Similar conditions are not an evidence-based crime risk estimate.
+        # Preserve the nullable compatibility field; never manufacture a zero.
 
         return profile
 

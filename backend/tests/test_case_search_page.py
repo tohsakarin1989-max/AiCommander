@@ -194,4 +194,4 @@ def test_pipeline_hash_is_stable_for_equivalent_timezone_representations(search_
     updated = CaseService.update_case(search_db, item.id,
         occurred_time=datetime.fromisoformat("2026-09-09T12:00:00+00:00"))
     assert CasePipelineService.source_hash(search_db, updated) == original_hash
-    assert search_db.query(OutboxEvent).count() == 1
+    assert search_db.query(OutboxEvent).filter_by(event_type='case.analysis.requested').count() == 1

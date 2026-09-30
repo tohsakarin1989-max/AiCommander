@@ -70,6 +70,10 @@ class CaseKnowledgeService:
         if status not in {"draft", "confirmed", "archived"}:
             raise ValueError("invalid_experience_status")
         case = CaseProfileService.get_case(db, case_id)
+        if CaseKnowledgeService._has_experience_asset(db, case_id):
+            # A case-only legacy URL cannot identify which content is being
+            # reviewed; callers must use the explicit versioned asset endpoint.
+            raise ValueError("experience_asset_version_required")
         features = dict(case.features or {})
         intelligence = dict(features.get("intelligence") or {})
         card = dict(intelligence.get("experience_card") or {})
@@ -101,8 +105,28 @@ class CaseKnowledgeService:
 
     @staticmethod
     def search_experience_cards(db: Session, query: str, status: str = "confirmed", limit: int = 20) -> Dict[str, Any]:
-        items = CaseKnowledgeService._experience_items(db, query, status=status, limit=limit, require_match=bool(query.strip()))
-        return {"items": items, "total": len(items), "query": query, "generated_at": _now()}
+        from app.services.case_history_retrieval import CaseHistoryRetrieval
+        if not query.strip():
+            return CaseKnowledgeService.list_experience_cards(db, status=status, limit=limit)
+        history = CaseHistoryRetrieval.search_experiences(db, query=query, limit=limit, status=status)
+        items = []
+        for result in history["items"]:
+            case = db.query(Case).filter(Case.id == result["case_id"]).first()
+            if case is None:
+                continue
+            if result["source_type"] == "experience_card":
+                asset = db.query(KnowledgeAsset).filter(KnowledgeAsset.id == result["source_id"]).first()
+                if asset is None:
+                    continue
+                item = CaseKnowledgeService._experience_asset_result(case, asset, result["score"])
+            else:
+                card = _as_dict(_as_dict(_as_dict(case.features).get("intelligence")).get("experience_card"))
+                item = CaseKnowledgeService._experience_result(case, card, result["score"])
+            items.append({**item, **result, "history_source_type": result["source_type"],
+                          "source_type": "experience_card", "manual_review_status": status,
+                          "applicability_reason": "历史内容仅供参考；否定、待核和差异条件须分别核对。"})
+        return {**{key: value for key, value in history.items() if key != "items"},
+                "items": items, "total": len(items), "query": query, "status": status}
 
     @staticmethod
     def search(db: Session, query: str, case_id: Optional[int] = None, limit: int = 20) -> Dict[str, Any]:
@@ -227,6 +251,9 @@ class CaseKnowledgeService:
         report = db.query(Report).filter(Report.id == report_id).first()
         if not report:
             raise ValueError("report_not_found")
+        from app.services.meeting_frozen_service import report_sources_visible
+        if not report_sources_visible(db, report):
+            raise ValueError('report_not_found')
         content = _as_dict(report.content)
         findings: List[Dict[str, Any]] = []
         if not _as_list(report.consensus_points):
@@ -301,8 +328,9 @@ class CaseKnowledgeService:
         }
 
     @staticmethod
-    def build_case_diagram(db: Session, case_id: int) -> Dict[str, Any]:
-        profile = CaseProfileService.build_case_profile(db, case_id)
+    def build_case_diagram(db: Session, case_id: int, *, profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if profile is None:
+            profile = CaseProfileService.build_case_profile(db, case_id, include_similar=False)
         case = profile["case"]
         nodes: List[Dict[str, Any]] = [
             {"id": f"case:{case_id}", "type": "case", "label": case["case_number"], "detail": case.get("description")},
@@ -361,6 +389,9 @@ class CaseKnowledgeService:
 
     @staticmethod
     def _experience_items(db: Session, query: str, *, status: str, limit: int, require_match: bool) -> List[Dict[str, Any]]:
+        from app.services.case_history_retrieval import _asset_access, HistoryUnavailable
+        if "authorized_area_ids" not in db.info:
+            raise HistoryUnavailable("history_unavailable")
         items: List[Dict[str, Any]] = []
         dedicated_case_ids = {
             source_case_id
@@ -376,12 +407,11 @@ class CaseKnowledgeService:
                 KnowledgeAsset.status == status,
             )
             .order_by(KnowledgeAsset.created_at.desc(), KnowledgeAsset.id.desc())
-            .limit(500)
-            .all()
+            .yield_per(100)
         )
         for asset in assets:
             case = db.query(Case).filter(Case.id == asset.source_case_id).first()
-            if not case:
+            if not case or not _asset_access(db, asset):
                 continue
             score = _score(query, _text(asset.content))
             if require_match and score <= 0:
@@ -390,7 +420,7 @@ class CaseKnowledgeService:
                 CaseKnowledgeService._experience_asset_result(case, asset, score)
             )
 
-        for case in db.query(Case).order_by(Case.occurred_time.desc()).limit(500).all():
+        for case in db.query(Case).order_by(Case.occurred_time.desc()).yield_per(100):
             if case.id in dedicated_case_ids:
                 continue
             card = _as_dict(_as_dict(_as_dict(case.features).get("intelligence")).get("experience_card"))
@@ -422,7 +452,8 @@ class CaseKnowledgeService:
             "snippet": card.get("summary") or case.description or "经验卡摘要待补齐",
             "score": score,
             "manual_review_status": asset.status,
-            "applicability_reason": "命中已确认经验卡，可作为同类已发生案件复盘参考。",
+            "applicability_reason": ("命中已确认经验卡，可作为同类已发生案件复盘参考。"
+                                     if asset.status == "confirmed" else "本版本未确认或已归档，不作为已确认经验采用。"),
             "tags": _as_list(_as_dict(card.get("evidence_basis")).get("tags")),
             "route": f"/case-intelligence?caseId={case.id}",
             "evidence_refs": asset.evidence_refs or [],
@@ -441,7 +472,9 @@ class CaseKnowledgeService:
             "snippet": card.get("summary") or case.description or "经验卡摘要待补齐",
             "score": score,
             "manual_review_status": card.get("manual_review_status"),
-            "applicability_reason": "命中已确认经验卡，可作为同类已发生案件复盘参考。",
+            "applicability_reason": ("命中已确认经验卡，可作为同类已发生案件复盘参考。"
+                                     if card.get("manual_review_status") == "confirmed"
+                                     else "本版本未确认或已归档，不作为已确认经验采用。"),
             "tags": _as_list(_as_dict(card.get("evidence_basis")).get("tags")),
             "route": f"/case-intelligence?caseId={case.id}",
             "evidence_refs": [
@@ -527,7 +560,7 @@ class CaseKnowledgeService:
     @staticmethod
     def _conclusion_query(db: Session, case_id: Optional[int]) -> Iterable[Conclusion]:
         from app.services.case_result_access import CaseResultAccessError
-        from app.services.conclusion_factory_service import ConclusionFactoryService
+        from app.services.legacy_conclusion_access import require_conclusion_result_access
 
         query = db.query(Conclusion)
         if case_id is not None:
@@ -535,7 +568,7 @@ class CaseKnowledgeService:
         accessible = []
         for conclusion in query.order_by(Conclusion.id.desc()).limit(100):
             try:
-                ConclusionFactoryService.require_conclusion_result_access(db, conclusion)
+                require_conclusion_result_access(db, conclusion)
             except CaseResultAccessError:
                 continue
             accessible.append(conclusion)
@@ -543,15 +576,17 @@ class CaseKnowledgeService:
 
     @staticmethod
     def _report_query(db: Session, case_id: Optional[int] = None) -> Iterable[Report]:
+        from app.services.meeting_frozen_service import report_sources_visible
         if case_id is None:
-            return db.query(Report).order_by(Report.id.desc()).limit(100).all()
+            return [row for row in db.query(Report).order_by(Report.id.desc()).limit(100)
+                    if report_sources_visible(db, row)]
         from app.models.meeting import Meeting
         # Retain the documented legacy 100-report supplement, but never mix an
         # unrelated meeting into a case-filtered query. No text-similarity dedup.
         rows = (db.query(Report, Meeting.case_ids).join(Meeting, Report.meeting_id == Meeting.meeting_id)
                 .order_by(Report.id.desc()).limit(100).all())
         return [report for report, identifiers in rows
-                if isinstance(identifiers, list) and case_id in identifiers]
+                if isinstance(identifiers, list) and case_id in identifiers and report_sources_visible(db, report)]
 
     @staticmethod
     def _tag_merges(tags: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

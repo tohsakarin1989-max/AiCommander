@@ -22,6 +22,7 @@ from app.api.cases import (
 )
 from app.models.case import CaseVehicle
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState, OutboxEvent
+from app.models.case_source import CaseRevision
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 from app.services.case_service import CaseService
@@ -90,7 +91,7 @@ def test_related_vehicle_type_is_frozen_and_not_replaced_by_car_assumption(db_se
 def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Session):
     case = _create_case(db_session)
 
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     assert event.aggregate_id == str(case.id)
     assert event.event_type == "case.analysis.requested"
     assert event.status == "pending"
@@ -98,9 +99,13 @@ def test_case_create_commits_outbox_without_waiting_for_pipeline(db_session: Ses
 
 
 def test_case_save_captures_road_delegation_without_starting_road_calculation(db_session):
-    db_session.info.update(principal_user_id=12, authorized_area_ids=None)
+    from app.models.user import User
+    actor = User(id=12, username="pipeline-source-test", display_name="合成测试用户", password_hash="synthetic", role="admin")
+    db_session.add(actor)
+    db_session.commit()
+    db_session.info.update(principal_user_id=actor.id, authorized_area_ids=None)
     _create_case(db_session)
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     assert event.payload['road_authority'] == {'user_id': 12, 'scope': None}
     assert event.event_type == 'case.analysis.requested'
     # No graph/user lookup here; execution must validate the actual live user.
@@ -115,7 +120,7 @@ def test_rule_upgrade_does_not_discard_request_for_unchanged_case(
     case = _create_case(db_session)
     original_description = case.description
     state = db_session.query(CasePipelineState).one()
-    old_event = db_session.query(OutboxEvent).one()
+    old_event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     state.status = status
     setattr(state, version_field, "previous-version")
     old_event.payload = {**old_event.payload, version_field: "previous-version"}
@@ -135,7 +140,7 @@ def test_rule_upgrade_does_not_discard_request_for_unchanged_case(
 
 def test_expired_processing_lease_is_recovered(db_session: Session):
     _create_case(db_session)
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     event.status = "processing"
     event.attempts = 1
     event.lease_until = datetime.now(timezone.utc) - timedelta(seconds=1)
@@ -154,7 +159,7 @@ def test_expired_processing_lease_is_recovered(db_session: Session):
 
 def test_saved_case_semantics_are_derived_and_frozen_per_profile(db_session: Session):
     case = _create_case(db_session)
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     CasePipelineService.process_event(db_session, event.id)
     old_profile = db_session.query(CaseAnalysisProfile).one()
     frozen = old_profile.payload["semantics"]["source_snapshot"]
@@ -197,7 +202,7 @@ def test_pipeline_generates_versioned_profile_without_overwriting_case(db_sessio
         "latitude": case.latitude,
         "longitude": case.longitude,
     }
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
 
     result = CasePipelineService.process_event(db_session, event.id)
 
@@ -221,56 +226,70 @@ def test_pipeline_generates_versioned_profile_without_overwriting_case(db_sessio
 
 def test_unchanged_case_and_rules_do_not_enqueue_or_duplicate_profile(db_session: Session):
     case = _create_case(db_session)
-    first_event = db_session.query(OutboxEvent).one()
+    first_event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     CasePipelineService.process_event(db_session, first_event.id)
 
     duplicate = CasePipelineService.enqueue_case_change(db_session, case, changed_fields={"location"})
     db_session.commit()
 
     assert duplicate is None
-    assert db_session.query(OutboxEvent).count() == 1
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 1
     assert db_session.query(CaseAnalysisProfile).count() == 1
 
 
 def test_only_analysis_relevant_changes_trigger_new_profile(db_session: Session):
     case = _create_case(db_session)
-    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).one().id)
+    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one().id)
 
-    CaseService.update_case(db_session, case.id, security_level="待评估")
-    assert db_session.query(OutboxEvent).count() == 1
+    CaseService.update_case(db_session, case.id, features={"derived_only": "待评估"})
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 1
 
     CaseService.update_case(db_session, case.id, location="南区 13 号井附近")
 
-    assert db_session.query(OutboxEvent).count() == 2
-    pending = db_session.query(OutboxEvent).filter(OutboxEvent.status == "pending").one()
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 2
+    pending = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.status == "pending").one()
     CasePipelineService.process_event(db_session, pending.id)
     profiles = db_session.query(CaseAnalysisProfile).order_by(CaseAnalysisProfile.created_at).all()
     assert len(profiles) == 2
     assert [item.is_current for item in profiles] == [False, True]
 
 
-def test_reverting_to_a_historical_source_hash_reactivates_only_that_profile(db_session: Session):
+def test_reverting_to_historical_content_preserves_three_source_bound_profiles(db_session: Session):
+    from copy import deepcopy
+
     case = _create_case(db_session)
     original_location = case.location
-    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).one().id)
+    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one().id)
+    original_profile = db_session.query(CaseAnalysisProfile).one()
+    original_source_id = original_profile.source_revision_id
+    original_payload = deepcopy(original_profile.payload)
+    original_revision = db_session.get(CaseRevision, original_source_id)
+    original_source_payload = deepcopy(original_revision.payload)
 
     CaseService.update_case(db_session, case.id, location="南区 13 号井附近")
-    changed = db_session.query(OutboxEvent).filter(OutboxEvent.status == "pending").one()
+    changed = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.status == "pending").one()
     CasePipelineService.process_event(db_session, changed.id)
 
     CaseService.update_case(db_session, case.id, location=original_location)
-    reverted = db_session.query(OutboxEvent).filter(OutboxEvent.status == "pending").one()
+    reverted = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.status == "pending").one()
     CasePipelineService.process_event(db_session, reverted.id)
 
     profiles = db_session.query(CaseAnalysisProfile).order_by(CaseAnalysisProfile.profile_version).all()
-    assert len(profiles) == 2
-    assert [item.is_current for item in profiles] == [True, False]
+    revisions = db_session.query(CaseRevision).order_by(CaseRevision.revision).all()
+    assert len(profiles) == len(revisions) == 3
+    assert [item.source_revision_id for item in profiles] == [item.id for item in revisions]
+    assert [item.is_current for item in profiles] == [False, False, True]
+    assert profiles[0].source_hash == profiles[2].source_hash != profiles[1].source_hash
+    assert profiles[0].source_revision_id == original_source_id != profiles[2].source_revision_id
+    assert profiles[0].payload == original_payload
+    assert db_session.get(CaseRevision, original_source_id).payload == original_source_payload
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 3
     assert db_session.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.is_current.is_(True)).count() == 1
 
 
 def test_confirmed_intake_and_evidence_changes_enqueue_fresh_analysis(db_session: Session):
     case = _create_case(db_session)
-    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).one().id)
+    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one().id)
 
     apply_ai_intake_preview(
         case.id,
@@ -280,8 +299,8 @@ def test_confirmed_intake_and_evidence_changes_enqueue_fresh_analysis(db_session
         ),
         db_session,
     )
-    assert db_session.query(OutboxEvent).count() == 2
-    pending = db_session.query(OutboxEvent).filter(OutboxEvent.status == "pending").one()
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 2
+    pending = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.status == "pending").one()
     CasePipelineService.process_event(db_session, pending.id)
 
     create_case_evidence(
@@ -290,15 +309,15 @@ def test_confirmed_intake_and_evidence_changes_enqueue_fresh_analysis(db_session
         db_session,
     )
 
-    assert db_session.query(OutboxEvent).count() == 3
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").count() == 3
 
 
 def test_quality_rule_fields_enqueue_and_refresh_profile(db_session: Session):
     case = _create_case(db_session)
-    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).one().id)
+    CasePipelineService.process_event(db_session, db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one().id)
 
     CaseService.update_case(db_session, case.id, police_reported=True)
-    pending = db_session.query(OutboxEvent).filter(OutboxEvent.status == "pending").one()
+    pending = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.status == "pending").one()
     CasePipelineService.process_event(db_session, pending.id)
 
     profiles = db_session.query(CaseAnalysisProfile).order_by(
@@ -307,10 +326,13 @@ def test_quality_rule_fields_enqueue_and_refresh_profile(db_session: Session):
     assert len(profiles) == 2
     assert profiles[0].is_current is False
     assert profiles[1].is_current is True
-    assert {item["field"] for item in profiles[1].payload["quality"]["missing_required"]} >= {
-        "police_officer",
-        "police_phone",
+    quality = profiles[1].payload["quality"]
+    # A report flag triggers a new source/profile version, not mandatory personal contact data.
+    assert not {"police_officer", "police_phone"} & {
+        item["field"] for item in quality["missing_required"]
     }
+    assert quality["rule_version"].startswith("case-quality-6.1")
+    assert quality["validation"]["can_save"] is True
 
 
 def test_vehicle_transfer_fields_are_part_of_profile_source_hash(db_session: Session):
@@ -335,7 +357,7 @@ def test_vehicle_transfer_fields_are_part_of_profile_source_hash(db_session: Ses
 
 def test_profile_output_is_deterministic_for_same_source_hash(db_session: Session):
     case = _create_case(db_session)
-    first_event = db_session.query(OutboxEvent).one()
+    first_event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     CasePipelineService.process_event(db_session, first_event.id)
     first = db_session.query(CaseAnalysisProfile).one()
 
@@ -363,7 +385,7 @@ def _client(db: Session, role: str = "analyst") -> TestClient:
 
 def test_profile_and_pipeline_status_are_read_only_for_normal_user(db_session: Session):
     case = _create_case(db_session)
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     CasePipelineService.process_event(db_session, event.id)
     client = _client(db_session)
 
@@ -397,7 +419,7 @@ def test_profile_backfill_cursor_advances_past_the_first_batch(db_session: Sessi
         case_number="PIPE-002",
         occurred_time=datetime(2026, 9, 8, 2, 30),
     )
-    db_session.query(OutboxEvent).delete()
+    db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").delete()
     db_session.query(CasePipelineState).delete()
     db_session.commit()
 
@@ -410,7 +432,7 @@ def test_profile_backfill_cursor_advances_past_the_first_batch(db_session: Sessi
 
     assert batch_one["next_after_id"] == first.id
     assert batch_two["next_after_id"] == second.id
-    assert {item.aggregate_id for item in db_session.query(OutboxEvent).all()} == {
+    assert {item.aggregate_id for item in db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").all()} == {
         str(first.id),
         str(second.id),
     }
@@ -418,7 +440,7 @@ def test_profile_backfill_cursor_advances_past_the_first_batch(db_session: Sessi
 
 def test_outbox_completion_is_fenced_by_worker_token(db_session: Session):
     _create_case(db_session)
-    event = db_session.query(OutboxEvent).one()
+    event = db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").one()
     claimed, acquired = OutboxClaimService.claim(
         db_session,
         event.id,
@@ -426,7 +448,7 @@ def test_outbox_completion_is_fenced_by_worker_token(db_session: Session):
     )
     assert acquired is True
     original_worker = claimed.worker_id
-    db_session.query(OutboxEvent).filter(OutboxEvent.id == event.id).update(
+    db_session.query(OutboxEvent).filter_by(event_type="case.analysis.requested").filter(OutboxEvent.id == event.id).update(
         {OutboxEvent.worker_id: "replacement-worker"},
         synchronize_session=False,
     )

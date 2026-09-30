@@ -10,6 +10,7 @@ import {
   AppstoreOutlined,
 } from '@ant-design/icons'
 import { caseApi } from '../../services/cases'
+import { formatCaseTime } from '../../utils/caseValues'
 import { authApi } from '../../services/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { caseDetailKey, parseCaseDeepLinkId, visibleCaseDetail } from './caseSearch'
@@ -151,7 +152,7 @@ const CasesMap: React.FC = () => {
         caseType: c.case_type,
         riskLevel: 'medium' as const,
         chainPosition,
-        occurredTime: c.occurred_time,
+        occurredTime: c.occurred_time ?? undefined,
         modus: c.modus_operandi,
       }
     })
@@ -239,9 +240,9 @@ const CasesMap: React.FC = () => {
           <Button
             className="cases-map-filter__spacetime-btn"
             icon={<FieldTimeOutlined />}
-            onClick={() => navigate(regionalContextPath('/cases/spacetime', searchParams))}
+            onClick={() => navigate(regionalContextPath('/area-analysis?regional_view=time', searchParams))}
           >
-            时空研判
+            时间规律
           </Button>
         </div>
       </div>
@@ -400,7 +401,7 @@ const CasesMap: React.FC = () => {
                 <div className="cases-map-selected__num">{selectedCase.case_number}</div>
                 <div className="cases-map-selected__type">{selectedCase.case_type || '未分类'}</div>
                 <div className="cases-map-selected__date">
-                  {selectedCase.occurred_time?.slice(0, 10)}
+                  {formatCaseTime(selectedCase, 'YYYY-MM-DD')}
                 </div>
                 <div className="cases-map-selected__divider" />
                 <Button

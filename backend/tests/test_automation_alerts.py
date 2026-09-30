@@ -10,6 +10,7 @@ from app.database import Base, get_db
 from app.models.automation_alert import AutomationAlert
 from app.models.event import Event
 from app.models.case import Case
+from app.services.automation_alert_service import AutomationAlertService
 
 
 def _session() -> Session:
@@ -20,7 +21,9 @@ def _session() -> Session:
     )
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return session_local()
+    db = session_local()
+    db.info['authorized_area_ids'] = None  # Explicit unrestricted synthetic fixture.
+    return db
 
 
 def _client(db_session: Session) -> TestClient:
@@ -34,15 +37,63 @@ def _client(db_session: Session) -> TestClient:
     return TestClient(app)
 
 
-def test_simulated_automation_alerts_can_create_event_and_archive_false_alarm():
+def _create_alert(client: TestClient, title: str = "人工登记参数异常") -> dict:
+    response = client.post("/api/automation-alerts/", json={
+        "source_system": "manual",
+        "alert_type": "parameter_anomaly",
+        "title": title,
+        "description": "人工登记的参数异常，需核验设备状态。",
+        "location": "合成测试位置",
+        "ai_assessment": {"result": "资料待核验", "basis": ["人工登记参数异常"]},
+    })
+    assert response.status_code == 200
+    assert response.json()["is_simulated"] is False
+    return response.json()
+
+
+def test_retired_simulation_endpoint_is_absent_without_business_writes(monkeypatch):
     db = _session()
     client = _client(db)
 
-    seeded = client.post("/api/automation-alerts/simulated")
-    assert seeded.status_code == 200
-    alerts = seeded.json()
-    assert len(alerts) == 2
-    alert_id = alerts[0]["id"]
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("retired endpoint must not generate records")
+
+    monkeypatch.setattr(AutomationAlertService, "seed_simulated_alerts", forbidden)
+    response = client.post("/api/automation-alerts/simulated")
+
+    assert response.status_code == 404
+    assert db.query(AutomationAlert).count() == 0
+    assert db.query(Event).count() == 0
+    assert db.query(Case).count() == 0
+
+
+def test_generic_alert_creation_cannot_bypass_retired_simulation():
+    db = _session()
+    response = _client(db).post("/api/automation-alerts/", json={
+        "alert_type": "simulation", "title": "合成测试", "is_simulated": True,
+    })
+    assert response.status_code == 410
+    assert db.query(AutomationAlert).count() == 0
+
+
+def test_existing_simulated_records_remain_readable_and_unchanged():
+    db = _session()
+    old = AutomationAlertService.seed_simulated_alerts(db)
+    before = [(item.id, item.title, item.status) for item in old]
+    client = _client(db)
+
+    response = client.get("/api/automation-alerts/")
+    assert response.status_code == 200
+    assert {item["id"] for item in response.json()} == {item.id for item in old}
+    assert client.post("/api/automation-alerts/simulated").status_code == 404
+    assert [(item.id, item.title, item.status) for item in db.query(AutomationAlert).order_by(AutomationAlert.id)] == before
+
+
+def test_automation_alerts_can_create_event_and_archive_false_alarm():
+    db = _session()
+    client = _client(db)
+
+    alert_id = _create_alert(client)["id"]
 
     event_response = client.post(f"/api/automation-alerts/{alert_id}/event")
     assert event_response.status_code == 200
@@ -68,7 +119,7 @@ def test_automation_alert_can_convert_to_case_without_patrol_dispatch():
     db = _session()
     client = _client(db)
 
-    alert = client.post("/api/automation-alerts/simulated").json()[1]
+    alert = _create_alert(client)
 
     response = client.post(f"/api/automation-alerts/{alert['id']}/convert-to-case")
 
@@ -88,7 +139,7 @@ def test_automation_alert_can_convert_to_case_without_patrol_dispatch():
 def test_automation_alert_terminal_states_do_not_conflict():
     db = _session()
     client = _client(db)
-    first, second = client.post("/api/automation-alerts/simulated").json()
+    first, second = _create_alert(client, "异常记录一"), _create_alert(client, "异常记录二")
 
     archived = client.post(f"/api/automation-alerts/{first['id']}/false-alarm", json={"note": "误报"})
     assert archived.status_code == 200
@@ -104,7 +155,7 @@ def test_automation_alert_terminal_states_do_not_conflict():
 def test_automation_alert_triage_pack_links_to_case_context_after_conversion():
     db = _session()
     client = _client(db)
-    alert = client.post("/api/automation-alerts/simulated").json()[0]
+    alert = _create_alert(client)
 
     before = client.get(f"/api/automation-alerts/{alert['id']}/triage-pack")
     assert before.status_code == 200

@@ -114,7 +114,7 @@ case "$APP_VERSION" in
         [ "$ALEMBIC_TARGET" = "head" ] \
             || fail "v3.1 及以上候选部署必须使用 ALEMBIC_TARGET=head"
         case "$APP_VERSION" in
-          5.*)
+          5.*|6.*)
             sh "$ROOT_DIR/scripts/check-postgres-image.sh" "$POSTGIS_IMAGE" \
                 || fail "v5.1+ 数据库镜像不满足离线迁移条件，请参照 local-history-embedding.zh-CN.md"
             ;;

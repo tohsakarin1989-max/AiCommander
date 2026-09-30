@@ -47,15 +47,19 @@ const EventCenter: React.FC = () => {
     queryFn: ({ signal }) => eventApi.get(regional.eventId!, signal), enabled: regional.eventId != null && !regional.error,
     retry: false, gcTime: 0 })
   const selectedEvent = !detailQuery.isError && !regional.error && detailQuery.data?.id === regional.eventId ? detailQuery.data : undefined
+  const eventScope = { operational_area_id: regional.areaId ?? undefined,
+    start_date: regional.startDate, end_date: regional.endDate }
 
   const { data: events, isLoading, isError } = useQuery({
-    queryKey: ['events'],
-    queryFn: () => eventApi.list({ limit: 100 }),
+    queryKey: ['events', 'list', user?.id, sessionEpoch, eventScope],
+    queryFn: () => eventApi.list({ limit: 100, ...eventScope }),
+    enabled: !regional.error, retry: false,
   })
 
-  const { data: statistics } = useQuery({
-    queryKey: ['events', 'statistics'],
-    queryFn: () => eventApi.getStatistics(30),
+  const { data: statistics, isError: statisticsError, isLoading: statisticsLoading } = useQuery({
+    queryKey: ['events', 'statistics', user?.id, sessionEpoch, eventScope],
+    queryFn: () => eventApi.getStatistics({ ...eventScope, all_history: true }),
+    enabled: !regional.error, retry: false,
   })
 
   const { data: wells = [] } = useQuery({
@@ -102,11 +106,11 @@ const EventCenter: React.FC = () => {
   })
 
   const typeStats = useMemo(() => {
-    const source = statistics?.by_type ?? {}
+    const source = !statisticsError && !regional.error ? statistics?.by_type ?? {} : {}
     return Object.entries(source)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
-  }, [statistics])
+  }, [statistics, statisticsError, regional.error])
 
   const handleCreate = async () => {
     const values = await form.validateFields()
@@ -128,11 +132,13 @@ const EventCenter: React.FC = () => {
     })
   }
 
-  const rows = isError ? [] : events ?? []
+  const rows = isError || regional.error ? [] : events ?? []
+  const statisticValue = (value?: number) => statisticsError || regional.error ? '未读取'
+    : statisticsLoading ? '读取中' : value ?? '未知'
 
   return (
     <div className="page event-page">
-      {params.has('operational_area_id') && <p>当前保留共享辖区与时间选择。此页保留原事件管理清单，<button className="btn-ghost" onClick={() => navigate(regionalContextPath('/area-analysis', params))}>查看同条件事件时间线</button>。</p>}
+      <p>事件清单与统计使用同一授权辖区、案发时间范围；清单最多展示 100 条，统计不受分页限制。案件专用筛选不应用于事件。<button className="btn-ghost" onClick={() => navigate(regionalContextPath('/area-analysis', params))}>查看同条件事件时间线</button></p>
       {regional.error && <Alert type="error" message={regional.error} />}
       {params.has('eventId') && <section className="card" aria-label="指定事件原始记录">
         <div className="card-head"><h2>指定事件原始记录</h2><button onClick={() => setParams(previous => writeRegionalContext(previous, { eventId: null }))}>关闭</button></div>
@@ -154,29 +160,30 @@ const EventCenter: React.FC = () => {
 
       <div className="ev-stats">
         <div className="ev-stat">
-          <span>事件总量</span>
-          <b>{statistics?.total_events ?? rows.length}</b>
-          <small>全部事件</small>
+          <span>当前范围事件</span>
+          <b>{statisticValue(statistics?.filtered_events)}</b>
+          <small>授权范围与所选时间，按事件编号计数</small>
         </div>
         <div className="ev-stat">
-          <span>近 30 天</span>
-          <b>{statistics?.recent_events ?? 0}</b>
-          <small>新增事件</small>
+          <span>关联案件</span>
+          <b>{statisticValue(statistics?.linked_case_count)}</b>
+          <small>可访问案件去重，与事件数不相加</small>
         </div>
         <div className="ev-stat">
-          <span>高风险区域</span>
-          <b>{statistics?.high_risk_areas?.length ?? 0}</b>
-          <small>需人工核查</small>
+          <span>旧版区域评估</span>
+          <b>{statisticValue(statistics?.high_risk_areas?.length)}</b>
+          <small>历史高等级档案（最多 5 条），非当前风险</small>
         </div>
         <div className="ev-stat wide">
           <span>主要类型</span>
           <div className="ev-type-row">
             {typeStats.length > 0 ? typeStats.map(([type, count]) => (
               <em key={type}>{EVENT_TYPES[type as keyof typeof EVENT_TYPES] ?? type} {count}</em>
-            )) : <em>暂无统计</em>}
+            )) : <em>{statisticsError ? '统计暂不可用' : statisticsLoading ? '读取中' : '暂无类型统计'}</em>}
           </div>
         </div>
       </div>
+      {!statisticsError && statistics?.cutoff && <p>统计截止：{dayjs(statistics.cutoff).format('YYYY-MM-DD HH:mm')}；{statistics.counting_rule}</p>}
 
       <div className="card">
         <div className="card-head">

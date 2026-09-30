@@ -1,6 +1,8 @@
 # Dashboard Command Screen Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **历史设计参考（2026-05-10）**：当前 AGENTS 引用本文用于核对相关设计与验收，只有用户明确要求恢复本计划时才结合当前代码和已完成证据选择未完成步骤；不强制旧 superpowers 子技能，不重建已经存在的实现。保留 WebSocket、地图交互、既有查询、只在必要范围改动和本文验收约束。
+>
+> Commit 步骤仅在用户明确授权相应提交时执行；阅读计划、完成检查或记录结果不自动授权提交、推送或发布。不得覆盖当前任务范围外的已有改动。
 
 **Goal:** Build the approved B1-C v4 command screen on the existing Dashboard page.
 

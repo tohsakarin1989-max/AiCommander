@@ -10,7 +10,6 @@ import RuntimeFeatureGate from './components/RuntimeFeatureGate'
 import { getThemeTokens } from './theme/themeMode'
 import { ThemeProvider, useThemeMode } from './theme/ThemeContext'
 
-const Home = lazy(() => import('./pages/Home/Home'))
 const Showcase = lazy(() => import('./pages/Showcase/Showcase'))
 const Workbench = lazy(() => import('./pages/Workbench/Workbench'))
 const Cases = lazy(() => import('./pages/Cases/Cases'))
@@ -25,16 +24,12 @@ const Deployment = lazy(() => import('./pages/Deployment/Deployment'))
 const Assistant = lazy(() => import('./pages/Assistant/Assistant'))
 const Topics = lazy(() => import('./pages/Topics/Topics'))
 const Dashboard = lazy(() => import('./pages/Dashboard/Dashboard'))
-const ConclusionFactory = lazy(() => import('./pages/Conclusions/ConclusionFactory'))
 const AgentCenter = lazy(() => import('./pages/Agents/IntelligenceRuntimeCenter'))
 const AgentLab = lazy(() => import('./pages/Agents/AgentCenter'))
 const CaseGraph = lazy(() => import('./pages/Graphs/CaseGraph'))
 const EvidenceGraph = lazy(() => import('./pages/Graphs/EvidenceGraph'))
 const SituationWorkbench = lazy(() => import('./pages/Situation/SituationWorkbench'))
 const AreaAnalysis = lazy(() => import('./pages/AreaAnalysis/AreaAnalysis'))
-const Patrols = lazy(() => import('./pages/Patrols/Patrols'))
-const GangAnalysis = lazy(() => import('./pages/Gangs/GangAnalysis'))
-const SpaceTimeAnalysis = lazy(() => import('./pages/Cases/SpaceTimeAnalysis'))
 const IntelliInspect = lazy(() => import('./pages/IntelliInspect/IntelliInspect'))
 const Suggestions = lazy(() => import('./pages/Suggestions/Suggestions'))
 const EventCenter = lazy(() => import('./pages/Events/EventCenter'))
@@ -60,6 +55,28 @@ export function LegacyCaseReviewRedirect() {
   return <Navigate to={caseReviewDestination(search)} replace />
 }
 
+export function spaceTimeDestination(search: string, hash = ''): string {
+  const params = new URLSearchParams(search)
+  params.set('regional_view', 'time')
+  return `/area-analysis?${params}${hash}`
+}
+
+export function LegacySpaceTimeRedirect() {
+  const { search, hash } = useLocation()
+  return <Navigate to={spaceTimeDestination(search, hash)} replace />
+}
+
+export function conclusionDestination(search: string) {
+  const params = new URLSearchParams(search)
+  const id = params.get('conclusionId')
+  if (id && /^[1-9]\d*$/.test(id)) return `/reports?kind=conclusion&resultId=${id}`
+  const caseId = params.get('caseId')
+  return `/reports?catalogKind=conclusion${caseId && /^[1-9]\d*$/.test(caseId) ? `&subject=case&subjectId=${caseId}` : ''}`
+}
+function LegacyConclusionRedirect() {
+  return <Navigate to={conclusionDestination(useLocation().search)} replace />
+}
+
 export function AuthenticatedApp() {
   const { phase, user, sessionEpoch } = useAuth()
 
@@ -76,7 +93,6 @@ export function AuthenticatedApp() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/"                element={<Navigate to="/workbench" replace />} />
-          <Route path="/legacy-home"     element={<Home />} />
           <Route path="/workbench"       element={<Workbench />} />
           <Route path="/dashboard"       element={<Dashboard />} />
           <Route path="/showcase" element={user.role !== 'viewer' ? <RuntimeFeatureGate feature="showcase" label="能力演示"><Showcase /></RuntimeFeatureGate> : <Navigate to="/dashboard" replace />} />
@@ -86,10 +102,10 @@ export function AuthenticatedApp() {
           <Route path="/cases/features"  element={adminOnly(<CaseFeatures />)} />
           <Route path="/case-intelligence" element={<CaseIntelligence />} />
           <Route path="/situation"       element={<SituationWorkbench />} />
-          <Route path="/cases/spacetime" element={<SpaceTimeAnalysis />} />
+          <Route path="/cases/spacetime" element={<LegacySpaceTimeRedirect />} />
           <Route path="/meetings"        element={<Meetings />} />
           <Route path="/reports"         element={<Reports />} />
-          <Route path="/conclusions"     element={<ConclusionFactory />} />
+          <Route path="/conclusions"     element={<LegacyConclusionRedirect />} />
           <Route path="/deployment"      element={adminOnly(<Deployment />)} />
           <Route path="/case-review"     element={<LegacyCaseReviewRedirect />} />
           <Route path="/area-analysis"   element={<AreaAnalysis />} />
@@ -98,8 +114,6 @@ export function AuthenticatedApp() {
           <Route path="/jurisdiction"    element={<Jurisdiction />} />
           <Route path="/graphs/serial"   element={<CaseGraph />} />
           <Route path="/graphs/evidence" element={<EvidenceGraph />} />
-          <Route path="/gangs"           element={<GangAnalysis />} />
-          <Route path="/patrols"         element={<RuntimeFeatureGate feature="legacy_operations" label="历史巡逻模块">{adminOnly(<Patrols />)}</RuntimeFeatureGate>} />
           <Route path="/assistant"       element={<Assistant />} />
           <Route path="/topics"          element={<Topics />} />
           <Route path="/agent-lab" element={adminOnly(<RuntimeFeatureGate feature="agent_lab" label="Agent 试用"><AgentLab /></RuntimeFeatureGate>)} />

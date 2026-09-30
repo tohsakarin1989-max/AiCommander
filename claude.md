@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AiCommander 是一个 AI 驱动的案件分析系统，专注于涉油案件分析，核心特性是"圆桌会议"模式——多个 AI 智能体协作研判案件。系统还集成了辖区风险底座、时空研判、团伙分析、自动化告警等多个业务模块。
+AiCommander 是涉油案件数智研判与防控辅助系统。日常主链为案件资料、标准画像/过程、历史条件和道路依据、专题及统一材料；多模型会议只保留为高级可选能力，不是每案必经流程。
+
+> 2026-09-30：本文后面的早期 API/目录清单保留为历史开发记录，不能作为当前运行清单。结论工厂、执行型巡逻/人员/重点部位管理及旧团伙入口已退出；原始业务表和人工记录保留。当前版本以 `VERSION`、README 和 [v6.5 说明](docs/releases/v6.5.0-stable.md)为准，统一阅读使用 `/api/results`。不要按下方旧清单恢复已退役路径。
 
 ## 常用命令
 
@@ -281,7 +283,7 @@ export { suggestionsApi } from './suggestions'   // 工作建议
 | `CaseAutomationService` | 案件状态自动化工作流 |
 | `CaseQualityService` | 案件质量评分 |
 | `ConclusionFactoryService` | 结论批量生成 |
-| `EmbeddingService` | 文本向量化 |
+| `LocalEmbeddingService` | 已校验的内网模型包向量化，供统一历史索引使用 |
 | `VectorDbService` | 向量数据库检索 |
 
 ## 智能研判系统

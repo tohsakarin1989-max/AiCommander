@@ -16,8 +16,12 @@ export function caseResultMapModel(result: CaseResult) {
   }
   return {
     markers, snapshotRef: content.versions.map_snapshot_id ?? undefined,
-    productionAssetIds: hypothesisMapAssetIds(content.candidates),
-    hypothesisRegions: content.candidates.map(item => ({
+    referencePoints: content.composition ? content.road_map?.reference_points.map(point => ({
+      id: point.id, latitude: point.latitude, longitude: point.longitude, title: point.title,
+      description: '本组合冻结可信入口，不代表实际行驶轨迹或正式关联。',
+    })) : undefined,
+    productionAssetIds: content.composition ? content.road_map?.production_asset_ids ?? [] : hypothesisMapAssetIds(content.candidates),
+    hypothesisRegions: content.composition ? [] : content.candidates.map(item => ({
       ...item, hypothesis_type: item.category, ruleSupport: item.score,
     })),
   }

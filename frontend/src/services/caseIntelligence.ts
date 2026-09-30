@@ -11,6 +11,19 @@ export interface IntelligenceTag {
   case_count?: number
 }
 
+export interface IntelligenceObservation {
+  key: string
+  label: string
+  category: string
+  kind: 'negated' | 'uncertain' | 'conflicting'
+  references: Array<{
+    field: string
+    quote?: string
+    path?: Array<string | number>
+    value?: unknown
+  }>
+}
+
 export interface IntelligenceCounterItem {
   [key: string]: string | number | undefined
   count: number
@@ -49,6 +62,12 @@ export interface SimilarCaseItem {
   reasons: string[]
   duplicate_warnings: string[]
   shared_tags: string[]
+  score?: number
+  score_kind?: string
+  different_conditions?: [string, string, string][]
+  unmatched_query_conditions?: [string, string, string][]
+  versions?: Record<string, string | number | null>
+  evidence_refs?: unknown[]
 }
 
 export interface SimilarCasesPayload {
@@ -56,6 +75,10 @@ export interface SimilarCasesPayload {
   case_number?: string
   principle: string
   items: SimilarCaseItem[]
+  state?: 'ready' | 'partial' | 'unavailable'
+  mode?: string
+  boundary?: string
+  coverage?: { authorized_cases?: number; scanned_cases?: number; complete: boolean }
 }
 
 export interface SpatiotemporalPayload {
@@ -112,8 +135,11 @@ export interface AreaProfile {
 export interface AreaProfilesPayload {
   days: number
   radius_km: number
-  profile_count: number
+  profile_count: number | null
   items: AreaProfile[]
+  state?: 'retired'
+  computed?: boolean
+  boundary?: string
 }
 
 export interface PreventionSuggestion {
@@ -150,7 +176,8 @@ export interface ExperienceCardPayload {
   how_it_was_found: string[]
   reusable_lessons: string[]
   next_attention_points: string[]
-  evidence_basis: Record<string, unknown>
+  evidence_basis: Record<string, unknown> & { observations?: IntelligenceObservation[]; tag_rule_version?: string }
+  evidence_gaps?: string[]
 }
 
 export interface StructuredAiInference {
@@ -254,6 +281,9 @@ export interface IntelligenceWorkbench {
     category_counts?: Record<string, number>
     context?: Record<string, unknown>
     principle?: string
+    observations?: IntelligenceObservation[]
+    information_gaps?: string[]
+    rule_version?: string
   }
   similar_cases: SimilarCasesPayload
   spatiotemporal: SpatiotemporalPayload
@@ -262,6 +292,7 @@ export interface IntelligenceWorkbench {
   prevention_suggestions: PreventionSuggestionsPayload
   experience_card?: ExperienceCardPayload | null
   report: IntelligenceReport
+  context_pack?: LlmContextPack
 }
 
 export interface TagOverrideRequest {
@@ -318,11 +349,6 @@ export const caseIntelligenceApi = {
     const response = await api.get<SpatiotemporalPayload>('/case-intelligence/spatiotemporal', {
       params: { days },
     })
-    return response.data
-  },
-
-  getAreaProfiles: async (params?: { days?: number; limit?: number; radius_km?: number }) => {
-    const response = await api.get<AreaProfilesPayload>('/case-intelligence/area-profiles', { params })
     return response.data
   },
 

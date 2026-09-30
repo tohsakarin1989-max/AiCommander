@@ -5,6 +5,13 @@ import { parseCaseContextParams } from './caseContext'
 export type QueryCaseFilters = Omit<CasePageParams, 'page' | 'page_size'>
 export interface InitialQueryContext { source_case_id?: number; filters: QueryCaseFilters }
 export interface QuerySourceCase { case_id: number; operational_area_id: number | null; source_hash: string }
+export type QueryPresetName = 'case_count' | 'case_process' | 'case_result' | 'facility_dossier' | 'facility_history' | 'coverage_scenario'
+export interface QueryPreset { name: QueryPresetName; arguments: Record<string, unknown> }
+export interface EvidenceAnswer {
+  schema_version: 'query-answer-6.4-1'; summary: string
+  findings: Array<{ text: string; card_index: number; evidence_refs: string[] }>
+  information_gaps: string[]; boundary: string
+}
 
 /** Only page selection is submitted; source versions and permissions come from the server. */
 export function queryEntryContext(params: URLSearchParams): { initialContext?: InitialQueryContext; error?: string } {
@@ -24,6 +31,16 @@ export interface QueryCard {
   information_gaps?: string[]
   evidence?: { source?: string; queried_at?: string; filters?: Record<string, unknown>; tool_version?: string }
   boundary?: string
+  continuation?: AggregateContinuation | { status: 'unavailable'; error_code?: string }
+}
+export interface AggregateContinuation {
+  id: string
+  status: 'pending' | 'retry' | 'processing' | 'completed' | 'cancelled' | 'superseded' | 'failed'
+  progress: { phase: string; scanned_cases: number; total_cases: number | null }
+  as_of: string
+  scope_version: string
+  error?: string | null
+  result?: Record<string, unknown> | null
 }
 export interface QueryTask {
   id: string
@@ -34,6 +51,8 @@ export interface QueryTask {
   followup_context?: { parent_query_id: string; previous_question: string; previous_completed_at?: string | null;
     conditions: QueryConditions; parent_result_hash: string; source_case?: QuerySourceCase | null } | null
   result: { cards?: QueryCard[]; query_conditions?: QueryConditions;
+    execution_mode?: 'deterministic_preset' | 'intranet_model'; answer?: EvidenceAnswer
+    usage?: { model_requests: number; input_tokens: number | null; output_tokens: number | null; token_state: string; tool_calls: number; duration_ms: number }
     trace?: { step: number; tool: string; duration_ms?: number; error_code?: string;
       condition_changes?: { field: string; previous: unknown; current: unknown; basis: string }[] }[];
     error_code?: string | null }
@@ -42,15 +61,20 @@ export interface QueryConditions { case_filters: Record<string, unknown>; tool_d
 export const intelligentQueriesApi = {
   document: async (id: string, format: 'docx' | 'pdf', signal?: AbortSignal): Promise<Blob> =>
     (await api.get(`/intelligent-queries/${encodeURIComponent(id)}/document.${format}`, { responseType: 'blob', signal })).data,
-  create: async (query: string, parentQueryId?: string, initialContext?: InitialQueryContext): Promise<QueryTask> => {
+  create: async (query: string, parentQueryId?: string, initialContext?: InitialQueryContext, preset?: QueryPreset): Promise<QueryTask> => {
     if (parentQueryId && initialContext) throw new Error('已有查询与初始选择不能混用')
     return (await api.post('/intelligent-queries', { query,
       ...(parentQueryId ? { parent_query_id: parentQueryId } : {}),
       ...(initialContext ? { initial_context: initialContext } : {}),
+      ...(preset ? { preset } : {}),
     })).data
   },
   read: async (id: string, signal?: AbortSignal): Promise<QueryTask> =>
     (await api.get(`/intelligent-queries/${encodeURIComponent(id)}`, { signal })).data,
   cancel: async (id: string): Promise<{ id: string; status: string }> =>
     (await api.post(`/intelligent-queries/${encodeURIComponent(id)}/cancel`)).data,
+  readContinuation: async (id: string, signal?: AbortSignal): Promise<AggregateContinuation> =>
+    (await api.get(`/analysis-topics/aggregations/${encodeURIComponent(id)}`, { signal })).data,
+  cancelContinuation: async (id: string): Promise<AggregateContinuation> =>
+    (await api.post(`/analysis-topics/aggregations/${encodeURIComponent(id)}/cancel`)).data,
 }

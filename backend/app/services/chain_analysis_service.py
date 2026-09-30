@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models.case import Case
 from app.models.chain_link import ChainLink
@@ -14,6 +14,7 @@ from app.utils.geo import bounding_box, haversine_km
 
 
 class ChainAnalysisService:
+    ALGORITHM_VERSION = "chain-6.0-source-bound-1"
     DEFAULT_RADIUS_KM = 20.0
     DEFAULT_TIME_WINDOW_DAYS = 180
     DEFAULT_MIN_CONFIDENCE = 0.3
@@ -51,9 +52,9 @@ class ChainAnalysisService:
         return case.latitude is not None and case.longitude is not None
 
     @staticmethod
-    def _day_diff(a: Optional[datetime], b: Optional[datetime]) -> int:
+    def _day_diff(a: Optional[datetime], b: Optional[datetime]) -> Optional[int]:
         if not a or not b:
-            return 0
+            return None
         return abs((a - b).days)
 
     @staticmethod
@@ -77,7 +78,7 @@ class ChainAnalysisService:
         radius_km: float,
         time_window_days: int,
     ) -> List[Case]:
-        if not ChainAnalysisService._has_geo(base_case):
+        if not ChainAnalysisService._has_geo(base_case) or base_case.occurred_time is None:
             return []
 
         min_lat, max_lat, min_lon, max_lon = bounding_box(base_case.latitude, base_case.longitude, radius_km)
@@ -99,7 +100,8 @@ class ChainAnalysisService:
         for item in rough_candidates:
             if classify_chain_position(item) != expected_position:
                 continue
-            if ChainAnalysisService._day_diff(base_case.occurred_time, item.occurred_time) > time_window_days:
+            time_gap = ChainAnalysisService._day_diff(base_case.occurred_time, item.occurred_time)
+            if time_gap is None or time_gap > time_window_days:
                 continue
             distance = haversine_km(base_case.latitude, base_case.longitude, item.latitude, item.longitude)
             if distance <= radius_km:
@@ -145,11 +147,11 @@ class ChainAnalysisService:
     @staticmethod
     def _reasoning(link_type: str, distance_km: float, time_diff_days: int) -> str:
         if link_type == "upstream_transport":
-            return f"运输环节与盗采环节相距{distance_km:.1f}公里，时间差{time_diff_days}天，可能存在取油路径。"
-        return f"运输环节与囤储环节相距{distance_km:.1f}公里，时间差{time_diff_days}天，可能存在转运去向。"
+            return f"运输与盗采记录直线相距{distance_km:.1f}公里，时间差{time_diff_days}天；仅为待核验的时空关联，不证明取油路径。"
+        return f"运输与囤储记录直线相距{distance_km:.1f}公里，时间差{time_diff_days}天；仅为待核验的时空关联，不证明实际转运去向。"
 
     @staticmethod
-    def scan_chain_links(case_id: int, db: Session) -> List[ChainLink]:
+    def scan_chain_links(case_id: int, db: Session, *, commit: bool = True) -> List[ChainLink]:
         base_case = db.query(Case).filter(Case.id == case_id).first()
         if not base_case or not ChainAnalysisService._has_geo(base_case):
             return []
@@ -181,8 +183,12 @@ class ChainAnalysisService:
                     .first()
                 )
                 if existing:
-                    links.append(existing)
-                    continue
+                    # Human decisions belong to the reviewed source version.
+                    # Never overwrite/reconfirm them when a case changes.
+                    if existing.status in {"confirmed", "rejected"}:
+                        if ChainAnalysisService.freshness(existing, db) == "current":
+                            links.append(existing)
+                        continue
 
                 distance_km = haversine_km(base_case.latitude, base_case.longitude, candidate.latitude, candidate.longitude)
                 time_diff_days = ChainAnalysisService._day_diff(base_case.occurred_time, candidate.occurred_time)
@@ -193,22 +199,25 @@ class ChainAnalysisService:
                 if confidence < min_confidence:
                     continue
 
-                link = ChainLink(
-                    case_id_a=case_id_a,
-                    case_id_b=case_id_b,
-                    link_type=link_type,
-                    status="inferred",
-                    confidence=confidence,
-                    distance_km=round(distance_km, 3),
-                    time_diff_days=time_diff_days,
-                    reasoning=ChainAnalysisService._reasoning(link_type, distance_km, time_diff_days),
-                )
+                link = existing or ChainLink(case_id_a=case_id_a, case_id_b=case_id_b, link_type=link_type)
+                link.status = "inferred"
+                link.confidence = confidence
+                link.distance_km = round(distance_km, 3)
+                link.time_diff_days = time_diff_days
+                link.reasoning = ChainAnalysisService._reasoning(link_type, distance_km, time_diff_days)
+                from app.services.case_pipeline_service import CasePipelineService
+                source_a, source_b = (base_case, candidate) if base_case.id == case_id_a else (candidate, base_case)
+                link.source_hash_a = CasePipelineService.source_hash(db, source_a)
+                link.source_hash_b = CasePipelineService.source_hash(db, source_b)
+                link.algorithm_version = ChainAnalysisService.ALGORITHM_VERSION
                 db.add(link)
                 links.append(link)
 
-        db.commit()
-        for link in links:
-            db.refresh(link)
+        db.flush()
+        if commit:
+            db.commit()
+            for link in links:
+                db.refresh(link)
         return sorted(links, key=lambda item: (-item.confidence, item.id))
 
     @staticmethod
@@ -216,6 +225,10 @@ class ChainAnalysisService:
         link = db.query(ChainLink).filter(ChainLink.id == link_id).first()
         if not link:
             return None
+        if link.status == "confirmed":
+            return link
+        if ChainAnalysisService.freshness(link, db) != "current":
+            raise ValueError("chain_source_changed")
         link.status = "confirmed"
         link.confirmed_by = operator or "人工确认"
         link.confirmed_at = datetime.utcnow()
@@ -236,17 +249,21 @@ class ChainAnalysisService:
         return link
 
     @staticmethod
-    def list_links(db: Session, case_id: Optional[int] = None, include_rejected: bool = False) -> List[ChainLink]:
+    def list_links(db: Session, case_id: Optional[int] = None, include_rejected: bool = False,
+                   include_stale: bool = False) -> List[ChainLink]:
         query = db.query(ChainLink)
         if case_id is not None:
             query = query.filter(or_(ChainLink.case_id_a == case_id, ChainLink.case_id_b == case_id))
         if not include_rejected:
             query = query.filter(ChainLink.status != "rejected")
-        return query.order_by(ChainLink.status.asc(), ChainLink.confidence.desc(), ChainLink.created_at.desc()).all()
+        rows = query.order_by(ChainLink.status.asc(), ChainLink.confidence.desc(), ChainLink.created_at.desc()).all()
+        return [link for link in rows if include_stale or link.status in {"confirmed", "rejected"}
+                or ChainAnalysisService.freshness(link, db) == "current"]
 
     @staticmethod
     def get_chain_context(case_id: int, db: Session) -> Dict[str, Any]:
         links = ChainAnalysisService.list_links(db, case_id=case_id, include_rejected=False)
+        links = [link for link in links if ChainAnalysisService.freshness(link, db) == "current"]
         upstream: List[Dict[str, Any]] = []
         downstream: List[Dict[str, Any]] = []
         for link in links:
@@ -264,8 +281,27 @@ class ChainAnalysisService:
                 "confirmed": sum(1 for link in links if link.status == "confirmed"),
                 "inferred": sum(1 for link in links if link.status == "inferred"),
             },
-            "boundary": "链条关联为系统基于距离、时间和环节类型生成的辅助假设，必须经人工确认后才能作为正式串案记录。",
+            "boundary": "链条关联仅是基于直线距离、时间和环节的辅助假设，不代表实际路径、正式串并案或真实团伙；来源变化后旧推断不再供当前研判使用。",
         }
+
+    @staticmethod
+    def freshness(link: ChainLink, db: Session | None = None) -> str:
+        """Read-only validity: old confirmations are preserved, not silently rewritten."""
+        if not link.source_hash_a or not link.source_hash_b or not link.algorithm_version:
+            return "legacy_unversioned"
+        if link.algorithm_version != ChainAnalysisService.ALGORITHM_VERSION:
+            return "algorithm_changed"
+        db = db or object_session(link)
+        if db is None:
+            return "source_unavailable"
+        from app.services.case_pipeline_service import CasePipelineService
+        for case_id, expected in ((link.case_id_a, link.source_hash_a), (link.case_id_b, link.source_hash_b)):
+            case = db.query(Case).filter(Case.id == case_id).first()
+            if case is None:
+                return "source_unavailable"
+            if CasePipelineService.source_hash(db, case) != expected:
+                return "source_changed"
+        return "current"
 
     @staticmethod
     def _case_brief(case: Optional[Case]) -> Optional[Dict[str, Any]]:
@@ -286,6 +322,7 @@ class ChainAnalysisService:
 
     @staticmethod
     def link_to_dict(link: ChainLink) -> Dict[str, Any]:
+        freshness = ChainAnalysisService.freshness(link)
         return {
             "id": link.id,
             "case_id_a": link.case_id_a,
@@ -293,6 +330,15 @@ class ChainAnalysisService:
             "link_type": link.link_type,
             "status": link.status,
             "confidence": link.confidence,
+            "score_kind": "rule_support",
+            "freshness": freshness,
+            "source_hash_a": link.source_hash_a,
+            "source_hash_b": link.source_hash_b,
+            "algorithm_version": link.algorithm_version,
+            "source_change_warning": (
+                "来源已变化或旧记录未绑定版本，仅保留历史判断，不作为当前有效关联。"
+                if freshness != "current" else None
+            ),
             "distance_km": link.distance_km,
             "time_diff_days": link.time_diff_days,
             "reasoning": link.reasoning,

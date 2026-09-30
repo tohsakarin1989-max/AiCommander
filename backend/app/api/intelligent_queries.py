@@ -12,6 +12,8 @@ from app.services import intelligent_query_tasks as service
 from app.services.intelligent_query_document import export_query_document
 from app.services.case_result_export import CaseResultExportError
 from app.services.intelligent_query_initial_context import InitialQueryContext
+from app.services.runtime_capabilities import query_creation_enabled
+from app.services.intelligent_query_presets import QueryPreset
 
 
 router = APIRouter()
@@ -22,6 +24,7 @@ class QueryCreate(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     parent_query_id: UUID | None = None
     initial_context: InitialQueryContext | None = None
+    preset: QueryPreset | None = None
 
     @model_validator(mode='after')
     def single_context(self):
@@ -32,8 +35,6 @@ class QueryCreate(BaseModel):
 
 def _authorize(request, db, response):
     response.headers['Cache-Control'] = 'no-store'
-    if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == 'off':
-        raise HTTPException(404, detail='智能查询未启用')
     principal = getattr(request.state, 'principal', None)
     if principal is None:
         raise HTTPException(401, detail='请先登录')
@@ -64,9 +65,12 @@ def _call(db, operation, *args):
 @router.post('', status_code=201)
 def create(payload: QueryCreate, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, db, response)
+    if not query_creation_enabled(settings):
+        raise HTTPException(404, detail='新智能查询未启用；已有任务仍可读取或取消')
     result = _call(db, service.create_query, payload.query,
                    str(payload.parent_query_id) if payload.parent_query_id else None,
-                   payload.initial_context.model_dump(mode='json') if payload.initial_context else None)
+                   payload.initial_context.model_dump(mode='json') if payload.initial_context else None,
+                   payload.preset.model_dump(mode='json') if payload.preset else None)
     response.headers['Location'] = f"/api/intelligent-queries/{result['id']}"
     return result
 

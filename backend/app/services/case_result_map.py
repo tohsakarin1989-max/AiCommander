@@ -17,6 +17,8 @@ def _coordinate(value: object, maximum: int) -> bool:
 
 def frozen_result_map_input(content: dict) -> dict:
     """仅调用方已校验的冻结content；不向数据库补齐缺失坐标或图例。"""
+    if content.get("composition") is not None:
+        return json.loads(json.dumps(content["road_map"], ensure_ascii=False, allow_nan=False))
     facts = content["related_conditions"]
     latitude, longitude = facts.get("latitude"), facts.get("longitude")
     warnings = []

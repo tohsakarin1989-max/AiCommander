@@ -19,6 +19,39 @@ describe('道路车辆参数', () => {
 })
 
 describe('caseEntrySubmitPayload', () => {
+  it('案发地点唯一精确点控制主地图点，区域或删除不残留旧点，发现点不投影', () => {
+    const values = { latitude: 46, longitude: 123, initial_locations: [{ role: 'incident', precision: 'exact', ui_latitude: 47, ui_longitude: 124 }] }
+    expect(buildCaseEntrySubmitPayload(values, { mode: 'edit' })).toMatchObject({ latitude: 47, longitude: 124 })
+    expect(buildCaseEntrySubmitPayload({ ...values, initial_locations: [{ role: 'incident', precision: 'area' }] }, { mode: 'edit' })).toMatchObject({ latitude: null, longitude: null })
+    expect(buildCaseEntrySubmitPayload({ ...values, initial_locations: [] }, { mode: 'edit', hadIncidentLocations: true })).toMatchObject({ latitude: null, longitude: null })
+    expect(buildCaseEntrySubmitPayload({ ...values, initial_locations: [{ role: 'discovery', precision: 'exact', ui_latitude: 47, ui_longitude: 124 }] }, { mode: 'edit' })).toMatchObject({ latitude: 46, longitude: 123 })
+  })
+  it('未知时间可保存且清除旧精确值，不发送旧人员车辆 JSON', () => {
+    const payload = buildCaseEntrySubmitPayload({ time_precision: 'unknown', occurred_time: timeValue('2026-06-05T01:00:00Z'), time_expression: '近期', oil_volume: 9,
+      involved_persons: [{ name: '旧人' }], vehicle_info: [{ plate: '旧车' }],
+    }, { mode: 'create' })
+    expect(payload).toMatchObject({ occurred_time: null, occurred_from: null, occurred_to: null, time_precision: 'unknown', oil_volume_unit: 'unknown', time_expression: '近期' })
+    expect(payload).not.toHaveProperty('involved_persons'); expect(payload).not.toHaveProperty('vehicle_info')
+  })
+
+  it('区间保留两端，不编造发生时刻；不同测量环节和单位原样保留', () => {
+    const payload = buildCaseEntrySubmitPayload({ time_precision: 'interval', occurred_time: timeValue('2026-06-05T01:00:00Z'), occurred_from: timeValue('2026-06-01T00:00:00Z'), occurred_to: timeValue('2026-06-03T00:00:00Z'),
+      initial_measurements: [{ id: 22, case_id: 7, value: 0, unit: 'liter', stage: 'seized' }, { value: 5, unit: 'kg', stage: 'transferred' }],
+    }, { mode: 'edit' })
+    expect(payload).toMatchObject({ occurred_time: null, occurred_from: '2026-06-01T00:00:00Z', occurred_to: '2026-06-03T00:00:00Z' })
+    expect(payload.initial_measurements).toEqual([{ value: 0, unit: 'liter', stage: 'seized', measured_at: null }, { value: 5, unit: 'kg', stage: 'transferred', measured_at: null }])
+  })
+
+  it('来源集合读取失败时不替换旧数据；经纬度按 GeoJSON 轴序保存', () => {
+    const rows = [{ id: 2, case_id: 7, role: 'discovery', precision: 'exact', ui_latitude: 47, ui_longitude: 124 }]
+    const payload = buildCaseEntrySubmitPayload({ initial_locations: rows, initial_measurements: [] }, { mode: 'edit' })
+    expect(payload.initial_locations).toEqual([{ role: 'discovery', precision: 'exact', geometry: { type: 'Point', coordinates: [124, 47] } }])
+    const failed = buildCaseEntrySubmitPayload({ initial_locations: rows, initial_measurements: [] }, { mode: 'edit', includeLocations: false, includeMeasurements: false })
+    expect(failed).not.toHaveProperty('initial_locations'); expect(failed).not.toHaveProperty('initial_measurements')
+    const cleared = buildCaseEntrySubmitPayload({ initial_locations: [{ geometry: { type: 'Point', coordinates: [124, 47] }, ui_latitude: null, ui_longitude: null, precision: 'unknown' }] }, { mode: 'edit' })
+    expect(cleared.initial_locations?.[0].geometry).toBeNull()
+  })
+
   it('removes UI-only bonus scope switches from the API payload', () => {
     const payload = buildCaseEntrySubmitPayload({
       operational_area_id: 12,

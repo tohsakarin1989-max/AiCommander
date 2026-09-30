@@ -16,7 +16,6 @@ import {
   Switch,
   Pagination,
 } from 'antd'
-import type { FormInstance } from 'antd'
 import {
   EditOutlined,
   DeleteOutlined,
@@ -35,14 +34,25 @@ import { caseApi, type CaseImportOptions, type CaseImportResult } from '../../se
 import CaseImportCorrections from './CaseImportCorrections'
 import CaseImportConfiguration from './CaseImportConfiguration'
 import CaseHistoryReferences from './CaseHistoryReferences'
+import CaseSemanticProfile from './CaseSemanticProfile'
+import { CaseEntryPrecheck } from './CaseEntryPrecheck'
+import { CaseSourceCollections, CaseTimeFields, oilUnitOptions } from './CaseSourceFields'
+import CaseSourceDetails from './CaseSourceDetails'
+import CaseEntityDetails from './CaseEntityDetails'
+import CaseEvidenceFiles from './CaseEvidenceFiles'
+import { caseLocationDraft } from './caseLocationDraft'
+import RecordIntake from './RecordIntake'
+import { CaseDossierNavigation, CaseDossierPanel, CaseQualityStatus, caseDossierView } from './CaseDossier'
+import { formatCaseTime, formatOilVolume, formCaseTime } from '../../utils/caseValues'
 import CaseResultPanel from '../../components/CaseResult/CaseResultPanel'
 import CaseResultMap from '../../components/CaseResult/CaseResultMap'
 import { useCaseWorkspace, useCaseWorkspaceSection } from '../../services/useCaseWorkspace'
 import { caseContextPath, parseCaseContextParams, writeCaseFilterParams } from '../../services/caseContext'
 import type { ImportCorrectionResult } from '../../services/caseImports'
 import { caseStewardApi } from '../../services/caseSteward'
-import type { BatchReviewResult, BonusAssessment, Case, CaseAutomationWorkbench, CaseCreate, CasePerson, CaseProcessingCard, CaseProfile, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
+import type { BatchReviewResult, BonusAssessment, Case, CaseCreate, CasePerson, CaseQualityPreview, CaseUpdatePayload, CaseVehicle } from '../../types'
 import type { ChainLink } from '../../types'
+import { chainPresentation } from './chainPresentation'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import MapPicker from '../../components/Map/MapPicker'
@@ -50,11 +60,10 @@ import { authApi } from '../../services/auth'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { canAccessAgentLab } from '../../config/features'
 import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
-import { buildBonusEntryHints, buildCaseEntryReadiness } from './caseEntryReadiness'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 import { summarizeBatchReview } from './batchReviewPresentation'
 import { summarizeCaseQualityPreview } from './caseQualityPreview'
-import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail } from './caseSearch'
+import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail, returnToCaseListParams } from './caseSearch'
 import {
   buildCaseAiIntakeApplication,
   buildCaseAiIntakeEntryFlags,
@@ -90,17 +99,6 @@ const oilTypeColor: Record<string, string> = {
   原油:  'oklch(0.65 0.05 250)',
 }
 
-const qualityColor: Record<string, string> = {
-  high: 'var(--ok)',
-  medium: 'var(--warn)',
-  low: 'var(--err)',
-}
-
-const qualityLabel: Record<string, string> = {
-  high: '信息完整',
-  medium: '需补充',
-  low: '缺项较多',
-}
 
 const materialStatusLabel: Record<string, string> = {
   satisfied: '已齐',
@@ -141,6 +139,8 @@ function vehicleDraftFromRecord(vehicle: CaseVehicle): Record<string, unknown> {
     gross_weight_t: vehicle.gross_weight_t,
     plate_number: vehicle.plate_number,
     handling_status: vehicle.handling_status,
+    oil_volume: vehicle.oil_volume,
+    oil_volume_unit: vehicle.oil_volume_unit || 'unknown',
   }
 }
 
@@ -170,312 +170,11 @@ const defaultFilterState: FilterState = {
   endDate: '',
 }
 
-interface CaseEntryPrecheckProps {
-  form: FormInstance
-  onBonusVehicleScopeChange: (checked: boolean) => void
-  onBonusPersonScopeChange: (checked: boolean) => void
-}
-
-export const CaseEntryPrecheck: React.FC<CaseEntryPrecheckProps> = ({
-  form,
-  onBonusVehicleScopeChange,
-  onBonusPersonScopeChange,
-}) => {
-  const watchedLat = Form.useWatch('latitude', form)
-  const watchedLng = Form.useWatch('longitude', form)
-  const watchedOccurredTime = Form.useWatch('occurred_time', form)
-  const watchedReportTime = Form.useWatch('report_time', form)
-  const watchedReportUnit = Form.useWatch('report_unit', form)
-  const watchedSourceType = Form.useWatch('source_type', form)
-  const watchedSecurityOfficers = Form.useWatch('security_officers', form)
-  const watchedLocation = Form.useWatch('location', form)
-  const watchedCaseType = Form.useWatch('case_type', form)
-  const watchedDescription = Form.useWatch('description', form)
-  const watchedVehicleHandling = Form.useWatch('vehicle_handling', form)
-  const watchedPersonHandling = Form.useWatch('person_handling', form)
-  const watchedInitialVehicles = Form.useWatch('initial_vehicles', form)
-  const watchedInitialPersons = Form.useWatch('initial_persons', form)
-  const watchedBonusHasVehicle = Form.useWatch('bonus_has_vehicle', form)
-  const watchedBonusHasPerson = Form.useWatch('bonus_has_person', form)
-  const watchedBonusHasOil = Form.useWatch('bonus_has_oil', form)
-  const watchedBonusHasPolice = Form.useWatch('bonus_has_police', form)
-  const watchedOilNature = Form.useWatch('oil_nature', form)
-  const watchedOilVolume = Form.useWatch('oil_volume', form)
-  const watchedWaterCut = Form.useWatch('water_cut', form)
-  const watchedOilHandling = Form.useWatch('oil_handling', form)
-  const watchedPoliceReported = Form.useWatch('police_reported', form)
-  const watchedCaseFiled = Form.useWatch('case_filed', form)
-  const watchedPoliceOfficer = Form.useWatch('police_officer', form)
-  const watchedPolicePhone = Form.useWatch('police_phone', form)
-
-  const bonusEntryHints = useMemo(() => buildBonusEntryHints({
-    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
-    bonus_has_person: Boolean(watchedBonusHasPerson),
-    bonus_has_oil: Boolean(watchedBonusHasOil),
-    bonus_has_police: Boolean(watchedBonusHasPolice),
-    description: watchedDescription,
-    vehicle_handling: watchedVehicleHandling,
-    person_handling: watchedPersonHandling,
-    oil_nature: watchedOilNature,
-    oil_volume: watchedOilVolume,
-    water_cut: watchedWaterCut,
-    oil_handling: watchedOilHandling,
-    police_reported: watchedPoliceReported,
-    case_filed: watchedCaseFiled,
-    police_officer: watchedPoliceOfficer,
-    police_phone: watchedPolicePhone,
-    initial_vehicles: watchedInitialVehicles,
-    initial_persons: watchedInitialPersons,
-  }), [
-    watchedBonusHasVehicle,
-    watchedBonusHasPerson,
-    watchedBonusHasOil,
-    watchedBonusHasPolice,
-    watchedDescription,
-    watchedVehicleHandling,
-    watchedPersonHandling,
-    watchedOilNature,
-    watchedOilVolume,
-    watchedWaterCut,
-    watchedOilHandling,
-    watchedPoliceReported,
-    watchedCaseFiled,
-    watchedPoliceOfficer,
-    watchedPolicePhone,
-    watchedInitialVehicles,
-    watchedInitialPersons,
-  ])
-
-  const caseEntryReadiness = useMemo(() => buildCaseEntryReadiness({
-    occurred_time: watchedOccurredTime,
-    report_time: watchedReportTime,
-    report_unit: watchedReportUnit,
-    source_type: watchedSourceType,
-    security_officers: watchedSecurityOfficers,
-    latitude: watchedLat,
-    longitude: watchedLng,
-    location: watchedLocation,
-    case_type: watchedCaseType,
-    bonus_has_vehicle: Boolean(watchedBonusHasVehicle),
-    bonus_has_person: Boolean(watchedBonusHasPerson),
-    bonus_has_oil: Boolean(watchedBonusHasOil),
-    bonus_has_police: Boolean(watchedBonusHasPolice),
-    description: watchedDescription,
-    vehicle_handling: watchedVehicleHandling,
-    person_handling: watchedPersonHandling,
-    oil_nature: watchedOilNature,
-    oil_volume: watchedOilVolume,
-    water_cut: watchedWaterCut,
-    oil_handling: watchedOilHandling,
-    police_reported: watchedPoliceReported,
-    case_filed: watchedCaseFiled,
-    police_officer: watchedPoliceOfficer,
-    police_phone: watchedPolicePhone,
-    initial_vehicles: watchedInitialVehicles,
-    initial_persons: watchedInitialPersons,
-  }, bonusEntryHints), [
-    bonusEntryHints,
-    watchedOccurredTime,
-    watchedReportTime,
-    watchedReportUnit,
-    watchedSourceType,
-    watchedSecurityOfficers,
-    watchedLat,
-    watchedLng,
-    watchedLocation,
-    watchedCaseType,
-    watchedBonusHasVehicle,
-    watchedBonusHasPerson,
-    watchedBonusHasOil,
-    watchedBonusHasPolice,
-    watchedDescription,
-    watchedVehicleHandling,
-    watchedPersonHandling,
-    watchedOilNature,
-    watchedOilVolume,
-    watchedWaterCut,
-    watchedOilHandling,
-    watchedPoliceReported,
-    watchedCaseFiled,
-    watchedPoliceOfficer,
-    watchedPolicePhone,
-    watchedInitialVehicles,
-    watchedInitialPersons,
-  ])
-
-  const readinessAttentionCount = caseEntryReadiness.filter(item => item.status === 'attention').length
-  const readinessReadyCount = caseEntryReadiness.filter(item => item.status === 'ready').length
-
-  return (
-    <>
-      <div className="case-entry-readiness">
-        <div className="case-entry-readiness-head">
-          <span>保存前预检</span>
-          <b>{readinessReadyCount} 项就绪 · {readinessAttentionCount} 项需关注</b>
-        </div>
-        <div className="case-entry-readiness-grid">
-          {caseEntryReadiness.map(item => (
-            <div key={item.key} className={`case-readiness-card ${item.status}`}>
-              <strong>{item.label}</strong>
-              <span>{item.impact}</span>
-              <small>{item.action}</small>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="cases-bonus-scope-grid">
-        <div>
-          <Form.Item name="bonus_has_vehicle" valuePropName="checked" noStyle>
-            <Switch size="small" onChange={onBonusVehicleScopeChange} />
-          </Form.Item>
-          <b>涉案车辆资料</b>
-          <span>车辆类别、车牌和处置状态</span>
-        </div>
-        <div>
-          <Form.Item name="bonus_has_person" valuePropName="checked" noStyle>
-            <Switch size="small" onChange={onBonusPersonScopeChange} />
-          </Form.Item>
-          <b>抓获人员奖励</b>
-          <span>人员处理类型和角色</span>
-        </div>
-        <div>
-          <Form.Item name="bonus_has_oil" valuePropName="checked" noStyle>
-            <Switch size="small" />
-          </Form.Item>
-          <b>涉油检斤处置</b>
-          <span>油量、含水率和入库/回收</span>
-        </div>
-        <div>
-          <Form.Item name="bonus_has_police" valuePropName="checked" noStyle>
-            <Switch size="small" />
-          </Form.Item>
-          <b>报案立案佐证</b>
-          <span>报案、立案和公安联系人</span>
-        </div>
-      </div>
-
-      {watchedBonusHasVehicle && (
-        <Form.List name="initial_vehicles">
-          {(fields, { add, remove }) => (
-            <div className="cases-bonus-draft">
-              <div className="cases-bonus-draft-head">
-                <span>涉案车辆</span>
-                <Button size="small" onClick={() => add({})}>增加车辆</Button>
-              </div>
-              {fields.map(({ key, name, ...restField }) => (
-                <div key={key} className="cases-bonus-draft-row">
-                  <Form.Item {...restField} name={[name, 'id']} hidden>
-                    <Input />
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'vehicle_type']}
-                    label="车辆考核类别"
-                  >
-                    <Select allowClear placeholder="请选择车辆类别">
-                      {['摩托车（电动车）', '5吨以下机动车', '5吨以上机动车', '重型挂车', '机动船', '3吨以下炼化油罐', '3吨以上炼化油罐'].map(option => (
-                        <Option key={option} value={option}>{option}</Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'plate_number']}
-                    label="车牌/编号"
-                  >
-                    <Input placeholder="可选" />
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'handling_status']}
-                    label="车辆处理"
-                  >
-                    <Select allowClear placeholder="请选择">
-                      {['移交公安', '扣押停放', '待处理', '返还'].map(option => (
-                        <Option key={option} value={option}>{option}</Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                  <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
-                    删除
-                  </Button>
-                  <details style={{ gridColumn: '1 / -1' }}>
-                    <summary>道路通行条件（选填）</summary>
-                    <p>只填写已掌握的车辆条件。车辆总重不是载油量或核定载质量，未知时留空，不影响案件保存。</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
-                      <Form.Item {...restField} name={[name, 'road_vehicle_kind']} label="道路计算车型">
-                        <Select allowClear placeholder="未知则留空" options={[{ value: 'auto', label: '小客车' }, { value: 'truck', label: '货车' }]} />
-                      </Form.Item>
-                      <Form.Item {...restField} name={[name, 'height_m']} label="车高（米）" rules={[{ type: 'number', min: 0.01 }]}>
-                        <InputNumber min={0.01} step={0.1} style={{ width: '100%' }} placeholder="选填" />
-                      </Form.Item>
-                      <Form.Item {...restField} name={[name, 'gross_weight_t']} label="车辆总重（吨）" rules={[{ type: 'number', min: 0.01 }]}>
-                        <InputNumber min={0.01} step={0.1} style={{ width: '100%' }} placeholder="选填" />
-                      </Form.Item>
-                    </div>
-                  </details>
-                </div>
-              ))}
-            </div>
-          )}
-        </Form.List>
-      )}
-
-      {watchedBonusHasPerson && (
-        <Form.List name="initial_persons">
-          {(fields, { add, remove }) => (
-            <div className="cases-bonus-draft">
-              <div className="cases-bonus-draft-head">
-                <span>抓获/涉案人员</span>
-                <Button size="small" onClick={() => add({})}>增加人员</Button>
-              </div>
-              {fields.map(({ key, name, ...restField }) => (
-                <div key={key} className="cases-bonus-draft-row">
-                  <Form.Item {...restField} name={[name, 'id']} hidden>
-                    <Input />
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'name']}
-                    label="姓名/代称"
-                  >
-                    <Input placeholder="可选" />
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'handling_status']}
-                    label="人员处理类型"
-                  >
-                    <Select allowClear placeholder="请选择处理类型">
-                      {['刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
-                        <Option key={option} value={option}>{option}</Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                  <Form.Item
-                    {...restField}
-                    name={[name, 'role']}
-                    label="人员角色"
-                  >
-                    <Input placeholder="如司机、协助人员" />
-                  </Form.Item>
-                  <Button size="small" disabled={fields.length === 1} onClick={() => remove(name)}>
-                    删除
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Form.List>
-      )}
-    </>
-  )
-}
 
 const Cases: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const caseContext = parseCaseContextParams(searchParams)
+  const dossierView = caseDossierView(searchParams.get('case_view'))
   const [form] = Form.useForm()
   const [evidenceForm] = Form.useForm()
   const [modal, modalContextHolder] = Modal.useModal()
@@ -505,6 +204,8 @@ const Cases: React.FC = () => {
   }, [])
   const [bonusDraftLoadState, setBonusDraftLoadState] = useState({ vehicles: true, persons: true })
   const [bonusDraftTouched, setBonusDraftTouched] = useState({ vehicles: false, persons: false })
+  const [sourceCollectionsLoaded, setSourceCollectionsLoaded] = useState({ locations: true, measurements: true })
+  const [hadIncidentLocations, setHadIncidentLocations] = useState(false)
   const [evidenceModalVisible, setEvidenceModalVisible] = useState(false)
   const [locationModalVisible, setLocationModalVisible] = useState(false)
   const [activeLocationCaseId, setActiveLocationCaseId] = useState<number | null>(null)
@@ -598,17 +299,16 @@ const Cases: React.FC = () => {
   })
 
   const renderQualityBadge = (caseItem: Case) => {
-    if (caseItem.quality_score == null) {
+    if (!caseItem.quality_issues?.validation) {
       return <span style={{ color: 'var(--ink-3)' }}>—</span>
     }
-    const level = caseItem.quality_level || 'low'
     return (
       <span
         className="tag"
-        style={{ '--tag-c': qualityColor[level] || 'var(--warn)' } as React.CSSProperties}
-        title={caseItem.quality_issues?.recommendations?.[0]}
+        style={{ '--tag-c': caseItem.quality_issues.validation.can_save ? 'var(--ok)' : 'var(--warn)' } as React.CSSProperties}
+        title="仅表示字段格式，不代表案件完成度"
       >
-        {Math.round(caseItem.quality_score)} · {qualityLabel[level] || level}
+        {caseItem.quality_issues.validation.can_save ? '格式有效' : '格式待修正'}
       </span>
     )
   }
@@ -638,24 +338,16 @@ const Cases: React.FC = () => {
     refetchInterval: 5000,
   })
 
-  const { data: bonusAssessment } = useCaseWorkspaceSection(
-    'case-bonus-assessment', selectedCase?.id, () => caseApi.getBonusAssessment(selectedCase!.id), bonusAccountingEnabled)
-  const automationQuery = useCaseWorkspaceSection(
-    'case-automation-workbench', selectedCase?.id, () => caseApi.getAutomationWorkbench(selectedCase!.id))
-  const automationWorkbench = automationQuery.data
-  const profileQuery = useCaseWorkspaceSection<CaseProfile>(
-    'case-profile', selectedCase?.id, () => caseApi.getCaseProfile(selectedCase!.id))
-  const caseProfile = profileQuery.data
-
-  const { workspace, isPending: resultLoading, error: resultError } = useCaseWorkspace(selectedCase?.id)
+  const { workspace, isPending: resultLoading, error: resultError, refetch: reloadWorkspace } = useCaseWorkspace(selectedCase?.id)
   const unifiedResult = workspace?.result.data ?? undefined
-
-  const processingQuery = useCaseWorkspaceSection<CaseProcessingCard>(
-    'case-processing-card', selectedCase?.id, () => caseApi.getProcessingCard(selectedCase!.id))
-  const processingCard = processingQuery.data
-  const diagramQuery = useCaseWorkspaceSection(
-    'case-diagram', selectedCase?.id, () => caseApi.getCaseDiagram(selectedCase!.id))
-  const caseDiagram = diagramQuery.data
+  const automationWorkbench = workspace?.automation_workbench?.data ?? undefined
+  const bonusAssessment = bonusAccountingEnabled ? automationWorkbench?.bonus_assessment ?? undefined : undefined
+  const caseProfile = workspace?.detail_profile?.data ?? undefined
+  const caseDiagram = workspace?.diagram?.data ?? undefined
+  const profileQuery = { isError: !!resultError || workspace?.detail_profile?.status === 'unavailable' }
+  const processingQuery = { isError: !!resultError || workspace?.processing_card?.status === 'unavailable' }
+  const diagramQuery = { isError: !!resultError || workspace?.diagram?.status === 'unavailable' }
+  const automationQuery = { isError: !!resultError || workspace?.automation_workbench?.status === 'unavailable' }
   const { data: caseEvidence } = useCaseWorkspaceSection(
     'case-evidence', selectedCase?.id, () => caseApi.getCaseEvidence(selectedCase!.id))
   const { data: chainLinks } = useCaseWorkspaceSection(
@@ -676,6 +368,8 @@ const Cases: React.FC = () => {
     mutationFn: caseApi.createCase,
     onSuccess: () => {
       message.success('创建成功')
+      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
       queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
       setIsModalVisible(false)
       form.resetFields()
@@ -698,6 +392,8 @@ const Cases: React.FC = () => {
       caseApi.updateCase(id, data),
     onSuccess: () => {
       message.success('更新成功')
+      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
       queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
       setIsModalVisible(false)
       setEditingCase(null)
@@ -718,6 +414,8 @@ const Cases: React.FC = () => {
     mutationFn: caseApi.deleteCase,
     onSuccess: (_data, deletedId) => {
       message.success('删除成功')
+      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
       if (linkedCaseId === deletedId) {
         setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('caseId'); return next }, { replace: true })
       }
@@ -783,9 +481,9 @@ const Cases: React.FC = () => {
         ...application.patch,
         ...buildCaseAiIntakeEntryFlags(data, application.patch),
       } as Record<string, unknown>
-      ;(['occurred_time', 'report_time'] as const).forEach(field => {
+      ;(['occurred_time', 'occurred_from', 'occurred_to', 'discovered_at', 'report_time'] as const).forEach(field => {
         if (typeof patch[field] === 'string') {
-          patch[field] = dayjs(patch[field] as string)
+          patch[field] = formCaseTime(patch[field] as string, String(patch.time_timezone || form.getFieldValue('time_timezone') || 'Asia/Shanghai'))
         }
       })
       form.setFieldsValue(patch)
@@ -816,6 +514,8 @@ const Cases: React.FC = () => {
       caseApi.createCaseEvidence(selectedCase!.id, data),
     onSuccess: async () => {
       message.success('材料已归档')
+      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
+      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
       queryClient.invalidateQueries({ queryKey: ['case-unified-result', selectedCase?.id] })
       setEvidenceModalVisible(false)
       evidenceForm.resetFields()
@@ -935,8 +635,14 @@ const Cases: React.FC = () => {
     editRequestRef.current += 1
     setEditingCase(null)
     form.resetFields()
+    qualityPreviewMutation.reset()
     form.setFieldsValue({
       operational_area_id: defaultWritableOperationalAreaId,
+      time_precision: 'unknown',
+      time_timezone: 'Asia/Shanghai',
+      oil_volume_unit: 'unknown',
+      initial_locations: [],
+      initial_measurements: [],
       bonus_has_vehicle: false,
       bonus_has_person: false,
       bonus_has_oil: false,
@@ -945,6 +651,8 @@ const Cases: React.FC = () => {
       initial_persons: [],
     })
     setBonusDraftLoadState({ vehicles: true, persons: true })
+    setSourceCollectionsLoaded({ locations: true, measurements: true })
+    setHadIncidentLocations(false)
     setBonusDraftTouched({ vehicles: false, persons: false })
     setShowAdvancedFields(false)
     setShowMapPicker(false)
@@ -958,11 +666,15 @@ const Cases: React.FC = () => {
     const requestId = editRequestRef.current + 1
     editRequestRef.current = requestId
     setEditingCase(caseItem)
+    qualityPreviewMutation.reset()
+    form.resetFields()
     let vehicles: CaseVehicle[] = []
     let persons: CasePerson[] = []
-    const [vehicleResult, personResult] = await Promise.allSettled([
+    const [vehicleResult, personResult, locationResult, measurementResult] = await Promise.allSettled([
       caseApi.getCaseVehicles(caseItem.id),
       caseApi.getCasePersons(caseItem.id),
+      caseApi.getCaseLocations(caseItem.id),
+      caseApi.getCaseMeasurements(caseItem.id),
     ])
     if (editRequestRef.current !== requestId) return
     const vehiclesLoaded = vehicleResult.status === 'fulfilled'
@@ -978,6 +690,8 @@ const Cases: React.FC = () => {
       message.warning('涉案人员台账加载失败，本次保存不会覆盖人员台账')
     }
     setBonusDraftLoadState({ vehicles: vehiclesLoaded, persons: personsLoaded })
+    setSourceCollectionsLoaded({ locations: locationResult.status === 'fulfilled', measurements: measurementResult.status === 'fulfilled' })
+    setHadIncidentLocations(locationResult.status === 'fulfilled' && locationResult.value.some(item => item.role === 'incident'))
     setBonusDraftTouched({ vehicles: false, persons: false })
     setAiIntakeText(caseItem.description || '')
     setAiIntakeSourceText('')
@@ -990,8 +704,16 @@ const Cases: React.FC = () => {
     const hasPoliceBonus = Boolean(caseItem.police_reported || caseItem.case_filed || caseItem.police_officer || caseItem.police_phone)
     form.setFieldsValue({
       ...caseItem,
-      occurred_time: dayjs(caseItem.occurred_time),
-      report_time: caseItem.report_time ? dayjs(caseItem.report_time) : undefined,
+      occurred_time: formCaseTime(caseItem.occurred_time, caseItem.time_timezone || 'Asia/Shanghai'),
+      occurred_from: formCaseTime(caseItem.occurred_from, caseItem.time_timezone || 'Asia/Shanghai'),
+      occurred_to: formCaseTime(caseItem.occurred_to, caseItem.time_timezone || 'Asia/Shanghai'),
+      time_precision: caseItem.time_precision || (caseItem.occurred_time ? 'exact' : 'unknown'),
+      time_timezone: caseItem.time_timezone || 'Asia/Shanghai',
+      discovered_at: formCaseTime(caseItem.discovered_at, caseItem.time_timezone || 'Asia/Shanghai'),
+      oil_volume_unit: caseItem.oil_volume_unit || 'unknown',
+      initial_locations: locationResult.status === 'fulfilled' ? locationResult.value.map(caseLocationDraft) : undefined,
+      initial_measurements: measurementResult.status === 'fulfilled' ? measurementResult.value.map(item => ({ ...item, measured_at: formCaseTime(item.measured_at, caseItem.time_timezone || 'Asia/Shanghai') })) : undefined,
+      report_time: formCaseTime(caseItem.report_time, caseItem.time_timezone || 'Asia/Shanghai'),
       bonus_has_vehicle: hasVehicleBonus,
       bonus_has_person: hasPersonBonus,
       bonus_has_oil: hasOilBonus,
@@ -1033,6 +755,9 @@ const Cases: React.FC = () => {
       mode: editingCase ? 'edit' : 'create',
       includeVehicleDrafts: !editingCase || bonusDraftLoadState.vehicles || bonusDraftTouched.vehicles,
       includePersonDrafts: !editingCase || bonusDraftLoadState.persons || bonusDraftTouched.persons,
+      includeLocations: sourceCollectionsLoaded.locations,
+      includeMeasurements: sourceCollectionsLoaded.measurements,
+      hadIncidentLocations,
     })
     const persist = () => {
       if (editingCase) {
@@ -1048,6 +773,10 @@ const Cases: React.FC = () => {
     try {
       const preview = await qualityPreviewMutation.mutateAsync(payload as CaseCreate)
       const summary = summarizeCaseQualityPreview(preview)
+      if (!summary.canSave) {
+        message.error(summary.description)
+        return
+      }
       if (!summary.requiresConfirmation) {
         persist()
         return
@@ -1127,14 +856,9 @@ const Cases: React.FC = () => {
   // 发起圆桌分析
   const handleStartRoundtable = () => {
     if (!selectedCase) return
-    navigate(`/meetings/new?caseId=${selectedCase.id}`)
+    navigate(`/meetings?caseId=${selectedCase.id}`)
   }
 
-  // 派遣巡逻
-  const handleDispatchPatrol = () => {
-    if (!selectedCase) return
-    navigate(`/patrols?caseId=${selectedCase.id}`)
-  }
 
   const handleRunAiIntake = () => {
     const text = aiIntakeText || form.getFieldValue('description')
@@ -1211,25 +935,27 @@ const Cases: React.FC = () => {
 
   const renderChainLinkItem = (link: ChainLink, direction: 'upstream' | 'downstream') => {
     const related = direction === 'upstream' ? link.from_case : link.to_case
-    const statusLabel = link.status === 'confirmed' ? '已确认' : '待确认'
+    const chainView = chainPresentation(link)
     return (
       <div key={link.id} className={`chain-link-card chain-link-card--${link.status}`}>
         <div className="chain-link-card__main">
           <b>{related?.case_number || `案件 ${direction === 'upstream' ? link.case_id_a : link.case_id_b}`}</b>
           <span>{related?.chain_label || '未知环节'} · {related?.location || '未标注地点'}</span>
           <small>
-            距离 {link.distance_km.toFixed(1)} km · 时间差 {link.time_diff_days} 天 · 置信度 {Math.round(link.confidence * 100)}%
+            直线距离 {link.distance_km.toFixed(1)} km · 时间差 {link.time_diff_days} 天 · 规则支持度 {Math.round(link.confidence * 100)} / 100
           </small>
           {link.reasoning && <p>{link.reasoning}</p>}
+          {chainView.warning && <Alert type="warning" showIcon message={chainView.warning} />}
         </div>
         <div className="chain-link-card__side">
-          <span>{statusLabel}</span>
+          <span>{chainView.statusLabel}</span>
           {link.status === 'inferred' && (
             <div>
               <Button
                 size="small"
                 type="primary"
                 loading={confirmChainMutation.isPending}
+                disabled={!chainView.canConfirm}
                 onClick={() => confirmChainMutation.mutate(link.id)}
               >
                 确认
@@ -1254,13 +980,15 @@ const Cases: React.FC = () => {
     const upstreamLinks = (links || []).filter(item => item.case_id_b === selectedCase.id)
     const downstreamLinks = (links || []).filter(item => item.case_id_a === selectedCase.id)
     const hasLinks = upstreamLinks.length > 0 || downstreamLinks.length > 0
+    const currentCount = [...upstreamLinks, ...downstreamLinks].filter(item => item.freshness === 'current').length
+    const historyCount = upstreamLinks.length + downstreamLinks.length - currentCount
     return (
       <div className="chain-panel">
         <div className="chain-panel__summary">
           {renderChainPositionTag(selectedCase)}
-          <span>{hasLinks ? `发现 ${upstreamLinks.length + downstreamLinks.length} 条上下游关联` : '暂无链条推断'}</span>
+          <span>{hasLinks ? `当前辅助关联 ${currentCount} 条 · 历史判断 ${historyCount} 条` : '暂无当前链条推断'}</span>
         </div>
-        <p className="chain-panel__boundary">链条关联是系统基于环节、距离和时间生成的辅助假设，确认前不作为定案依据。</p>
+        <p className="chain-panel__boundary">仅基于环节、直线距离和时间的辅助假设，不证明实际运输路径或正式串并案；历史判断不计入当前有效关联。</p>
         {upstreamLinks.length > 0 && (
           <div className="chain-panel__group">
             <b>上游关联</b>
@@ -1346,86 +1074,9 @@ const Cases: React.FC = () => {
     )
   }
 
-  const renderAutomationPanel = (workbench?: CaseAutomationWorkbench) => {
-    const assessment = bonusAccountingEnabled ? (workbench?.bonus_assessment || bonusAssessment) : undefined
-    const gate = assessment?.material_gate
-    const unavailable = !selectedCase ? '待选择案件' : automationQuery.isError ? '暂不可读' : '加载中…'
-    const primarySquad = assessment?.primary_squad || selectedCase?.report_unit || '未选择'
-    const moduleByKey = new Map((workbench?.modules || []).map(item => [item.key, item]))
-    const conclusion = moduleByKey.get('conclusion_layering')
-    const card = moduleByKey.get('experience_card')
-    const gap = moduleByKey.get('gap_closure')
-    const actions = workbench?.gap_closure.actions || []
-    return (
-      <div className="cases-automation-panel">
-        <div className="cases-automation-head">
-          <span>案件自动化</span>
-          <b>{selectedCase ? selectedCase.case_number : '待选择案件'}</b>
-        </div>
-        <div className="cases-automation-metrics">
-          <div>
-            <span>主控班组</span>
-            <b>{primarySquad}</b>
-          </div>
-          <div>
-            <span>佐证材料</span>
-            <b>{gate ? `${gate.satisfied_count}/${gate.required_count}` : workbench ? `${workbench.gap_closure.material_gaps.length} 缺口` : unavailable}</b>
-          </div>
-          <div>
-            <span>{bonusAccountingEnabled ? '奖金测算' : '研判复核'}</span>
-            <b>{bonusAccountingEnabled
-              ? (assessment ? `¥${assessment.total_suggested_amount.toLocaleString()}` : unavailable)
-              : workbench ? (workbench.ready_for_human_review ? '可复核' : '需补充') : unavailable}</b>
-          </div>
-        </div>
-        <div className="cases-automation-actions">
-          <Button size="small" icon={<ApiOutlined />} onClick={handleCreate}>
-            录入提取
-          </Button>
-          <Button
-            size="small"
-            icon={<DatabaseOutlined />}
-            disabled={!selectedCase}
-            onClick={() => setEvidenceModalVisible(true)}
-          >
-            材料归档
-          </Button>
-          {bonusAccountingEnabled && (
-            <Button
-              size="small"
-              icon={<NodeIndexOutlined />}
-              disabled={!selectedCase}
-              onClick={() => document.querySelector('.case-detail')?.scrollTo({ top: 0, behavior: 'smooth' })}
-            >
-              奖金测算
-            </Button>
-          )}
-        </div>
-        <div className="cases-automation-modules">
-          <div className={`cases-automation-module cases-automation-module--${conclusion?.status || 'idle'}`}>
-            <span>4 结论分层</span>
-            <b>
-              {workbench ? `事实 ${workbench.conclusion_layering.facts.length} · 推断 ${workbench.conclusion_layering.inferences.length}` : unavailable}
-            </b>
-            {workbench && <small>建议 {workbench.conclusion_layering.suggestions.length} · 缺口 {workbench.conclusion_layering.information_gaps.length}</small>}
-          </div>
-          <div className={`cases-automation-module cases-automation-module--${card?.status || 'idle'}`}>
-            <span>5 经验卡</span>
-            <b>{workbench ? `经验 ${workbench.experience_card.reusable_lessons.length}` : unavailable}</b>
-            {workbench && <small>{workbench.experience_card.how_it_was_found?.[0] || '暂无发现方式记录'}</small>}
-          </div>
-          <div className={`cases-automation-module cases-automation-module--${gap?.status || 'idle'}`}>
-            <span>6 缺口闭环</span>
-            <b>{workbench ? `待办 ${actions.length}` : unavailable}</b>
-            {workbench && <small>{actions[0]?.title || '当前没有待补充或待判断事项'}</small>}
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   return (
-    <div className="page page-cases">
+    <div className={`page page-cases${selectedCase ? ' has-dossier' : ''}`}>
       {modalContextHolder}
       {messageContextHolder}
       {/* 预处理状态提醒 */}
@@ -1593,13 +1244,10 @@ const Cases: React.FC = () => {
                 </button>
               )}
               <button className="btn-ghost" onClick={() => setImportModalVisible(true)}>导入 ▾</button>
-              <button className="btn-primary" onClick={handleCreate}>
-                ＋ 新建案件
-              </button>
+              {user?.role !== 'viewer' && <RecordIntake onCase={handleCreate} areaId={defaultWritableOperationalAreaId} scopes={writableAreaScopes} />}
             </div>
           </div>
 
-          {renderAutomationPanel(automationWorkbench)}
           {caseContext.error && <Alert type="error" showIcon message={caseContext.error} />}
           {linkedCaseQuery.isError && <Alert type="warning" showIcon message="链接中的案件不存在或当前无权访问。" />}
 
@@ -1650,7 +1298,7 @@ const Cases: React.FC = () => {
                             <span className="cno">{caseItem.case_number || `#${caseItem.id}`}</span>
                           </td>
                           <td className="time">
-                            {dayjs(caseItem.occurred_time).format('MM-DD HH:mm')}
+                            {formatCaseTime(caseItem, 'MM-DD HH:mm')}
                           </td>
                           <td>
                             <span style={{ fontSize: 12, color: 'var(--ink-1)' }}>
@@ -1749,6 +1397,10 @@ const Cases: React.FC = () => {
             <aside className="case-detail">
               {selectedCase ? (
                 <>
+                  <div className="case-dossier-return">
+                    <button type="button" className="btn-ghost" onClick={() => setSearchParams(returnToCaseListParams, { replace: true })}>← 返回案件列表</button>
+                    <span>筛选条件与当前页保留</span>
+                  </div>
                   {/* 详情头 */}
                   <div className="detail-head">
                     <div>
@@ -1766,21 +1418,28 @@ const Cases: React.FC = () => {
                     </span>
                   </div>
 
+                  <CaseDossierNavigation />
+                  <CaseDossierPanel view="relations" active={dossierView}>
                   <nav className="case-context-links detail-section" aria-label="当前案件关联视图">
                     <Link to={caseContextPath(`/case-intelligence?caseId=${selectedCase.id}`, searchParams)}>历史关联与研判</Link>
                     <Link to={caseContextPath(`/cases/map?caseId=${selectedCase.id}`, searchParams)}>案件地图</Link>
                     <Link to={caseContextPath(`/graphs/evidence?caseId=${selectedCase.id}`, searchParams)}>证据图谱</Link>
                     <Link to={caseContextPath(`/assistant?caseId=${selectedCase.id}`, searchParams)}>带条件询问助手</Link>
+                    <Link to={`/topics?source=case&sourceId=${selectedCase.id}`}>持续关注资料变化</Link>
                     {unifiedResult && <Link to={caseContextPath(`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`, searchParams)}>同版报告</Link>}
                   </nav>
+                  {unifiedResult && <CaseResultMap result={unifiedResult} operationalAreaId={selectedCase.operational_area_id ?? undefined} />}
+                  </CaseDossierPanel>
                   {(profileQuery.isError || processingQuery.isError || diagramQuery.isError || automationQuery.isError) && <Alert type="warning" showIcon
                     message="部分案件资料暂不可读，不能将其视为没有缺项。原始记录和可读成果仍可使用。" />}
 
+                  <CaseDossierPanel view="overview" active={dossierView}>
                   <div className="detail-section">
-                    <div className="ds-head">信息质量与报送</div>
+                    <div className="ds-head">资料状态与报送</div>
+                    <CaseQualityStatus quality={selectedCase.quality_issues} />
                     <div className="detail-grid">
                       <div className="kv">
-                        <span className="k">质量评分</span>
+                        <span className="k">录入有效性</span>
                         <span className="v">{renderQualityBadge(selectedCase)}</span>
                       </div>
                       {selectedCase.report_time && (
@@ -1815,11 +1474,6 @@ const Cases: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    {selectedCase.quality_issues?.missing_required?.length ? (
-                      <p className="narr" style={{ color: 'var(--warn)' }}>
-                        缺项：{selectedCase.quality_issues.missing_required.slice(0, 4).map(i => i.label).join('、')}
-                      </p>
-                    ) : null}
                   </div>
 
                   <div className="detail-section">
@@ -1853,26 +1507,11 @@ const Cases: React.FC = () => {
                     </p>
                   </div>
 
-                  {processingCard && (
-                    <div className="detail-section">
-                      <div className="ds-head">智能处理卡</div>
-                      <div className="automation-456-list">
-                        {processingCard.gap_groups.slice(0, 4).map(group => (
-                          <div key={group.key}>
-                            <b>{group.label}</b>
-                            <span>{group.items.slice(0, 2).map(item => String(item.label || item.field || item.reason || '待复核')).join('、') || '暂无缺口'}</span>
-                          </div>
-                        ))}
-                        {processingCard.gap_groups.length === 0 && (
-                          <div>
-                            <b>暂无归并缺口</b>
-                            <span>当前没有待补充或待判断事项。经验卡和报告按需使用，不影响案件办理状态。</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  <p className="detail-section">发生记录：{formatCaseTime(selectedCase)}。油量记录：{formatOilVolume(selectedCase.oil_volume, selectedCase.oil_volume_unit)}。</p>
+                  </CaseDossierPanel>
 
+                  <CaseDossierPanel view="results" active={dossierView}>
+                  <Button size="small" onClick={() => void reloadWorkspace()}>刷新已有成果</Button>
                   <CaseResultPanel
                     key={selectedCase.id}
                     caseId={selectedCase.id}
@@ -1883,8 +1522,17 @@ const Cases: React.FC = () => {
                     map={unifiedResult && <CaseResultMap result={unifiedResult} operationalAreaId={selectedCase.operational_area_id ?? undefined} />}
                     footer={unifiedResult && <Link to={caseContextPath(`/reports?resultId=${encodeURIComponent(unifiedResult.id)}`, searchParams)}>在报告中心查看此版本</Link>}
                   />
+                  </CaseDossierPanel>
+                  <CaseDossierPanel view="relations" active={dossierView}>
+                  <CaseSemanticProfile semantics={workspace?.profile.data?.payload.semantics}
+                    loading={resultLoading} error={!!resultError}
+                    updating={workspace?.profile.status === 'updating'} />
                   <CaseHistoryReferences caseId={selectedCase.id} revision={selectedCase.updated_at || workspace?.profile.data?.source_hash} />
+                  </CaseDossierPanel>
 
+                  <CaseDossierPanel view="materials" active={dossierView}>
+                  <Link to={`/reports?subject=case&subjectId=${selectedCase.id}`}>查看本案已有成果与材料</Link>
+                  <CaseEvidenceFiles key={selectedCase.id} caseId={selectedCase.id} />
                   {bonusAccountingEnabled && (
                     <div className="detail-section">
                       <div className="ds-head">奖金考核测算</div>
@@ -1894,7 +1542,7 @@ const Cases: React.FC = () => {
 
                   {automationWorkbench && (
                     <div className="detail-section">
-                      <div className="ds-head">AI 自动化复盘</div>
+                      <div className="ds-head">已有成果与经验状态</div>
                       <div className="automation-456-list">
                         <div>
                           <b>结论分层</b>
@@ -1904,7 +1552,7 @@ const Cases: React.FC = () => {
                         </div>
                         <div>
                           <b>经验卡</b>
-                          <span>{automationWorkbench.experience_card.reusable_lessons[0] || automationWorkbench.experience_card.why_it_matters[0] || '待补充更多案件信息'}</span>
+                          <span>{automationWorkbench.experience_card.reusable_lessons[0] || automationWorkbench.experience_card.why_it_matters[0] || '尚无已保存经验，按需沉淀，不影响案件办理'}</span>
                         </div>
                         <div>
                           <b>缺口闭环</b>
@@ -1914,11 +1562,15 @@ const Cases: React.FC = () => {
                     </div>
                   )}
 
+                  </CaseDossierPanel>
+                  <CaseDossierPanel view="relations" active={dossierView}>
                   <div className="detail-section">
                     <div className="ds-head">链条关联</div>
                     {renderChainPanel(chainLinks)}
                   </div>
+                  </CaseDossierPanel>
 
+                  <CaseDossierPanel view="materials" active={dossierView}>
                   <div className="detail-section">
                     <div className="ds-head ds-head--split">
                       <span>佐证材料</span>
@@ -1942,12 +1594,16 @@ const Cases: React.FC = () => {
                       <p className="narr">暂无材料目录</p>
                     )}
                   </div>
+                  </CaseDossierPanel>
 
+                  <CaseDossierPanel view="sources" active={dossierView}>
+                  <CaseSourceDetails key={selectedCase.id} caseId={selectedCase.id} revision={selectedCase.updated_at} />
+                  <CaseEntityDetails profile={caseProfile} />
                   {/* 关键信息 */}
                   <div className="detail-grid">
                     <div className="kv">
                       <span className="k">案发时间</span>
-                      <span className="v">{dayjs(selectedCase.occurred_time).format('YYYY-MM-DD HH:mm')}</span>
+                      <span className="v">{formatCaseTime(selectedCase)}</span>
                     </div>
                     {selectedCase.location && (
                       <div className="kv">
@@ -1988,7 +1644,7 @@ const Cases: React.FC = () => {
                       <div className="kv">
                         <span className="k">涉案油量</span>
                         <span className="v" style={{ fontFamily: 'var(--mono)' }}>
-                          {selectedCase.oil_volume} 吨
+                          {formatOilVolume(selectedCase.oil_volume, selectedCase.oil_volume_unit)}
                         </span>
                       </div>
                     )}
@@ -2047,6 +1703,7 @@ const Cases: React.FC = () => {
                       <p className="narr">{selectedCase.description}</p>
                     </div>
                   )}
+                  </CaseDossierPanel>
 
                   {/* 底部操作 */}
                   <div className="detail-actions">
@@ -2055,9 +1712,6 @@ const Cases: React.FC = () => {
                     </button>
                     <button className="btn-ghost" onClick={() => handleEdit(selectedCase)}>
                       编辑案件
-                    </button>
-                    <button className="btn-ghost" onClick={handleDispatchPatrol}>
-                      派遣巡逻
                     </button>
                     <Popconfirm
                       title="确认删除此案件？"
@@ -2211,13 +1865,7 @@ const Cases: React.FC = () => {
             </Form.Item>
           ) : null}
 
-          <Form.Item
-            name="occurred_time"
-            label="发生时间"
-            rules={[{ required: true, message: '请选择发生时间' }]}
-          >
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
+          <CaseTimeFields form={form} />
 
           <Form.Item name="location" label="地点">
             <Input placeholder="如：××路××小区南门" />
@@ -2300,8 +1948,7 @@ const Cases: React.FC = () => {
 
           <Form.Item
             name="description"
-            label="案情描述"
-            rules={[{ required: true, message: '请输入案情描述' }]}
+            label="案情原文（未知内容可后补）"
           >
             <TextArea rows={4} placeholder="请尽可能详细描述案情，其余结构化分析将由系统自动完成" />
           </Form.Item>
@@ -2311,9 +1958,11 @@ const Cases: React.FC = () => {
             onBonusVehicleScopeChange={handleBonusVehicleScopeChange}
             onBonusPersonScopeChange={handleBonusPersonScopeChange}
           />
+          <CaseSourceCollections locationsEnabled={sourceCollectionsLoaded.locations} measurementsEnabled={sourceCollectionsLoaded.measurements} />
+          {qualityPreviewMutation.data && <CaseQualityStatus quality={qualityPreviewMutation.data} />}
 
           <div className="cases-advanced-toggle" style={{ cursor: 'default' }}>
-            业务管理字段（按细则用于报送、质量评分和后续研判）
+            业务管理字段（按需用于报送与后续研判）
           </div>
 
           <Row gutter={12}>
@@ -2420,9 +2069,10 @@ const Cases: React.FC = () => {
                 </Select>
               </Form.Item>
 
-              <Form.Item name="oil_volume" label="涉油数量（吨，仅填写核定吨值）">
-                <InputNumber style={{ width: '100%' }} />
+              <Form.Item name="oil_volume" label="涉油数量记录（不明可留空）">
+                <InputNumber min={0} style={{ width: '100%' }} />
               </Form.Item>
+              <Form.Item name="oil_volume_unit" label="数量单位" initialValue="unknown"><Select options={oilUnitOptions} /></Form.Item>
 
               <Form.Item name="water_cut" label="检斤含水率（%）">
                 <InputNumber style={{ width: '100%' }} min={0} max={100} />
@@ -2534,7 +2184,7 @@ const Cases: React.FC = () => {
                 >
                   <b>{item.case_number}</b>
                   <span>{item.location || '未标注地点'}</span>
-                  <small>{dayjs(item.occurred_time).format('YYYY-MM-DD')}</small>
+                  <small>{formatCaseTime(item, 'YYYY-MM-DD')}</small>
                 </button>
               ))
             )}

@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.ai.utils import parse_llm_json_response
 from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilRecoveryRecord
-from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_quality_service import CaseQualityService, _is_blank
+from app.services.case_quality_rules import time_precision
 
 
 MATERIAL_RULES = {
@@ -55,6 +55,7 @@ AI_INTAKE_FIELD_NAMES = {
     "report_unit",
     "oil_type",
     "oil_volume",
+    "oil_volume_unit",
     "oil_value",
     "oil_nature",
     "water_cut",
@@ -243,7 +244,7 @@ class CaseAutomationService:
         if occurred_time:
             set_field("occurred_time", occurred_time.isoformat(), "案情中的日期时间")
         else:
-            warnings.append("未识别到明确发生时间，创建案件时仍需人工选择。")
+            warnings.append("未识别到精确发生时间，可记录时间范围或保留未知，不补造时刻。")
 
         report_unit = CaseAutomationService._extract_report_unit(text)
         set_field("report_unit", report_unit, "细则格式中的报送保卫班")
@@ -259,8 +260,10 @@ class CaseAutomationService:
         oil_type = "原油" if _contains_any(text, ("原油", "落地油", "被盗原油", "收缴油")) else None
         set_field("oil_type", oil_type, "油品关键词")
 
-        oil_volume = CaseAutomationService._extract_volume_tons(text)
-        set_field("oil_volume", oil_volume, "案情中的数量/检斤描述")
+        measurement = CaseAutomationService._extract_oil_measurement(text)
+        if measurement:
+            set_field("oil_volume", measurement[0], "案情中的原始数量，未作单位换算")
+            set_field("oil_volume_unit", measurement[1], "案情中的原始计量单位")
 
         water_cut = CaseAutomationService._extract_water_cut(text)
         set_field("water_cut", water_cut, "案情中的含水率")
@@ -360,7 +363,7 @@ class CaseAutomationService:
 5. description 要写成符合业务管理细则的标准案情摘要：时间、报送保卫班、地点、作业区/区块、车辆、油品数量/含水率、人员、报案立案、车辆/人员/原油处理方式，缺项不编。
 6. 每个 candidates 项要给 label、field、value、source、confidence、status=candidate。
 7. 身份证号、家庭住址可保留在摘要中供人工核对，但不要编造，不要外推。
-8. oil_volume 的单位是吨；原文仅提供升/L时保留原始单位，不假设密度、不换算吨数。
+8. oil_volume 必须与 oil_volume_unit 同时给出，单位仅可为 tonne/liter/kg/m3/unknown；保留原文数值与单位，不假设密度、不换算吨数，多个不同阶段计量不能合成一个数量。
 
 {STANDARD_CASE_REPORTING_REQUIREMENTS}
 
@@ -394,25 +397,38 @@ class CaseAutomationService:
         model_fields = CaseAutomationService._sanitize_llm_case_fields(
             model_payload.get("case_fields") or model_payload.get("standard_fields") or {}
         )
-        unweighed_liters = bool(re.search(r"\d+(?:\.\d+)?\s*(?:升|L|l)", text)) and (
-            CaseAutomationService._extract_volume_tons(text) is None
-        )
-        if unweighed_liters:
-            model_fields.pop("oil_volume", None)
-            # 保留原始单位，避免模型在摘要中把未经核定的升数改写成吨数。
+        measurement = CaseAutomationService._extract_oil_measurement(text)
+        described_measurement = (CaseAutomationService._extract_oil_measurement(model_fields["description"])
+                                 if isinstance(model_fields.get("description"), str) else measurement)
+        quantity_changed = (described_measurement != measurement or
+                            (any(key in model_fields for key in ("oil_volume", "oil_volume_unit")) and (
+                                measurement is None or model_fields.get("oil_volume") != measurement[0]
+                                or model_fields.get("oil_volume_unit", fallback_fields.get("oil_volume_unit")) != measurement[1])))
+        known_time = CaseAutomationService._extract_datetime(text)
+        described_time = (CaseAutomationService._extract_datetime(model_fields["description"])
+                          if isinstance(model_fields.get("description"), str) else known_time)
+        time_changed = described_time != known_time or (
+            "occurred_time" in model_fields and known_time is None)
+        model_fields.pop("occurred_time", None)
+        # A model cannot replace grounded value/unit candidates or invent converted quantities.
+        for key in ("oil_volume", "oil_volume_unit"):
+            model_fields.pop(key, None)
+        if quantity_changed or time_changed:
             model_fields["description"] = text
         fields = {**fallback_fields, **model_fields}
 
         field_sources = dict(fallback.get("field_sources") or {})
         for field, source in (model_payload.get("field_sources") or {}).items():
-            if unweighed_liters and field in {"oil_volume", "description"}:
+            if field in {"oil_volume", "oil_volume_unit", "occurred_time"} or ((quantity_changed or time_changed) and field == "description"):
                 continue
             if field in AI_INTAKE_FIELD_NAMES and source:
                 field_sources[field] = f"大模型整理：{source}"
         for field in model_fields:
             field_sources.setdefault(field, "大模型语义整理")
-        if unweighed_liters:
-            field_sources["description"] = "保留原始案情与升数，吨数待核定"
+        if quantity_changed:
+            field_sources["description"] = "保留原始案情和计量单位，禁止模型推算数量"
+        if time_changed:
+            field_sources["description"] = "保留原始时间表达，不补造日期或精确时刻"
 
         model_evidence = [
             item for item in (model_payload.get("suggested_evidence") or model_payload.get("material_recommendations") or [])
@@ -426,8 +442,10 @@ class CaseAutomationService:
             *(fallback.get("warnings") or []),
             *(model_payload.get("warnings") or []),
         ]
-        if unweighed_liters:
-            warnings.append("原文仅提供升数，涉油数量（吨）待检斤核定，不按体积推算重量。")
+        if quantity_changed:
+            warnings.append("模型计量候选与原文不一致，已保留原始单位和数值；未换算吨数。")
+        if time_changed:
+            warnings.append("模型时间候选超出原文精度，已保留原始表达，不补造年份或零点。")
         confidence = float(model_payload.get("confidence") or fallback.get("confidence") or 0.75)
         confidence = max(0.0, min(0.98, confidence))
 
@@ -442,7 +460,8 @@ class CaseAutomationService:
         model_candidates = [
             item for item in (model_payload.get("candidates") or [])
             if isinstance(item, dict) and item.get("field")
-            and not (unweighed_liters and item.get("field") in {"oil_volume", "description"})
+            and item.get("field") not in {"oil_volume", "oil_volume_unit", "occurred_time"}
+            and not ((quantity_changed or time_changed) and item.get("field") == "description")
         ]
         if model_candidates:
             ai_intake["candidates"] = CaseAutomationService._merge_ai_candidates(
@@ -618,6 +637,7 @@ class CaseAutomationService:
             "oil_nature": "油品性质",
             "oil_type": "油品类型",
             "oil_volume": "涉油数量",
+            "oil_volume_unit": "涉油数量单位",
             "water_cut": "含水率",
             "oil_value": "涉案价值",
             "source_type": "线索来源",
@@ -795,22 +815,48 @@ class CaseAutomationService:
         }
 
     @staticmethod
-    def build_automation_workbench(db: Session, case: Case, include_bonus: bool = True) -> Dict[str, Any]:
-        """聚合 4-6 自动化能力：结论分层、经验卡、缺口闭环。"""
-        bonus = CaseAutomationService.build_bonus_assessment(db, case) if include_bonus else None
-        context = CaseIntelligenceService.build_llm_context_pack(
-            db,
-            case_id=case.id,
-            days=365,
-            limit=6,
-            radius_km=1.5,
-        )
-        experience = CaseIntelligenceService.build_experience_card(db, case.id, persist=False)
+    def build_automation_workbench(db: Session, case: Case, include_bonus: bool = True,
+                                   *, profile: Optional[Dict[str, Any]] = None,
+                                   result_module: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Compatibility read of saved outputs; never perform a second analysis."""
+        from app.services.case_profile_service import CaseProfileService
+        from app.services.case_result_access import CaseResultAccessError
+        from app.services.case_result_service import CaseResultService
 
-        facts = context.get("facts") or []
-        inferences = context.get("pattern_inferences") or []
-        suggestions = context.get("prevention_references") or []
-        info_gaps = CaseAutomationService._filter_real_information_gaps(context.get("information_gaps") or [])
+        if profile is None:
+            profile = CaseProfileService.build_case_profile(db, case.id, include_similar=False)
+        if result_module is None:
+            try:
+                result = CaseResultService.latest(db, case.id)
+            except CaseResultAccessError:
+                result = None
+        else:
+            result = result_module.get("data")
+        bonus = CaseAutomationService.build_bonus_assessment(db, case) if include_bonus else None
+        current = result if result and result.get("freshness") != "pending_update" else None
+        content = (current or {}).get("content") or {}
+        facts = [f"{key}：{value}" for key, value in
+                 (content.get("facts_summary", {}).get("recorded_fields") or {}).items()
+                 if value not in (None, "")]
+        inferences = [{"claim": item.get("claim") or item.get("title") or "候选解释",
+                       "basis": item.get("supporting_evidence") or [],
+                       "confidence": "规则支持度，非准确概率", "candidate_id": item.get("id")}
+                      for item in (content.get("candidates") or [])]
+        if (current or {}).get("composition_status") == "road_not_ready":
+            inferences = []
+        suggestions = []
+        gap_sections = content.get("information_gaps") or {}
+        info_gaps = [item.get("label") or item.get("reason") or "信息待补齐" if isinstance(item, dict) else str(item)
+                     for item in [*gap_sections.get("profile", []), *gap_sections.get("analysis", [])]]
+        if not current:
+            info_gaps.append("当前冻结成果尚未就绪；未重新分析原文。")
+        elif current.get("composition_status") == "road_not_ready":
+            info_gaps.extend(current.get("composition_information_gaps") or ["当前道路组合待生成。"])
+        saved_experience = profile.get("experience_card") or {}
+        experience = {"case_id": case.id, "case_number": case.case_number, "summary": "",
+                      "what_happened": {}, "how_it_was_found": [], "evidence_basis": {},
+                      "reusable_lessons": [], "next_attention_points": [],
+                      "why_it_matters": [], **saved_experience}
         if bonus:
             material_gaps = bonus.get("material_gate", {}).get("missing_materials") or []
             materials_ready = bonus.get("material_gate", {}).get("status") == "ready"
@@ -866,15 +912,19 @@ class CaseAutomationService:
         return {
             "case_id": case.id,
             "case_number": case.case_number,
-            "version": "automation_456_v1",
+            "version": "automation_saved_outputs_v6",
+            "result_id": current.get("id") if current else None,
+            "result_state": "ready" if current else "unavailable",
+            "experience_state": profile.get("experience_state"),
             "modules": modules,
             "conclusion_layering": {
                 "facts": facts[:10],
                 "inferences": inferences[:8],
                 "suggestions": suggestions[:8],
                 "information_gaps": info_gaps[:10],
-                "evidence_index": (context.get("evidence_index") or [])[:12],
-                "boundary": context.get("system_boundary") or [],
+                "evidence_index": [{"id": ref, "source_result_id": current["id"]}
+                                   for ref in content.get("facts_summary", {}).get("evidence_refs") or []],
+                "boundary": content.get("boundary") or [],
             },
             "experience_card": experience,
             "gap_closure": {
@@ -886,7 +936,7 @@ class CaseAutomationService:
             },
             "bonus_assessment": bonus,
             "ready_for_human_review": ready_for_human_review,
-            "boundary": "4-6 自动化只做后台分层、经验沉淀和缺口提醒，不替代人工结论、不自动派发处置任务。",
+            "boundary": "兼容入口只读取同一冻结成果与已保存经验版本；不即时生成经验，不重新分析，不改变案件状态。",
         }
 
     @staticmethod
@@ -1139,15 +1189,18 @@ class CaseAutomationService:
         warnings.extend(count_warnings)
         officer_counts, officer_warnings = CaseAutomationService._extract_officer_counts(case, primary_squad)
         warnings.extend(officer_warnings)
-        quarter_start, quarter_end, _, _ = CaseAutomationService._bonus_period_bounds(case)
+        if time_precision(case) != "exact" or case.occurred_time is None:
+            CaseAutomationService._add_calculation_gap(
+                calculation_gaps, "occurred_time", "考核所属周期待明确",
+                "发生时间不是精确时刻，不能自动归入当前季度。")
+            performance = {}
+        else:
+            quarter_start, quarter_end, _, _ = CaseAutomationService._bonus_period_bounds(case)
+            performance = CaseAutomationService._build_squad_performance(db, start_at=quarter_start, end_at=quarter_end)
         return {
             "primary_squad": primary_squad,
             "counts": counts,
-            "squad_performance": CaseAutomationService._build_squad_performance(
-                db,
-                start_at=quarter_start,
-                end_at=quarter_end,
-            ),
+            "squad_performance": performance,
             "officer_counts": officer_counts,
             "warnings": warnings,
             "calculation_gaps": calculation_gaps,
@@ -1221,7 +1274,9 @@ class CaseAutomationService:
 
     @staticmethod
     def _bonus_period_bounds(case: Case) -> Tuple[datetime, datetime, datetime, datetime]:
-        occurred = case.occurred_time or datetime.utcnow()
+        if time_precision(case) != "exact" or case.occurred_time is None:
+            raise ValueError("bonus_period_unknown: 发生时间未知或为区间，不能自动归属考核周期")
+        occurred = case.occurred_time
         quarter = (occurred.month - 1) // 3 + 1
         quarter_start_month = (quarter - 1) * 3 + 1
         tzinfo = occurred.tzinfo
@@ -1242,6 +1297,12 @@ class CaseAutomationService:
         bonus_context: Dict[str, Any],
         selected_total: float,
     ) -> Dict[str, Any]:
+        if time_precision(case) != "exact" or case.occurred_time is None:
+            return {"status": "unknown_period", "period_type": "unknown", "period": None,
+                    "quarter": None, "annual": None, "rules_version": rules.get("version"),
+                    "selected_case_amount": 0, "case_amount_status": "not_calculated",
+                    "primary_squad": bonus_context.get("primary_squad"),
+                    "pricing_basis": "发生时间不足以归属考核周期，未用录入时间或今天替代。"}
         quarter_start, quarter_end, year_start, year_end = CaseAutomationService._bonus_period_bounds(case)
         primary_squad = bonus_context.get("primary_squad")
         target_rules = rules.get("squad_targets") or SQUAD_TARGETS
@@ -1288,7 +1349,7 @@ class CaseAutomationService:
                 "person_high": bool(person_target > 0 and person_actual > person_target),
             }
 
-        occurred = case.occurred_time or datetime.utcnow()
+        occurred = case.occurred_time
         quarter = (occurred.month - 1) // 3 + 1
         return {
             "period_type": "quarter",
@@ -1609,30 +1670,19 @@ class CaseAutomationService:
 
     @staticmethod
     def _extract_datetime(text: str) -> Optional[datetime]:
-        patterns = [
-            r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?\s*(\d{1,2})?[时:]?(\d{1,2})?",
-            r"(\d{1,2})月(\d{1,2})日\s*(\d{1,2})?[时:]?(\d{1,2})?",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if not match:
-                continue
-            groups = match.groups()
+        # Only explicit date and clock time qualify: no current-year or midnight default.
+        match = re.search(
+            r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?\s*[T ]?"
+            r"(凌晨|上午|下午|晚上)?\s*(\d{1,2})[时:](\d{1,2})(?:分)?", text)
+        if match:
+            year, month, day, period, hour, minute = match.groups()
             try:
-                if len(groups) == 5:
-                    year, month, day, hour, minute = groups
-                else:
-                    year = datetime.utcnow().year
-                    month, day, hour, minute = groups
-                return datetime(
-                    int(year),
-                    int(month),
-                    int(day),
-                    int(hour or 0),
-                    int(minute or 0),
-                )
+                hour = int(hour)
+                if period in {"下午", "晚上"} and hour < 12:
+                    hour += 12
+                return datetime(int(year), int(month), int(day), hour, int(minute))
             except ValueError:
-                return None
+                pass
         return None
 
     @staticmethod
@@ -1680,6 +1730,20 @@ class CaseAutomationService:
             for item in re.split(r"[、,，;；/\s]+", match.group(1))
             if item.strip(" 、,，")
         ]
+
+    @staticmethod
+    def _extract_oil_measurement(text: str) -> Optional[Tuple[float, str]]:
+        """Preserve one unambiguous raw quantity; capacities and multi-stage amounts stay unknown."""
+        if "油" not in text and "检斤" not in text:
+            return None
+        units = {"吨": "tonne", "t": "tonne", "公斤": "kg", "千克": "kg", "kg": "kg",
+                 "升": "liter", "l": "liter", "立方米": "m3", "m3": "m3", "m³": "m3"}
+        found = []
+        for match in re.finditer(r"(\d+(?:\.\d+)?)\s*(立方米|公斤|千克|kg|吨|升|m3|m³|t|l)(?![A-Za-z])", text, re.I):
+            if re.match(r"\s*(?:以上|以下|载重|机动车|卡车|油罐车)", text[match.end():]):
+                continue
+            found.append((float(match.group(1)), units[match.group(2).lower()]))
+        return found[0] if len(found) == 1 else None
 
     @staticmethod
     def _extract_volume_tons(text: str) -> Optional[float]:
@@ -1753,17 +1817,21 @@ class CaseAutomationService:
         return result
 
     @staticmethod
-    def _oil_tons(case: Case, oil_recovery: List[OilRecoveryRecord]) -> float:
+    def _oil_tons(case: Case, oil_recovery: List[OilRecoveryRecord]) -> Optional[float]:
         if case.oil_volume is not None:
-            return float(case.oil_volume)
+            return float(case.oil_volume) if getattr(case, "oil_volume_unit", None) == "tonne" else None
         volumes = [r.volume_tons for r in oil_recovery if r.volume_tons is not None]
-        return float(sum(volumes)) if volumes else 0.0
+        return float(sum(volumes)) if volumes else None
 
     @staticmethod
-    def _net_oil_tons(oil_tons: float, water_cut: Optional[float], oil_recovery: List[OilRecoveryRecord]) -> float:
+    def _net_oil_tons(oil_tons: Optional[float], water_cut: Optional[float], oil_recovery: List[OilRecoveryRecord]) -> Optional[float]:
+        if oil_tons is None:
+            return None
         water = water_cut
         if water is None:
             water_values = [r.water_cut for r in oil_recovery if r.water_cut is not None]
-            water = water_values[0] if water_values else 0
+            water = water_values[0] if len(water_values) == 1 else None
+        if water is None:
+            return None
         water = max(0.0, min(float(water or 0), 100.0))
         return round(oil_tons * (1 - water / 100), 3)

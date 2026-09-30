@@ -9,7 +9,6 @@ import {
   Modal,
   InputNumber,
   Popconfirm,
-  Alert,
 } from 'antd'
 import {
   SaveOutlined,
@@ -20,49 +19,24 @@ import {
   CheckCircleOutlined,
   InfoCircleOutlined,
   SettingOutlined,
-  TeamOutlined,
-  EnvironmentOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { configApi } from '../../services/config'
-import { personnelApi } from '../../services/personnel'
-import { keyLocationApi } from '../../services/key_locations'
 import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
-import type { AIModel, ModelCreate, SystemConfig, SecurityPersonnel, SecurityPersonnelCreate, KeyLocation, KeyLocationCreate } from '../../types'
+import type { AIModel, ModelCreate, SystemConfig } from '../../types'
 import './Settings.css'
 
 const { Option } = Select
 const { TextArea } = Input
 
-const LOCATION_TYPE_LABELS: Record<string, string> = {
-  oil_depot: '油库',
-  pipeline_node: '管线节点',
-  gas_station: '加油站',
-  refinery: '炼化厂',
-  storage: '储油罐区',
-  other: '其他',
-}
-
-const PERSONNEL_STATUS_LABELS: Record<string, string> = {
-  active: '在职',
-  inactive: '离职',
-  on_leave: '休假',
-}
-
 const Settings: React.FC = () => {
   const [mapForm] = Form.useForm()
   const [meetingForm] = Form.useForm()
   const [modelForm] = Form.useForm()
-  const [personnelForm] = Form.useForm()
-  const [locationForm] = Form.useForm()
   const [isModelModalVisible, setIsModelModalVisible] = useState(false)
   const [editingModel, setEditingModel] = useState<AIModel | null>(null)
-  const [isPersonnelModalVisible, setIsPersonnelModalVisible] = useState(false)
-  const [editingPersonnel, setEditingPersonnel] = useState<SecurityPersonnel | null>(null)
-  const [isLocationModalVisible, setIsLocationModalVisible] = useState(false)
-  const [editingLocation, setEditingLocation] = useState<KeyLocation | null>(null)
   const queryClient = useQueryClient()
-  const { legacyOperationsEnabled, availability, query: runtimeQuery } = useRuntimeFeatures()
+  const { query: runtimeQuery } = useRuntimeFeatures()
 
   // 获取配置
   const { data: mapConfigs } = useQuery({
@@ -144,86 +118,6 @@ const Settings: React.FC = () => {
     onError: (error: any) => {
       message.error(`删除失败: ${error.response?.data?.detail || error.message}`)
     },
-  })
-
-  // ── 保卫人员查询与操作 ───────────────────────────────────────
-  const { data: personnelList = [], isLoading: personnelLoading } = useQuery({
-    queryKey: ['personnel'],
-    queryFn: () => personnelApi.list(),
-    enabled: legacyOperationsEnabled,
-  })
-
-  const createPersonnelMutation = useMutation({
-    mutationFn: (data: SecurityPersonnelCreate) => personnelApi.create(data),
-    onSuccess: () => {
-      message.success('添加成功')
-      setIsPersonnelModalVisible(false)
-      personnelForm.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['personnel'] })
-    },
-    onError: (error: any) => message.error(`添加失败: ${error.response?.data?.detail || error.message}`),
-  })
-
-  const updatePersonnelMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<SecurityPersonnelCreate> }) =>
-      personnelApi.update(id, data),
-    onSuccess: () => {
-      message.success('更新成功')
-      setIsPersonnelModalVisible(false)
-      setEditingPersonnel(null)
-      personnelForm.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['personnel'] })
-    },
-    onError: (error: any) => message.error(`更新失败: ${error.response?.data?.detail || error.message}`),
-  })
-
-  const deletePersonnelMutation = useMutation({
-    mutationFn: (id: number) => personnelApi.delete(id),
-    onSuccess: () => {
-      message.success('删除成功')
-      queryClient.invalidateQueries({ queryKey: ['personnel'] })
-    },
-    onError: (error: any) => message.error(`删除失败: ${error.response?.data?.detail || error.message}`),
-  })
-
-  // ── 重要部位查询与操作 ───────────────────────────────────────
-  const { data: locationList = [], isLoading: locationLoading } = useQuery({
-    queryKey: ['key-locations'],
-    queryFn: () => keyLocationApi.list(),
-    enabled: legacyOperationsEnabled,
-  })
-
-  const createLocationMutation = useMutation({
-    mutationFn: (data: KeyLocationCreate) => keyLocationApi.create(data),
-    onSuccess: () => {
-      message.success('添加成功')
-      setIsLocationModalVisible(false)
-      locationForm.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['key-locations'] })
-    },
-    onError: (error: any) => message.error(`添加失败: ${error.response?.data?.detail || error.message}`),
-  })
-
-  const updateLocationMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<KeyLocationCreate> }) =>
-      keyLocationApi.update(id, data),
-    onSuccess: () => {
-      message.success('更新成功')
-      setIsLocationModalVisible(false)
-      setEditingLocation(null)
-      locationForm.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['key-locations'] })
-    },
-    onError: (error: any) => message.error(`更新失败: ${error.response?.data?.detail || error.message}`),
-  })
-
-  const deleteLocationMutation = useMutation({
-    mutationFn: (id: number) => keyLocationApi.delete(id),
-    onSuccess: () => {
-      message.success('删除成功')
-      queryClient.invalidateQueries({ queryKey: ['key-locations'] })
-    },
-    onError: (error: any) => message.error(`删除失败: ${error.response?.data?.detail || error.message}`),
   })
 
   const setDefaultModelMutation = useMutation({
@@ -434,78 +328,6 @@ const Settings: React.FC = () => {
     },
   ]
 
-  // ── 保卫人员表格列 ────────────────────────────────────────────
-  const personnelColumns = [
-    { title: '姓名', dataIndex: 'name', key: 'name',
-      render: (v: string) => <span style={{ color: 'var(--ink-0)', fontSize: 13 }}>{v}</span> },
-    { title: '工号', dataIndex: 'badge_number', key: 'badge_number',
-      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-2)' }}>{v || '—'}</span> },
-    { title: '部门', dataIndex: 'department', key: 'department',
-      render: (v: string) => <span style={{ color: 'var(--ink-2)' }}>{v || '—'}</span> },
-    { title: '职务', dataIndex: 'position', key: 'position',
-      render: (v: string) => <span style={{ color: 'var(--ink-2)' }}>{v || '—'}</span> },
-    { title: '电话', dataIndex: 'phone', key: 'phone',
-      render: (v: string) => <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>{v || '—'}</span> },
-    { title: '状态', dataIndex: 'status', key: 'status',
-      render: (v: string) => (
-        <span className={v === 'active' ? 'settings-badge settings-badge--active' : 'settings-badge settings-badge--inactive'}>
-          {PERSONNEL_STATUS_LABELS[v] ?? v}
-        </span>
-      )},
-    { title: '操作', key: 'action', render: (_: unknown, record: SecurityPersonnel) => (
-      <div style={{ display: 'flex', gap: 4 }}>
-        <button className="settings-action-btn" onClick={() => {
-          setEditingPersonnel(record)
-          personnelForm.setFieldsValue(record)
-          setIsPersonnelModalVisible(true)
-        }}><EditOutlined /> 编辑</button>
-        <Popconfirm title="确认删除" description="确定要删除该人员吗？" okText="确定" cancelText="取消"
-          onConfirm={() => deletePersonnelMutation.mutate(record.id)}>
-          <button className="settings-action-btn settings-action-btn--danger"><DeleteOutlined /> 删除</button>
-        </Popconfirm>
-      </div>
-    )},
-  ]
-
-  // ── 重要部位表格列 ────────────────────────────────────────────
-  const locationColumns = [
-    { title: '名称', dataIndex: 'name', key: 'name',
-      render: (v: string) => <span style={{ color: 'var(--ink-0)', fontSize: 13 }}>{v}</span> },
-    { title: '类型', dataIndex: 'location_type', key: 'location_type',
-      render: (v: string) => <span className="settings-badge settings-badge--analyst">{LOCATION_TYPE_LABELS[v] ?? v}</span> },
-    { title: '坐标', key: 'coord', render: (_: unknown, r: KeyLocation) =>
-      r.latitude && r.longitude
-        ? <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)' }}>{r.latitude.toFixed(4)}, {r.longitude.toFixed(4)}</span>
-        : <span style={{ color: 'var(--ink-4)' }}>—</span>
-    },
-    { title: '风险等级', dataIndex: 'risk_level', key: 'risk_level',
-      render: (v: number) => (
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 12,
-          color: v >= 4 ? 'var(--err)' : v >= 3 ? 'var(--warn)' : 'var(--ok)' }}>
-          {'★'.repeat(v)}{'☆'.repeat(5 - v)}
-        </span>
-      )},
-    { title: '状态', dataIndex: 'status', key: 'status',
-      render: (v: string) => (
-        <span className={v === 'active' ? 'settings-badge settings-badge--active' : 'settings-badge settings-badge--inactive'}>
-          {v === 'active' ? '启用' : '停用'}
-        </span>
-      )},
-    { title: '操作', key: 'action', render: (_: unknown, record: KeyLocation) => (
-      <div style={{ display: 'flex', gap: 4 }}>
-        <button className="settings-action-btn" onClick={() => {
-          setEditingLocation(record)
-          locationForm.setFieldsValue(record)
-          setIsLocationModalVisible(true)
-        }}><EditOutlined /> 编辑</button>
-        <Popconfirm title="确认删除" description="确定要删除该部位吗？" okText="确定" cancelText="取消"
-          onConfirm={() => deleteLocationMutation.mutate(record.id)}>
-          <button className="settings-action-btn settings-action-btn--danger"><DeleteOutlined /> 删除</button>
-        </Popconfirm>
-      </div>
-    )},
-  ]
-
   return (
     <div className="page-scrollable">
 
@@ -525,9 +347,6 @@ const Settings: React.FC = () => {
         </button>
       </div>
 
-      {availability.legacy_operations === 'unavailable' && <Alert type="warning" showIcon
-        message="历史模块状态暂不可用，尚不能确认人员及重要部位管理是否启用。"
-        action={<button className="btn-ghost" onClick={() => void runtimeQuery.refetch()}>重新读取功能状态</button>} />}
       <section className="settings-runtime" aria-label="系统运行状态"><h2>系统运行状态</h2>
         {runtimeQuery.isError ? <p role="alert">运行状态读取失败</p> : runtimeQuery.data ? <dl>
           <div><dt>数据库</dt><dd>{runtimeQuery.data.database}</dd></div>
@@ -770,163 +589,7 @@ const Settings: React.FC = () => {
               </div>
             ),
           },
-          /* ── 保卫人员管理 ── */
-          {
-            key: 'personnel',
-            label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><TeamOutlined />保卫人员</span>,
-            children: (
-              <div style={{ paddingTop: 'var(--gap)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
-                    人员列表 · {personnelList.length} 人
-                  </span>
-                  <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 5 }}
-                    onClick={() => { setEditingPersonnel(null); personnelForm.resetFields(); personnelForm.setFieldsValue({ status: 'active' }); setIsPersonnelModalVisible(true) }}>
-                    <PlusOutlined /> 添加人员
-                  </button>
-                </div>
-                <Table columns={personnelColumns} dataSource={personnelList} loading={personnelLoading}
-                  rowKey="id" pagination={{ pageSize: 15 }} />
-
-                <Modal
-                  title={<span style={{ fontFamily: 'var(--sans)', color: 'var(--ink-0)', fontSize: 14 }}>{editingPersonnel ? '编辑人员' : '添加人员'}</span>}
-                  open={isPersonnelModalVisible}
-                  onOk={async () => {
-                    try {
-                      const values = await personnelForm.validateFields()
-                      if (editingPersonnel) {
-                        updatePersonnelMutation.mutate({ id: editingPersonnel.id, data: values })
-                      } else {
-                        createPersonnelMutation.mutate(values as SecurityPersonnelCreate)
-                      }
-                    } catch {}
-                  }}
-                  onCancel={() => { setIsPersonnelModalVisible(false); setEditingPersonnel(null); personnelForm.resetFields() }}
-                  width={500} className="settings-modal"
-                  confirmLoading={createPersonnelMutation.isPending || updatePersonnelMutation.isPending}
-                  okButtonProps={{ className: 'btn-primary' }} cancelButtonProps={{ className: 'btn-ghost' }}
-                >
-                  <Form name="personnel" form={personnelForm} layout="vertical" className="settings-form">
-                    <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>
-                      <Input placeholder="真实姓名" />
-                    </Form.Item>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <Form.Item name="badge_number" label="工号/警号">
-                        <Input placeholder="如：G001" />
-                      </Form.Item>
-                      <Form.Item name="phone" label="联系电话">
-                        <Input placeholder="手机号" />
-                      </Form.Item>
-                      <Form.Item name="department" label="所属部门">
-                        <Input placeholder="如：安保一队" />
-                      </Form.Item>
-                      <Form.Item name="position" label="职务">
-                        <Input placeholder="如：队长、队员" />
-                      </Form.Item>
-                    </div>
-                    <Form.Item name="status" label="状态">
-                      <Select>
-                        <Option value="active">在职</Option>
-                        <Option value="on_leave">休假</Option>
-                        <Option value="inactive">离职</Option>
-                      </Select>
-                    </Form.Item>
-                    <Form.Item name="notes" label="备注">
-                      <TextArea rows={2} placeholder="专业技能、注意事项等（可选）" />
-                    </Form.Item>
-                  </Form>
-                </Modal>
-              </div>
-            ),
-          },
-
-          /* ── 重要部位管理 ── */
-          {
-            key: 'key-locations',
-            label: <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><EnvironmentOutlined />重要部位</span>,
-            children: (
-              <div style={{ paddingTop: 'var(--gap)' }}>
-                <div className="settings-info-block">
-                  <InfoCircleOutlined style={{ color: 'var(--info)', marginRight: 8 }} />
-                  <div style={{ display: 'inline' }}>
-                    <div className="settings-info-block__title">KEY LOCATION MANAGEMENT</div>
-                    <p className="settings-info-block__text">
-                      添加重要部位后，大屏地图将自动按坐标显示对应标记，并可切换显示/隐藏。
-                    </p>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
-                    部位列表 · {locationList.length} 处
-                  </span>
-                  <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 5 }}
-                    onClick={() => { setEditingLocation(null); locationForm.resetFields(); locationForm.setFieldsValue({ status: 'active', risk_level: 1 }); setIsLocationModalVisible(true) }}>
-                    <PlusOutlined /> 添加部位
-                  </button>
-                </div>
-                <Table columns={locationColumns} dataSource={locationList} loading={locationLoading}
-                  rowKey="id" pagination={{ pageSize: 15 }} />
-
-                <Modal
-                  title={<span style={{ fontFamily: 'var(--sans)', color: 'var(--ink-0)', fontSize: 14 }}>{editingLocation ? '编辑部位' : '添加重要部位'}</span>}
-                  open={isLocationModalVisible}
-                  onOk={async () => {
-                    try {
-                      const values = await locationForm.validateFields()
-                      if (editingLocation) {
-                        updateLocationMutation.mutate({ id: editingLocation.id, data: values })
-                      } else {
-                        createLocationMutation.mutate(values as KeyLocationCreate)
-                      }
-                    } catch {}
-                  }}
-                  onCancel={() => { setIsLocationModalVisible(false); setEditingLocation(null); locationForm.resetFields() }}
-                  width={560} className="settings-modal"
-                  confirmLoading={createLocationMutation.isPending || updateLocationMutation.isPending}
-                  okButtonProps={{ className: 'btn-primary' }} cancelButtonProps={{ className: 'btn-ghost' }}
-                >
-                  <Form name="key-location" form={locationForm} layout="vertical" className="settings-form">
-                    <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-                      <Input placeholder="如：让胡路原油储罐区" />
-                    </Form.Item>
-                    <Form.Item name="location_type" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
-                      <Select placeholder="选择部位类型">
-                        {Object.entries(LOCATION_TYPE_LABELS).map(([v, l]) => (
-                          <Option key={v} value={v}>{l}</Option>
-                        ))}
-                      </Select>
-                    </Form.Item>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <Form.Item name="latitude" label="纬度" rules={[{ type: 'number', min: 44, max: 49, message: '请输入合理纬度（44–49）' }]}>
-                        <InputNumber style={{ width: '100%' }} placeholder="如：46.639" step={0.001} />
-                      </Form.Item>
-                      <Form.Item name="longitude" label="经度" rules={[{ type: 'number', min: 122, max: 128, message: '请输入合理经度（122–128）' }]}>
-                        <InputNumber style={{ width: '100%' }} placeholder="如：125.134" step={0.001} />
-                      </Form.Item>
-                    </div>
-                    <Form.Item name="address" label="详细地址">
-                      <Input placeholder="如：大庆市让胡路区××路××号" />
-                    </Form.Item>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <Form.Item name="risk_level" label="风险等级（1–5）">
-                        <InputNumber min={1} max={5} style={{ width: '100%' }} />
-                      </Form.Item>
-                      <Form.Item name="status" label="状态">
-                        <Select>
-                          <Option value="active">启用</Option>
-                          <Option value="inactive">停用</Option>
-                        </Select>
-                      </Form.Item>
-                    </div>
-                    <Form.Item name="description" label="说明">
-                      <TextArea rows={2} placeholder="容量、管理单位、注意事项等（可选）" />
-                    </Form.Item>
-                  </Form>
-                </Modal>
-              </div>
-            ),
-          },
-        ].filter(item => legacyOperationsEnabled || !['personnel', 'key-locations'].includes(item.key))}
+        ]}
       />
     </div>
   )

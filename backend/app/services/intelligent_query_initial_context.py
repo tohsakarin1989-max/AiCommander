@@ -54,9 +54,12 @@ def freeze_initial_context(db, value) -> dict:
             raise ValueError('query_initial_context_conflict')
         source = {'case_id': case.id, 'operational_area_id': case.operational_area_id,
                   'source_hash': CasePipelineService.source_hash(db, case)}
+        from app.services.case_source_service import CaseSourceService
+        revision = CaseSourceService.latest_revision(db, case.id)
+        source['source_revision_id'] = revision.id if revision else None
     conditions = remember(empty_conditions(), 'aggregate_case_profiles' if filters.get('conditions') else 'find_cases',
                           filters if filters.get('conditions') else {k: v for k, v in filters.items() if k != 'conditions'})
-    return {'schema_version': 'query-initial-context-5.0-1', 'source_case': source,
+    return {'schema_version': 'query-initial-context-6.4-1', 'source_case': source,
             'conditions': conditions,
             'boundary': '从页面继承案件选择与筛选条件，不继承授权；案件内容仍由内网只读工具获取。'}
 
@@ -72,3 +75,8 @@ def require_source_case_version(db, context) -> None:
     if (case is None or case.operational_area_id != source.get('operational_area_id')
             or CasePipelineService.source_hash(db, case) != source.get('source_hash')):
         raise PermissionError('query_initial_context_changed')
+    if 'source_revision_id' in source:
+        from app.services.case_source_service import CaseSourceService
+        revision = CaseSourceService.latest_revision(db, case.id)
+        if (revision.id if revision else None) != source['source_revision_id']:
+            raise PermissionError('query_initial_context_changed')

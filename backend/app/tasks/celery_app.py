@@ -1,5 +1,6 @@
 from celery import Celery
 from app.config import settings
+from app.services.runtime_capabilities import query_creation_enabled
 
 celery_app = Celery(
     "aicommander",
@@ -23,13 +24,20 @@ celery_app = Celery(
     ],
 )
 
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    beat_schedule={
+
+def build_beat_schedule(config):
+    """Build once at process startup; restart Beat after changing feature flags."""
+    schedule = {
+        "expire-intelligent-queries": {
+            "task": "aicommander.queries.expire",
+            "schedule": 60.0,
+            "options": {"expires": 60},
+        },
+        "process-case-chain": {
+            "task": "aicommander.chain.process_pending",
+            "schedule": 10.0,
+            "options": {"expires": 10},
+        },
         "reconcile-facility-catalog": {
             "task": "aicommander.facilities.reconcile",
             "schedule": 60.0,
@@ -59,7 +67,7 @@ celery_app.conf.update(
         "process-intelligent-query": {
             "task": "aicommander.queries.process_next",
             "schedule": 5.0,
-            "options": {"queue": settings.AGENT_REDIS_QUEUE, "expires": 5},
+            "options": {"queue": config.AGENT_REDIS_QUEUE, "expires": 5},
         },
         "process-map-package-import": {
             "task": "aicommander.maps.process_import",
@@ -69,7 +77,7 @@ celery_app.conf.update(
         "expire-agent-approvals": {
             "task": "aicommander.agent.expire_approvals",
             "schedule": 900.0,
-            "options": {"queue": settings.AGENT_REDIS_QUEUE},
+            "options": {"queue": config.AGENT_REDIS_QUEUE},
         },
         "process-case-pipeline": {
             "task": "aicommander.case_pipeline.process_pending",
@@ -96,5 +104,18 @@ celery_app.conf.update(
             "task": "aicommander.deployment_advisor.generate_weekly",
             "schedule": 21600.0,
         },
-    },
+    }
+    if not query_creation_enabled(config):
+        # Keep the task registered and leave historical approval cleanup intact.
+        schedule.pop("process-intelligent-query")
+    return schedule
+
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    beat_schedule=build_beat_schedule(settings),
 )

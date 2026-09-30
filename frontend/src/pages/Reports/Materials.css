@@ -1,0 +1,27 @@
+.materials { color: var(--ink); }
+.materials-layout { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.material-directory, .material-reader { background: var(--surface, white); border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 20px; }
+.material-directory form, .material-judgment-form { display: grid; gap: 12px; }
+.material-directory label, .material-judgment-form label { display: grid; gap: 6px; }
+.materials input:not([type=checkbox]), .materials textarea, .materials select { max-width: 100%; padding: 8px; border: 1px solid var(--line, #ccc); border-radius: 4px; font: inherit; background: var(--surface, white); color: inherit; }
+.material-directory ul { list-style: none; padding: 0; }
+.material-directory li { border-bottom: 1px solid var(--line, #ddd); }
+.material-directory a { display: grid; gap: 6px; padding: 12px 8px; color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.material-directory a[aria-current=page] { border-left: 3px solid var(--green, #277453); background: var(--green-wash, #f1f7f3); }
+.material-directory small { color: var(--ink-3, #666); }
+.material-directory nav, .material-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
+.material-reading-pane { min-width: 0; }
+.material-reader h1 { font-size: 26px; line-height: 1.4; }
+.material-reader h2 { font-size: 20px; margin-top: 24px; }
+.material-reader h2 small { font-size: 14px; font-weight: normal; }
+.material-document { line-height: 1.8; font-size: 16px; }
+.material-document p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-document table { border-collapse: collapse; width: 100%; table-layout: fixed; margin-block: 20px; }
+.material-document th, .material-document td { border: 1px solid var(--line, #ddd); padding: 10px; text-align: left; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-document caption { text-align: left; font-weight: 600; padding: 8px 0; }
+.material-source, .material-boundary { color: var(--ink-2, #555); }
+.material-reader code { overflow-wrap: anywhere; }
+.material-judgment { border-top: 1px solid var(--line, #ddd); margin-top: 24px; }
+.material-judgment-form fieldset { border: 1px solid var(--line, #ddd); padding: 12px; }
+.material-judgment-form fieldset label:has(input[type=checkbox]) { display: flex; align-items: center; }
+@media (max-width: 980px) { .materials-layout { grid-template-columns: 1fr; } .material-directory { max-height: 440px; overflow: auto; } .material-reader { padding: 16px; } }

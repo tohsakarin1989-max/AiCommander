@@ -9,18 +9,28 @@ function conditions(values: [string, string, string][]) {
 }
 
 export function CaseHistoryContent({ result }: { result: CaseHistoryResult }) {
+  const indexed = result.retrieval_mode === 'fragment_index'
   return <>
-    <p>当前授权与筛选范围内 {result.coverage.authorized_cases} 起候选案件，本次已检查 {result.coverage.scanned_cases} 起；最多展示三项参考。</p>
+    {indexed ? <p>授权范围内 {result.coverage.authorized_cases} 起案件，已建索引 {result.coverage.indexed_cases} 起；本轮召回 {result.coverage.recalled_fragments} 个片段，复核 {result.coverage.scanned_cases} 起候选案件。最多展示三项参考，不是全库统计。</p>
+      : <p>当前授权与筛选范围内 {result.coverage.authorized_cases} 起候选案件，本次已检查 {result.coverage.scanned_cases} 起；最多展示三项参考。</p>}
+    {indexed && !!result.coverage.missing_index_cases && <p role="status">{result.coverage.missing_index_cases} 起案件的片段索引尚未就绪，不能把未检索资料当作没有关联。</p>}
+    {indexed && result.coverage.recall_truncated && <p>本轮达到片段召回上限，仅提供有限历史参考，不宣称全库穷尽。</p>}
+    {indexed && !!result.coverage.process_missing_cases && <p>{result.coverage.process_missing_cases} 起案件尚无当前过程画像，已建原文索引仍可检索，不代表过程关系已完整。</p>}
     {result.semantic_index_state === 'not_enabled' && <p>当前使用结构条件与本地词项检索，语义向量索引未启用。</p>}
     {result.semantic_index_state === 'unavailable' && <p>本地语义模型暂不可用，当前保留结构条件与词项结果，不能据此排除其他语义关联。</p>}
     {result.semantic_index_state === 'partial' && <p>部分资料尚无当前版本向量，本次联合检索不完整。</p>}
     {result.mode === 'hybrid_local' && <p>已结合结构条件、词项与本地语义进行名次融合，相似程度不是准确概率。</p>}
     {!result.coverage.complete && <p role="status">本次检索未完成全部范围，以下是部分结果，不能据此判断没有其他相关资料。</p>}
-    {!!result.coverage.missing_derived_sources && <p>有 {result.coverage.missing_derived_sources} 项来源缺少当前画像或索引，仅作词项检索，未重新抽取案情。</p>}
+    {!indexed && !!result.coverage.missing_derived_sources && <p>有 {result.coverage.missing_derived_sources} 项来源缺少当前画像或索引，仅作词项检索，未重新抽取案情。</p>}
     {result.items.length === 0 && result.coverage.complete && <p>本次条件未找到匹配的历史参考，不表示案件没有线索。</p>}
     <ul>{result.items.map(item => <li key={`${item.source_type}:${item.source_id}`}>
       <Link to={item.route}>{item.title}</Link>
       <p>{item.snippet}</p>
+      {item.fragment && <details><summary>命中片段与原文位置</summary>
+        <blockquote>{item.fragment.reference.quote}</blockquote>
+        <p>字段：{item.fragment.reference.field} · 字符 {item.fragment.reference.start + 1} 至 {item.fragment.reference.end} · 来源版本：{item.fragment.source_revision_id ?? '父来源版本见下方'}</p>
+        <p>召回依据：{[item.structural_rank != null && '结构条件', item.lexical_rank != null && '词项', item.semantic_rank != null && '本地语义'].filter(Boolean).join('、') || '版本化片段'}。相似不等于事实关联。</p>
+      </details>}
       <p>{item.source_type === 'case' ? '历史案件资料' : '已确认历史经验，当前适用性仍需核对'}</p>
       {(item.profile_state === 'lexical_only' || item.derived_state === 'missing') && <p>仅词项匹配，未形成可引用的结构条件。</p>}
       {!!item.shared_conditions.length && <p>相似条件：{conditions(item.shared_conditions)}</p>}

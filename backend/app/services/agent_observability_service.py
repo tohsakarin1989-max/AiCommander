@@ -87,6 +87,11 @@ class AgentObservabilityService:
             "window_days": days,
             "generated_at": now.isoformat(),
             "summary": {
+                "completion_rate_basis": "business_completion_including_degraded_not_model_success",
+                "model_successful_calls": sum(item.request_count or 0 for item in usage_records
+                                              if item.status == 'completed'),
+                "model_unsuccessful_calls": sum(item.request_count or 0 for item in usage_records
+                                                if item.status != 'completed'),
                 "runs_total": len(runs),
                 "completed_runs": status_counts["completed"],
                 "degraded_runs": status_counts["degraded"],

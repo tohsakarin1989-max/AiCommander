@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 from app.models.case import Case
 from app.models.case_history_index import CaseHistoryIndex, CaseHistoryIndexCursor
 from app.models.case_pipeline import OutboxEvent
+from app.models.case_source import ChangeDelivery
 from app.models.knowledge_asset import KnowledgeAsset
 from app.services.case_semantic_evidence import freeze_sources, snapshot_payload, text_hash
 from app.services.case_semantic_service import SEMANTIC_RULE_VERSION, TEXT_FIELDS, build_semantic_profile
 
-INDEX_VERSION = "history-lexical-5.1-2"
+INDEX_VERSION = "history-lexical-6.3-1"
 CURSOR_NAME = "case-history"
 
 
@@ -41,14 +42,16 @@ def cached_features(row: CaseHistoryIndex | None, source_hash: str) -> tuple[set
 
 class CaseHistoryIndexService:
     @staticmethod
-    def rebuild_case(db: Session, case: Case) -> int:
+    def rebuild_case(db: Session, case: Case, *, publications: list | None = None) -> int:
         # Import lazily: retrieval reads this cache, but never calls its write methods.
         from app.services.case_history_retrieval import business_conditions, lexical_terms, source_values
-        from app.models.case_history_index import CaseHistoryEmbedding
-        from app.services.local_embedding_service import get_local_embedder, LocalEmbeddingError
-        from app.services.case_history_vector_service import store_embedding
+        from app.services.local_embedding_service import get_local_embedder
+        from app.services.case_history_fragments import prepare_fragments
+        from app.services.case_source_service import CaseSourceService
 
         embedder = get_local_embedder()
+        revision = CaseSourceService.latest_revision(db, case.id)
+        captured_area, captured_time = case.operational_area_id, case.occurred_time
 
         rows = {(row.source_type, row.source_id): row for row in db.scalars(
             select(CaseHistoryIndex).where(CaseHistoryIndex.case_id == case.id)
@@ -71,17 +74,17 @@ class CaseHistoryIndexService:
                 text = str(card.get("summary") or "")
                 sources.append(("legacy_experience_card", str(case.id), content_hash(card), text, {"description": text}))
         active = set()
-        changed = 0
+        changed, prepared, road_changes = 0, [], []
         for source_type, source_id, signature, text, source in sources:
             key = (source_type, source_id)
             active.add(key)
-            row = rows.get(key)
-            previous_payload = (dict(row.payload) if row is not None
-                                and isinstance(row.payload, dict) else {})
-            lexical_current = cached_features(row, signature) is not None
-            if row is None:
-                row = CaseHistoryIndex(case_id=case.id, source_type=source_type, source_id=source_id)
-                db.add(row)
+            stored = rows.get(key)
+            previous_payload = (dict(stored.payload) if stored is not None
+                                and isinstance(stored.payload, dict) else {})
+            lexical_current = cached_features(stored, signature) is not None
+            row = CaseHistoryIndex(case_id=case.id, source_type=source_type, source_id=source_id,
+                source_hash=signature, rule_version=rule_version(), payload=previous_payload,
+                updated_at=stored.updated_at if stored is not None else datetime.now(timezone.utc))
             if not lexical_current:
                 row.source_hash = signature
                 row.rule_version = rule_version()
@@ -90,18 +93,11 @@ class CaseHistoryIndexService:
                                    build_semantic_profile({field: value for field, value in source.items() if field in TEXT_FIELDS})))]}
                 row.updated_at = datetime.now(timezone.utc)
                 changed += 1
-            if embedder.state == 'ready':
-                current = db.scalar(select(CaseHistoryEmbedding.source_hash).where(
-                    CaseHistoryEmbedding.case_id == case.id, CaseHistoryEmbedding.source_type == source_type,
-                    CaseHistoryEmbedding.source_id == source_id, CaseHistoryEmbedding.model_version == embedder.model_version))
-                if current != signature:
-                    try:
-                        store_embedding(db, row, embedder.encode(text), embedder.model_version)
-                        row.payload = {**row.payload, 'embedding_state': 'ready', 'embedding_model': embedder.model_version}
-                    except LocalEmbeddingError as error:
-                        row.payload = {**row.payload, 'embedding_state': 'unavailable', 'embedding_error': str(error)}
-                    if lexical_current:
-                        changed += 1
+            fragment_changed, publish_fragments = prepare_fragments(db, row, source, embedder=embedder,
+                revision=revision if source_type == 'case' else None)
+            prepared.append((stored, row, publish_fragments))
+            if lexical_current and fragment_changed:
+                changed += 1
             if source_type == 'case':
                 # Incident time and authorization area affect history retrieval
                 # even when the lexical source hash is unchanged.
@@ -112,17 +108,51 @@ class CaseHistoryIndexService:
                     'occurred_time': occurred.isoformat() if occurred is not None else None,
                     'area_id': case.operational_area_id})
                 if previous_payload.get('history_dependency_hash') != dependency:
-                    from app.services.history_road_refresh import record_change
                     areas = [case.operational_area_id]
                     if key in rows:
                         areas.append(previous_payload.get('history_area_id'))
-                    record_change(db, case_id=case.id, area_ids=areas)
+                    road_changes.append(areas)
                 row.payload = {**row.payload, 'history_dependency_hash': dependency,
                                'history_area_id': case.operational_area_id}
-        for key, row in rows.items():
-            if key not in active:
+        inactive = [row for key, row in rows.items() if key not in active]
+        changed += len(inactive)
+
+        def publish():
+            statement = select(Case).where(Case.id == case.id).execution_options(populate_existing=True)
+            if db.get_bind().dialect.name == 'postgresql':
+                statement = statement.with_for_update()
+            fresh = db.scalar(statement)
+            current_revision = CaseSourceService.latest_revision(db, case.id) if fresh is not None else None
+            if (fresh is None or snapshot_payload(freeze_sources(source_values(fresh)))["sha256"] != sources[0][2]
+                    or fresh.operational_area_id != captured_area or fresh.occurred_time != captured_time
+                    or (current_revision.id if current_revision else None) != (revision.id if revision else None)):
+                raise ValueError('history_source_changed')
+            for stored, candidate, publish_fragments in prepared:
+                if candidate.source_type == 'experience_card':
+                    asset_query = select(KnowledgeAsset).where(KnowledgeAsset.id == int(candidate.source_id))
+                    if db.get_bind().dialect.name == 'postgresql':
+                        asset_query = asset_query.with_for_update()
+                    asset = db.scalar(asset_query.execution_options(populate_existing=True))
+                    if (asset is None or asset.status != 'confirmed'
+                            or content_hash(asset.content if isinstance(asset.content, dict) else {}) != candidate.source_hash):
+                        raise ValueError('history_source_changed')
+                if stored is None:
+                    db.add(candidate)
+                else:
+                    stored.source_hash, stored.rule_version = candidate.source_hash, candidate.rule_version
+                    stored.payload, stored.updated_at = candidate.payload, candidate.updated_at
+                db.flush()
+                publish_fragments()
+            for row in inactive:
                 db.delete(row)
-                changed += 1
+            from app.services.history_road_refresh import record_change
+            for areas in road_changes:
+                record_change(db, case_id=case.id, area_ids=areas)
+
+        if publications is not None:
+            publications.append(publish)
+        else:
+            publish()
         return changed
 
     @staticmethod
@@ -160,15 +190,25 @@ class CaseHistoryIndexService:
             priority_ids.add(int(event.aggregate_id))
         priority_cases = list(db.scalars(select(Case).where(Case.id.in_(priority_ids))
             .order_by(Case.id).execution_options(populate_existing=True))) if priority_ids else []
-        changed = sum(CaseHistoryIndexService.rebuild_case(db, case) for case in priority_cases)
+        cases = list(db.scalars(select(Case).where(Case.id > cursor.after_case_id)
+                               .order_by(Case.id).limit(limit).execution_options(populate_existing=True)))
+        publications = []
+        changed = sum(CaseHistoryIndexService.rebuild_case(db, case, publications=publications)
+                      for case in priority_cases + [case for case in cases if case.id not in priority_ids])
+        # Finish every expensive model call before any business-row/FK publication lock.
+        for publish in publications:
+            publish()
         for event in pending:
             # The cursor lock serializes this consumer, not the profile consumer.
             # A rollback restores both vectors and this acknowledgement.
             event.payload = {**event.payload, 'history_index_pending': False}
-        cases = list(db.scalars(select(Case).where(Case.id > cursor.after_case_id)
-                               .order_by(Case.id).limit(limit).execution_options(populate_existing=True)))
-        changed += sum(CaseHistoryIndexService.rebuild_case(db, case)
-                       for case in cases if case.id not in priority_ids)
+            if event.domain_change_id is not None:
+                delivery = db.query(ChangeDelivery).filter_by(
+                    change_id=event.domain_change_id, consumer="history_index").first()
+                if delivery is not None:
+                    delivery.state = "completed"
+                    delivery.attempts += 1
+                    delivery.error = None
         if len(cases) < limit:
             cursor.after_case_id = 0
             cursor.completed_passes += 1

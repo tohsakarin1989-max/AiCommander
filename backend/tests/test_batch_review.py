@@ -23,7 +23,9 @@ def _session() -> Session:
     )
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return session_local()
+    db = session_local()
+    db.info["authorized_area_ids"] = None  # Explicit unrestricted synthetic test scope.
+    return db
 
 
 def _client(db_session: Session) -> TestClient:

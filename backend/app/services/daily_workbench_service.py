@@ -110,6 +110,7 @@ class DailyWorkbenchService:
         return {
             "schema_version": SCHEMA_VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "changes": _topic_changes(db),
             "summary": {
                 "total_cases": totals.total_cases,
                 "needs_information": totals.needs_information,
@@ -137,3 +138,37 @@ class DailyWorkbenchService:
                 "total": totals.total_cases,
             },
         }
+
+
+def _topic_changes(db):
+    """At most three readable material changes; GET never acknowledges or creates work."""
+    from app.models.analysis_topic import AnalysisTopic, TopicSnapshot
+    from app.services.analysis_topic_service import _owner, validate_snapshot_access
+    try:
+        owner, scope = _owner(db)
+    except PermissionError:
+        return []
+    changes = []
+    with db.no_autoflush:
+        rows = db.query(AnalysisTopic, TopicSnapshot).join(TopicSnapshot, TopicSnapshot.topic_id == AnalysisTopic.id).filter(
+            AnalysisTopic.created_by == owner.id, AnalysisTopic.scope_version == scope,
+            AnalysisTopic.paused.is_(False)).order_by(TopicSnapshot.created_at.desc(),
+                TopicSnapshot.revision.desc(), TopicSnapshot.id.desc()).limit(100)
+        seen = set()
+        for topic, snapshot in rows:
+            if topic.id in seen:
+                continue
+            seen.add(topic.id)
+            items = snapshot.changes.get('meaningful_items', [])
+            if not snapshot.changes.get('material_changed') or not items:
+                continue
+            try:
+                validate_snapshot_access(db, snapshot)
+            except (PermissionError, ValueError):
+                continue
+            changes.append({'topic_id': topic.id, 'title': topic.title, 'revision': snapshot.revision,
+                'summary': items[0]['message'], 'items': items[:3],
+                'target_path': f'/topics?topic={topic.id}&revision={snapshot.revision}'})
+            if len(changes) == 3:
+                break
+    return changes

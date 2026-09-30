@@ -15,6 +15,7 @@ from app.models.facility_summary import FacilityDerivedSummary
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.map_foundation import JurisdictionAssetVersion, MapFeatureClaim, MapSource
 from app.services.intelligent_query_context import result_hash
+from app.utils.datetimes import utc_datetime
 
 VERSION = 'facility-catalog-5.4-1'
 PRODUCTION_KEYS = (
@@ -114,7 +115,12 @@ def summary_metadata(db, asset):
             'changes': row.changes}
 
 
-def read_dossier(db, asset_id, *, start_date=None, end_date=None):
+def read_dossier(db, asset_id, *, start_date=None, end_date=None, context=None):
+    with db.no_autoflush:
+        return _read_dossier(db, asset_id, start_date=start_date, end_date=end_date, context=context)
+
+
+def _read_dossier(db, asset_id, *, start_date=None, end_date=None, context=None):
     from app.services.facility_dossier_content import build_dossier_content
     if 'authorized_area_ids' not in db.info:
         raise PermissionError('facility_scope_required')
@@ -126,6 +132,30 @@ def read_dossier(db, asset_id, *, start_date=None, end_date=None):
     if content['sections'].get('production', {}).get('state') == 'restricted':
         content['summary'] = {'state': 'restricted', 'revision': None, 'updated_at': None,
                               'changes': [], 'boundary': '来源受限，不返回历史摘要及版本数量'}
+    if context is not None:
+        from app.services.facility_identity_service import FacilityIdentityService
+        from app.services.facility_computability import facility_readiness
+        boundary = '双时间仅用于核对设施资料；下方案件、事件及成果仍按当前授权与所选统计窗口读取，不宣称还原历史全景。'
+        content['execution_context'] = context.public()
+        try:
+            identities = FacilityIdentityService.list_identity(db, asset_id=asset_id)
+            content['identity'] = {**identities, 'asset_id': asset_id,
+                'state': 'ready' if identities['items'] else 'missing',
+                'boundary': '名称不是身份；跨来源对应由管理员明确记录，可撤销，不自动合并原始设施。'}
+            for value in content['identity']['items']:
+                value['name'] = value.get('record_name')
+            historical = FacilityIdentityService.get_asset_at(db, asset_id,
+                valid_at=context.valid_at, known_at=context.known_at)
+            version = db.query(JurisdictionAssetVersion).filter_by(id=historical['version_id']).first() if historical['version_id'] else None
+            content['temporal_context'] = {**historical, 'boundary': boundary,
+                'valid_from': utc_datetime(version.valid_from) if version else None,
+                'valid_to': utc_datetime(version.valid_to) if version else None,
+                'recorded_at': utc_datetime(version.known_at) if version else None}
+        except (PermissionError, LookupError):
+            content['identity'] = {'asset_id': asset_id, 'state': 'restricted', 'boundary': '来源受限，不返回对应关系或数量'}
+            content['temporal_context'] = {'state': 'restricted', 'valid_at': context.valid_at,
+                'known_at': context.known_at, 'snapshot': None, 'version_id': None, 'boundary': boundary}
+        content['computability'] = facility_readiness(db, asset_id, context=context)
     versions = content.setdefault('versions', {})
     versions['section_versions'] = {key: result_hash(value) for key, value in content['sections'].items()}
     versions['view_version'] = result_hash({'content': content, 'user_id': db.info.get('principal_user_id'),

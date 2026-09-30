@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
-import json
 import math
 
 from sqlalchemy import or_, select
@@ -14,7 +13,8 @@ from app.models.case_pipeline import CaseAnalysisProfile
 from app.models.event import Event
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.map_foundation import MapSnapshot, MapSource, OperationalArea
-from app.services.case_pipeline_service import ANALYSIS_RELEVANT_FIELDS, CasePipelineService
+from app.services.case_pipeline_service import CasePipelineService
+from app.services.case_source_service import CaseSourceService, encode
 from app.services.facility_candidate_pool import FACILITY_TERMS, SOURCE_EXCLUDED
 from app.services.facility_production_conditions import _instant, production_comparison
 from app.services.profile_aggregate import checked_profile
@@ -93,33 +93,10 @@ def facility_brief(asset):
             "canonical_key": asset.canonical_key, "valid_from": iso(asset.valid_from), "valid_to": iso(asset.valid_to)}
 
 
-HASH_DETAIL_FIELDS = (
-    ("vehicles", CaseVehicle, ("vehicle_type", "road_vehicle_kind", "height_m", "gross_weight_t", "color", "brand", "model", "plate_number", "oil_volume", "water_cut", "custody_location", "current_location", "handling_status", "transferred_to_police", "transfer_time", "transfer_document_no")),
-    ("persons", CasePerson, ("name", "gender", "id_number", "home_address", "phone", "role", "handling_status")),
-    ("evidence", CaseEvidence, ("evidence_type", "title", "file_path", "requirement_key", "captured_at", "latitude", "longitude", "is_sensitive", "meta")),
-    ("oil_recovery", OilRecoveryRecord, ("oil_nature", "volume_tons", "water_cut", "source", "receiver", "handled_at", "handling_method")),
-)
-
-
 def current_source_hashes(db, cases):
-    """Same canonical source contract as the pipeline, with four batched reads.
-
-    A regression test compares hashes against source_hash(), including all
-    detail tables. No source text is extracted or analyzed here.
-    """
-    ids = [case.id for case in cases]
-    details = {identifier: {name: [] for name, _, _ in HASH_DETAIL_FIELDS} for identifier in ids}
-    for offset in range(0, len(ids), 400):
-        for name, model, fields in HASH_DETAIL_FIELDS:
-            for row in db.query(model).populate_existing().filter(model.case_id.in_(ids[offset:offset + 400])).order_by(model.id):
-                details[row.case_id][name].append(CasePipelineService._model_values(row, fields))
-    hashes = {}
-    for case in cases:
-        payload = {"case": {key: CasePipelineService._json_value(getattr(case, key))
-                    for key in sorted(ANALYSIS_RELEVANT_FIELDS)
-                    if key not in {"vehicles", "persons", "evidence", "oil_recovery"}}, **details[case.id]}
-        hashes[case.id] = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return hashes
+    """Reuse the canonical, batched source contract, including v6.1 details."""
+    return {identifier: hashlib.sha256(encode(payload).encode()).hexdigest()
+            for identifier, payload in CaseSourceService.source_payloads(db, cases).items()}
 
 
 def profile_catalog(db, cases):

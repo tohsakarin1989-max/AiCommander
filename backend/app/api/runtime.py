@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.ai_model import AIModel
 from app.services.system_config_service import SystemConfigService
+from app.services.runtime_capabilities import query_creation_enabled
 
 
 router = APIRouter()
@@ -19,6 +20,9 @@ class RuntimeFeatures(BaseModel):
     bonus_accounting: bool
     agent_lab: bool
     showcase: bool
+    intelligent_query: bool
+    query_history: bool = True
+    query_cancel: bool = True
 
 
 class RuntimeStatusResponse(BaseModel):
@@ -71,9 +75,10 @@ def runtime_status(db: Session = Depends(get_db)):
         map_configured=map_configured,
         version=settings.APP_VERSION,
         features=RuntimeFeatures(
-            legacy_operations=settings.ENABLE_LEGACY_OPERATIONS_MODULES,
+            legacy_operations=False,  # Compatibility flag: modules retired in v6.5.
             bonus_accounting=settings.ENABLE_BONUS_ACCOUNTING,
             agent_lab=settings.ENABLE_AGENT_LAB,
             showcase=settings.ENABLE_SHOWCASE,
+            intelligent_query=query_creation_enabled(settings),
         ),
     )

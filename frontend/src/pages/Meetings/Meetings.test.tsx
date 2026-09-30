@@ -44,7 +44,9 @@ describe('历史圆桌会议入口', () => {
     const html = renderToStaticMarkup(<Meetings />)
     expect(html).toContain('只读账号可查看会议记录')
     expect(html).toMatch(/class="btn-accent" disabled=""/)
-    expect(html).toMatch(/class="btn-accent-sm" disabled=""/)
+    expect(html).toContain('阅读已有会议材料')
+    expect(html).toContain('/reports?meetingId=MEET-OLD-998')
+    expect(html).not.toContain('生成结论')
   })
 
   it('处理中不提前请求未生成报告，列表错误不显示无记录', () => {

@@ -7,6 +7,7 @@ type Query = { queryKey: unknown[]; enabled?: boolean; queryFn: (context: { sign
 const state = vi.hoisted(() => ({
   search: '?caseId=2401', epoch: 1, failed: false, listFailed: false,
   queries: [] as Query[], map: {} as Record<string, unknown>,
+  actions: [] as Array<{ children: ReactNode; onClick?: () => void }>,
   getCase: vi.fn(), getCases: vi.fn(), navigate: vi.fn(),
 }))
 
@@ -25,7 +26,7 @@ vi.mock('@ant-design/icons', () => ({ FireOutlined: () => null, LinkOutlined: ()
   EnvironmentOutlined: () => null, AppstoreOutlined: () => null }))
 vi.mock('antd', () => ({
   Alert: ({ message }: { message: ReactNode }) => <div>{message}</div>,
-  Button: ({ children }: { children: ReactNode }) => <button>{children}</button>,
+  Button: (props: { children: ReactNode; onClick?: () => void }) => { state.actions.push(props); return <button>{props.children}</button> },
   Select: () => null, Spin: () => null, Switch: () => null,
   List: Object.assign(() => null, { Item: ({ children }: { children: ReactNode }) => <div>{children}</div> }),
 }))
@@ -51,7 +52,18 @@ const renderPage = () => { state.queries = []; return renderToStaticMarkup(<Case
 describe('案件地图接续（组件契约，非 DOM）', () => {
   beforeEach(() => {
     state.search = '?caseId=2401'; state.epoch = 1; state.failed = false; state.listFailed = false
-    state.map = {}; vi.clearAllMocks()
+    state.map = {}; state.actions = []; vi.clearAllMocks()
+  })
+  it('时间规律直接进入统一区域视图并保留范围、重复筛选与对象', () => {
+    state.search = '?caseId=2401&assetId=7&eventId=8&operational_area_id=2&statuses=pending&statuses=resolved&has_geo=false&start_date=2026-09-01&end_date=2026-10-01'
+    renderPage()
+    state.actions.find(action => action.children === '时间规律')!.onClick!()
+    const destination = new URL(state.navigate.mock.calls[0][0], 'http://localhost')
+    expect(destination.pathname).toBe('/area-analysis')
+    expect(destination.searchParams.get('regional_view')).toBe('time')
+    for (const key of new Set(new URLSearchParams(state.search).keys())) {
+      expect(destination.searchParams.getAll(key)).toEqual(new URLSearchParams(state.search).getAll(key))
+    }
   })
   it('深链超出区域列表限制时仍独立请求精确案件，且传递取消信号', async () => {
     renderPage()

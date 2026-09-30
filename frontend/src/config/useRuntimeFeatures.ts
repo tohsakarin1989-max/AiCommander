@@ -27,6 +27,9 @@ export function useRuntimeFeatures() {
     bonus_accounting: featureState('bonus_accounting', bonusAccountingEnabled),
     agent_lab: featureState('agent_lab', agentLabEnabled),
     showcase: featureState('showcase'),
+    intelligent_query: featureState('intelligent_query'),
+    query_history: featureState('query_history'),
+    query_cancel: featureState('query_cancel'),
   }
   return {
     query,

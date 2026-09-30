@@ -42,7 +42,7 @@ export interface RegionFacility {
   [key: string]: unknown
 }
 export interface FacilityDossier {
-  schema_version: 'facility-dossier-5.4-1'
+  schema_version: 'facility-dossier-5.4-1' | 'facility-dossier-6.2-1'
   facility: Omit<RegionFacility, 'condition_comparison'>
   filters: { start_date?: string | null; end_date?: string | null }
   sections: Record<'production' | 'record_links' | 'nearby_cases' | 'candidate_links' | 'events' | 'results' | 'roads' | 'tech_defense' | 'history_conditions', FacilitySection>
@@ -50,6 +50,41 @@ export interface FacilityDossier {
   gaps: string[]
   boundary: string
   summary: { state: 'ready' | 'pending' | 'stale' | 'restricted'; revision: number | null; updated_at?: string | null; changes: unknown[] }
+  identity?: FacilityIdentity
+  temporal_context?: FacilityTemporalContext
+  computability?: FacilityComputability
+}
+export interface FacilityIdentityItem {
+  identity_id: number; source_id: number; source_name: string; source_record_id: string
+  name: string; decision_id: number | null; status: string; identity_kind?: 'exact_id' | 'unidentified'
+}
+export interface FacilityIdentity {
+  asset_id: number; state: string; items?: FacilityIdentityItem[]; boundary: string
+}
+export interface FacilityTemporalContext {
+  valid_at: string | null; known_at: string | null; state: 'ready' | 'unknown' | 'conflict' | 'restricted'
+  version_id?: number | null; valid_from?: string | null; valid_to?: string | null; recorded_at?: string | null
+  snapshot?: { name?: string | null; asset_type?: string | null; attributes?: Record<string, unknown> } | null
+  boundary: string
+}
+export interface FacilityComputabilityCheck {
+  key: string; label: string
+  state: 'ready' | 'missing' | 'unverified' | 'disconnected' | 'restricted' | 'expired' | 'unavailable' | 'not_checked'
+  detail: string; evidence_refs?: string[]
+}
+export interface FacilityComputability {
+  state: 'ready' | 'partial' | 'missing'; checks: FacilityComputabilityCheck[]; boundary: string
+}
+export interface MapReadiness {
+  items: Array<{ asset_id: number; name: string; asset_type: string; state: FacilityComputability['state']; checks: FacilityComputabilityCheck[] }>
+  total: number; page: number; page_size: number; boundary: string
+  context: { operational_area_id: number; [key: string]: unknown }
+}
+export interface FacilityDossierParams { start_date?: string; end_date?: string; valid_at?: string; known_at?: string }
+export interface FacilityIdentityDecision { note: string; request_key: string; previous_decision_id: number | null }
+export interface FacilityCaseLinkCreate {
+  case_id: number; source_reference_id: number; source_revision_id: number
+  relation_type: 'incident_site' | 'recovery_site' | 'mentioned'; note: string; request_key: string
 }
 export interface RegionalCase {
   id: number; case_number: string; occurred_time?: string | null; latitude?: number | null; longitude?: number | null
@@ -74,8 +109,22 @@ export interface RegionalAnalysis {
 }
 
 export const facilityAnalysisApi = {
-  dossier: async (id: number, params: { start_date?: string; end_date?: string }, signal?: AbortSignal): Promise<FacilityDossier> =>
+  dossier: async (id: number, params: FacilityDossierParams, signal?: AbortSignal): Promise<FacilityDossier> =>
     (await api.get(`/facility-analysis/assets/${id}`, { params, signal })).data,
+  readiness: async (params: { operational_area_id: number; page: number; page_size: number }, signal?: AbortSignal): Promise<MapReadiness> =>
+    (await api.get('/facility-analysis/readiness', { params, signal })).data,
+  bindIdentity: async (identityId: number, decision: FacilityIdentityDecision & { asset_id: number }): Promise<void> => {
+    await api.post(`/facility-analysis/identities/${identityId}/bind`, decision)
+  },
+  revokeIdentity: async (identityId: number, decision: FacilityIdentityDecision): Promise<void> => {
+    await api.post(`/facility-analysis/identities/${identityId}/revoke`, decision)
+  },
+  createCaseLink: async (assetId: number, data: FacilityCaseLinkCreate): Promise<void> => {
+    await api.post(`/facility-analysis/assets/${assetId}/case-links`, data)
+  },
+  revokeCaseLink: async (associationId: number, note: string): Promise<void> => {
+    await api.post(`/facility-analysis/case-links/${associationId}/revoke`, { note })
+  },
   region: async (params: { operational_area_id: number; start_date?: string; end_date?: string; page?: number; page_size?: number }, signal?: AbortSignal): Promise<RegionalAnalysis> =>
     (await api.get('/facility-analysis/region', { params, signal })).data,
 }

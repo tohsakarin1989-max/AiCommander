@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import openpyxl
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -117,18 +117,6 @@ class JurisdictionAssetResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class PatrolPlanRequest(BaseModel):
-    case_id: Optional[int] = None
-    asset_ids: Optional[List[int]] = None
-    limit: int = Field(6, ge=1, le=20)
-
-
-class PatrolPlanMaterializeRequest(PatrolPlanRequest):
-    officer_count: int = Field(1, ge=1, le=20)
-    officer_names: Optional[str] = None
-    created_by: Optional[str] = None
 
 
 class JurisdictionFeedbackCreate(BaseModel):
@@ -354,143 +342,6 @@ async def refresh_well_attention(
         days_back=payload.days_back,
         radius_km=payload.radius_km,
     )
-
-
-@router.get("/assets/{asset_id:int}/risk-profile")
-async def get_asset_risk_profile(
-    asset_id: int,
-    radius_km: float = Query(1.0, ge=0.1, le=10),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """生成点位风险画像，支撑阶段 3 风险画像研判。"""
-    try:
-        return JurisdictionService.build_asset_risk_profile(db, asset_id, radius_km=radius_km)
-    except ValueError as exc:
-        if str(exc) == "asset_not_found":
-            raise HTTPException(status_code=404, detail="辖区要素不存在") from exc
-        raise
-
-
-@router.get("/cases/{case_id:int}/risk-context")
-async def get_case_risk_context(
-    case_id: int,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """基于地图参考和油区业务资产为案件生成道路、村屯、目标和防控条件画像。"""
-    try:
-        return JurisdictionService.build_case_risk_context(db, case_id)
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.get("/cases/{case_id:int}/experience-card")
-async def get_case_experience_card(
-    case_id: int,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """把已破案件转成可复用经验卡，支撑阶段 2 经验沉淀。"""
-    try:
-        return JurisdictionService.build_case_experience_card(db, case_id)
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.get("/similar-targets")
-async def get_similar_targets(
-    case_id: int,
-    limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """用已破案件的空间条件检索辖区内相似生产目标。"""
-    try:
-        return JurisdictionService.find_similar_targets(db, case_id=case_id, limit=limit)
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.post("/patrol-plan")
-async def create_patrol_plan(
-    payload: PatrolPlanRequest,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """根据案件经验卡和相似风险点生成控点、控线、控时布防建议。"""
-    try:
-        return JurisdictionService.build_patrol_plan(
-            db,
-            case_id=payload.case_id,
-            asset_ids=payload.asset_ids,
-            limit=payload.limit,
-        )
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.post("/patrol-plan/materialize")
-async def materialize_patrol_plan(
-    payload: PatrolPlanMaterializeRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """把预防工作台的布防建议落成巡逻计划，进入巡逻执行模块。"""
-    if not settings.ENABLE_LEGACY_PATROL_MATERIALIZATION:
-        raise HTTPException(
-            status_code=410,
-            detail="当前系统只生成部署参考，不直接创建巡逻执行记录",
-        )
-    principal = getattr(request.state, "principal", None)
-    role = getattr(principal, "role", "admin" if not settings.AUTH_REQUIRED else None)
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可使用旧巡逻落地兼容入口")
-    try:
-        return JurisdictionService.materialize_patrol_plan(
-            db,
-            case_id=payload.case_id,
-            asset_ids=payload.asset_ids,
-            limit=payload.limit,
-            officer_count=payload.officer_count,
-            officer_names=payload.officer_names,
-            created_by=str(getattr(principal, "username", None) or "system")[:100],
-        )
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.get("/roundtable-briefing")
-async def get_roundtable_briefing(
-    case_id: int,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """生成圆桌会议研判简报和任务清单，支撑阶段 5 决策闭环。"""
-    try:
-        return JurisdictionService.build_roundtable_briefing(db, case_id)
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
-
-
-@router.get("/prevention-workbench")
-async def get_prevention_workbench(
-    case_id: Optional[int] = None,
-    db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """聚合经验卡、相似风险点、布防、会议和反馈，形成完整预防工作台。"""
-    try:
-        return JurisdictionService.build_prevention_workbench(db, case_id=case_id)
-    except ValueError as exc:
-        if str(exc) == "case_not_found":
-            raise HTTPException(status_code=404, detail="案件不存在") from exc
-        raise
 
 
 @router.post("/feedback", response_model=JurisdictionFeedbackResponse)

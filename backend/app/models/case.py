@@ -26,7 +26,13 @@ class Case(Base):
         nullable=True,
     )
     case_number = Column(String(50), unique=True, nullable=False, index=True)
-    occurred_time = Column(DateTime(timezone=True), nullable=False)
+    occurred_time = Column(DateTime(timezone=True), nullable=True)
+    occurred_from = Column(DateTime(timezone=True), nullable=True)
+    occurred_to = Column(DateTime(timezone=True), nullable=True)
+    time_precision = Column(String(20), nullable=True)  # NULL: pre-contract source; new intake explicitly supplies precision.
+    time_expression = Column(Text, nullable=True)
+    time_timezone = Column(String(80), nullable=False, default="Asia/Shanghai", server_default="Asia/Shanghai")
+    discovered_at = Column(DateTime(timezone=True), nullable=True)
     location = Column(String(200))
     # 地理信息：经纬度，支持地图定位和空间分析（已添加复合索引）
     latitude = Column(Float, nullable=True, index=True)   # 纬度
@@ -38,7 +44,8 @@ class Case(Base):
     loss_amount = Column(Integer)
     # 涉油案件专用字段（可为空，用于普通案件兼容）
     oil_type = Column(String(50))  # 油品类型：汽油/柴油/原油/润滑油等
-    oil_volume = Column(Float)  # 涉油数量（吨/升，按统一单位约定）
+    oil_volume = Column(Float)  # 原始数值；未知单位不能按吨解释。
+    oil_volume_unit = Column(String(20), nullable=False, default="unknown", server_default="unknown")
     oil_value = Column(Integer)  # 估算价值（元）
     facility_type = Column(String(50))  # 目标设施类型：管线/油库/加油站/油罐车等
     facility_owner = Column(String(100))  # 设施所属单位/企业
@@ -79,6 +86,8 @@ class Case(Base):
     evidence = relationship("CaseEvidence", back_populates="case", cascade="all, delete-orphan")
     oil_recovery_records = relationship("OilRecoveryRecord", back_populates="case", cascade="all, delete-orphan")
     tips = relationship("CaseTip", back_populates="case")
+    locations = relationship("CaseLocation", cascade="all, delete-orphan")
+    measurements = relationship("OilMeasurement", cascade="all, delete-orphan")
 
 
 class CaseVehicle(Base):
@@ -100,6 +109,7 @@ class CaseVehicle(Base):
     model = Column(String(100))
     plate_number = Column(String(50))
     oil_volume = Column(Float)
+    oil_volume_unit = Column(String(20), nullable=False, default="unknown", server_default="unknown")
     water_cut = Column(Float)
     custody_location = Column(String(200))  # 扣押/停放地点
     current_location = Column(String(200))
@@ -151,6 +161,8 @@ class CaseEvidence(Base):
     evidence_type = Column(String(50))  # photo/rubbing/document/video/other
     title = Column(String(200))
     file_path = Column(String(500))
+    evidence_object_id = Column(Integer, ForeignKey("evidence_objects.id", ondelete="RESTRICT"), nullable=True)
+    source_reference_id = Column(Integer, ForeignKey("source_references.id", ondelete="RESTRICT"), nullable=True)
     requirement_key = Column(String(100))  # vehicle_front/vehicle_vin_rubbing 等标准项
     captured_at = Column(DateTime(timezone=True))
     latitude = Column(Float)
@@ -196,6 +208,7 @@ class CaseTip(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
+    operational_area_id = Column(Integer, ForeignKey("operational_areas.id", ondelete="RESTRICT"), nullable=True, index=True)
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     reporter_name = Column(String(100))
     reporter_contact = Column(String(100))

@@ -31,6 +31,18 @@ describe('案件工作界面共用读取', () => {
     await expect(caseWorkspaceApi.read(8)).rejects.toThrow('不可用')
     expect(api.post).not.toHaveBeenCalled()
   })
+  it('v6日常详情模块与成果沿用同一读取，不逐个调用旧聚合接口', async () => {
+    const data: CaseWorkspace = { ...fixture(), schema_version: 'case-workspace-6.0-1',
+      detail_profile: { status: 'unavailable', data: null },
+      processing_card: { status: 'unavailable', data: null },
+      automation_workbench: { status: 'unavailable', data: null },
+      diagram: { status: 'unavailable', data: null } }
+    vi.mocked(api.get).mockResolvedValue({ data })
+    const saved = await caseWorkspaceApi.read(8)
+    expect(visibleWorkspace({ data: saved, isError: false }, 8)).toBe(data)
+    expect(api.get).toHaveBeenCalledTimes(1)
+    expect(api.post).not.toHaveBeenCalled()
+  })
   it('同案共用缓存但不同用户、权限会话隔离；拒绝刷新后隐藏旧数据', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const key = caseWorkspaceKey(8, 1, 2)
@@ -48,10 +60,13 @@ describe('案件工作界面共用读取', () => {
     client.clear()
   })
   it('待更新轮询快于已稳定结果，缺数据不假装完成', () => {
-    expect(workspaceRefreshInterval()).toBe(5000)
-    expect(workspaceRefreshInterval(fixture())).toBe(30000)
+    expect(workspaceRefreshInterval()).toBe(10000)
+    expect(workspaceRefreshInterval(fixture())).toBe(false)
     const data = fixture()
     data.result.status = 'updating'
-    expect(workspaceRefreshInterval(data)).toBe(5000)
+    expect(workspaceRefreshInterval(data)).toBe(10000)
+    expect(workspaceRefreshInterval(data, 13)).toBe(false)
+    expect(workspaceRefreshInterval(data, 1, true)).toBe(false)
+    expect(workspaceRefreshInterval(data, 1, false, true)).toBe(false)
   })
 })

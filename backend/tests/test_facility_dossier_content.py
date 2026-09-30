@@ -41,8 +41,10 @@ def test_explicit_nearby_candidate_and_event_classes_remain_separate(facility_db
     assert sections["record_links"]["items"][0]["review_status"] == "confirmed"
     assert sections["record_links"]["items"][0]["relation_kind"] == "recorded_event_link"
     assert {row["case_id"] for row in sections["nearby_cases"]["items"]} == {1, 2}
-    assert [row["case_id"] for row in sections["candidate_links"]["items"]] == [2]
-    assert sections["candidate_links"]["items"][0]["status"] == "candidate"
+    assert sections["candidate_links"]["items"] == []
+    historical = sections["results"]["items"][0]
+    assert historical["case_id"] == 2 and historical["relation_kind"] == "historical_system_candidate"
+    assert "历史" in historical["label"]
     assert [row["event_id"] for row in sections["events"]["items"]] == [1]
     assert "risk_score" not in str(value)
 
@@ -50,16 +52,17 @@ def test_explicit_nearby_candidate_and_event_classes_remain_separate(facility_db
 def test_identical_names_with_distinct_ids_do_not_share_candidates(facility_db):
     add_candidate(facility_db, asset_id=2)
     assert build_dossier_content(facility_db, 1)["sections"]["candidate_links"]["total"] == 0
-    assert build_dossier_content(facility_db, 2)["sections"]["candidate_links"]["total"] == 1
+    assert build_dossier_content(facility_db, 2)["sections"]["candidate_links"]["total"] == 0
+    assert build_dossier_content(facility_db, 2)["sections"]["results"]["total"] == 1
 
 
 def test_candidate_secondary_source_revocation_hides_items_and_counts(facility_db):
     db = facility_db
     add_candidate(db, extra_refs=("case:3",))
     db.info["authorized_area_ids"] = (1, 2)
-    assert build_dossier_content(db, 1)["sections"]["candidate_links"]["total"] == 1
+    assert build_dossier_content(db, 1)["sections"]["results"]["total"] == 1
     db.info["authorized_area_ids"] = (1,)
-    value = build_dossier_content(db, 1)["sections"]["candidate_links"]
+    value = build_dossier_content(db, 1)["sections"]["results"]
     assert value["state"] == "restricted" and "items" not in value and "total" not in value
     assert "同名井候选" not in str(value)
 
@@ -104,6 +107,25 @@ def test_linked_case_outside_event_window_is_explicitly_marked(facility_db):
     link = value["sections"]["record_links"]["items"][0]
     assert not link["case_in_window"] and "不纳入" in str(link["gaps"])
     assert {row["case_id"] for row in value["sections"]["nearby_cases"]["items"]} == {2}
+
+
+@pytest.mark.parametrize("precision", ["unknown", "interval"])
+def test_linked_case_without_exact_time_keeps_unknown_window_membership(facility_db, precision):
+    case = facility_db.get(Case, 1)
+    case.occurred_time = None
+    case.time_precision = precision
+    if precision == "interval":
+        case.occurred_from = datetime(2026, 9, 11)
+        case.occurred_to = datetime(2026, 9, 14)
+    facility_db.commit()
+
+    value = build_dossier_content(facility_db, 1, start_date="2026-09-12", end_date="2026-09-13")
+    link = value["sections"]["record_links"]["items"][0]
+    assert link["case_id"] == 1
+    assert link["case_in_window"] is None
+    assert link["time_precision"] == precision
+    assert "无法确定" in str(link["gaps"])
+    assert "不在当前时间窗" not in str(link["gaps"])
 
 
 def test_dossier_does_not_write_or_flush_and_rechecks_cached_identity(facility_db):

@@ -21,7 +21,7 @@ from app.services.case_semantic_evidence import TextReference, freeze_sources, g
 from app.services.case_semantic_service import CLAUSE, NEGATED, SEMANTIC_RULE_VERSION, UNCERTAIN
 
 
-ADAPTER_VERSION = "local-extraction-5.1-1"
+ADAPTER_VERSION = "local-extraction-6.3-1"
 BOUNDARY = "原文引用已校验，语义类别和肯否判断仍是模型提取候选；不写入正式事实或自动参与候选评分。"
 
 
@@ -68,7 +68,7 @@ def resolve_model_plan(db) -> ModelPlan:
         "trusted_hosts": sorted(settings.TRUSTED_LOCAL_MODEL_HOSTS.split(",")),
     }
     digest = hashlib.sha256(json.dumps(fingerprint, sort_keys=True, default=str).encode()).hexdigest()
-    version = "semantic-5.1-" + digest[:16]  # Fits existing VARCHAR(30).
+    version = "semantic-6.3-" + digest[:16]  # Fits existing VARCHAR(30).
     if model is None or not model.is_active or type(selected) is not int or selected <= 0:
         return ModelPlan(version, "unavailable", selected)
     try:
@@ -120,13 +120,15 @@ def _request(plan: ModelPlan, prompt: str) -> str:
     return content
 
 
-def extract(plan: ModelPlan, values: dict) -> dict:
+def extract(plan: ModelPlan, values: dict, *, source_revision_id: int | None = None) -> dict:
     result = {"status": plan.status, "adapter_version": ADAPTER_VERSION,
               "model_id": plan.model_id, "version": plan.version, "items": [],
-              "rejected_items": 0, "boundary": BOUNDARY}
+              "rejected_items": 0, "boundary": BOUNDARY, "source_revision_id": source_revision_id}
     if plan.status != "ready":
         return result
     try:
+        if source_revision_id is not None and (type(source_revision_id) is not int or source_revision_id <= 0):
+            raise ValueError("invalid_model_source_revision")
         sources = {source.field: source for source in freeze_sources(values)}
         prompt = json.dumps({
             "instructions": "只返回JSON。提取时间、行为、设施、油品、工具、车辆、地点条件和上下游线索。"
@@ -156,6 +158,8 @@ def extract(plan: ModelPlan, values: dict) -> dict:
                 seen.add(identity)
                 item = grounded_assertion(source, ref, category=fragment.category,
                                           normalized_value=ref.quote, kind=kind)
+                item["reference"].update(kind="text", source_revision_id=source_revision_id,
+                                         snapshot_path=["case", source.field])
                 item["judgment_status"] = "model_candidate"
                 result["items"].append(item)
             except (KeyError, ValueError):

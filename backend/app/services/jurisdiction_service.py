@@ -92,7 +92,8 @@ class JurisdictionService:
         JurisdictionService._lock_operational_area(db, data.get("operational_area_id"))
         asset = JurisdictionAsset(**data)
         db.add(asset)
-        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_created")
+        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_created",
+            validity={key: data[key] for key in ("valid_from", "valid_to") if key in data} or None)
         db.commit()
         db.refresh(asset)
         return asset
@@ -110,6 +111,9 @@ class JurisdictionService:
         if not asset:
             raise ValueError("asset_not_found")
         JurisdictionService._lock_operational_area(db, asset.operational_area_id)
+        require_area_write_access(db, asset.operational_area_id)
+        if "operational_area_id" in data:
+            require_area_write_access(db, data["operational_area_id"])
         MapFoundationService.record_observed_baseline(db, asset)
         geometry_type = str(data.get("geometry_type") or asset.geometry_type or "point").lower()
         latitude = data.get("latitude", asset.latitude)
@@ -124,7 +128,8 @@ class JurisdictionService:
             data["geometry"] = {"type": "Point", "coordinates": [longitude, latitude]}
         for key, value in data.items():
             setattr(asset, key, value)
-        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_updated")
+        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_updated",
+            validity={key: data[key] for key in ("valid_from", "valid_to") if key in data} or None)
         if commit:
             db.commit()
             db.refresh(asset)
@@ -150,7 +155,8 @@ class JurisdictionService:
             JurisdictionService._lock_operational_area(db, payload.get("operational_area_id"))
             asset = JurisdictionAsset(**payload)
             db.add(asset)
-            MapFoundationService._record_asset_version(db, asset=asset, change_type="bulk_created")
+            MapFoundationService._record_asset_version(db, asset=asset, change_type="bulk_created",
+                validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
             created.append(asset)
         db.commit()
         for asset in created:
@@ -448,7 +454,8 @@ class JurisdictionService:
             "nearest": {},
             "risk_conditions": [],
             "prevention_opportunities": [],
-            "risk_score": 0,
+            "risk_score": None,
+            "risk_score_status": "retired",
         }
         if not base["has_geo"]:
             base["risk_conditions"].append("案件缺少经纬度，无法计算辖区空间条件。")
@@ -477,10 +484,7 @@ class JurisdictionService:
             for key, value in nearest.items()
         }
 
-        risk_conditions, opportunities, score = JurisdictionService._evaluate_context(case, nearest)
-        base["risk_conditions"] = risk_conditions
-        base["prevention_opportunities"] = opportunities
-        base["risk_score"] = min(100, score)
+        base["boundary"] = "仅邻近已登记要素，不代表道路可达或技防覆盖；旧风险评分已停用。"
         return base
 
     @staticmethod
@@ -587,30 +591,14 @@ class JurisdictionService:
                 ),
             }
 
-        risk_score = min(100, (asset.risk_level or 1) * 8 + len(related_cases) * 22)
-        risk_reasons = []
+        risk_reasons = ["仅记录空间邻近条件，不代表设施涉案；未登记资料不代表没有技防。"]
         recommendations = []
-        if related_cases:
-            risk_reasons.append(f"{radius_km:g} 公里范围内关联已破案件 {len(related_cases)} 起。")
-        if nearest.get("road") and nearest["road"]["distance_km"] <= 0.5:
-            risk_score = min(100, risk_score + 18)
-            risk_reasons.append("临近道路或便道，具备车辆快速接近条件。")
-            recommendations.append("围绕邻近道路布置控线巡逻和临时卡控。")
-        if not nearest.get("tech") or nearest["tech"]["distance_km"] > 0.5:
-            risk_score = min(100, risk_score + 15)
-            risk_reasons.append("近距离技防覆盖不足。")
-            recommendations.append("补充监控、照明或报警覆盖，并校验夜间可用性。")
-        if not nearest.get("patrol_point") or nearest["patrol_point"]["distance_km"] > 1:
-            risk_score = min(100, risk_score + 10)
-            risk_reasons.append("巡逻签到或卡控点覆盖不足。")
-            recommendations.append("设置巡逻签到点或随机回访点。")
-        if not risk_reasons:
-            risk_reasons.append("暂无明显风险暴露，建议维持基础巡防和数据补全。")
 
         return {
             "asset": JurisdictionService._asset_to_dict(asset),
-            "risk_score": round(risk_score, 1),
-            "risk_level": JurisdictionService._risk_level(risk_score),
+            "risk_score": None,
+            "risk_level": None,
+            "risk_score_status": "retired",
             "nearest": nearest,
             "related_cases": [
                 JurisdictionService._case_to_brief(case, distance_km=distance)
@@ -1351,13 +1339,15 @@ out body geom qt;
         if existing is None:
             asset = JurisdictionAsset(**payload)
             db.add(asset)
-            MapFoundationService._record_asset_version(db, asset=asset, change_type="import_created")
+            MapFoundationService._record_asset_version(db, asset=asset, change_type="import_created",
+                validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
             return asset, True
 
         MapFoundationService.record_observed_baseline(db, existing)
         for key, value in payload.items():
             setattr(existing, key, value)
-        MapFoundationService._record_asset_version(db, asset=existing, change_type="import_updated")
+        MapFoundationService._record_asset_version(db, asset=existing, change_type="import_updated",
+            validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
         return existing, False
 
     @staticmethod

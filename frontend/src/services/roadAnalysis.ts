@@ -1,4 +1,5 @@
 import api from './api'
+import { validFacilityConditions, validRankingChanges, type FacilityConditionComparison, type FacilityRankingChanges } from './facilityConditions'
 
 export interface RoadVehicle {
   kind: 'auto' | 'truck'
@@ -71,6 +72,8 @@ export interface CaseFacilityComparison {
     algorithm_version: string
     scoring_evidence?: unknown[]
     scorer_checksum?: string
+    condition_comparison?: FacilityConditionComparison
+    ranking_changes?: FacilityRankingChanges
     coverage: { recalled: number; compared: number; unresolved: number; complete: boolean }
     candidates: Array<{ asset_id: number; name: string; rank: number; score: number; road_distance_m: number; selected_entry_index?: number;
       rank_change_from_distance: number; supporting_evidence: string[]; counter_evidence: string[];
@@ -83,6 +86,7 @@ export interface RoadArtifact {
 }
 
 export interface AutomaticRoadComparison {
+  information_dependencies?: string[]
   result_id: string; content_sha256: string
   status: 'processing' | 'waiting_network' | 'completed' | 'information_missing' | 'unavailable' | 'not_available'
   artifact: (RoadArtifact & { content: CaseRoadComparison | CaseFacilityComparison }) | null
@@ -141,6 +145,8 @@ export async function readAutomaticRoadComparison(resultId: string, hash: string
   const { data } = await api.get<AutomaticRoadComparison>(
     `/road-analysis/case-results/${encodeURIComponent(resultId)}/automatic-comparison`, { signal })
   if (data.result_id !== resultId || data.content_sha256 !== hash
+      || (data.information_dependencies !== undefined && (!Array.isArray(data.information_dependencies)
+        || data.information_dependencies.some(value => typeof value !== 'string')))
       || !['processing', 'waiting_network', 'completed', 'information_missing', 'unavailable', 'not_available'].includes(data.status)) {
     throw new Error('自动道路成果版本不一致')
   }
@@ -206,6 +212,9 @@ export function validateFacilityComparison(value: CaseFacilityComparison): void 
         .every(values => Array.isArray(values) && values.every(text => typeof text === 'string'))
       || !item.evidence_refs.length || !item.counter_evidence.length))
     throw new Error('设施候选比较内容不完整')
+  if ((result.condition_comparison && !validFacilityConditions(result.condition_comparison, result.coverage.recalled))
+      || (result.ranking_changes && !validRankingChanges(result.ranking_changes)))
+    throw new Error('设施条件依据不完整')
 }
 
 export async function expandCaseRoad(comparison: CaseRoadComparison, assetId: number, signal: AbortSignal): Promise<CaseRoadRoute> {

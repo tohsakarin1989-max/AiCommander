@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-from copy import deepcopy
 import hashlib
 import io
 import json
@@ -24,6 +23,7 @@ from app.models.map_foundation import (
     MapSource,
     OperationalArea,
 )
+from app.services.facility_identity_service import FacilityIdentityService
 
 
 ALLOWED_TABLE_EXTENSIONS = (".csv", ".xlsx", ".xlsm", ".xltx", ".xltm")
@@ -342,6 +342,7 @@ class MapFoundationService:
                     raw,
                     area_boundary=area.boundary if area else None,
                 )
+                claim.normalized_payload = normalized
                 asset, created, conflict = MapFoundationService._merge_asset(
                     db,
                     source=source,
@@ -521,12 +522,16 @@ class MapFoundationService:
         normalized: dict[str, Any],
     ) -> tuple[JurisdictionAsset, bool, bool]:
         canonical_key = normalized["canonical_key"]
-        asset = (
+        identity, decision, asset = FacilityIdentityService.resolve_import(
+            db, source=source, normalized=normalized,
+        )
+        if asset is None:
+            asset = (
             db.query(JurisdictionAsset)
             .filter(JurisdictionAsset.canonical_key == canonical_key)
             .first()
-        )
-        if asset is not None and (
+            )
+        if identity is None and asset is not None and (
             asset.external_id != normalized.get("external_id")
             or (asset.attributes or {}).get("source_id") != source.id
         ):
@@ -561,9 +566,16 @@ class MapFoundationService:
         # an explicit, separately reviewed identity mapping.
         created = asset is None
         if asset is None:
-            asset = JurisdictionAsset(canonical_key=canonical_key)
+            asset = JurisdictionAsset(canonical_key=canonical_key, name=normalized["name"],
+                asset_type=normalized["asset_type"], operational_area_id=source.operational_area_id)
             db.add(asset)
-        else:
+            db.flush()
+        identity = identity or FacilityIdentityService.ensure_identity(
+            db, source=source, asset=asset, normalized=normalized,
+        )
+        claim.source_identity_id = identity.id
+        claim.identity_decision_id = decision.id if decision else None
+        if not created:
             stored_rank = int((asset.attributes or {}).get("source_trust_rank", 0))
             stored_source_id = (asset.attributes or {}).get("source_id")
             if source.trust_rank < stored_rank:
@@ -572,7 +584,6 @@ class MapFoundationService:
                 material_change = any(
                     getattr(asset, key, None) != normalized.get(key)
                     for key in (
-                        "name",
                         "asset_type",
                         "latitude",
                         "longitude",
@@ -580,6 +591,12 @@ class MapFoundationService:
                         "verified",
                         "verification_state",
                     )
+                )
+                incoming_conditions = normalized.get("attributes") or {}
+                stored_conditions = asset.attributes or {}
+                material_change = material_change or any(
+                    stored_conditions.get(key) != value for key, value in incoming_conditions.items()
+                    if key != "original_coordinate_system"
                 )
                 if material_change:
                     return asset, False, True
@@ -593,15 +610,42 @@ class MapFoundationService:
                 "source_key": source.source_key,
                 "source_trust_rank": source.trust_rank,
                 "source_revision": claim.source_revision,
+                "source_identity_id": identity.id,
+                "identity_decision_id": decision.id if decision else None,
             }
         )
-        for key, value in normalized.items():
-            if key != "attributes":
-                setattr(asset, key, value)
-        asset.attributes = attributes
+        valid_from = normalized.get("valid_from")
+        valid_to = normalized.get("valid_to")
+        now = datetime.now(timezone.utc)
+        current_observation = (
+            (valid_from is None or datetime.fromisoformat(valid_from) <= now)
+            and (valid_to is None or now < datetime.fromisoformat(valid_to))
+        )
+        # Do not replace today's projection with an explicitly old/future row.
+        # The full incoming values still become their own historical version.
+        if created or current_observation:
+            for key, value in normalized.items():
+                if key not in {"attributes", "valid_from", "valid_to"}:
+                    if not created and key in {"canonical_key", "external_id"}:
+                        continue  # source aliases never replace the stable business identity
+                    setattr(asset, key, value)
+            asset.attributes = attributes
+            asset.valid_from = datetime.fromisoformat(valid_from) if valid_from else None
+            asset.valid_to = datetime.fromisoformat(valid_to) if valid_to else None
+            if not current_observation:
+                asset.verified = False
+                asset.verification_state = "temporal_not_current"
+        elif valid_from and valid_to and (asset.attributes or {}).get("source_identity_id") == identity.id:
+            stored_start = asset.valid_from
+            if stored_start is not None and stored_start.tzinfo is None:
+                stored_start = stored_start.replace(tzinfo=timezone.utc)
+            # A late end-date correction of the same period also invalidates
+            # the flat current projection, not only the bitemporal read.
+            if stored_start == datetime.fromisoformat(valid_from) and datetime.fromisoformat(valid_to) <= now:
+                asset.valid_to = datetime.fromisoformat(valid_to)
+                asset.verified = False
+                asset.verification_state = "temporal_not_current"
         asset.source_claim_refs = claim_refs
-        asset.valid_from = datetime.now(timezone.utc)
-        asset.valid_to = None
         db.flush()
         return asset, created, False
 
@@ -612,23 +656,11 @@ class MapFoundationService:
         asset: JurisdictionAsset,
         claim: MapFeatureClaim | None = None,
         change_type: str,
-    ) -> None:
-        db.flush()
-        latest = (
-            db.query(JurisdictionAssetVersion)
-            .filter(JurisdictionAssetVersion.asset_id == asset.id)
-            .order_by(JurisdictionAssetVersion.version.desc())
-            .first()
+        validity: dict | None = None,
+    ) -> JurisdictionAssetVersion:
+        return FacilityIdentityService.record_asset_version(
+            db, asset=asset, claim=claim, change_type=change_type, validity=validity,
         )
-        version = JurisdictionAssetVersion(
-            asset_id=asset.id,
-            version=(latest.version + 1) if latest else 1,
-            source_claim_id=claim.id if claim else None,
-            snapshot=deepcopy(MapFoundationService.asset_to_dict(asset)),
-            change_type=change_type,
-        )
-        db.add(version)
-        db.flush()
 
     @staticmethod
     def record_observed_baseline(db: Session, asset: JurisdictionAsset) -> None:
@@ -753,6 +785,23 @@ class MapFoundationService:
         if all(key in production_attributes for key in ("production_valid_from", "production_valid_to")):
             if production_attributes["production_valid_from"] >= production_attributes["production_valid_to"]:
                 raise ValueError("invalid_production_time|生产条件有效结束时间必须晚于开始时间")
+        validity = {}
+        for key in ("valid_from", "valid_to"):
+            value = MapFoundationService._mapped_value(raw, mapping, key)
+            if value in (None, ""):
+                # An oil-property interval alone does not establish the validity
+                # of geometry, names or the whole facility observation.
+                validity[key] = None
+                continue
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("invalid_production_time|资料有效时间必须是ISO日期时间") from None
+            if parsed.tzinfo is None:
+                raise ValueError("invalid_production_time|资料有效时间需标明时区")
+            validity[key] = parsed.astimezone(timezone.utc).isoformat()
+        if validity["valid_to"] and (not validity["valid_from"] or validity["valid_to"] <= validity["valid_from"]):
+            raise ValueError("invalid_production_time|资料有效结束时间必须晚于明确开始时间")
         production_output = MapFoundationService._mapped_value(
             raw,
             mapping,
@@ -797,6 +846,7 @@ class MapFoundationService:
             ),
             "coordinate_system": "epsg:4326",
             "attributes": production_attributes,
+            **validity,
         }
 
     @staticmethod

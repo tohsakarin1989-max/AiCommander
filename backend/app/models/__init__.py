@@ -3,6 +3,9 @@ from app.models.query_scope_revision import QueryScopeRevision
 from app.models.map_package_import import MapPackageImport, MapPackageImportChunk
 from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
+from app.models.case_facility_association import CaseFacilityAssociation
+from app.models.case_source import (CaseLocation, OilMeasurement, CaseRevision, DomainChange,
+                                    ChangeDelivery, EvidenceObject, SourceReference, CaseSourceLink)
 from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Evaluation, Ranking
 from app.models.report import Report
 from app.models.preprocess_job import PreprocessJob
@@ -18,6 +21,8 @@ from app.models.personnel import SecurityPersonnel
 from app.models.key_location import KeyLocation
 from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
 from app.models.map_foundation import (
+    FacilitySourceIdentity,
+    FacilityIdentityDecision,
     JurisdictionAssetVersion,
     MapPackageArtifact,
     MapSnapshot,
@@ -62,6 +67,9 @@ __all__ = [
     "CaseImportTemplate",
     "AIModel",
     "Case",
+    "CaseFacilityAssociation",
+    "CaseLocation", "OilMeasurement", "CaseRevision", "DomainChange", "ChangeDelivery",
+    "EvidenceObject", "SourceReference", "CaseSourceLink",
     "CaseEvidence",
     "CasePerson",
     "CaseTip",
@@ -107,6 +115,8 @@ __all__ = [
     "MapIngestRun",
     "MapFeatureClaim",
     "JurisdictionAssetVersion",
+    "FacilitySourceIdentity",
+    "FacilityIdentityDecision",
     "PublicMapBundle",
     "MapSnapshot",
     "MapSnapshotFeature",
@@ -140,6 +150,9 @@ from .internal_roads import InternalRoadImport, InternalRoadReview, InternalRoad
 from .road_network import RoadAccessGroup, RoadAccessMembership, RoadAccessGrant, RoadNetworkVersion
 from .road_public_alias import RoadPublicAlias
 from .case_road_artifact import CaseRoadArtifact
-from .case_history_index import CaseHistoryIndex, CaseHistoryIndexCursor, CaseHistoryEmbedding
+from .case_history_index import (CaseHistoryIndex, CaseHistoryIndexCursor, CaseHistoryEmbedding,
+                                CaseHistoryFragment, CaseHistoryPosting)
 from .analysis_topic import AnalysisTopic, TopicSnapshot
 from .facility_summary import FacilityDerivedSummary
+from .result_material import FacilityMaterial, ResultJudgment, MeetingFrozenInput
+from app.services import topic_revision_fence  # noqa: F401; metadata trigger registration

@@ -19,6 +19,7 @@ from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_result_access import require_result_access
 from app.services.case_result_service import CaseResultService
+from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION, branch_for
 from app.services.case_result_snapshot import assemble_case_result
 from app.services.case_road_artifact_service import read_road_artifact
 from app.services.facility_condition_comparison import (
@@ -144,18 +145,64 @@ def _recorded_events(db, asset, start, end):
             # The relationship is a recorded link, even if observation review
             # is confirmed. It never means the well was confirmed oil source.
             at = case.occurred_time
-            at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at.astimezone(timezone.utc)
-            case_in_window = (start is None or at >= start) and (end is None or at < end)
+            if at is None:
+                case_in_window = None
+                time_gaps = ["关联案件缺少精确发生时刻，无法确定是否属于当前时间窗；保留原始关联，不纳入窗口内案件统计"]
+            else:
+                at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at.astimezone(timezone.utc)
+                case_in_window = (start is None or at >= start) and (end is None or at < end)
+                time_gaps = [] if case_in_window else ["该关联案件发生时间不在当前时间窗，不纳入窗口内案件统计"]
             if case_in_window:
                 case_ids.add(case.id)
             links.append(item(f"event:{event.id}:case:{case.id}", case.case_number,
                 evidence_refs=[*evidence, f"case:{case.id}"], case_id=case.id, event_id=event.id,
                 review_status=event.review_status or "pending_review", relation_kind="recorded_event_link",
                 case_in_window=case_in_window, occurred_time=iso(case.occurred_time),
+                time_precision=case.time_precision or ("exact" if at else "unknown"),
+                occurred_from=iso(case.occurred_from), occurred_to=iso(case.occurred_to),
                 detail="事件记录同时关联该案件与设施，复核状态保留原记录",
                 counter=["事件复核状态不等于确认实际盗取来源"],
-                gaps=[] if case_in_window else ["该关联案件发生时间不在当前时间窗，不纳入窗口内案件统计"]))
+                gaps=time_gaps))
     return section(links), section(records, boundary="仅收录原始事件明确记录的设施编号，不将最近井自动分配提升为关联事实。"), case_ids
+
+
+def _recorded_materials(db, asset, links, linked_case_ids, start, end):
+    """Human source recording is separate from proximity and machine candidates."""
+    from app.models.case_facility_association import CaseFacilityAssociation
+    from app.services.case_facility_association_service import view_association
+    if links['state'] == 'restricted':
+        return links
+    records = list(links.get('items', []))
+    rows = db.query(CaseFacilityAssociation).filter_by(asset_id=asset.id).order_by(
+        CaseFacilityAssociation.created_at.desc(), CaseFacilityAssociation.id.desc()).all()
+    for row in rows:
+        try:
+            value = view_association(db, row)
+        except PermissionError:
+            return section(state='restricted')
+        case = db.query(Case).filter_by(id=row.case_id).first()
+        at = case.occurred_time
+        at = at.replace(tzinfo=timezone.utc) if at and at.tzinfo is None else at
+        in_period = None if at is None else (start is None or at >= start) and (end is None or at < end)
+        gaps = []
+        if in_period is None:
+            gaps.append('案件时间未明确，不纳入窗口内统计')
+        elif not in_period:
+            gaps.append('案件不在所选时间窗，不纳入窗口内统计')
+        if value['source_state'] != 'current':
+            gaps.append('所引案件已更新，该人工记录需重新核对，保留原依据版本')
+        if value['evidence_state'] != 'available':
+            gaps.append('所引材料不可用，该记录不能作为现行依据')
+        if value['status'] == 'revoked':
+            gaps.append('人工记录已撤销，仅保留历史')
+        elif in_period and value['source_state'] == 'current' and value['evidence_state'] == 'available':
+            linked_case_ids.add(case.id)
+        records.append(item(f"case_material:{row.id}", value['label'],
+            evidence_refs=value.pop('evidence_refs'), detail=value['note'],
+            gaps=gaps, counter=[value['boundary']],
+            **{key: val for key, val in value.items() if key not in {'id', 'label', 'boundary'}},
+            association_id=row.id, relation_kind='recorded_material_link', case_in_window=in_period))
+    return section(records, total=links.get('total', 0) + len(rows))
 
 
 def _nearby(db, asset, start, end):
@@ -187,6 +234,40 @@ def _candidates_and_results(db, asset, start, end, linked_case_ids):
     candidates, results = [], []
     restricted_candidates = restricted_results = False
     unavailable_candidates = unavailable_results = False
+    try:
+        branch = branch_for(db)
+    except PermissionError:
+        branch = None
+    # The facility and case views consume the same current frozen composition.
+    # Old spatial hypotheses and road attachments below are history, never a
+    # second independently selected current-candidate source.
+    result_cases = db.query(CaseResultSnapshot.case_id).filter(
+        CaseResultSnapshot.case_id.in_(select(cases.c.id))).distinct()
+    for (case_id,) in result_cases:
+        try:
+            saved = CaseResultService.latest(db, case_id)
+        except PermissionError:
+            unavailable_candidates = True
+            continue
+        except (ValueError, TypeError, KeyError, AttributeError):
+            unavailable_candidates = True
+            continue
+        if saved.get("composition_status") != "ready":
+            unavailable_candidates = True
+            continue
+        content = saved["content"]
+        for candidate in content["candidates"]:
+            if candidate.get("asset_id") != asset.id:
+                continue
+            candidates.append(item(candidate["id"], candidate["title"],
+                case_id=case_id, result_id=saved["id"], content_sha256=saved["content_sha256"],
+                artifact_id=content["composition"]["road_artifact_id"],
+                relation_kind="system_candidate", status=candidate["status"],
+                evidence_refs=[f"case_result:{saved['id']}", *candidate.get("evidence_refs", [])],
+                support=candidate.get("supporting_evidence", []),
+                counter=candidate.get("counter_evidence", []), gaps=candidate.get("information_gaps", []),
+                detail=candidate.get("claim"), versions=content["versions"],
+                composition=content["composition"]))
     for hypothesis in hypotheses:
         if not _targets(hypothesis.evidence_refs, asset.id):
             continue
@@ -199,19 +280,22 @@ def _candidates_and_results(db, asset, start, end, linked_case_ids):
             snapshot = assemble_case_result(profile, run, peers)
             require_result_access(db, snapshot)
         except PermissionError:
-            restricted_candidates = True
+            restricted_results = True
             continue
         except (ValueError, TypeError, KeyError, AttributeError):
-            unavailable_candidates = True
+            unavailable_results = True
             continue
-        candidates.append(item(hypothesis.id, hypothesis.title, detail=hypothesis.claim,
+        results.append(item(hypothesis.id, f"历史空间候选：{hypothesis.title}", detail=hypothesis.claim,
             case_id=hypothesis.case_id, analysis_run_id=run.id, status=hypothesis.status,
             evidence_refs=hypothesis.evidence_refs, support=hypothesis.supporting_evidence,
             counter=hypothesis.counter_evidence, gaps=hypothesis.information_gaps,
             map_snapshot_id=run.map_snapshot_id, profile_id=profile.id,
-            relation_kind="system_candidate", boundary=hypothesis.boundary))
+            relation_kind="historical_system_candidate", boundary=f"历史冻结/留存空间候选，不代表当前道路组合。{hypothesis.boundary}"))
     for row in db.query(CaseResultSnapshot).filter(CaseResultSnapshot.case_id.in_(select(cases.c.id))).order_by(CaseResultSnapshot.id):
         content = row.content if isinstance(row.content, dict) else {}
+        if content.get("schema_version") == COMPOSITION_SCHEMA_VERSION and (
+                content.get("composition", {}).get("branch") != branch or branch is None):
+            continue  # Do not reveal another principal/scope's result metadata.
         saved_candidates = content.get("candidates")
         if not isinstance(saved_candidates, list):
             unavailable_results = unavailable_results or row.case_id in linked_case_ids
@@ -227,11 +311,16 @@ def _candidates_and_results(db, asset, start, end, linked_case_ids):
         except (ValueError, KeyError, TypeError, AttributeError):
             unavailable_results = True
             continue
-        results.append(item(row.id, "案件研判成果", case_id=row.case_id,
+        results.append(item(row.id, "历史冻结案件成果", case_id=row.case_id,
             result_id=row.id, created_at=iso(row.created_at), content_sha256=saved["content_sha256"],
-            evidence_refs=[f"case_result:{row.id}"], versions=saved["content"]["versions"]))
+            evidence_refs=[f"case_result:{row.id}"], versions=saved["content"]["versions"],
+            relation_kind="historical_result"))
     for row in db.query(CaseRoadArtifact).filter(CaseRoadArtifact.case_id.in_(select(cases.c.id))).order_by(CaseRoadArtifact.id):
         content = row.content if isinstance(row.content, dict) else {}
+        calculation = content.get("calculation") or content.get("route") or content.get("matrix") or {}
+        if (branch is None or calculation.get("user_id") != branch["principal_user_id"]
+                or calculation.get("scope") != branch["area_ids"]):
+            continue
         comparison = content.get("result") or {}
         target = content.get("target") or {}
         if not isinstance(comparison, dict) or not isinstance(target, dict):
@@ -247,18 +336,18 @@ def _candidates_and_results(db, asset, start, end, linked_case_ids):
         try:
             saved = read_road_artifact(db, row.id)
         except PermissionError:
-            restricted_candidates = restricted_results = True
+            restricted_results = True
             continue
         except (ValueError, KeyError, TypeError, AttributeError):
-            unavailable_candidates = unavailable_results = True
+            unavailable_results = True
             continue
         for candidate in matched:
-            candidates.append(item(f"road:{row.id}:{asset.id}", candidate.get("name") or asset.name,
-                case_id=row.case_id, artifact_id=row.id, relation_kind="system_candidate",
+            results.append(item(f"road:{row.id}:{asset.id}", f"历史道路候选：{candidate.get('name') or asset.name}",
+                case_id=row.case_id, artifact_id=row.id, relation_kind="historical_system_candidate",
                 evidence_refs=candidate.get("evidence_refs", []), support=candidate.get("supporting_evidence", []),
                 counter=candidate.get("counter_evidence", []), gaps=candidate.get("information_gaps", []),
-                detail="已保存的道路及生产条件候选比较", versions=saved["content"].get("calculation")))
-        results.append(item(f"road:{row.id}", "道路研判成果", case_id=row.case_id,
+                detail="历史道路及生产条件候选，不代表当前条件", versions=saved["content"].get("calculation")))
+        results.append(item(f"road:{row.id}", "历史道路研判成果", case_id=row.case_id,
             artifact_id=row.id, created_at=iso(row.created_at), evidence_refs=[f"road_artifact:{row.id}"]))
     # Historical meeting reports keep their original source, never converted
     # into a new facility conclusion. Re-authorize every recorded member case.
@@ -277,7 +366,7 @@ def _candidates_and_results(db, asset, start, end, linked_case_ids):
             evidence_refs=[f"report:{report.id}"], detail="通过事件明确记录的案件关联；保留原会议来源"))
     candidate_section = section(candidates, state="restricted" if restricted_candidates else
         "partial" if unavailable_candidates and candidates else "unavailable" if unavailable_candidates else None,
-        gaps=["部分历史候选来源不完整，未展开内容"] if unavailable_candidates else [])
+        gaps=["部分案件当前道路组合未就绪或不可读取；不以历史候选替代。"] if unavailable_candidates else [])
     return candidate_section, section(results, state="restricted" if restricted_results else
         "partial" if unavailable_results and results else "unavailable" if unavailable_results else None,
         gaps=["部分历史成果资料损坏，未展开内容"] if unavailable_results else [])
@@ -352,6 +441,7 @@ def build_dossier_content(db, asset_id, *, start_date=None, end_date=None):
             raise PermissionError("facility_unavailable")
         production, source_versions = _production(db, asset)
         links, events, linked_case_ids = _recorded_events(db, asset, start, end)
+        links = _recorded_materials(db, asset, links, linked_case_ids, start, end)
         candidates, results = _candidates_and_results(db, asset, start, end, linked_case_ids)
         cases = in_window(db.query(Case).populate_existing(), Case.occurred_time, start, end).order_by(Case.id).all()
         profiles, coverage = profile_catalog(db, cases)

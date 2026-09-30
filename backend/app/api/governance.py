@@ -488,12 +488,23 @@ def intelligence_runtime_overview(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(request)
-    versions = GovernanceService.ensure_versions(db)
+    from app.config import settings
+    from app.services.runtime_capabilities import query_creation_enabled
+    versions = GovernanceService.declared_versions()
     latest_evaluation = db.query(EvaluationRun).order_by(EvaluationRun.started_at.desc()).first()
     if latest_evaluation is not None and not _evaluation_visible(db, latest_evaluation):
         latest_evaluation = None
     return {
         "orchestrator": "deterministic-event-orchestrator",
+        "versions_basis": "declared_code_not_execution",
+        "capabilities": {
+            "deterministic_business": "independent_of_agent_lab",
+            "model_query": "enabled" if query_creation_enabled(settings) else "disabled",
+            "query_model": "configured_not_validated" if settings.AGENT_MODEL_ID else "not_configured",
+            "query_history": "authorized_read", "query_cancel": "owner_only",
+            "experimental_lab": "enabled" if settings.ENABLE_AGENT_LAB and settings.AGENT_MODE != 'off' else "disabled",
+            "degraded_is_model_success": False,
+        },
         "business_agents": [
             "geographic-foundation",
             "case-governance",

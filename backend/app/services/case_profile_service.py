@@ -11,8 +11,9 @@ from app.models.conclusion import Conclusion
 from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
-from app.services.case_quality_service import CaseQualityService
 from app.services.case_result_access import CaseResultAccessError
+from app.services.case_saved_profile import read_saved_profile
+from app.services.experience_state_service import read_experience_state
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -50,19 +51,19 @@ class CaseProfileService:
         }
 
     @staticmethod
-    def build_case_profile(db: Session, case_id: int, include_similar: bool = True) -> Dict[str, Any]:
+    def build_case_profile(db: Session, case_id: int, include_similar: bool = True,
+                           *, saved_profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         case = CaseProfileService.get_case(db, case_id)
         related = CaseProfileService._related(db, case.id)
-        quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
+        saved = saved_profile if saved_profile is not None else read_saved_profile(db, case)
+        payload = _as_dict((saved.get("data") or {}).get("payload")) if saved["status"] == "ready" else {}
+        quality = case.quality_issues or payload.get("quality") or {"missing_required": [], "state": "not_generated"}
         features = _as_dict(case.features)
-        intelligence = _as_dict(features.get("intelligence"))
-        experience_card = _as_dict(intelligence.get("experience_card"))
-        tags = CaseProfileService._safe_tags(db, case)
-        similar = (
-            CaseProfileService._safe_similar_cases(db, case.id)
-            if include_similar
-            else {"case_id": case.id, "items": []}
-        )
+        experience_state = read_experience_state(db, case)
+        experience_card = experience_state["card"] or {}
+        tags = []
+        similar = {"case_id": case.id, "items": [], "state": "not_requested",
+                   "reason": "历史参考由独立统一检索入口提供，画像读取不重复搜索。"}
         reports = CaseProfileService._reports(db, case)
         conclusions = CaseProfileService._conclusions(db, case.id)
         alerts = CaseProfileService._alerts(db, case.id)
@@ -72,16 +73,21 @@ class CaseProfileService:
             "facts": CaseProfileService._facts(case, related),
             "related": related,
             "quality": quality,
-            "quality_gaps": quality.get("missing_required", []) if isinstance(quality, dict) else [],
+            "quality_gaps": quality.get("priority_gaps", quality.get("missing_required", [])[:3]) if isinstance(quality, dict) else [],
+            "standard_profile": saved,
             "ai_summary": {
-                "summary": features.get("summary") or features.get("case_summary") or case.description,
-                "preprocess_mode": features.get("preprocess_mode"),
-                "analysis_readiness": features.get("analysis_readiness") or {},
-                "features": features,
+                "summary": case.description,
+                "source": "original_record",
+                "state": saved["status"],
+                "preprocess_mode": "saved_standard_profile",
+                "analysis_readiness": payload.get("analysis_readiness") or {},
+                "features": payload,
+                "legacy_summary": {"state": "historical_unversioned", "text": features.get("summary") or features.get("case_summary")},
             },
             "tags": tags,
             "similar_cases": similar,
             "experience_card": experience_card or None,
+            "experience_state": experience_state,
             "knowledge_refs": {
                 "reports": reports,
                 "conclusions": conclusions,
@@ -90,18 +96,20 @@ class CaseProfileService:
             "availability": {
                 "has_geo": case.latitude is not None and case.longitude is not None,
                 "has_evidence": bool(related["evidence"]),
-                "has_ai_features": bool(features),
+                "has_ai_features": saved["status"] == "ready",
                 "has_quality": bool(case.quality_issues),
-                "has_confirmed_experience": experience_card.get("manual_review_status") in {"confirmed", "approved"},
+                "has_confirmed_experience": experience_state["confirmed"],
                 "needs_human_review": bool(quality.get("missing_required") if isinstance(quality, dict) else True)
-                or CaseProfileService.experience_needs_review(experience_card)
-                or any(item.get("status") in {"draft", "needs_review", "flagged"} for item in conclusions),
+                or experience_state["needs_review"]
+                or any(item.get("status") == "flagged" for item in conclusions),
             },
             "source_map": {
                 "case": f"case:{case.id}",
                 "quality": f"case:{case.id}:quality",
                 "features": f"case:{case.id}:features",
-                "experience_card": f"case:{case.id}:experience_card" if experience_card else None,
+                "experience_card": (f"knowledge_asset:{experience_state['asset_id']}:v{experience_state['asset_version']}"
+                                    if experience_state.get("asset_id") else
+                                    f"case:{case.id}:legacy_experience_card" if experience_card else None),
                 "evidence": [f"case_evidence:{item['id']}" for item in related["evidence"] if item.get("id")],
                 "conclusions": [f"conclusion:{item['id']}" for item in conclusions],
                 "alerts": [f"automation_alert:{item['id']}" for item in alerts],
@@ -119,6 +127,12 @@ class CaseProfileService:
             "id": case.id,
             "case_number": case.case_number,
             "occurred_time": _iso(case.occurred_time),
+            "occurred_from": _iso(getattr(case, "occurred_from", None)),
+            "occurred_to": _iso(getattr(case, "occurred_to", None)),
+            "time_precision": getattr(case, "time_precision", None) or "unknown",
+            "time_expression": getattr(case, "time_expression", None),
+            "time_timezone": getattr(case, "time_timezone", None),
+            "discovered_at": _iso(getattr(case, "discovered_at", None)),
             "location": case.location,
             "latitude": case.latitude,
             "longitude": case.longitude,
@@ -130,6 +144,7 @@ class CaseProfileService:
             "current_stage": case.current_stage,
             "oil_type": case.oil_type,
             "oil_volume": case.oil_volume,
+            "oil_volume_unit": getattr(case, "oil_volume_unit", None) or "unknown",
             "oil_value": case.oil_value,
             "oil_nature": case.oil_nature,
             "facility_type": case.facility_type,
@@ -141,11 +156,15 @@ class CaseProfileService:
     def _facts(case: Case, related: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         return {
             "time": _iso(case.occurred_time),
+            "time_precision": getattr(case, "time_precision", None) or "unknown",
+            "occurred_from": _iso(getattr(case, "occurred_from", None)),
+            "occurred_to": _iso(getattr(case, "occurred_to", None)),
             "location": case.location,
             "source_type": case.source_type,
             "oil": {
                 "oil_type": case.oil_type,
                 "oil_volume": case.oil_volume,
+                "oil_volume_unit": getattr(case, "oil_volume_unit", None) or "unknown",
                 "oil_nature": case.oil_nature,
                 "oil_handling": case.oil_handling,
                 "recovery_count": len(related["oil_recovery"]),
@@ -234,20 +253,28 @@ class CaseProfileService:
 
     @staticmethod
     def _safe_similar_cases(db: Session, case_id: int) -> Dict[str, Any]:
+        from sqlalchemy.exc import SQLAlchemyError
+
         try:
             return CaseIntelligenceService.find_similar_cases(db, case_id, days=365, limit=5)
+        except SQLAlchemyError:
+            # A failed PostgreSQL statement may abort the caller's transaction.
+            # Do not continue aggregating reads or rollback unrelated work here.
+            raise
         except Exception:
-            return {"case_id": case_id, "items": []}
+            return {"case_id": case_id, "items": [], "state": "unavailable",
+                    "coverage": {"complete": False, "recency_limit": None},
+                    "boundary": "历史参考暂不可用，不能据此判断没有相似案件。"}
 
     @staticmethod
     def _conclusions(db: Session, case_id: int) -> List[Dict[str, Any]]:
-        # 在运行时引入生成服务，避免旧画像/知识服务的模块依赖形成循环。
-        from app.services.conclusion_factory_service import ConclusionFactoryService
+        # 历史记录只读鉴权，不再依赖或恢复旧结论生成器。
+        from app.services.legacy_conclusion_access import require_conclusion_result_access
 
         items = []
         for item in db.query(Conclusion).filter(Conclusion.case_id == case_id).order_by(Conclusion.id.desc()).limit(8):
             try:
-                ConclusionFactoryService.require_conclusion_result_access(db, item)
+                require_conclusion_result_access(db, item)
             except CaseResultAccessError:
                 # 不返回标题、状态、编号或隐藏数量；处理卡和source_map也只基于可读结果。
                 continue
@@ -280,6 +307,7 @@ class CaseProfileService:
 
     @staticmethod
     def _reports(db: Session, case: Case) -> List[Dict[str, Any]]:
+        from app.services.meeting_frozen_service import report_sources_visible
         meetings = db.query(Meeting).all()
         meeting_ids = [
             item.meeting_id
@@ -300,4 +328,5 @@ class CaseProfileService:
                 "created_at": _iso(item.created_at),
             }
             for item in query.order_by(Report.id.desc()).limit(8).all()
+            if report_sources_visible(db, item)
         ]

@@ -42,6 +42,30 @@ SCOPE_POLICY = {
 
 class GovernanceService:
     @staticmethod
+    def declared_versions() -> dict[str, Any]:
+        """Read code declarations without registering rows from a GET request."""
+        from app.services.case_pipeline_service import CASE_PROFILE_SCHEMA_VERSION
+        from app.services.case_insight_service import CASE_INSIGHT_ALGORITHM_VERSION
+        from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION
+        from app.services.scorers.facility_roads_v63 import VERSION as ROAD_SCORER_VERSION
+
+        # ALGORITHMS remains the legacy evaluation registry, not current runtime truth.
+        current = {
+            "case-profile": (CASE_PROFILE_SCHEMA_VERSION, {"mode": "deterministic", "max_gaps": 3}),
+            "dual-domain": (CASE_INSIGHT_ALGORITHM_VERSION, {"mode": "deterministic", "max_candidates": 3}),
+            "facility-roads": (ROAD_SCORER_VERSION, {"mode": "deterministic", "max_candidates": 3}),
+            "case-result-composition": (COMPOSITION_SCHEMA_VERSION, {"immutable": True}),
+            "deployment-advisor": ("deployment-advisor-4.4-1", {"mode": "deterministic", "max_advice": 3}),
+        }
+        return {
+            "algorithms": [{"component": key, "version": value[0],
+                            "checksum": GovernanceService._checksum(value[1])}
+                           for key, value in current.items()],
+            "scope_policy": {"version": SCOPE_POLICY_VERSION,
+                             "checksum": GovernanceService._checksum(SCOPE_POLICY)},
+        }
+
+    @staticmethod
     def ensure_versions(db: Session) -> dict[str, Any]:
         algorithms = []
         for component, (version, configuration) in ALGORITHMS.items():

@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
+import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import { intelligentQueriesApi, queryEntryContext } from '../../services/intelligentQueries'
-import type { InitialQueryContext } from '../../services/intelligentQueries'
+import type { InitialQueryContext, QueryPreset } from '../../services/intelligentQueries'
 import { activeQuery, canFollowup, conditionLines, conditionNames, conditionValue, failureText, queryIdValid, requestFailure, statusNames, toolNames } from './queryPresentation'
 import { QueryResult } from './QueryResult'
 import { SaveQueryTopic } from '../Topics/SaveQueryTopic'
+import QueryPresets from './QueryPresets'
+import EvidenceAnswer from './EvidenceAnswer'
+import { resultPath } from '../../services/results'
 import './IntelligentQuery.css'
 
 const examples = ['查找包含“管线”的案件', '统计当前授权范围的案件数量', '查找“大庆”相关地点和设施', '汇总已有研判成果']
 
 export default function Assistant() {
   const { user, sessionEpoch } = useAuth()
+  const { availability } = useRuntimeFeatures()
   const [params, setParams] = useSearchParams()
   const runId = params.get('query') || ''
   const entry = queryEntryContext(params)
@@ -42,9 +47,9 @@ export default function Assistant() {
     refetchInterval: query => !query.state.error && activeQuery(query.state.data?.status) ? 1500 : false,
   })
   const create = useMutation({
-    mutationFn: ({ text, parentId, initialContext }: {
-      text: string; sourceId: string; parentId?: string; initialContext?: InitialQueryContext
-    }) => intelligentQueriesApi.create(text, parentId, initialContext),
+    mutationFn: ({ text, parentId, initialContext, preset }: {
+      text: string; sourceId: string; parentId?: string; initialContext?: InitialQueryContext; preset?: QueryPreset
+    }) => preset ? intelligentQueriesApi.create(text, parentId, initialContext, preset) : intelligentQueriesApi.create(text, parentId, initialContext),
     onSuccess: (data, variables) => {
       if (!live.current || createSelection.current !== variables.sourceId) return
       setQuestion('')
@@ -61,7 +66,7 @@ export default function Assistant() {
   })
   const current = !task.error && task.data?.id === runId ? task.data : undefined
   const busy = create.isPending || activeQuery(current?.status)
-  const canQuery = user?.role === 'admin' || user?.role === 'analyst'
+  const canQuery = (user?.role === 'admin' || user?.role === 'analyst') && availability.intelligent_query === 'enabled'
   const followup = canFollowup(current)
   const conditions = conditionLines(current?.result.query_conditions ?? current?.followup_context?.conditions ?? current?.initial_context?.conditions)
   const sourceCase = current?.initial_context?.source_case ?? current?.followup_context?.source_case
@@ -115,8 +120,10 @@ export default function Assistant() {
           setParams({}); create.reset(); cancel.reset()
         }}>新查询</button>}
       </div>
-      {!canQuery && <p role="status">当前账号不能发起智能查询，可继续使用案件和地图浏览。</p>}
+      {!canQuery && <p role="status">当前不能发起新查询（能力未启用、状态未确认或账号受限）。已有任务仍可按权限读取、导出和取消，案件与地图浏览不受影响。</p>}
     </form>
+    {!runId && !entry.error && <QueryPresets key={createSource} context={entry.initialContext} assetId={params.get('assetId') || undefined}
+      disabled={!canQuery || busy} onRun={(text, preset) => create.mutate({ text, preset, sourceId: createSource, initialContext: entry.initialContext })} />}
     {!runId && <div className="query-examples" aria-label="问题示例">{examples.map(example =>
       <button type="button" className="btn-ghost" key={example} disabled={!canQuery || create.isPending}
         onClick={() => setQuestion(example)}>{example}</button>)}</div>}
@@ -130,8 +137,10 @@ export default function Assistant() {
       <div className="query-status" role="status"><strong>{statusNames[current.status] || '状态未知'}</strong>
         <button className="btn-ghost" disabled={task.isFetching} onClick={() => void task.refetch()}>刷新状态</button></div>
       <p className="query-original">{current.query}</p>
+      {current.result.execution_mode && <p>执行方式：{current.result.execution_mode === 'deterministic_preset' ? '确定性业务预设，未使用模型规划' : '内网模型受控规划'}</p>}
       {sourceCase && <p className="query-history-note">来源案件 ID：{sourceCase.case_id}。此查询绑定提交时的案件版本。</p>}
       {followup && <div className="query-actions">
+        <Link to={resultPath('query', current.id)}>在统一材料中阅读与判断</Link>
         <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('docx')}>导出 Word</button>
         <button className="btn-ghost" disabled={exportState === '正在生成报告…'} onClick={() => void download('pdf')}>导出 PDF</button>
       </div>}
@@ -150,7 +159,11 @@ export default function Assistant() {
       {current.status === 'running' && <p>正在执行只读查询，可取消；后台故障不会影响案件录入。</p>}
       {current.result.error_code && <p role="status">{failureText(current.result.error_code)}</p>}
       {!!current.result.cards?.length && <p className="query-history-note">以下是该次查询的历史结果，数据更新后请重新查询。</p>}
-      {current.result.cards?.map((card, index) => <QueryResult key={index} card={card} />)}
+      {current.result.answer && <EvidenceAnswer answer={current.result.answer} cards={current.result.cards || []} />}
+      {current.result.cards?.map((card, index) => <div id={`query-card-${index}`} key={index}><QueryResult card={card} /></div>)}
+      {current.result.usage && <details><summary>本次调用计量</summary><p>工具 {current.result.usage.tool_calls} 次；模型 {current.result.usage.model_requests} 次。</p>
+        <p>{current.result.usage.token_state === 'known' ? `输入 ${current.result.usage.input_tokens}、输出 ${current.result.usage.output_tokens} Token`
+          : current.result.usage.token_state === 'not_used' ? '未使用模型' : '模型未提供可靠 Token 计量，不按零计。'}</p></details>}
       {!!current.result.trace?.length && <details><summary>查看工具轨迹（{current.result.trace.length} 步）</summary>
         <ol>{current.result.trace.map(step => <li key={step.step}>{toolNames[step.tool] || '只读查询'}{step.duration_ms != null ? ` · ${step.duration_ms} 毫秒` : ''}{step.error_code ? ' · 条件未满足，本步未执行' : ''}</li>)}</ol>
       </details>}

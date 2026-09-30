@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { readAutomaticRoadComparison, roadVehicleLabel, type AutomaticRoadComparison } from '../../services/roadAnalysis'
+import { readAutomaticRoadComparison, readRoadArtifact, roadVehicleLabel, type AutomaticRoadComparison } from '../../services/roadAnalysis'
 import CaseResultDownload from './CaseResultDownload'
 import CaseReachableRoads from './CaseReachableRoads'
 import CaseRoadPath from './CaseRoadPath'
@@ -14,12 +14,13 @@ export function LegacyCandidateReference({ currentFacility, children }: { curren
     <p>以下为原冻结空间分析，未替换成道路排序，不与上方候选合并排名。</p>{open && children}</details> : <>{children}</>
 }
 
-export default function CaseRoadComparison({ resultId, hash, legacyCandidates }: { resultId: string; hash: string; legacyCandidates?: ReactNode }) {
+export default function CaseRoadComparison({ resultId, hash, legacyCandidates, frozen, awaitingComposition = false }: { resultId: string; hash: string; legacyCandidates?: ReactNode; frozen?: { id: string; content_sha256: string }; awaitingComposition?: boolean }) {
   const [artifact, setArtifact] = useState<AutomaticRoadComparison['artifact']>(null)
-  const [status, setStatus] = useState<'loading' | 'ready' | 'failed' | 'paused' | 'processing' | 'waiting_network' | 'information_missing' | 'not_available'>('loading')
+  const [status, setStatus] = useState<'loading' | 'ready' | 'failed' | 'paused' | 'processing' | 'waiting_network' | 'information_missing' | 'not_available' | 'composition_pending'>('loading')
   const [attempt, setAttempt] = useState(0)
   const [controller, setController] = useState<AbortController | null>(null)
   const [pathTarget, setPathTarget] = useState<number | null>(null)
+  const [dependencies, setDependencies] = useState<string[]>([])
   const invalidateComparison = useCallback(() => { setArtifact(null); setPathTarget(null); setStatus('failed') }, [])
   useEffect(() => {
     const request = new AbortController()
@@ -29,15 +30,30 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates }:
     setController(request)
     setArtifact(null)
     setPathTarget(null)
+    setDependencies([])
     setStatus('loading')
     const load = async () => {
       if (!active || request.signal.aborted) return
       if (document.hidden) { timer = setTimeout(() => void load(), 10000); return }
       try {
+        if (frozen) {
+          const item = await readRoadArtifact(frozen.id, resultId, frozen.content_sha256, request.signal)
+          if (!active || request.signal.aborted) return
+          if (item.content.schema_version !== 'case-facility-comparison-5.2-1' || item.content.content_sha256 !== hash)
+            throw new Error('组合道路附件不一致')
+          setArtifact({ ...item, content: item.content })
+          setStatus('ready')
+          return
+        }
         const result = await readAutomaticRoadComparison(resultId, hash, request.signal)
         if (!active || request.signal.aborted) return
+        setDependencies(result.information_dependencies || [])
         polls += 1
         if (result.status === 'completed' && result.artifact) {
+          if (awaitingComposition) {
+            setStatus('composition_pending')
+            return
+          }
           setArtifact(result.artifact)
           setStatus('ready')
         } else if (result.status === 'processing' || result.status === 'waiting_network') {
@@ -54,16 +70,17 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates }:
     }
     void load()
     return () => { active = false; request.abort(); clearTimeout(timer) }
-  }, [resultId, hash, attempt])
+  }, [resultId, hash, attempt, frozen?.id, frozen?.content_sha256, awaitingComposition])
   const data = artifact?.content
   const usable = data?.schema_version === 'case-road-comparison-4.2.0-1' && data.result_id === resultId && data.content_sha256 === hash ? data : null
   const facility = data?.schema_version === 'case-facility-comparison-5.2-1' && data.result_id === resultId && data.content_sha256 === hash ? data : null
   return <section className="case-result__roads" aria-label="道路参考比较" aria-busy={status === 'loading'}>
-    {!(status === 'ready' && facility) && <LegacyCandidateReference currentFacility={false}>{legacyCandidates}</LegacyCandidateReference>}
+    {!(status === 'ready' && facility) && !(frozen && status === 'failed') && <LegacyCandidateReference currentFacility={false}>{legacyCandidates}</LegacyCandidateReference>}
     <h4>设施道路与条件研判</h4>
     <p className="case-result__note">新结果先比较设施池的道路条件再排序；旧版点位附近道路比较继续保留。车型未明确时使用标明的小客车参考假设，不确认案发时路线。</p>
-    <p className="case-result__note">道路参考与原冻结成果分开保存；比较完成后可直接下载含道路附件的报告，历史版本仍可追溯。</p>
+    <p className="case-result__note">{frozen ? '本页与顶部报告下载使用同一冻结组合，不用后来生成的附件替换当前内容。' : '道路参考与原冻结成果分开保存；比较完成后可直接下载含道路附件的报告，历史版本仍可追溯。'}</p>
     {status === 'loading' && <p role="status">正在读取后台道路成果…</p>}
+    {status === 'composition_pending' && <p role="status">道路附件已形成，等待统一成果刷新后再展示；不将新附件混入旧成果。若范围或条件已变化，需等待对应新结果。</p>}
     {status === 'processing' && <><p role="status">后台正在处理，完成后自动显示；可以继续查看案件。</p>
       <button type="button" onClick={() => { controller?.abort(); setStatus('paused') }}>暂停刷新</button></>}
     {status === 'waiting_network' && <><p role="status">路网或通行授权尚未就绪，系统会在可用后继续。案件录入和原研判内容不受影响。</p>
@@ -71,16 +88,17 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates }:
     {status === 'failed' && <p role="status">道路比较暂不可用，可能缺少授权路网或点位连接尚待核验。没有据此判断不可达，其他成果仍可查看。</p>}
     {status === 'paused' && <p role="status">已暂停页面刷新，后台任务仍会继续。</p>}
     {status === 'information_missing' && <p role="status">案件点位、设施点位或车辆通行条件不足，暂未形成道路比较。未推定设施入口或不可达结论。</p>}
+    {status === 'information_missing' && !!dependencies.length && <ul>{dependencies.map(item => <li key={item}>{item}</li>)}</ul>}
     {status === 'not_available' && <p role="status">暂无可读取的后台道路成果。历史案件或尚未配置路网的案件可继续查看原研判内容。</p>}
     {(status === 'failed' || status === 'paused' || status === 'not_available') && <button type="button" onClick={() => setAttempt(value => value + 1)}>刷新结果</button>}
     {status === 'ready' && facility && artifact && <>
       <CaseFacilityComparison content={facility} onSelect={setPathTarget} />
       {pathTarget !== null && <CaseRoadPath key={`${facility.result_id}:${artifact.id}:${pathTarget}`}
         comparison={facility} artifact={artifact} assetId={pathTarget} onUnavailable={invalidateComparison} />}
-      <CaseResultDownload resultId={resultId} hash={hash} road={{ id: artifact.id, content_sha256: artifact.content_sha256 }} />
+      {!frozen && <CaseResultDownload resultId={resultId} hash={hash} road={{ id: artifact.id, content_sha256: artifact.content_sha256 }} />}
       <FacilityEvaluationArchive artifactId={artifact.id}
         available={Array.isArray(facility.result.scoring_evidence) && !!facility.result.scorer_checksum} />
-      <LegacyCandidateReference currentFacility>{legacyCandidates}</LegacyCandidateReference>
+      {!frozen && <LegacyCandidateReference currentFacility>{legacyCandidates}</LegacyCandidateReference>}
     </>}
     {status === 'ready' && usable && <>
       {usable.matrix && <p className="case-result__note">计算车型：{roadVehicleLabel(usable.matrix.vehicle)}。未提供的其他车型属性采用引擎默认参考值。</p>}
@@ -102,6 +120,6 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates }:
       {usable.matrix && usable.map_snapshot_id && <CaseReachableRoads
         key={`${resultId}:${hash}:${artifact?.id}`} comparison={usable} />}
     </>}
-    <CaseRoadHistory key={resultId} resultId={resultId} />
+    {!frozen && <CaseRoadHistory key={resultId} resultId={resultId} />}
   </section>
 }

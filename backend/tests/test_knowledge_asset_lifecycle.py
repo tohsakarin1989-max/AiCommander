@@ -15,6 +15,7 @@ from app.models.case import Case, CaseEvidence
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
 from app.services.case_intelligence_service import CaseIntelligenceService
+from app.services.case_pipeline_service import CasePipelineService
 
 
 def _session() -> Session:
@@ -25,7 +26,17 @@ def _session() -> Session:
     )
     Base.metadata.create_all(bind=engine)
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return session_local()
+    db = session_local()
+    db.info["authorized_area_ids"] = None  # Explicit unrestricted synthetic-test principal.
+    return db
+
+
+def _freeze_result(db: Session, case: Case) -> None:
+    case.quality_issues = None
+    event = CasePipelineService.enqueue_case_change(db, case)
+    db.commit()
+    if event:
+        CasePipelineService.process_event(db, event.id)
 
 
 def _client(db: Session, *, role: str | None = None) -> TestClient:
@@ -43,7 +54,9 @@ def _client(db: Session, *, role: str | None = None) -> TestClient:
         yield db
 
     app.dependency_overrides[get_db] = override_get_db
-    return TestClient(app)
+    client = TestClient(app)
+    client.test_db = db
+    return client
 
 
 def _seed_case(
@@ -79,6 +92,9 @@ def _seed_case(
         )
     )
     db.commit()
+    _freeze_result(db, case)
+    from tests.history_index_helpers import build_history_index
+    build_history_index(db)
     return case
 
 
@@ -94,6 +110,8 @@ def _confirm(client: TestClient, asset_id: int) -> dict:
         json={"status": "confirmed", "note": "事实、依据和适用边界已人工核验"},
     )
     assert response.status_code == 200, response.text
+    from tests.history_index_helpers import build_history_index
+    build_history_index(client.test_db)
     return response.json()
 
 
@@ -112,6 +130,7 @@ def test_experience_assets_are_versioned_and_unchanged_generation_is_idempotent(
 
     case.description = f"{case.description} 补充核验道路通达条件。"
     db.commit()
+    _freeze_result(db, case)
     changed = _generate_experience(client, case.id)
 
     assert changed["id"] != first["id"]
@@ -135,6 +154,7 @@ def test_review_rejects_stale_asset_and_confirm_is_idempotent():
     assert stale.status_code == 409
     assert stale.json()["detail"] == "源案件已变化，请重新生成后复核"
 
+    _freeze_result(db, case)
     current = _generate_experience(client, case.id)
     confirmed = _confirm(client, current["id"])
     repeated = _confirm(client, current["id"])
@@ -185,7 +205,7 @@ def test_review_rejects_asset_when_evidence_changed_after_generation():
     assert stale.json()["detail"] == "源案件已变化，请重新生成后复核"
 
 
-def test_review_rejects_experience_when_map_scope_changed_after_generation():
+def test_frozen_experience_does_not_recompute_unrelated_map_after_generation():
     db = _session()
     client = _client(db)
     case = _seed_case(db, number="KA-MAP-STALE")
@@ -208,11 +228,11 @@ def test_review_rejects_experience_when_map_scope_changed_after_generation():
         json={"status": "confirmed", "note": "地图底座变化后不能确认旧版本"},
     )
 
-    assert stale.status_code == 409
-    assert stale.json()["detail"] == "源案件已变化，请重新生成后复核"
+    assert stale.status_code == 200
+    assert stale.json()['status'] == 'confirmed'
 
 
-def test_generation_prepares_missing_quality_without_making_draft_stale():
+def test_generation_reuses_frozen_quality_without_mutating_case():
     db = _session()
     client = _client(db)
     experience_case = _seed_case(db, number="KA-QUALITY-EXPERIENCE")
@@ -222,8 +242,10 @@ def test_generation_prepares_missing_quality_without_making_draft_stale():
     db.commit()
 
     experience = _generate_experience(client, experience_case.id)
+    assert experience_case.quality_issues is None
     assert _confirm(client, experience["id"])["status"] == "confirmed"
 
+    _freeze_result(db, report_case)
     report = client.post(
         f"/api/knowledge/cases/{report_case.id}/report-snapshots",
         json={"experience_asset_ids": [], "days": 365},
@@ -272,7 +294,7 @@ def test_recommendations_only_return_confirmed_historical_experience():
     assert draft_case.case_number not in source_numbers
     item = next(item for item in payload["items"] if item["source_case_number"] == confirmed_case.case_number)
     assert item["asset_id"] == confirmed_asset["id"]
-    assert item["similarity_score"] >= 25
+    assert item["similarity_score"] > 0  # RRF rank support is not an old percentage threshold.
     assert item["applicability_reasons"]
     assert item["evidence_refs"]
 
@@ -292,6 +314,7 @@ def test_report_snapshot_reuses_only_selected_confirmed_assets_and_records_trace
     assert rejected.json()["detail"] == "只能引用已确认且未归档的经验资产"
 
     _confirm(client, source_asset["id"])
+    _freeze_result(db, target)
     response = client.post(
         f"/api/knowledge/cases/{target.id}/report-snapshots",
         json={"experience_asset_ids": [source_asset["id"]], "days": 365},
@@ -423,6 +446,7 @@ def test_confirmed_version_is_searchable_while_new_draft_stays_hidden():
 
     case.description = f"{case.description} 新增尚未复核的围栏缺口。"
     db.commit()
+    _freeze_result(db, case)
     draft = _generate_experience(client, case.id)
     assert draft["version"] == 2
 
@@ -435,10 +459,11 @@ def test_confirmed_version_is_searchable_while_new_draft_stays_hidden():
     assert draft["id"] not in {item["asset_id"] for item in second_search.json()["items"]}
 
 
-def test_report_confirmation_requires_unchanged_analysis_scope():
+def test_frozen_report_confirmation_does_not_recompute_unrelated_scope():
     db = _session()
     client = _client(db)
     target = _seed_case(db, number="KA-SCOPE")
+    _freeze_result(db, target)
     report = client.post(
         f"/api/knowledge/cases/{target.id}/report-snapshots",
         json={"experience_asset_ids": [], "days": 365},
@@ -450,5 +475,5 @@ def test_report_confirmation_requires_unchanged_analysis_scope():
         json={"status": "confirmed", "note": "统计范围变化后不能确认旧报告"},
     )
 
-    assert stale.status_code == 409
-    assert stale.json()["detail"] == "源案件已变化，请重新生成后复核"
+    assert stale.status_code == 200
+    assert stale.json()["status"] == "confirmed"

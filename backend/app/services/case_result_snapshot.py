@@ -19,6 +19,15 @@ def _canonical(value: dict) -> str:
 def verify_snapshot(snapshot: dict) -> bool:
     """仅验证内容完整性，不替代当前用户权限校验。"""
     try:
+        semantics = snapshot["content"].get("semantics") or {}
+        if semantics.get("process") is not None:
+            from app.services.case_process_contract import validate_process
+            validate_process(semantics["process"], semantics["source_snapshot"])
+            process_hash = semantics["process"].get("source_hash")
+            if process_hash is not None and process_hash != snapshot["content"]["versions"]["case_source_hash"]:
+                return False
+            if semantics["process"]["source_revision_id"] != snapshot["content"]["versions"]["source_revision_id"]:
+                return False
         encoded = _canonical(snapshot["content"])
         return snapshot["content_sha256"] == hashlib.sha256(encoded.encode()).hexdigest()
     except (KeyError, TypeError, ValueError, RecursionError):
@@ -37,6 +46,15 @@ def assemble_case_result(
         raise ValueError("result_profile_hash_mismatch")
     if profile.payload.get("case_id", profile.case_id) != profile.case_id:
         raise ValueError("result_profile_case_mismatch")
+    semantics = profile.payload.get("semantics") or {}
+    process = semantics.get("process")
+    if process is not None:
+        from app.services.case_process_contract import validate_process
+        validate_process(process, semantics["source_snapshot"])
+        if (process["source_revision_id"] != profile.source_revision_id
+                or profile.payload.get("source_revision_id") != profile.source_revision_id
+                or process["source_hash"] not in (None, profile.source_hash)):
+            raise ValueError("result_process_source_revision_mismatch")
     if run is None and hypotheses:
         raise ValueError("result_candidates_without_run")
     if run is not None and (run.case_id != profile.case_id or run.case_profile_id != profile.id):
@@ -95,5 +113,8 @@ def assemble_case_result(
             "历史成果及导出仍须重新核对当前案件与每项证据访问权限。",
         ],
     }
+    # Old snapshots without process keep exactly their historical hash contract.
+    if process is not None:
+        content["versions"]["source_revision_id"] = profile.source_revision_id
     encoded = _canonical(content)
     return {"content_sha256": hashlib.sha256(encoded.encode()).hexdigest(), "content": json.loads(encoded)}

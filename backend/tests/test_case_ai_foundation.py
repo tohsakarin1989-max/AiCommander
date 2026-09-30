@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import assistant, case_intelligence, cases, conclusions, knowledge, reports, suggestions
+from app.api import assistant, case_intelligence, cases, knowledge, reports, suggestions
 from app.database import Base, get_db
 from app.models.automation_alert import AutomationAlert
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
@@ -33,7 +33,6 @@ def _client(db_session: Session) -> TestClient:
     app.include_router(knowledge.router, prefix="/api/knowledge")
     app.include_router(assistant.router, prefix="/api/assistant")
     app.include_router(reports.router, prefix="/api/reports")
-    app.include_router(conclusions.router, prefix="/api/conclusions")
     app.include_router(case_intelligence.router, prefix="/api/case-intelligence")
     app.include_router(suggestions.router, prefix="/api/suggestions")
 
@@ -144,6 +143,8 @@ def _seed_case(db: Session, *, case_number: str = "AI-BASE-001", card_status: st
     )
     db.commit()
     db.refresh(case)
+    from tests.history_index_helpers import build_history_index
+    build_history_index(db)
     return case
 
 
@@ -162,7 +163,9 @@ def test_case_profile_aggregates_case_foundation_without_mutating_get():
     assert payload["quality"]["score"] == 68
     assert payload["related"]["vehicles"][0]["plate_number"] == "黑A12345"
     assert payload["related"]["evidence"][0]["title"] == "现场照片"
-    assert payload["ai_summary"]["summary"] == "夜间井场涉油盗窃案件"
+    assert payload["ai_summary"]["summary"] == case.description
+    assert payload["ai_summary"]["source"] == "original_record"
+    assert payload["ai_summary"]["legacy_summary"]["text"] == "夜间井场涉油盗窃案件"
     assert payload["experience_card"]["manual_review_status"] == "confirmed"
     assert payload["availability"]["has_evidence"] is True
     assert payload["source_map"]["case"] == f"case:{case.id}"
@@ -217,7 +220,8 @@ def test_processing_card_groups_case_gaps_and_routes_to_human_review():
     payload = response.json()
     assert payload["case_id"] == case.id
     group_keys = {item["key"] for item in payload["gap_groups"]}
-    assert {"quality", "bonus", "experience", "report"}.issubset(group_keys)
+    assert {"quality", "bonus", "experience"}.issubset(group_keys)
+    assert 'report' not in group_keys  # Historical automatic drafts are not compulsory work.
     assert payload["manual_review_required"] is True
     assert all(item["mutation_allowed"] is False for item in payload["suggested_actions"])
 
@@ -257,6 +261,8 @@ def test_experience_card_status_can_be_confirmed_and_archived():
 
     assert confirmed.status_code == 200
     assert confirmed.json()["manual_review_status"] == "confirmed"
+    from tests.history_index_helpers import build_history_index
+    build_history_index(db)
     after = client.get("/api/knowledge/experience-cards/search", params={"q": "夜间 井场 软管"})
     assert case.case_number in {item["case_number"] for item in after.json()["items"]}
 
@@ -316,11 +322,7 @@ def test_evidence_qa_search_citation_report_review_and_conclusion_draft_are_sour
     assert review.json()["manual_review_required"] is True
 
     draft = client.post("/api/conclusions/draft", json={"case_id": case.id})
-    assert draft.status_code == 200
-    draft_payload = draft.json()
-    assert draft_payload["status"] == "draft"
-    assert draft_payload["not_published"] is True
-    assert draft_payload["evidence_refs"]
+    assert draft.status_code == 404  # Retired writer; report review above remains optional.
 
 
 def test_case_filtered_search_does_not_mix_other_meeting_reports():

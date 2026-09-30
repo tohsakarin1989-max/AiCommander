@@ -1,44 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from pydantic import BaseModel
 from app.database import get_db
 from app.config import settings
 from app.models.agent_task import AgentTask
-from app.services.agent_service import AgentService
 
 router = APIRouter()
 
 
-def _require_agent_enabled() -> None:
-    if not settings.ENABLE_AGENT_LAB or settings.AGENT_MODE == "off":
-        raise HTTPException(status_code=404, detail="Agent Lab 未启用")
-
-
-class AgentRunRequest(BaseModel):
-    query: str
-    case_ids: Optional[List[int]] = None
-
-
-@router.post("/run")
-async def run_agent(request: AgentRunRequest, db: Session = Depends(get_db)):
-    _require_agent_enabled()
-    if not request.query:
-        raise HTTPException(status_code=400, detail="query不能为空")
-    task = await AgentService.run_task(db, query=request.query, case_ids=request.case_ids)
-    return {
-        "id": task.id,
-        "query": task.query,
-        "case_ids": task.case_ids,
-        "status": task.status,
-        "result": task.result,
-        "created_at": str(task.created_at),
-    }
-
-
 @router.get("/tasks")
-def list_tasks(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
-    _require_agent_enabled()
+def list_tasks(
+    request: Request,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    # Legacy global results have no owner/scope provenance. Only an unrestricted
+    # administrator may read them, including when new Agent execution is off.
+    principal = getattr(request.state, "principal", None)
+    if principal is None and settings.AUTH_REQUIRED:
+        raise HTTPException(401, detail="请先登录")
+    if ((principal is not None and principal.role != "admin")
+            or db.info.get("authorized_area_ids") is not None):
+        raise HTTPException(403, detail="旧任务缺少可重验的范围来源，仅限全域管理员查看历史记录")
     rows = db.query(AgentTask).order_by(AgentTask.created_at.desc()).offset(skip).limit(limit).all()
     return [
         {

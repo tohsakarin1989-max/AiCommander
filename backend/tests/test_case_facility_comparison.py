@@ -8,7 +8,7 @@ from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.case_pipeline import CaseAnalysisProfile
 from app.models.internal_roads import InternalRoadImport, InternalRoadFeatureVersion, InternalRoadReview
-from app.models.map_foundation import MapSource, MapSnapshot, MapSnapshotFeature
+from app.models.map_foundation import MapSource, MapSnapshot, MapSnapshotFeature, JurisdictionAssetVersion
 from app.models.road_network import RoadNetworkVersion, RoadAccessMembership
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.case_result_service import CaseResultService
@@ -27,6 +27,21 @@ from test_road_access_policy import AT
 VEHICLE = VehicleAssumption(kind="auto", source="explicit_reference_assumption")
 
 
+def declare_production(db, asset_id):
+    """Explicit synthetic history, not a backfill from an observed-only snapshot."""
+    feature = db.query(MapSnapshotFeature).filter_by(asset_id=asset_id).one()
+    latest = db.query(JurisdictionAssetVersion).filter_by(asset_id=asset_id).order_by(
+        JurisdictionAssetVersion.version.desc()).first()
+    version = JurisdictionAssetVersion(asset_id=asset_id, version=latest.version + 1 if latest else 1,
+        change_type="synthetic_declared", temporal_status="declared", known_at=AT - timedelta(days=1),
+        valid_from=AT - timedelta(days=30), valid_to=AT + timedelta(days=60),
+        snapshot={"id": asset_id, "operational_area_id": 1, "asset_type": "well", "verified": True,
+                  "status": "active", "attributes": deepcopy(feature.attributes)})
+    db.add(version)
+    db.flush()
+    return version
+
+
 @pytest.fixture
 def prepared(ready, monkeypatch):
     db = ready
@@ -36,14 +51,15 @@ def prepared(ready, monkeypatch):
     profile.is_current = True
     profile.source_hash = CasePipelineService.source_hash(db, case)
     profile.payload = {**profile.payload, "source_hash": profile.source_hash,
-        "standard": {"oil_type": "原油", "facility_type": "井口", "location": "合成地点"},
+        "standard": {"oil_type": "原油", "facility_type": "井口", "location": "合成地点",
+                     "occurred_time": case.occurred_time.isoformat()},
         "analysis_facts": {"latitude": 46., "longitude": 125.}}
     db.add(MapSource(id=10, operational_area_id=1, source_key="facility-roads", name="合成道路来源", source_type="internal_gis"))
     db.flush()
     features = [{"id": "road", "type": "Feature", "properties": {"kind": "road", "name": "生产路"},
                  "geometry": {"type": "LineString", "coordinates": [[125, 46], [125.02, 46]]}}]
     for i in range(2, 14):
-        db.add(JurisdictionAsset(id=i, operational_area_id=1, name=f"合成设施{i}", asset_type="well"))
+        db.add(JurisdictionAsset(id=i, operational_area_id=1, name=f"合成设施{i}", asset_type="well", verified=True))
         db.add(MapSnapshotFeature(snapshot_id="map-1", asset_id=i, operational_area_id=1,
             name=f"合成设施{i}", asset_type="well", geometry_type="point", source="manual", status="active",
             verified=True, latitude=46., longitude=125 + i / 1000,
@@ -69,6 +85,9 @@ def prepared(ready, monkeypatch):
         "filter_result": {"public_node_access_policy_version": NODE_POLICY_VERSION},
         "governance_plan": {"public_source_sha256": "f" * 64, "inputs": {"source_ids": [10], "included": [
             {"source_id": 10, "feature_id": "road", "import_id": 100, "input_sha256": "e" * 64}]}}}
+    db.commit()
+    for identifier in range(2, 14):
+        declare_production(db, identifier)
     db.commit()
     source, _ = CaseResultService.create_current(db, 1)
     db.commit()
@@ -133,7 +152,11 @@ def test_production_and_authorized_old_history_are_grounded_before_routing(prepa
     asset = db.query(MapSnapshotFeature).filter_by(asset_id=13).one()
     asset.attributes = {**asset.attributes, "water_cut_min": 20, "water_cut_max": 40, "water_cut_unit": "percent",
         "production_valid_from": "2026-09-01T00:00:00Z", "production_valid_to": "2026-10-01T00:00:00Z"}
+    db.flush()
+    declare_production(db, 13)
     db.commit()
+    from tests.history_index_helpers import build_history_index
+    build_history_index(db)
     source, _ = CaseResultService.create_current(db, 1)
     db.commit()
     result = compare_case_facilities(db, result_id=source["id"], network_id="graph-1", analysis_at=AT,

@@ -98,6 +98,14 @@ const Workbench: React.FC = () => {
 
     <DailyReviewPreview />
 
+    {data.changes && <section className="daily-cases" aria-label="持续关注的重要变化">
+      <h2>持续关注的重要变化</h2>
+      {data.changes.length ? <ul>{data.changes.slice(0, 3).map(change => <li key={`${change.topic_id}:${change.revision}`}>
+        <h3><Link to={`/topics?topic=${encodeURIComponent(change.topic_id)}&revision=${change.revision}`}>{change.title}</Link></h3>
+        <p>{change.summary}</p><ul>{change.items.map((item, index) => <li key={index}>{item.message}</li>)}</ul>
+      </li>)}</ul> : <p>目前没有需要提示的实质变化。后台刷新或重试不会单独生成事项。</p>}
+    </section>}
+
     <section className="daily-cases" aria-labelledby="daily-cases-title">
       <div className="daily-section-heading">
         <h2 id="daily-cases-title">近期案件</h2>

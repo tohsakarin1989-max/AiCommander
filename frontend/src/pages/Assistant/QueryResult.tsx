@@ -5,6 +5,8 @@ import { roadDetourLabel, type RoadDetourReference } from '../../services/roadAn
 import { isCaseHistoryResult } from '../../services/caseHistory'
 import { CaseHistoryContent } from '../Cases/CaseHistoryReferences'
 import { ProfileAggregateContent } from './ProfileAggregateContent'
+import BusinessQueryCard from './BusinessQueryCard'
+import { ContinuationResult } from './ContinuationResult'
 
 const assertionKinds: Record<string, string> = { stated: '原文明述（未核实）', negated: '原文否定', uncertain: '不确定', inferred: '推断' }
 function ProfileContent({ row }: { row: Record<string, unknown> }) {
@@ -76,10 +78,15 @@ function InsightContent({ row }: { row: Record<string, unknown> }) {
 
 export function QueryResult({ card }: { card: QueryCard }) {
   const data = card.data || {}
+  if (card.tool === 'aggregate_case_profiles' && card.continuation) return <section className="query-result" aria-label="全库画像条件统计">
+    <h2>全库画像条件统计</h2>
+    <ContinuationResult continuation={card.continuation} partial={data} />
+  </section>
   const rows = rowsOf(data.items)
   const publicData = data.public_places as { items?: unknown; state?: string } | undefined
   return <section className="query-result" aria-label={toolNames[card.tool] || '查询结果'}>
     <h2>{toolNames[card.tool] || '查询结果'}</h2>
+    <BusinessQueryCard card={card} />
     {card.state === 'empty' && card.tool !== 'find_history' && <p>当前授权范围和筛选条件下没有匹配数据。</p>}
     {card.tool === 'find_history' && (isCaseHistoryResult(data)
       ? <CaseHistoryContent result={data} /> : <p role="alert">历史参考结构或来源不完整，不能据此判断没有匹配资料。</p>)}

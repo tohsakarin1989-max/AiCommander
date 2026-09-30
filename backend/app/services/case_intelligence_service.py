@@ -8,14 +8,15 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models.case import Case, CaseEvidence, CaseVehicle
-from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_quality_service import CaseQualityService
+from app.services.case_tag_evidence import TAG_RULE_VERSION, collect_tag_evidence
 from app.services.jurisdiction_service import (
     PRODUCTION_TARGET_TYPES,
     ROAD_TYPES,
@@ -23,16 +24,16 @@ from app.services.jurisdiction_service import (
     VILLAGE_TYPES,
     JurisdictionService,
 )
-from app.utils.geo import haversine_km
 
 
 Tag = Dict[str, Any]
+LEGACY_AREA_BOUNDARY = "旧区域风险评分已停用，不再按邻近案数、资料缺失或未核验状态加分；未计算不表示零风险。"
 
 
 VEHICLE_KEYWORDS = {
     "pickup": ("皮卡", "皮卡车"),
     "van": ("面包车", "厢货", "厢式", "货车", "箱货"),
-    "tanker": ("罐车", "油罐", "储油罐"),
+    "tanker": ("罐车", "油罐车"),
     "farm": ("农用车", "三轮", "拖拉机"),
     "unknown_plate": ("无牌", "套牌", "遮挡号牌", "假牌"),
 }
@@ -82,6 +83,32 @@ def _safe_round(value: Optional[float], ndigits: int = 2) -> Optional[float]:
     return round(value, ndigits) if isinstance(value, (int, float)) else None
 
 
+class _WorkbenchInputs:
+    """Only reuse read-only calculations within one service call and session.
+
+    Nothing is stored on the session or globally. Exact arguments remain part of
+    the key: an experience card's 365-day window is not the selected window, and
+    a scene's eight examples are not the workbench's display limit.
+    """
+
+    _NESTED = {
+        "analyze_scene_factors", "build_prevention_suggestions",
+        "build_experience_card", "build_report",
+    }
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.values: dict[tuple, dict] = {}
+
+    def call(self, name: str, **parameters) -> dict:
+        key = (name, tuple(sorted(parameters.items())))
+        if key not in self.values:
+            method = getattr(CaseIntelligenceService, name)
+            nested = {"_inputs": self} if name in self._NESTED else {}
+            self.values[key] = method(self.db, **parameters, **nested)
+        return self.values[key]
+
+
 class CaseIntelligenceService:
     """案件研判工作台：从已破案件中沉淀可解释的防控参考。"""
 
@@ -93,6 +120,7 @@ class CaseIntelligenceService:
         limit: int = 8,
         radius_km: float = 1.5,
     ) -> Dict[str, Any]:
+        inputs = _WorkbenchInputs(db)
         selected_case = CaseIntelligenceService._get_case(db, case_id) if case_id else None
         quality = (
             selected_case.quality_issues
@@ -107,41 +135,41 @@ class CaseIntelligenceService:
             else {"case_id": None, "tags": CaseIntelligenceService._aggregate_tags(db, days)}
         )
         similar_cases = (
-            CaseIntelligenceService.find_similar_cases(db, selected_case.id, days=days, limit=limit)
+            inputs.call("find_similar_cases", case_id=selected_case.id, days=days, limit=limit)
             if selected_case
             else {"case_id": None, "items": []}
         )
-        spatiotemporal = CaseIntelligenceService.analyze_spatiotemporal_patterns(db, days=days)
+        spatiotemporal = inputs.call("analyze_spatiotemporal_patterns", days=days)
         scene = (
-            CaseIntelligenceService.analyze_scene_factors(db, selected_case.id, days=days)
+            inputs.call("analyze_scene_factors", case_id=selected_case.id, days=days)
             if selected_case
             else CaseIntelligenceService.analyze_global_scene_factors(db, days=days)
         )
-        area_profiles = CaseIntelligenceService.build_area_risk_profiles(
-            db,
+        area_profiles = inputs.call(
+            "build_area_risk_profiles",
             days=days,
             limit=limit,
             radius_km=radius_km,
         )
-        suggestions = CaseIntelligenceService.build_prevention_suggestions(
-            db,
+        suggestions = inputs.call(
+            "build_prevention_suggestions",
             case_id=selected_case.id if selected_case else None,
             days=days,
             limit=limit,
         )
         experience_card = (
-            CaseIntelligenceService.build_experience_card(db, selected_case.id, persist=False)
+            inputs.call("build_experience_card", case_id=selected_case.id, persist=False)
             if selected_case
             else None
         )
-        report = CaseIntelligenceService.build_report(
-            db,
+        report = inputs.call(
+            "build_report",
             case_id=selected_case.id if selected_case else None,
             days=days,
             limit=limit,
         )
 
-        return {
+        workbench = {
             "scope": {
                 "mode": "single_case" if selected_case else "global",
                 "days": days,
@@ -164,6 +192,8 @@ class CaseIntelligenceService:
             "experience_card": experience_card,
             "report": report,
         }
+        workbench["context_pack"] = CaseIntelligenceService._build_llm_context_from_workbench(workbench)
+        return workbench
 
     @staticmethod
     def build_llm_context_pack(
@@ -185,13 +215,14 @@ class CaseIntelligenceService:
             limit=limit,
             radius_km=radius_km,
         )
-        return CaseIntelligenceService._build_llm_context_from_workbench(workbench)
+        return workbench["context_pack"]
 
     @staticmethod
     def build_case_tags(db: Session, case: Case) -> Dict[str, Any]:
         context = CaseIntelligenceService._safe_case_context(db, case)
-        text_pool = CaseIntelligenceService._case_text_pool(case)
         tags: List[Tag] = []
+        observations: List[Dict[str, Any]] = []
+        information_gaps: List[str] = []
 
         def add(
             key: str,
@@ -225,55 +256,77 @@ class CaseIntelligenceService:
         production = nearest.get("production_target")
         tech = nearest.get("tech")
         if road and road.get("distance_km") is not None and road["distance_km"] <= 0.8:
-            add("space_road_access", "道路通达", "space", 0.88, [f"距道路 {road['distance_km']:.2f} 公里"])
+            add("space_road_access", "邻近已登记道路", "space", 0.88, [f"直线距道路 {road['distance_km']:.2f} 公里，入口及通行条件待核"])
         if village and village.get("distance_km") is not None and village["distance_km"] <= 1.5:
             add("space_near_village", "靠近村屯", "space", 0.82, [f"距村屯 {village['distance_km']:.2f} 公里"])
         if production and production.get("distance_km") is not None and production["distance_km"] <= 0.5:
             add("space_near_production", "贴近生产目标", "space", 0.9, [f"距生产目标 {production['distance_km']:.2f} 公里"])
-        if not village or (village.get("distance_km") is not None and village["distance_km"] > 2.0):
-            if _contains_any(text_pool, ("井场", "井口", "井区", "偏远", "荒地")) or case.facility_type:
-                add("space_remote_site", "偏远井场", "space", 0.72, ["案情或设施类型显示井场/井口，且近距离村屯信息不足"])
+        if not village:
+            information_gaps.append("村屯资料未取得，不能据此认定现场偏远。")
         if not tech:
-            add("defense_unknown_tech", "技防覆盖待核实", "defense", 0.55, ["辖区底座未找到近距离技防要素"])
-        elif tech.get("distance_km") is not None and tech["distance_km"] > 0.8:
-            add("defense_tech_gap", "近距离技防不足", "defense", 0.76, [f"距最近技防点 {tech['distance_km']:.2f} 公里"])
+            information_gaps.append("技防资料未取得，覆盖情况待核，不能认定没有技防。")
+        else:
+            information_gaps.append("已登记技防点的邻近距离不能证明覆盖或防护不足，需核对有效覆盖资料。")
 
-        vehicle_text = " ".join(
-            [
-                text_pool,
-                _text(case.vehicle_info),
-                _text([CaseIntelligenceService._vehicle_brief(v) for v in (case.vehicles or [])]),
-            ]
-        )
-        for key, keywords in VEHICLE_KEYWORDS.items():
-            if _contains_any(vehicle_text, keywords):
-                add(f"vehicle_{key}", CaseIntelligenceService._vehicle_label(key), "vehicle", 0.86, [f"命中车辆描述：{CaseIntelligenceService._matched_keyword(vehicle_text, keywords)}"])
-
-        for key, keywords in TOOL_KEYWORDS.items():
-            if _contains_any(text_pool, keywords):
-                add(f"tool_{key}", CaseIntelligenceService._tool_label(key), "tool", 0.86, [f"命中工具/装载描述：{CaseIntelligenceService._matched_keyword(text_pool, keywords)}"])
-
-        for key, keywords in WEAKNESS_KEYWORDS.items():
-            if _contains_any(text_pool, keywords):
-                add(f"weakness_{key}", CaseIntelligenceService._weakness_label(key), "defense", 0.84, [f"命中现场薄弱描述：{CaseIntelligenceService._matched_keyword(text_pool, keywords)}"])
-        if case.security_level and any(word in case.security_level for word in ("低", "薄弱", "差")):
-            add("weakness_low_security", "安防等级偏低", "defense", 0.82, [f"安防等级：{case.security_level}"])
+        terms = {}
+        labels = {"weakness_low_security": "安防等级偏低"}
+        for category, prefix, dictionary, labeler in (
+            ("vehicle", "vehicle", VEHICLE_KEYWORDS, CaseIntelligenceService._vehicle_label),
+            ("tool", "tool", TOOL_KEYWORDS, CaseIntelligenceService._tool_label),
+            ("defense", "weakness", WEAKNESS_KEYWORDS, CaseIntelligenceService._weakness_label),
+        ):
+            terms[category] = {}
+            for key, words in dictionary.items():
+                normalized_key = f"{prefix}_{key}"
+                labels[normalized_key] = labeler(key)
+                terms[category].update({word: normalized_key for word in words})
+        evidence = collect_tag_evidence(case, terms)
+        grouped = defaultdict(list)
+        for assertion in evidence["assertions"]:
+            grouped[(assertion["category"], assertion["value"])].append(assertion)
+        if evidence["information_gaps"]:
+            information_gaps.append("部分原文或结构化字段未完整提取，自动词项标签暂不作肯定归纳。")
+        for (category, key), assertions in grouped.items():
+            kinds = {item["kind"] for item in assertions}
+            references = [ref for item in assertions
+                          for ref in [item["reference"], *item.get("context_references", [])]]
+            # Mixed statements require context review, not an affirmative majority vote.
+            if kinds == {"stated"} and not evidence["information_gaps"]:
+                add(key, labels[key], category, 0.84, [
+                    f"原文明确表述：{ref.get('quote', ref.get('value', ''))}" for ref in references
+                ])
+                tags[-1]["references"] = references
+                tags[-1]["kind"] = "stated"
+                tags[-1]["is_official_fact"] = False
+            else:
+                kind = "conflicting" if {"stated", "negated"} <= kinds else (
+                    "negated" if kinds == {"negated"} else "uncertain"
+                )
+                observations.append({
+                    "key": key, "label": labels[key], "category": category,
+                    "kind": kind, "references": references,
+                })
+                state = {"negated": "否定表述", "uncertain": "待核表述", "conflicting": "肯否并存待核"}[kind]
+                information_gaps.append(f"{labels[key]}：{state}，不作为自动肯定标签。")
 
         if case.source_type in CAPTURE_SOURCE_TAGS:
             key, label = CAPTURE_SOURCE_TAGS[case.source_type]
             add(key, label, "capture", 0.92, [f"线索来源：{case.source_type}"])
 
-        if case.oil_volume is not None:
+        if case.oil_volume is not None and getattr(case, "oil_volume_unit", None) == "tonne":
             if case.oil_volume >= 2:
-                add("oil_large_volume", "涉油数量较大", "oil", 0.82, [f"涉油数量 {case.oil_volume:g}"])
+                add("oil_large_volume", "涉油数量较大", "oil", 0.82, [f"涉油数量 {case.oil_volume:g}吨"])
             elif case.oil_volume <= 0.5:
-                add("oil_small_volume", "小批量转运", "oil", 0.72, [f"涉油数量 {case.oil_volume:g}"])
+                add("oil_small_volume", "涉油数量较少", "oil", 0.72, [f"涉油数量 {case.oil_volume:g}吨，不能据此推定发生转运"])
+        elif case.oil_volume is not None:
+            information_gaps.append("油量非明确吨单位，未套用吨量大小标签；原始数值与单位分别保留。")
 
         overrides = CaseIntelligenceService._tag_overrides(case)
         removed = set(overrides.get("removed_keys") or [])
         tags = [tag for tag in tags if tag["key"] not in removed]
         for added in overrides.get("added") or []:
-            if isinstance(added, dict) and added.get("key") and not any(tag["key"] == added["key"] for tag in tags):
+            if isinstance(added, dict) and added.get("key"):
+                tags = [tag for tag in tags if tag["key"] != added["key"]]
                 tags.append({
                     "key": added["key"],
                     "label": added.get("label") or added["key"],
@@ -289,6 +342,11 @@ class CaseIntelligenceService:
             "case_number": case.case_number,
             "tags": sorted(tags, key=lambda item: (item["category"], -item["confidence"], item["label"])),
             "category_counts": dict(category_counts),
+            "rule_version": TAG_RULE_VERSION,
+            "observations": observations,
+            "information_gaps": information_gaps,
+            "source_snapshot": evidence["source_snapshot"],
+            "structured_sources": evidence["structured_sources"],
             "context": context,
             "principle": "标签基于时间、空间环境、车辆类型、工具痕迹、现场薄弱点和发现方式，不以同人同车多案作为核心依据。",
         }
@@ -332,27 +390,10 @@ class CaseIntelligenceService:
         days: int = 365,
         limit: int = 10,
     ) -> Dict[str, Any]:
-        base_case = CaseIntelligenceService._get_case(db, case_id)
-        base_tags = CaseIntelligenceService.build_case_tags(db, base_case)["tags"]
-        cutoff = datetime.utcnow() - timedelta(days=days) if days > 0 else None
-        query = db.query(Case).filter(Case.id != base_case.id)
-        if cutoff is not None:
-            query = query.filter(Case.occurred_time >= cutoff)
-        candidates = query.order_by(Case.occurred_time.desc()).limit(500).all()
+        """Compatibility shape backed by the authorized, versioned history index."""
+        from app.services.case_history_compat import build_legacy_similar_cases
 
-        items = []
-        for other in candidates:
-            scored = CaseIntelligenceService._score_case_similarity(db, base_case, base_tags, other)
-            if scored["similarity_score"] >= 25:
-                items.append(scored)
-        items.sort(key=lambda item: item["similarity_score"], reverse=True)
-
-        return {
-            "case_id": base_case.id,
-            "case_number": base_case.case_number,
-            "principle": "相似度按作案条件计算：时间、空间环境、车辆类型、工具痕迹、现场薄弱点和抓获方式；不把同人同车重复出现作为核心依据。",
-            "items": items[:limit],
-        }
+        return build_legacy_similar_cases(db, case_id, days=days, limit=limit)
 
     @staticmethod
     def analyze_spatiotemporal_patterns(db: Session, days: int = 365) -> Dict[str, Any]:
@@ -427,11 +468,14 @@ class CaseIntelligenceService:
         }
 
     @staticmethod
-    def analyze_scene_factors(db: Session, case_id: int, days: int = 365) -> Dict[str, Any]:
+    def analyze_scene_factors(
+        db: Session, case_id: int, days: int = 365, *, _inputs: Optional[_WorkbenchInputs] = None
+    ) -> Dict[str, Any]:
+        inputs = _inputs if _inputs is not None else _WorkbenchInputs(db)
         case = CaseIntelligenceService._get_case(db, case_id)
         tags_payload = CaseIntelligenceService.build_case_tags(db, case)
         tags = tags_payload["tags"]
-        similar = CaseIntelligenceService.find_similar_cases(db, case_id, days=days, limit=8)
+        similar = inputs.call("find_similar_cases", case_id=case_id, days=days, limit=8)
         similar_ids = [item["case"]["id"] for item in similar["items"]]
         related_cases = (
             db.query(Case).filter(Case.id.in_(similar_ids)).all()
@@ -517,71 +561,22 @@ class CaseIntelligenceService:
         limit: int = 10,
         radius_km: float = 1.5,
     ) -> Dict[str, Any]:
-        cutoff = datetime.utcnow() - timedelta(days=days) if days > 0 else None
-        case_query = db.query(Case).filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
-        if cutoff is not None:
-            case_query = case_query.filter(Case.occurred_time >= cutoff)
-        cases = case_query.all()
-        assets = db.query(JurisdictionAsset).filter(
-            JurisdictionAsset.status == "active",
-            JurisdictionAsset.latitude.isnot(None),
-            JurisdictionAsset.longitude.isnot(None),
-        ).all()
-
-        profiles = []
-        for asset in assets:
-            nearby = []
-            for case in cases:
-                distance = haversine_km(asset.latitude, asset.longitude, case.latitude, case.longitude)
-                if distance <= radius_km:
-                    nearby.append((case, distance))
-            if not nearby and asset.asset_type not in PRODUCTION_TARGET_TYPES:
-                continue
-            tag_counter: Counter[str] = Counter()
-            hour_counter: Counter[int] = Counter()
-            for case, _ in nearby:
-                if case.occurred_time:
-                    hour_counter[case.occurred_time.hour] += 1
-                for tag in CaseIntelligenceService.build_case_tags(db, case)["tags"]:
-                    tag_counter[tag["label"]] += 1
-            score = min(100, (asset.risk_level or 1) * 10 + len(nearby) * 24)
-            reasons = []
-            if nearby:
-                reasons.append(f"{radius_km:g} 公里范围内关联已破案件 {len(nearby)} 起。")
-            if asset.asset_type in PRODUCTION_TARGET_TYPES:
-                reasons.append("该要素属于生产目标，适合作为风险画像对象。")
-            if not asset.verified:
-                score = min(100, score + 6)
-                reasons.append("底座要素尚未核验，研判使用前需确认名称和坐标。")
-            if not reasons:
-                reasons.append("暂无历史案件关联，维持基础关注并补充周边条件。")
-
-            profiles.append({
-                "asset": CaseIntelligenceService._asset_brief(asset),
-                "risk_score": round(score, 1),
-                "risk_level": CaseIntelligenceService._risk_level(score),
-                "case_count": len(nearby),
-                "related_cases": [
-                    {
-                        **CaseIntelligenceService._case_brief(case),
-                        "distance_km": round(distance, 3),
-                    }
-                    for case, distance in sorted(nearby, key=lambda item: item[1])[:8]
-                ],
-                "common_tags": CaseIntelligenceService._counter_items(tag_counter, "label")[:8],
-                "top_hours": CaseIntelligenceService._counter_items(hour_counter, "hour")[:5],
-                "risk_reasons": reasons,
-            })
-
-        if not profiles and cases:
-            profiles = CaseIntelligenceService._fallback_case_grid_profiles(cases)
-
-        profiles.sort(key=lambda item: (item["risk_score"], item["case_count"]), reverse=True)
+        """Retain the workbench contract without running the retired score."""
         return {
+            "state": "retired",
+            "code": "legacy_area_scoring_retired",
             "days": days,
             "radius_km": radius_km,
-            "profile_count": len(profiles),
-            "items": profiles[:limit],
+            "profile_count": None,
+            "items": [],
+            "computed": False,
+            "boundary": LEGACY_AREA_BOUNDARY,
+            "replacement": {
+                "region": "/area-analysis",
+                "situation": "/situation",
+                "region_api": "/api/facility-analysis/region",
+                "situation_api": "/api/situation/briefs/latest",
+            },
         }
 
     @staticmethod
@@ -590,17 +585,18 @@ class CaseIntelligenceService:
         case_id: Optional[int] = None,
         days: int = 365,
         limit: int = 8,
+        *,
+        _inputs: Optional[_WorkbenchInputs] = None,
     ) -> Dict[str, Any]:
+        inputs = _inputs if _inputs is not None else _WorkbenchInputs(db)
         suggestions: List[Dict[str, Any]] = []
-        spatiotemporal = CaseIntelligenceService.analyze_spatiotemporal_patterns(db, days=days)
-        area_profiles = CaseIntelligenceService.build_area_risk_profiles(db, days=days, limit=limit)
-
+        spatiotemporal = inputs.call("analyze_spatiotemporal_patterns", days=days)
         if case_id is not None:
             case = CaseIntelligenceService._get_case(db, case_id)
             quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
             tags = CaseIntelligenceService.build_case_tags(db, case)["tags"]
-            similar = CaseIntelligenceService.find_similar_cases(db, case_id, days=days, limit=limit)
-            scene = CaseIntelligenceService.analyze_scene_factors(db, case_id, days=days)
+            similar = inputs.call("find_similar_cases", case_id=case_id, days=days, limit=limit)
+            scene = inputs.call("analyze_scene_factors", case_id=case_id, days=days)
 
             if similar["items"]:
                 top = similar["items"][0]
@@ -634,7 +630,7 @@ class CaseIntelligenceService:
                     "data_completion",
                     "先补齐影响研判的案件字段",
                     "medium",
-                    f"优先补齐 {CaseIntelligenceService._join_cn(missing)}，否则相似条件和风险画像会失真。",
+                    f"优先补齐 {CaseIntelligenceService._join_cn(missing)}，否则历史条件比较会受影响。",
                     ["案件信息质量评分存在缺项。"],
                     missing,
                     0.9,
@@ -664,17 +660,6 @@ class CaseIntelligenceService:
                 0.76,
             ))
 
-        for profile in area_profiles.get("items", [])[:3]:
-            suggestions.append(CaseIntelligenceService._suggestion(
-                f"area_{profile['asset']['id']}",
-                f"关注区域：{profile['asset']['name']}",
-                "high" if profile["risk_score"] >= 70 else "medium",
-                "该区域具备历史案件或相似现场条件，建议纳入人工研判关注清单。",
-                profile["risk_reasons"],
-                [case["case_number"] for case in profile.get("related_cases", [])[:5]],
-                min(0.9, 0.55 + profile["risk_score"] / 200),
-            ))
-
         deduped = []
         seen = set()
         for item in suggestions:
@@ -693,11 +678,20 @@ class CaseIntelligenceService:
 
     @staticmethod
     def build_experience_card(
-        db: Session, case_id: int, *, persist: bool = True
+        db: Session, case_id: int, *, persist: bool = True,
+        _inputs: Optional[_WorkbenchInputs] = None,
     ) -> Dict[str, Any]:
+        inputs = _inputs if _inputs is not None else _WorkbenchInputs(db)
         case = CaseIntelligenceService._get_case(db, case_id)
+        existing_features = dict(case.features or {})
+        intelligence = dict(existing_features.get("intelligence") or {})
+        existing_card = intelligence.get("experience_card") or {}
+        if persist and existing_card.get("manual_review_status") in {"confirmed", "archived"}:
+            # Legacy batch actions cannot overwrite a human-reviewed historical card.
+            # New drafts use the versioned knowledge-asset path instead.
+            return deepcopy(existing_card)
         tags_payload = CaseIntelligenceService.build_case_tags(db, case)
-        scene = CaseIntelligenceService.analyze_scene_factors(db, case_id)
+        scene = inputs.call("analyze_scene_factors", case_id=case_id, days=365)
         tags = tags_payload["tags"]
         conditions = [tag["label"] for tag in tags if tag["category"] in {"time", "space"}]
         vehicle_tools = [tag["label"] for tag in tags if tag["category"] in {"vehicle", "tool"}]
@@ -709,22 +703,19 @@ class CaseIntelligenceService:
             for item in quality.get("missing_required", [])
             if isinstance(item, dict) and item.get("label")
         ]
-        existing_features = dict(case.features or {})
-        intelligence = dict(existing_features.get("intelligence") or {})
-        existing_card = intelligence.get("experience_card") or {}
-        manual_review_status = existing_card.get("manual_review_status") or "pending"
 
         card = {
             "case_id": case.id,
             "source_case_id": case.id,
             "case_number": case.case_number,
             "generated_at": datetime.utcnow().isoformat(),
-            "manual_review_status": manual_review_status,
+            "manual_review_status": "pending",
             "summary": case.description or case.location or case.case_type or "未填写案情摘要",
             "operation_conditions": conditions or ["作案条件信息不足，需补齐时间、地点和现场环境。"],
             "discovery_method": capture_tags or [case.source_type or "发现方式未明确"],
             "protection_shortcomings": weaknesses or ["防护短板未明确，需结合现场照片、监控和防护设施核实。"],
-            "evidence_gaps": missing_fields or ["暂无明显必填字段缺口，仍需人工核验证据完整性。"],
+            "evidence_gaps": [*missing_fields, *tags_payload.get("information_gaps", [])]
+                or ["暂无明显必填字段缺口，仍需人工核验证据完整性。"],
             "reusable_suggestions": scene.get("reusable_rules", []),
             "referenced_cases": [case.case_number],
             "boundary": "经验卡区分事实、推断和建议；仅沉淀已发生案件经验，不做犯罪预测，不替代人工确认。",
@@ -743,6 +734,8 @@ class CaseIntelligenceService:
             "next_attention_points": CaseIntelligenceService._next_attention_points(tags),
             "evidence_basis": {
                 "tags": tags[:12],
+                "observations": tags_payload.get("observations", []),
+                "tag_rule_version": tags_payload.get("rule_version"),
                 "spatial_context": tags_payload.get("context"),
             },
         }
@@ -760,11 +753,14 @@ class CaseIntelligenceService:
         case_id: Optional[int] = None,
         days: int = 365,
         limit: int = 8,
+        *,
+        _inputs: Optional[_WorkbenchInputs] = None,
     ) -> Dict[str, Any]:
+        inputs = _inputs if _inputs is not None else _WorkbenchInputs(db)
         selected_case = CaseIntelligenceService._get_case(db, case_id) if case_id else None
-        spatiotemporal = CaseIntelligenceService.analyze_spatiotemporal_patterns(db, days=days)
-        suggestions = CaseIntelligenceService.build_prevention_suggestions(db, case_id=case_id, days=days, limit=limit)
-        area_profiles = CaseIntelligenceService.build_area_risk_profiles(db, days=days, limit=limit)
+        spatiotemporal = inputs.call("analyze_spatiotemporal_patterns", days=days)
+        suggestions = inputs.call("build_prevention_suggestions", case_id=case_id, days=days, limit=limit)
+        area_profiles = inputs.call("build_area_risk_profiles", days=days, limit=limit, radius_km=1.5)
         sections = []
 
         title = (
@@ -782,7 +778,7 @@ class CaseIntelligenceService:
             ],
         })
         if selected_case:
-            experience = CaseIntelligenceService.build_experience_card(db, selected_case.id, persist=False)
+            experience = inputs.call("build_experience_card", case_id=selected_case.id, persist=False)
             tags_payload = CaseIntelligenceService.build_case_tags(db, selected_case)
             tag_labels = [tag["label"] for tag in tags_payload.get("tags", [])[:8]]
             quality = selected_case.quality_issues or CaseQualityService.evaluate_case(db, selected_case)
@@ -814,7 +810,8 @@ class CaseIntelligenceService:
             sections.append({
                 "title": "四、信息缺口",
                 "type": "gaps",
-                "items": missing_fields or ["暂无明显必填字段缺口。"],
+                "items": [*missing_fields, *tags_payload.get("information_gaps", [])]
+                    or ["暂无明显必填字段缺口。"],
             })
         else:
             sections.append({
@@ -829,7 +826,8 @@ class CaseIntelligenceService:
             sections.append({
                 "title": "三、模式发现",
                 "type": "patterns",
-                "items": spatiotemporal.get("insights", []),
+                # Report-only area notes must not mutate the shared statistics.
+                "items": list(spatiotemporal.get("insights", [])),
             })
             sections.append({
                 "title": "四、信息缺口",
@@ -837,16 +835,11 @@ class CaseIntelligenceService:
                 "items": ["未选择具体案件时，仅能输出全局趋势，不能形成单案复盘结论。"],
             })
 
-        area_items = [
-            f"{profile['asset']['name']}：{'; '.join(profile['risk_reasons'][:2])}"
-            for profile in area_profiles.get("items", [])[:5]
-        ]
         pattern_section = next((section for section in sections if section.get("type") == "patterns"), None)
-        if pattern_section is not None:
-            pattern_section["items"].extend(
-                [f"重点关注区域：{item}" for item in area_items]
-                or ["辖区底座或案件坐标不足，暂不能形成区域画像。"]
-            )
+        gap_section = next((section for section in sections if section.get("type") == "gaps"), None)
+        if gap_section is not None:
+            gap_section["items"].append(area_profiles["boundary"])
+
         sections.append({
             "title": "五、防控建议草案",
             "type": "prevention_reference",
@@ -873,14 +866,6 @@ class CaseIntelligenceService:
                 "kind": "case",
                 "summary": f"案件 {selected_case.case_number}",
                 "basis": [selected_case.location or "地点未填写"],
-            })
-        for profile in area_profiles.get("items", [])[:5]:
-            asset = profile.get("asset", {})
-            evidence_refs.append({
-                "id": f"area:{asset.get('id')}",
-                "kind": "area_profile",
-                "summary": f"{asset.get('name', '未命名区域')}，风险画像分 {profile.get('risk_score')}",
-                "basis": profile.get("risk_reasons", []),
             })
         report_boundary = [
             "只基于已录入案件、辖区底座和结构化研判结果生成草稿。",
@@ -984,7 +969,6 @@ class CaseIntelligenceService:
         tags = workbench.get("feature_tags", {}).get("tags", []) or []
         similar_items = workbench.get("similar_cases", {}).get("items", []) or []
         suggestions = workbench.get("prevention_suggestions", {}).get("items", []) or []
-        area_profiles = workbench.get("area_profiles", {}).get("items", []) or []
         spatiotemporal = workbench.get("spatiotemporal", {}) or {}
         quality = workbench.get("quality") or {}
         readiness = workbench.get("readiness") or {}
@@ -1025,18 +1009,10 @@ class CaseIntelligenceService:
             case_number = item.get("case", {}).get("case_number")
             if case_number:
                 pattern_inferences.append({
-                    "claim": f"{case_number} 与当前案件具备相似作案条件，分值 {item.get('similarity_score')}",
+                    "claim": f"{case_number} 为统一历史检索参考，检索支持度 {item.get('score')}（非概率，不能据此认定实际关联）",
                     "basis": item.get("reasons", [])[:4],
-                    "confidence": "high" if item.get("similarity_score", 0) >= 70 else "medium",
+                    "confidence": "未校准",
                 })
-        for profile in area_profiles[:4]:
-            asset = profile.get("asset", {})
-            pattern_inferences.append({
-                "claim": f"{asset.get('name', '未命名区域')} 可作为区域画像关注对象",
-                "basis": profile.get("risk_reasons", [])[:4],
-                "confidence": "high" if profile.get("risk_score", 0) >= 70 else "medium",
-            })
-
         prevention_references = [
             {
                 "title": item.get("title"),
@@ -1049,7 +1025,13 @@ class CaseIntelligenceService:
             for item in suggestions[:display_limit]
         ]
 
-        information_gaps: List[str] = []
+        information_gaps: List[str] = [LEGACY_AREA_BOUNDARY]
+        information_gaps.extend(workbench.get("feature_tags", {}).get("information_gaps", []))
+        retrieval = workbench.get("similar_cases") or {}
+        if retrieval.get("state") == "unavailable":
+            information_gaps.append("统一历史检索暂不可用，不能据此判断没有相关资料。")
+        elif retrieval.get("coverage", {}).get("complete") is False:
+            information_gaps.append("历史检索未覆盖完整范围，以下为部分结果。")
         for item in (quality.get("missing_required") or [])[:8]:
             if isinstance(item, dict):
                 label = item.get("label") or item.get("field")
@@ -1069,24 +1051,18 @@ class CaseIntelligenceService:
                 "kind": "tag",
                 "summary": f"{tag.get('label')}（{tag.get('category')}）",
                 "basis": tag.get("basis", []),
+                "references": tag.get("references", []),
             })
         for item in similar_items[:5]:
             case_number = item.get("case", {}).get("case_number")
             evidence_index.append({
                 "id": f"similar:{case_number}",
                 "kind": "similar_case",
-                "summary": f"{case_number}，相似度 {item.get('similarity_score')}",
+                "summary": f"{case_number}，检索支持度 {item.get('score')}（非概率）",
                 "basis": item.get("reasons", []),
+                "versions": item.get("versions", {}),
+                "evidence_refs": item.get("evidence_refs", []),
             })
-        for profile in area_profiles[:5]:
-            asset = profile.get("asset", {})
-            evidence_index.append({
-                "id": f"area:{asset.get('id')}",
-                "kind": "area_profile",
-                "summary": f"{asset.get('name')}，风险画像分 {profile.get('risk_score')}",
-                "basis": profile.get("risk_reasons", []),
-            })
-
         boundary = [
             "只基于已录入案件、辖区底座和结构化研判结果回答。",
             "必须区分事实依据、模式推断、防控参考和信息缺口。",
@@ -1153,111 +1129,41 @@ class CaseIntelligenceService:
         }
 
     @staticmethod
-    def _score_case_similarity(
-        db: Session,
-        base_case: Case,
-        base_tags: List[Tag],
-        other: Case,
-    ) -> Dict[str, Any]:
-        other_tags = CaseIntelligenceService.build_case_tags(db, other)["tags"]
-        base_by_category = CaseIntelligenceService._tag_sets_by_category(base_tags)
-        other_by_category = CaseIntelligenceService._tag_sets_by_category(other_tags)
-        score = 0.0
-        reasons: List[str] = []
-        components: Dict[str, float] = {}
-
-        time_score = CaseIntelligenceService._tag_overlap_score(base_by_category, other_by_category, {"time"})
-        if time_score:
-            components["time"] = round(time_score * 18, 2)
-            score += components["time"]
-            reasons.append("发案时间或时段标签相似")
-        if base_case.occurred_time and other.occurred_time:
-            hour_diff = abs(base_case.occurred_time.hour - other.occurred_time.hour)
-            hour_diff = min(hour_diff, 24 - hour_diff)
-            if hour_diff <= 2:
-                score += 8
-                components["hour_near"] = 8
-                reasons.append(f"发生小时接近，相差 {hour_diff} 小时")
-
-        space_score = CaseIntelligenceService._tag_overlap_score(base_by_category, other_by_category, {"space", "defense"})
-        if space_score:
-            components["space_condition"] = round(space_score * 30, 2)
-            score += components["space_condition"]
-            reasons.append("空间环境或现场薄弱点相似")
-        if (
-            base_case.latitude is not None and base_case.longitude is not None
-            and other.latitude is not None and other.longitude is not None
-        ):
-            distance = haversine_km(base_case.latitude, base_case.longitude, other.latitude, other.longitude)
-            geo_score = max(0.0, 1 - distance / 8) * 18
-            if geo_score > 0:
-                score += geo_score
-                components["geo_distance"] = round(geo_score, 2)
-                reasons.append(f"空间距离 {distance:.2f} 公里")
-
-        vehicle_tool_score = CaseIntelligenceService._tag_overlap_score(base_by_category, other_by_category, {"vehicle", "tool"})
-        if vehicle_tool_score:
-            components["vehicle_tool"] = round(vehicle_tool_score * 22, 2)
-            score += components["vehicle_tool"]
-            reasons.append("车辆类型或工具痕迹相似")
-
-        field_matches = []
-        for field, label in (
-            ("case_type", "案件类型"),
-            ("facility_type", "设施类型"),
-            ("oil_nature", "油品性质"),
-            ("source_type", "发现方式"),
-        ):
-            left = getattr(base_case, field, None)
-            right = getattr(other, field, None)
-            if left and right and left == right:
-                field_matches.append(label)
-        if field_matches:
-            field_score = min(14, len(field_matches) * 4)
-            score += field_score
-            components["structured_fields"] = field_score
-            reasons.append(f"结构化字段一致：{CaseIntelligenceService._join_cn(field_matches)}")
-
-        duplicate_warnings = CaseIntelligenceService._duplicate_anchor_warnings(base_case, other)
-        if duplicate_warnings:
-            reasons.append("检测到同人/同车锚点，优先按重复录入或同案拆分核验，不作为多案规律。")
-
-        return {
-            "case": CaseIntelligenceService._case_brief(other),
-            "similarity_score": round(min(score, 100), 1),
-            "components": components,
-            "reasons": reasons or ["相似度较低，仅作为弱参考。"],
-            "duplicate_warnings": duplicate_warnings,
-            "shared_tags": sorted(
-                list({tag["label"] for tag in base_tags} & {tag["label"] for tag in other_tags})
-            ),
-        }
-
-    @staticmethod
     def _safe_case_context(db: Session, case: Case) -> Dict[str, Any]:
+        # Read geographic facts directly: the legacy risk-context builder adds
+        # uncalibrated proximity/coverage scores and must not be invoked here.
+        has_geo = case.latitude is not None and case.longitude is not None
+        context = {
+            "case_id": case.id,
+            "has_geo": has_geo,
+            "nearest": {},
+            "risk_conditions": [],
+            "prevention_opportunities": [],
+            "risk_score": None,
+            "scoring_state": "retired",
+            "state": "missing_coordinates" if not has_geo else "ready",
+            "boundary": "仅为已登记要素的直线邻近参考，不代表道路通达、实际关联或技防覆盖；旧风险评分已停用。",
+        }
+        if not has_geo:
+            return context
         try:
-            return JurisdictionService.build_case_risk_context(db, case.id)
+            for kind, asset_types in (
+                ("road", ROAD_TYPES), ("village", VILLAGE_TYPES),
+                ("production_target", PRODUCTION_TARGET_TYPES), ("tech", TECH_TYPES),
+            ):
+                nearest = JurisdictionService._nearest_asset(
+                    db, case.latitude, case.longitude, asset_types,
+                )
+                context["nearest"][kind] = JurisdictionService._distance_to_dict(nearest)
         except Exception:
-            return {
-                "case_id": case.id,
-                "has_geo": case.latitude is not None and case.longitude is not None,
-                "nearest": {},
-                "risk_conditions": [],
-                "prevention_opportunities": [],
-                "risk_score": 0,
-            }
+            context["state"] = "unavailable"
+            context["nearest"] = {}
+            context["boundary"] = "地理上下文读取失败，不能解释为没有周边设施或零风险；旧风险评分已停用。"
+        return context
 
     @staticmethod
     def _case_text_pool(case: Case) -> str:
-        # 经验卡是由本函数所依赖的标签生成的派生结果，不能再反向进入
-        # 下一轮标签提取，否则“软管抽油”等总结文本会自我放大出新标签。
-        source_features = dict(case.features or {})
-        intelligence = dict(source_features.get("intelligence") or {})
-        intelligence.pop("experience_card", None)
-        if intelligence:
-            source_features["intelligence"] = intelligence
-        else:
-            source_features.pop("intelligence", None)
+        # 派生特征、历史模型输出和人工标签不反向充当案件原文。
         values = [
             case.case_number,
             case.location,
@@ -1272,31 +1178,8 @@ class CaseIntelligenceService:
             case.source_detail,
             case.vehicle_handling,
             case.oil_handling,
-            _text(case.involved_items),
-            _text(source_features),
         ]
         return " ".join(_text(value) for value in values if value)
-
-    @staticmethod
-    def _tag_sets_by_category(tags: List[Tag]) -> Dict[str, set[str]]:
-        result: Dict[str, set[str]] = defaultdict(set)
-        for tag in tags:
-            result[tag.get("category") or "unknown"].add(tag.get("key") or tag.get("label"))
-        return result
-
-    @staticmethod
-    def _tag_overlap_score(
-        left: Dict[str, set[str]],
-        right: Dict[str, set[str]],
-        categories: set[str],
-    ) -> float:
-        scores = []
-        for category in categories:
-            l_values = left.get(category) or set()
-            r_values = right.get(category) or set()
-            if l_values and r_values:
-                scores.append(len(l_values & r_values) / len(l_values | r_values))
-        return sum(scores) / len(scores) if scores else 0.0
 
     @staticmethod
     def _practical_readiness(case: Case, quality: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1369,8 +1252,8 @@ class CaseIntelligenceService:
         rules = []
         if "夜间时段" in labels or "凌晨时段" in labels:
             rules.append("夜间/凌晨发生的同类案件，应优先核对道路通达性、照明和技防覆盖情况。")
-        if "道路通达" in labels and ("偏远井场" in labels or "贴近生产目标" in labels):
-            rules.append("道路可直达且贴近生产目标的偏远点位，应作为相似条件关注对象。")
+        if "邻近已登记道路" in labels and "贴近生产目标" in labels:
+            rules.append("邻近道路及生产目标仅为直线空间条件，需核实入口与路网后再判断是否可达。")
         if labels & {"皮卡类车辆", "厢货/货车类车辆", "罐车/储油车辆"}:
             rules.append("发现同类型车辆在井场、便道或村屯周边异常停留时，应结合历史车辆工具特征复核。")
         if labels & {"油桶装载痕迹", "软管/管线工具", "抽油泵工具", "暗罐/夹层装载"}:
@@ -1383,8 +1266,8 @@ class CaseIntelligenceService:
     def _next_attention_points(tags: List[Tag]) -> List[str]:
         labels = {tag["label"] for tag in tags}
         points = []
-        if "道路通达" in labels:
-            points.append("相似区域是否同样具备车辆快速接近和撤离条件。")
+        if "邻近已登记道路" in labels:
+            points.append("邻近道路是否通过可信入口连接现场，通行条件是否具备。")
         if "靠近村屯" in labels:
             points.append("村屯周边小路、院落、隐蔽停车点是否与案发点条件接近。")
         if labels & {"近距离技防不足", "技防覆盖待核实"}:
@@ -1392,79 +1275,6 @@ class CaseIntelligenceService:
         if labels & {"油桶装载痕迹", "软管/管线工具", "抽油泵工具"}:
             points.append("类似工具痕迹是否在其他已破案件中反复出现。")
         return points or ["补齐案件字段后再生成更具体的关注要点。"]
-
-    @staticmethod
-    def _duplicate_anchor_warnings(left: Case, right: Case) -> List[str]:
-        warnings = []
-        left_plates = CaseIntelligenceService._case_plate_set(left)
-        right_plates = CaseIntelligenceService._case_plate_set(right)
-        if left_plates and right_plates and left_plates & right_plates:
-            warnings.append(f"相同车牌：{CaseIntelligenceService._join_cn(sorted(left_plates & right_plates))}")
-        left_persons = CaseIntelligenceService._case_person_set(left)
-        right_persons = CaseIntelligenceService._case_person_set(right)
-        if left_persons and right_persons and left_persons & right_persons:
-            warnings.append(f"相同人员：{CaseIntelligenceService._join_cn(sorted(left_persons & right_persons))}")
-        return warnings
-
-    @staticmethod
-    def _case_plate_set(case: Case) -> set[str]:
-        plates = set()
-        for vehicle in case.vehicles or []:
-            if vehicle.plate_number:
-                plates.add(vehicle.plate_number)
-        if isinstance(case.vehicle_info, dict):
-            plate = case.vehicle_info.get("plate_number") or case.vehicle_info.get("plate")
-            if plate:
-                plates.add(str(plate))
-        elif isinstance(case.vehicle_info, list):
-            for item in case.vehicle_info:
-                if isinstance(item, dict):
-                    plate = item.get("plate_number") or item.get("plate")
-                    if plate:
-                        plates.add(str(plate))
-        return plates
-
-    @staticmethod
-    def _case_person_set(case: Case) -> set[str]:
-        persons = set()
-        for person in case.persons or []:
-            if person.name:
-                persons.add(person.name)
-            elif person.id_number:
-                persons.add(person.id_number)
-        if isinstance(case.involved_persons, list):
-            for item in case.involved_persons:
-                if isinstance(item, dict):
-                    value = item.get("name") or item.get("id_number")
-                    if value:
-                        persons.add(str(value))
-        return persons
-
-    @staticmethod
-    def _fallback_case_grid_profiles(cases: List[Case]) -> List[Dict[str, Any]]:
-        grid: Dict[Tuple[int, int], List[Case]] = defaultdict(list)
-        for case in cases:
-            grid[(round(case.latitude, 2), round(case.longitude, 2))].append(case)
-        profiles = []
-        for index, ((lat, lon), grid_cases) in enumerate(grid.items(), start=1):
-            score = min(100, 25 + len(grid_cases) * 20)
-            profiles.append({
-                "asset": {
-                    "id": f"grid-{index}",
-                    "name": f"案件热点网格 {lat},{lon}",
-                    "asset_type": "case_grid",
-                    "latitude": lat,
-                    "longitude": lon,
-                },
-                "risk_score": score,
-                "risk_level": CaseIntelligenceService._risk_level(score),
-                "case_count": len(grid_cases),
-                "related_cases": [CaseIntelligenceService._case_brief(case) for case in grid_cases[:8]],
-                "common_tags": [],
-                "top_hours": [],
-                "risk_reasons": ["辖区底座不足，暂按案件坐标网格形成临时画像。"],
-            })
-        return profiles
 
     @staticmethod
     def _suggestion(
@@ -1632,20 +1442,6 @@ class CaseIntelligenceService:
         }
 
     @staticmethod
-    def _asset_brief(asset: JurisdictionAsset) -> Dict[str, Any]:
-        return {
-            "id": asset.id,
-            "name": asset.name,
-            "asset_type": asset.asset_type,
-            "geometry_type": asset.geometry_type,
-            "latitude": asset.latitude,
-            "longitude": asset.longitude,
-            "risk_level": asset.risk_level,
-            "verified": asset.verified,
-            "tags": asset.tags or [],
-        }
-
-    @staticmethod
     def _vehicle_brief(vehicle: CaseVehicle) -> Dict[str, Any]:
         return {
             "vehicle_type": vehicle.vehicle_type,
@@ -1674,14 +1470,6 @@ class CaseIntelligenceService:
         if 18 <= hour <= 23:
             return {"key": "night", "label": "夜间时段"}
         return {"key": "unknown", "label": "未知时段"}
-
-    @staticmethod
-    def _risk_level(score: float) -> str:
-        if score >= 80:
-            return "high"
-        if score >= 55:
-            return "medium"
-        return "low"
 
     @staticmethod
     def _counter_items(counter: Counter, label_key: str) -> List[Dict[str, Any]]:

@@ -76,13 +76,16 @@ def _apply_operational_area_scope(execute_state) -> None:
 
 def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     """Build the same mandatory filters once per session and scope version."""
-    from app.models.case import Case
+    from app.models.case import Case, CaseTip
     from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
     from app.models.deployment_advisor import SituationBrief, TechDefenseEventAggregate, TechDefenseSource
     from app.models.event import AreaProfile, Event
     from app.models.governance import SpatialCoverageComparison
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
-    from app.models.map_foundation import MapSnapshot, MapSnapshotFeature, MapSource
+    from app.models.map_foundation import (
+        MapSnapshot, MapSnapshotFeature, MapSource,
+        FacilitySourceIdentity, FacilityIdentityDecision,
+    )
     from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
     from app.models.road_public_alias import RoadPublicAlias
     from app.models.meeting import Meeting
@@ -118,10 +121,17 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
                 include_aliases=True,
             )
         )
+    # Lambda SQL keeps the cache key compact without dropping scope checks.
+    # The captured area_ids remain tracked bound parameters per session scope.
+    for model in (FacilitySourceIdentity, FacilityIdentityDecision):
+        options.append(with_loader_criteria(
+            model, lambda cls: cls.operational_area_id.in_(area_ids), include_aliases=True,
+        ))
     from app.models.case import CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
     from app.models.case_insight import CaseAnalysisRun, CaseHypothesis
     from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
-    from app.models.case_history_index import CaseHistoryIndex, CaseHistoryEmbedding
+    from app.models.case_history_index import (CaseHistoryIndex, CaseHistoryEmbedding,
+                                                CaseHistoryFragment, CaseHistoryPosting)
     from app.models.case_result import CaseResultSnapshot
     from app.models.case_road_artifact import CaseRoadArtifact
     from app.models.facility_summary import FacilityDerivedSummary
@@ -134,6 +144,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.knowledge_asset import KnowledgeAsset, KnowledgeReuseRecord
     from app.models.meeting import AnalysisResult, Evaluation, MeetingConversation, Ranking
     from app.models.report import Report
+    from app.models.result_material import FacilityMaterial, MeetingFrozenInput
 
     allowed_case_ids = select(Case.id).where(Case.operational_area_id.in_(area_ids))
     for model in (
@@ -141,7 +152,6 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         CasePerson,
         CaseEvidence,
         OilRecoveryRecord,
-        CaseTip,
         PreprocessJob,
         CasePipelineState,
         CaseAnalysisProfile,
@@ -160,6 +170,21 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
                 include_aliases=True,
             )
         )
+    from app.models.case_source import CaseLocation, OilMeasurement, CaseRevision, CaseSourceLink, SourceReference
+    for model in (CaseHistoryFragment, CaseHistoryPosting):
+        options.append(with_loader_criteria(
+            model, lambda cls: cls.case_id.in_(select(Case.id).where(Case.operational_area_id.in_(area_ids))),
+            include_aliases=True,
+        ))
+    for model in (CaseLocation, OilMeasurement, CaseRevision, CaseSourceLink, SourceReference):
+        options.append(with_loader_criteria(model, model.case_id.in_(allowed_case_ids), include_aliases=True))
+    options.append(with_loader_criteria(
+        CaseTip,
+        CaseTip.case_id.in_(allowed_case_ids) | (
+            CaseTip.case_id.is_(None) & CaseTip.operational_area_id.in_(area_ids)
+        ),
+        include_aliases=True,
+    ))
     options.extend((
         with_loader_criteria(
             KnowledgeAsset,
@@ -185,6 +210,13 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         JurisdictionAsset.operational_area_id.in_(area_ids)
     )
     allowed_event_ids = select(Event.id).where(Event.operational_area_id.in_(area_ids))
+    from app.models.case_facility_association import CaseFacilityAssociation
+    options.append(with_loader_criteria(
+        CaseFacilityAssociation,
+        lambda cls: cls.case_id.in_(select(Case.id).where(Case.operational_area_id.in_(area_ids)))
+        & cls.asset_id.in_(select(JurisdictionAsset.id).where(JurisdictionAsset.operational_area_id.in_(area_ids))),
+        include_aliases=True,
+    ))
     allowed_meeting_ids = select(Meeting.meeting_id).where(
         Meeting.operational_area_id.in_(area_ids)
     )
@@ -192,6 +224,11 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         with_loader_criteria(
             FacilityDerivedSummary,
             FacilityDerivedSummary.asset_id.in_(allowed_asset_ids),
+            include_aliases=True,
+        ),
+        with_loader_criteria(
+            FacilityMaterial,
+            lambda cls: cls.asset_id.in_(select(JurisdictionAsset.id).where(JurisdictionAsset.operational_area_id.in_(area_ids))),
             include_aliases=True,
         ),
         with_loader_criteria(
@@ -223,7 +260,18 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
                 include_aliases=True,
             )
         )
+    options.append(with_loader_criteria(
+        MeetingFrozenInput,
+        lambda cls: cls.meeting_id.in_(select(Meeting.meeting_id).where(Meeting.operational_area_id.in_(area_ids))),
+        include_aliases=True,
+    ))
     return tuple(options)
+
+
+@event.listens_for(Session, "after_flush")
+def _record_topic_source_changes(session, _flush_context) -> None:
+    from app.services.topic_dependencies import record_session_changes
+    record_session_changes(session)
 
 
 def bind_principal_scope(db: Session, principal, *, method: str = "GET") -> None:

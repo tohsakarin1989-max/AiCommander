@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Alert,
   Button,
@@ -39,15 +40,22 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { caseApi } from '../../services/cases'
 import { knowledgeApi } from '../../services/knowledge'
+import type { KnowledgeAssetRecord } from '../../services/knowledge'
 import { useAuth } from '../../auth/AuthContext'
+import { ApiError } from '../../utils/errors'
 import LatestCaseResult from '../../components/CaseResult/LatestCaseResult'
+import { regionalContextPath } from '../../services/regionalContext'
 import {
-  AreaProfile,
+  AreaProfilesPayload,
   IntelligenceCounterItem,
+  IntelligenceObservation,
+  IntelligenceWorkbench,
+  ExperienceCardPayload,
   LlmContextPack,
   IntelligenceTag,
   PreventionSuggestion,
   SimilarCaseItem,
+  SimilarCasesPayload,
   caseIntelligenceApi,
 } from '../../services/caseIntelligence'
 import type { Case, KnowledgeSearchResult, TagCurationResult } from '../../types'
@@ -59,7 +67,6 @@ import {
   getKnowledgeAssetStatusMeta,
   getKnowledgeRoute,
   getKnowledgeSourceLabel,
-  getReportDraftMeta,
   getReportMarkdown,
 } from './caseIntelligencePresentation'
 import './CaseIntelligence.css'
@@ -81,12 +88,6 @@ const priorityLabels: Record<string, { text: string; color: string }> = {
   high: { text: '高优先', color: 'red' },
   medium: { text: '中优先', color: 'gold' },
   low: { text: '低优先', color: 'green' },
-}
-
-const riskLabels: Record<string, { text: string; color: string }> = {
-  high: { text: '高关注', color: 'red' },
-  medium: { text: '中关注', color: 'gold' },
-  low: { text: '低关注', color: 'green' },
 }
 
 const counterLabel = (item: IntelligenceCounterItem, keys: string[]) => {
@@ -117,19 +118,68 @@ const tagColor = (category: string) => {
 }
 
 const TagWall = ({ tags }: { tags: IntelligenceTag[] }) => {
-  if (!tags.length) return <Empty description="暂无标签，需补充案件时间、地点、车辆工具和现场环境描述" />
+  if (!tags.length) return <Empty description="暂无肯定标签，请结合否定与待核表述及信息缺口查看" />
   return (
     <div className="intel-tag-wall">
       {tags.map(tag => (
         <Tooltip key={tag.key} title={(tag.basis || []).join('；') || '暂无依据'}>
           <Tag color={tagColor(tag.category)} className="intel-tag">
             {categoryLabels[tag.category] || tag.category} · {tag.label}
-            <span className="intel-tag-confidence">{Math.round(tag.confidence * 100)}%</span>
+            <span className="intel-tag-confidence">{tag.manual ? '人工补充' : `规则支持度 ${Number.isFinite(tag.confidence) ? tag.confidence.toFixed(2) : '未提供'}（非概率）`}</span>
           </Tag>
         </Tooltip>
       ))}
     </div>
   )
+}
+
+const observationLabels: Record<IntelligenceObservation['kind'], string> = {
+  negated: '否定陈述', uncertain: '待核表述', conflicting: '矛盾表述',
+}
+const sourceFieldLabels: Record<string, string> = {
+  description: '案情描述', modus_operandi: '作案手法', security_level: '安防记录',
+  vehicle_info: '车辆信息', location: '地点记录', involved_items: '涉案物品',
+}
+
+export function SemanticObservations({ observations, gaps, ruleVersion }: {
+  observations?: IntelligenceObservation[]; gaps?: string[]; ruleVersion?: string
+}) {
+  return <>
+    <details>
+      <summary>否定与待核表述{observations ? `（${observations.length}）` : ''}</summary>
+      <p>以下保留否定、待核或矛盾的原文表述，不作为肯定标签或已确认事实；请结合来源与上下文判断。</p>
+      {observations === undefined ? <p>此来源尚未提供否定与待核记录，不能据此判断不存在此类表述。</p>
+        : observations.length ? <List size="small" dataSource={observations} renderItem={item => <List.Item key={`${item.key}:${item.kind}`}>
+          <Space direction="vertical" size={4}>
+            <Space wrap><Tag>{categoryLabels[item.category] || item.category}</Tag>
+              <Tag color={item.kind === 'conflicting' ? 'red' : item.kind === 'uncertain' ? 'gold' : 'default'}>{observationLabels[item.kind]}</Tag>
+              <Text strong>{item.label}</Text></Space>
+            {item.references.length ? item.references.map((reference, index) => <div key={`${reference.field}:${index}`}>
+              <Text type="secondary">{sourceFieldLabels[reference.field] || reference.field}
+                {reference.path?.length ? ` · ${reference.path.join('.')}` : ''}：</Text>
+              <span>{reference.quote || (reference.value !== undefined ? formatEvidence(reference.value) : '未提供原文引用，需核对来源')}</span>
+            </div>) : <Text type="secondary">未提供原文引用，需核对来源</Text>}
+          </Space>
+        </List.Item>} /> : <p>本次识别范围内未列出此类表述，不表示信息已经完整。</p>}
+    </details>
+    {!!gaps?.length && <section aria-label="信息缺口">
+      <div className="intel-section-mini">信息缺口</div>
+      <List size="small" dataSource={gaps} renderItem={item => <List.Item>{item}</List.Item>} />
+    </section>}
+    {ruleVersion && <Text type="secondary">整理规则版本：{ruleVersion}</Text>}
+  </>
+}
+
+export function FeatureTagDetails({ payload }: { payload: IntelligenceWorkbench['feature_tags'] }) {
+  return <>
+    <TagWall tags={payload.tags} />
+    <SemanticObservations observations={payload.observations} gaps={payload.information_gaps} ruleVersion={payload.rule_version} />
+  </>
+}
+
+export function ExperienceEvidence({ card }: { card: ExperienceCardPayload }) {
+  return <SemanticObservations observations={card.evidence_basis.observations} gaps={card.evidence_gaps}
+    ruleVersion={card.evidence_basis.tag_rule_version} />
 }
 
 const CounterList = ({
@@ -161,16 +211,16 @@ const CounterList = ({
   )
 }
 
-const SimilarCaseCard = ({ item }: { item: SimilarCaseItem }) => (
+export const SimilarCaseCard = ({ item }: { item: SimilarCaseItem }) => (
   <Card className="intel-inner-card" size="small">
     <div className="intel-similar-head">
       <div>
-        <Text strong>{item.case.case_number}</Text>
+        <Text strong><a href={`/cases?caseId=${item.case.id}`}>{item.case.case_number}</a></Text>
         <div className="intel-muted">
           {item.case.location || '未知地点'} · {item.case.occurred_time ? dayjs(item.case.occurred_time).format('YYYY-MM-DD HH:mm') : '未知时间'}
         </div>
       </div>
-      <Progress type="circle" size={54} percent={pct(item.similarity_score)} />
+      <Text type="secondary">检索支持度 {(item.score ?? item.similarity_score / 100).toFixed(3)}（非概率）</Text>
     </div>
     <div className="intel-chip-line">
       {item.shared_tags.slice(0, 8).map(tag => <Tag key={tag}>{tag}</Tag>)}
@@ -180,6 +230,9 @@ const SimilarCaseCard = ({ item }: { item: SimilarCaseItem }) => (
       dataSource={item.reasons}
       renderItem={reason => <List.Item>{reason}</List.Item>}
     />
+    {!!item.different_conditions?.length && <p>不同条件：{item.different_conditions.map(([, value, kind]) => `${value}（${kind}）`).join('、')}</p>}
+    {!!item.unmatched_query_conditions?.length && <p>尚未匹配的本案条件：{item.unmatched_query_conditions.map(([, value]) => value).join('、')}</p>}
+    {item.versions && <details><summary>来源版本与依据</summary><pre>{JSON.stringify({ versions: item.versions, evidence_refs: item.evidence_refs }, null, 2)}</pre></details>}
     {!!item.duplicate_warnings.length && (
       <Alert
         type="warning"
@@ -190,6 +243,21 @@ const SimilarCaseCard = ({ item }: { item: SimilarCaseItem }) => (
     )}
   </Card>
 )
+
+export function SimilarCasesPanel({ payload }: { payload: SimilarCasesPayload }) {
+  return <Card title="相似案件分析" className="intel-panel-card">
+    <Alert type={payload.state === 'unavailable' ? 'error' : 'info'} showIcon message={payload.principle} />
+    {payload.coverage && <p>授权候选 {payload.coverage.authorized_cases ?? '未知'} 起，本次已检查 {payload.coverage.scanned_cases ?? '未知'} 起。
+      {!payload.coverage.complete && ' 本次检索未覆盖完整范围，不能据此判断没有其他相关资料。'}</p>}
+    {payload.boundary && <p>{payload.boundary}</p>}
+    <div className="intel-card-stack">
+      {payload.items.length ? payload.items.map(item => <SimilarCaseCard key={item.case.id} item={item} />)
+        : <Empty description={payload.state === 'unavailable' ? '统一历史检索暂不可用，不代表没有匹配案件'
+          : payload.coverage?.complete === false ? '尚未获得完整检索结果，不能排除其他历史参考'
+            : '本次条件未找到历史参考，不表示没有线索'} />}
+    </div>
+  </Card>
+}
 
 const SuggestionCard = ({ item }: { item: PreventionSuggestion }) => {
   const priority = priorityLabels[item.priority] || { text: item.priority, color: 'default' }
@@ -224,39 +292,14 @@ const SuggestionCard = ({ item }: { item: PreventionSuggestion }) => {
   )
 }
 
-const AreaProfileCard = ({ profile }: { profile: AreaProfile }) => {
-  const risk = riskLabels[profile.risk_level] || { text: profile.risk_level, color: 'default' }
-  return (
-    <Card className="intel-inner-card" size="small">
-      <div className="intel-similar-head">
-        <div>
-          <Text strong>{profile.asset.name}</Text>
-          <div className="intel-muted">
-            {profile.asset.asset_type} · {profile.asset.verified ? '已核验' : '待核验'}
-          </div>
-        </div>
-        <Space>
-          <Tag color={risk.color}>{risk.text}</Tag>
-          <Progress type="circle" size={54} percent={pct(profile.risk_score)} />
-        </Space>
-      </div>
-      <div className="intel-chip-line">
-        {profile.common_tags.slice(0, 6).map(item => (
-          <Tag key={counterLabel(item, ['label'])}>{counterLabel(item, ['label'])} × {item.count}</Tag>
-        ))}
-      </div>
-      <List
-        size="small"
-        dataSource={profile.risk_reasons}
-        renderItem={reason => <List.Item>{reason}</List.Item>}
-      />
-      {!!profile.related_cases.length && (
-        <div className="intel-muted">
-          关联案件：{profile.related_cases.slice(0, 4).map(item => item.case_number).join('、')}
-        </div>
-      )}
-    </Card>
-  )
+export function RetiredAreaProfiles({ payload, onOpen }: { payload: AreaProfilesPayload; onOpen: () => void }) {
+  return <Card title="区域条件对照" className="intel-panel-card">
+    <Alert type="info" showIcon message="旧区域风险评分已停用"
+      description={payload.state === 'retired'
+        ? payload.boundary || '不再按邻近案数或未核验状态加分；未计算不表示零风险。'
+        : '当前返回内容属于旧版契约，未展示其中的风险分；请使用区域条件对照。'} />
+    <Button onClick={onOpen}>查看区域综合研判</Button>
+  </Card>
 }
 
 const KnowledgeResultCard = ({
@@ -427,15 +470,60 @@ const LlmContextPanel = ({
   )
 }
 
+export function FrozenReportPanel({ caseId, caseNumber, selectedExperienceCount, canWrite, saving,
+  reports, readError, onSave, onReview, onCopy, children }: {
+  caseId?: number; caseNumber?: string; selectedExperienceCount: number; canWrite: boolean; saving: boolean
+  reports: KnowledgeAssetRecord[]; readError: boolean; onSave: () => void
+  onReview: (assetId: number) => void; onCopy: (asset: KnowledgeAssetRecord) => void; children?: ReactNode
+}) {
+  return <Card title={caseId ? `${caseNumber || `案件 #${caseId}`} · 冻结成果报告` : '案件冻结成果报告'}
+    className="intel-panel-card" extra={<Button size="small" type="primary" disabled={!canWrite || !caseId}
+      loading={saving} onClick={onSave}>保存报告快照{selectedExperienceCount ? `（引用 ${selectedExperienceCount}）` : ''}</Button>}>
+    <Alert type="info" showIcon message={`当前选择 ${selectedExperienceCount} 张历史经验卡；报告复用已有冻结成果，不随上方时间范围或条数重新研判。保存后仍为待人工复核草稿。`}
+      description={caseId ? <a href="#case-frozen-result">正文依据见页面上方「统一案件成果」。保存后请展开对应报告版本，查看实际快照正文。</a>
+        : '请先选择案件。全局即时分析不作为案件报告正文或保存依据。'} />
+    <div className="intel-section-mini">报告版本</div>
+    {readError ? <Alert type="error" message="报告版本读取失败，不能据此判断没有历史快照。" /> : <List size="small"
+      dataSource={reports} locale={{ emptyText: '尚未保存报告快照' }} renderItem={asset => {
+        const statusMeta = getKnowledgeAssetStatusMeta(asset.status)
+        const markdown = getReportMarkdown(asset.content.report)
+        return <List.Item actions={[
+          <Button key="copy-snapshot" size="small" disabled={!markdown} onClick={() => onCopy(asset)}>复制此版本</Button>,
+          ...(asset.status === 'draft' ? [<Button key="confirm-report" size="small" disabled={!canWrite}
+            onClick={() => onReview(asset.id)}>人工确认</Button>] : []),
+        ]}>
+          <List.Item.Meta title={<Space><Text strong>报告 v{asset.version}</Text><Tag color={statusMeta.color}>{statusMeta.label}</Tag></Space>}
+            description={<>
+              <p>{asset.evidence_refs.length} 条证据引用 · {asset.content.reused_experience?.length || 0} 张历史经验卡
+                {asset.content.frozen_result?.id ? ` · 冻结成果 #${asset.content.frozen_result.id}` : ' · 历史报告版本，保留原来源'}</p>
+              <details><summary>查看已保存正文</summary>{markdown ? <pre className="intel-report">{markdown}</pre>
+                : <Text type="secondary">该版本未包含可展示正文，请到报告中心查看原始记录。</Text>}</details>
+            </>} />
+        </List.Item>
+      }} />}
+    {children}
+  </Card>
+}
+
 export function intelligenceCaseId(params: URLSearchParams): number | undefined {
   const value = params.get('caseId')
   return value && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : undefined
 }
 
-const intelligenceError = (error: unknown) => {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  message.error(typeof detail === 'string' ? detail : '操作未完成，请刷新后重试。原始案件记录未因此改变。')
+export const intelligenceErrorMessage = (error: unknown): string => {
+  const fallback = '操作未完成，请刷新后重试。原始案件记录未因此改变。'
+  const safeStatus = (status?: number) => status !== undefined && ((status >= 400 && status < 500) || status === 503)
+  // The shared interceptor normalizes HTTP failures to ApiError. Only show
+  // controlled business/unavailability responses, never native error details.
+  if (error instanceof ApiError) {
+    return safeStatus(error.status) && error.message.trim() ? error.message : fallback
+  }
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+  const detail = response?.data?.detail
+  return safeStatus(response?.status) && typeof detail === 'string' && detail.trim() ? detail : fallback
 }
+
+const intelligenceError = (error: unknown) => message.error(intelligenceErrorMessage(error))
 
 const CaseIntelligence: React.FC = () => {
   const navigate = useNavigate()
@@ -501,17 +589,6 @@ const CaseIntelligence: React.FC = () => {
     enabled: !casesQuery.isLoading && (globalMode || (!!selectedCaseId && legacyAnalysis)),
   })
 
-  const contextPackQuery = useQuery({
-    queryKey: ['case-intelligence-llm-context', selectedCaseId, days, limit, user?.id, sessionEpoch],
-    queryFn: () => caseIntelligenceApi.getLlmContext({
-      case_id: selectedCaseId,
-      days,
-      limit,
-      radius_km: 1.5,
-    }),
-    enabled: !casesQuery.isLoading && (globalMode || (!!selectedCaseId && legacyAnalysis)),
-  })
-
   const diagramQuery = useQuery({
     queryKey: ['case-diagram', selectedCaseId, user?.id, sessionEpoch],
     queryFn: () => caseApi.getCaseDiagram(selectedCaseId as number),
@@ -543,7 +620,7 @@ const CaseIntelligence: React.FC = () => {
   })
 
   const workbench = workbenchQuery.isError ? undefined : workbenchQuery.data
-  const contextPack = contextPackQuery.isError ? undefined : contextPackQuery.data
+  const contextPack = workbench?.context_pack
   const selectedCase = selectedCaseQuery.isError ? undefined : selectedCaseQuery.data
   const loadedCases = casesQuery.isError ? [] : casesQuery.data || []
   const cases: Case[] = selectedCase && !loadedCases.some(item => item.id === selectedCase.id)
@@ -626,8 +703,6 @@ const CaseIntelligence: React.FC = () => {
   const reportSnapshotMutation = useMutation({
     mutationFn: () => knowledgeApi.generateReportSnapshot(selectedCaseId as number, {
       experience_asset_ids: selectedExperienceAssetIds,
-      days,
-      limit,
     }),
     onSuccess: (asset) => {
       message.success(`研判报告 v${asset.version} 已保存为待复核快照`)
@@ -640,17 +715,20 @@ const CaseIntelligence: React.FC = () => {
   const tags = workbench?.feature_tags.tags || []
   const qualityScore = workbench?.quality?.score ?? selectedCase?.quality_score ?? 0
   const qualityLevel = workbench?.quality?.level || selectedCase?.quality_level || 'unknown'
-  const reportMarkdown = getReportMarkdown(workbench?.report)
-  const reportMeta = getReportDraftMeta(workbench?.report)
   const experienceStatus = getExperienceStatusMeta(workbench?.experience_card?.manual_review_status)
   const knowledgeAssets = knowledgeAssetsQuery.isError ? [] : knowledgeAssetsQuery.data?.items || []
   const experienceAssetVersions = knowledgeAssets.filter(item => item.asset_type === 'experience_card')
   const reportSnapshots = knowledgeAssets.filter(item => item.asset_type === 'case_report')
 
-  const copyReport = async () => {
-    if (!reportMarkdown) return
-    await navigator.clipboard.writeText(reportMarkdown)
-    message.success('研判报告 Markdown 已复制')
+  const copySavedReport = async (asset: KnowledgeAssetRecord) => {
+    const markdown = getReportMarkdown(asset.content.report)
+    if (!markdown) return
+    try {
+      await navigator.clipboard.writeText(markdown)
+      message.success(`已保存的报告 v${asset.version} Markdown 已复制`)
+    } catch (error) {
+      intelligenceError(error)
+    }
   }
 
   const copyContextPrompt = async () => {
@@ -762,14 +840,15 @@ const CaseIntelligence: React.FC = () => {
       </Card>
 
       {selectedCaseId && <>
-        <LatestCaseResult key={selectedCaseId} caseId={selectedCaseId} />
+        <div id="case-frozen-result"><LatestCaseResult key={selectedCaseId} caseId={selectedCaseId} /></div>
         <Button onClick={() => setLegacyAnalysis(value => !value)} aria-expanded={legacyAnalysis}>
           {legacyAnalysis ? '收起旧版分析工具' : '打开旧版分析工具（兼容）'}
         </Button>
-        {legacyAnalysis && <Alert type="warning" showIcon message="旧版动态分析与历史经验工具"
-          description="按需使用：下方内容按旧接口即时计算，不是上方冻结成果；不要求每起案件保存经验卡或报告。时间窗仅作用于旧版工具。" />}
       </>}
-      {(globalMode || legacyAnalysis) && contextPackQuery.isError && <Alert type="error" message="旧版模型上下文读取失败，不能据此判断证据完整。" />}
+      {(globalMode || legacyAnalysis) && <Alert type="warning" showIcon message="旧版动态分析与历史经验工具"
+        description="按需使用：标签、规律和经验预览按兼容接口计算，不是冻结成果；报告仅整理上方冻结成果，已保存正文从报告版本查看。不要求每起案件保存经验卡或报告。旧区域评分已停用，空间邻近不等于涉案关联；日常区域分析请使用区域综合研判。时间窗仅作用于旧版工具。" />}
+      {(globalMode || legacyAnalysis) && workbenchQuery.isError && <Alert type="error" message="旧版分析及模型上下文读取失败，不能据此判断证据完整。" />}
+      {workbench && !contextPack && <Alert type="warning" message="当前兼容接口未提供模型上下文；不再另行重复计算，请使用统一成果或升级后端。" />}
 
       {knowledgeQuery && (globalMode || legacyAnalysis) && (
         <Card
@@ -839,7 +918,7 @@ const CaseIntelligence: React.FC = () => {
                       <Tag color="blue">
                         {String(tag.label || tag.key || '候选标签')}
                         {typeof tag.confidence === 'number' && (
-                          <span className="intel-tag-confidence">{Math.round(tag.confidence * 100)}%</span>
+                          <span className="intel-tag-confidence">候选支持度 {tag.confidence.toFixed(2)}（非概率）</span>
                         )}
                       </Tag>
                     </Tooltip>
@@ -931,7 +1010,7 @@ const CaseIntelligence: React.FC = () => {
                   <Row gutter={[16, 16]}>
                     <Col xs={24} lg={15}>
                       <Card title="案件特征标签" className="intel-panel-card">
-                        <TagWall tags={tags} />
+                        <FeatureTagDetails payload={workbench.feature_tags} />
                       </Card>
                     </Col>
                     <Col xs={24} lg={9}>
@@ -962,18 +1041,7 @@ const CaseIntelligence: React.FC = () => {
                 key: 'similar',
                 label: <span><NodeIndexOutlined /> 相似条件</span>,
                 children: (
-                  <Card title="相似案件分析" className="intel-panel-card">
-                    <Alert type="success" showIcon message={workbench.similar_cases.principle} />
-                    <div className="intel-card-stack">
-                      {workbench.similar_cases.items.length ? (
-                        workbench.similar_cases.items.map(item => (
-                          <SimilarCaseCard key={item.case.id} item={item} />
-                        ))
-                      ) : (
-                        <Empty description="暂无相似案件，可能是历史样本不足或本案字段不完整" />
-                      )}
-                    </div>
-                  </Card>
+                  <SimilarCasesPanel payload={workbench.similar_cases} />
                 ),
               },
               {
@@ -1066,19 +1134,10 @@ const CaseIntelligence: React.FC = () => {
               },
               {
                 key: 'areas',
-                label: <span><BarChartOutlined /> 区域画像</span>,
+                label: <span><BarChartOutlined /> 区域条件</span>,
                 children: (
-                  <Card title="风险区域画像" className="intel-panel-card">
-                    <div className="intel-card-stack">
-                      {workbench.area_profiles.items.length ? (
-                        workbench.area_profiles.items.map(profile => (
-                          <AreaProfileCard key={profile.asset.id} profile={profile} />
-                        ))
-                      ) : (
-                        <Empty description="业务资产或案件坐标不足，暂不能形成区域画像" />
-                      )}
-                    </div>
-                  </Card>
+                  <RetiredAreaProfiles payload={workbench.area_profiles}
+                    onOpen={() => navigate(regionalContextPath('/area-analysis', searchParams))} />
                 ),
               },
               {
@@ -1104,7 +1163,7 @@ const CaseIntelligence: React.FC = () => {
                 children: (
                   <LlmContextPanel
                     contextPack={contextPack}
-                    loading={contextPackQuery.isLoading}
+                    loading={workbenchQuery.isLoading}
                     onCopy={copyContextPrompt}
                   />
                 ),
@@ -1136,6 +1195,7 @@ const CaseIntelligence: React.FC = () => {
                               message="当前内容是即时预览；保存后形成独立版本，人工确认后才进入历史经验推荐。"
                             />
                             <Paragraph>{workbench.experience_card.summary}</Paragraph>
+                            <ExperienceEvidence card={workbench.experience_card} />
                             <div className="intel-section-mini">为什么值得沉淀</div>
                             <List
                               size="small"
@@ -1263,59 +1323,12 @@ const CaseIntelligence: React.FC = () => {
                       </Card>
                     </Col>
                     <Col xs={24} lg={14}>
-                      <Card
-                        title={workbench.report.title}
-                        className="intel-panel-card"
-                        extra={(
-                          <Space>
-                            <Tag>{reportMeta.draftStatus}</Tag>
-                            <Tag color="gold">{reportMeta.reviewStatus}</Tag>
-                            <Tag color="blue">{reportMeta.modelStatus}</Tag>
-                            <Button size="small" onClick={copyReport}>复制报告</Button>
-                            <Button
-                              size="small"
-                              type="primary"
-                              disabled={!canWrite || !selectedCaseId}
-                              loading={reportSnapshotMutation.isPending}
-                              onClick={() => reportSnapshotMutation.mutate()}
-                            >
-                              保存报告快照{selectedExperienceAssetIds.length ? `（引用 ${selectedExperienceAssetIds.length}）` : ''}
-                            </Button>
-                          </Space>
-                        )}
-                      >
-                        <Alert
-                          type="info"
-                          showIcon
-                          message={`当前选择 ${selectedExperienceAssetIds.length} 张历史经验卡；保存后仍为待人工复核草稿。`}
-                        />
-                        <pre className="intel-report">{reportMarkdown}</pre>
-                        <div className="intel-section-mini">报告版本</div>
-                        <List
-                          size="small"
-                          dataSource={reportSnapshots}
-                          locale={{ emptyText: '尚未保存报告快照' }}
-                          renderItem={asset => {
-                            const statusMeta = getKnowledgeAssetStatusMeta(asset.status)
-                            return (
-                              <List.Item
-                                actions={asset.status === 'draft' ? [
-                                  <Button
-                                    key="confirm-report"
-                                    size="small"
-                                    disabled={!canWrite}
-                                    onClick={() => reviewAssetMutation.mutate({ assetId: asset.id, status: 'confirmed' })}
-                                  >人工确认</Button>,
-                                ] : []}
-                              >
-                                <List.Item.Meta
-                                  title={<Space><Text strong>报告 v{asset.version}</Text><Tag color={statusMeta.color}>{statusMeta.label}</Tag></Space>}
-                                  description={`${asset.evidence_refs.length} 条证据引用 · ${asset.content.reused_experience?.length || 0} 张历史经验卡`}
-                                />
-                              </List.Item>
-                            )
-                          }}
-                        />
+                      <FrozenReportPanel caseId={selectedCaseId} caseNumber={selectedCase?.case_number}
+                        selectedExperienceCount={selectedExperienceAssetIds.length} canWrite={canWrite}
+                        saving={reportSnapshotMutation.isPending} onSave={() => reportSnapshotMutation.mutate()}
+                        reports={reportSnapshots} readError={knowledgeAssetsQuery.isError}
+                        onReview={assetId => reviewAssetMutation.mutate({ assetId, status: 'confirmed' })}
+                        onCopy={copySavedReport}>
                         <div className="intel-section-mini">经验复用轨迹</div>
                         {reuseRecordsQuery.isError && <Alert type="error" message="经验复用轨迹读取失败，当前不能确认历史操作状态。" />}
                         <List
@@ -1328,7 +1341,7 @@ const CaseIntelligence: React.FC = () => {
                             </List.Item>
                           )}
                         />
-                      </Card>
+                      </FrozenReportPanel>
                     </Col>
                   </Row>
                 ),

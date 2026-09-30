@@ -1,4 +1,5 @@
 import type { CaseCreate, CaseUpdatePayload } from '../../types'
+import { serializeCaseTime } from '../../utils/caseValues'
 
 export type CaseEntrySubmitMode = 'create' | 'edit'
 
@@ -6,6 +7,9 @@ export interface CaseEntrySubmitPayloadOptions {
   mode: CaseEntrySubmitMode
   includeVehicleDrafts?: boolean
   includePersonDrafts?: boolean
+  includeLocations?: boolean
+  includeMeasurements?: boolean
+  hadIncidentLocations?: boolean
 }
 
 export interface CaseEntrySubmitValues extends Record<string, unknown> {
@@ -17,9 +21,11 @@ export interface CaseEntrySubmitValues extends Record<string, unknown> {
   bonus_has_police?: unknown
   initial_vehicles?: Array<Record<string, unknown>>
   initial_persons?: Array<Record<string, unknown>>
+  initial_locations?: Array<Record<string, unknown>>
+  initial_measurements?: Array<Record<string, unknown>>
 }
 
-const vehicleDraftFields = ['vehicle_type', 'plate_number', 'handling_status', 'road_vehicle_kind', 'height_m', 'gross_weight_t']
+const vehicleDraftFields = ['vehicle_type', 'plate_number', 'handling_status', 'road_vehicle_kind', 'height_m', 'gross_weight_t', 'oil_volume', 'oil_volume_unit']
 const personDraftFields = ['name', 'handling_status', 'role']
 
 function toIsoString(value: unknown): unknown {
@@ -59,6 +65,10 @@ export function buildCaseEntrySubmitPayload(
     bonus_has_police,
     initial_vehicles,
     initial_persons,
+    initial_locations,
+    initial_measurements,
+    involved_persons: _legacyPersons,
+    vehicle_info: _legacyVehicles,
     ...caseValues
   } = values
 
@@ -66,6 +76,37 @@ export function buildCaseEntrySubmitPayload(
     ...caseValues,
     occurred_time: toIsoString(caseValues.occurred_time),
     report_time: toIsoString(caseValues.report_time),
+  }
+  const precision = values.time_precision ?? (values.occurred_time ? 'exact' : 'unknown')
+  const timestamp = (value: unknown) => serializeCaseTime(value, String(values.time_timezone || 'Asia/Shanghai')) ?? null
+  payload.time_precision = precision
+  payload.time_timezone = values.time_timezone || 'Asia/Shanghai'
+  payload.occurred_time = precision === 'exact' ? timestamp(values.occurred_time) : null
+  payload.occurred_from = precision === 'interval' ? timestamp(values.occurred_from) : null
+  payload.occurred_to = precision === 'interval' ? timestamp(values.occurred_to) : null
+  payload.discovered_at = timestamp(values.discovered_at)
+  payload.report_time = timestamp(values.report_time)
+  payload.oil_volume_unit = values.oil_volume_unit || 'unknown'
+  if (options.includeLocations !== false && Array.isArray(initial_locations)) {
+    payload.initial_locations = initial_locations.map(({ id: _id, case_id: _caseId, ui_latitude, ui_longitude, ...row }) => ({
+      ...row, geometry: typeof ui_latitude === 'number' && typeof ui_longitude === 'number'
+        ? { type: 'Point', coordinates: [ui_longitude, ui_latitude] }
+        : ui_latitude !== undefined || ui_longitude !== undefined ? null : row.geometry ?? null, precision: row.precision || 'unknown',
+    }))
+    // The typed incident record owns the primary map point. Discovery/custody points never replace it.
+    const incidents = (payload.initial_locations as Array<Record<string, unknown>>).filter(row => row.role === 'incident')
+    if (incidents.length || options.hadIncidentLocations) {
+      const incident = incidents.length === 1 ? incidents[0] : null
+      const geometry = incident?.geometry as { type?: string; coordinates?: number[] } | null
+      const exact = incident?.precision === 'exact' && geometry?.type === 'Point' && Array.isArray(geometry.coordinates)
+      payload.latitude = exact ? geometry.coordinates![1] : null
+      payload.longitude = exact ? geometry.coordinates![0] : null
+    }
+  }
+  if (options.includeMeasurements !== false && Array.isArray(initial_measurements)) {
+    payload.initial_measurements = initial_measurements.map(({ id: _id, case_id: _caseId, ...row }) => ({
+      ...row, unit: row.unit || 'unknown', measured_at: timestamp(row.measured_at),
+    }))
   }
   if (options.mode === 'edit') delete payload.operational_area_id
 
@@ -91,6 +132,7 @@ export function buildCaseEntrySubmitPayload(
   if (options.mode === 'edit' && bonus_has_oil === false) {
     payload.oil_nature = null
     payload.oil_volume = null
+    payload.oil_volume_unit = 'unknown'
     payload.water_cut = null
     payload.oil_handling = null
   }

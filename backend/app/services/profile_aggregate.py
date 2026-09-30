@@ -28,6 +28,10 @@ def checked_profile(db, case, profile, *, current_hash=None):
         return [], 'missing'
     if profile.source_hash != (current_hash or CasePipelineService.source_hash(db, case)):
         return [], 'stale'
+    from app.services.case_source_service import CaseSourceService
+    revision = CaseSourceService.latest_revision(db, case.id)
+    if profile.source_revision_id != (revision.id if revision else None):
+        return [], 'stale'
     try:
         semantics = profile.payload['semantics']
         fields = semantics['source_snapshot']['fields']
@@ -80,7 +84,7 @@ def _condition_state(condition, states, profile_state):
     return 'unmatched'
 
 
-def build_aggregate(db, args, *, deadline=None, cancelled=lambda: False):
+def build_aggregate(db, args, *, deadline=None, cancelled=lambda: False, case_ids=None):
     """Return a frozen derived result and source references for subsequent access checks.
 
     No recent-N cutoff. The deadline is a computation budget, not a hidden dataset
@@ -95,6 +99,8 @@ def build_aggregate(db, args, *, deadline=None, cancelled=lambda: False):
     deadline = deadline if deadline is not None else monotonic() + 90
     filters = args.model_dump(exclude={'conditions', 'page', 'page_size'})
     query = CaseSearchService.filtered_query(db, **filters)
+    if case_ids is not None:
+        query = query.filter(Case.id.in_(case_ids))
     base_total = query.count()
     states, missing, counts, patterns = Counter(), Counter(), Counter(), defaultdict(list)
     model_states, model_candidate_count = Counter(), 0
@@ -137,6 +143,7 @@ def build_aggregate(db, args, *, deadline=None, cancelled=lambda: False):
                       'profile_version': profile.profile_version if profile else None,
                       'profile_content_sha256': result_hash(profile.payload) if profile else None,
                       'case_source_hash': current_hash,
+                      'source_revision_id': profile.source_revision_id if profile else None,
                       'state': state}
             sources.append(source)
             by_term = _states(assertions)
@@ -195,6 +202,45 @@ def build_aggregate(db, args, *, deadline=None, cancelled=lambda: False):
                              'candidate_count': model_candidate_count, 'boundary': MODEL_BOUNDARY},
         'patterns': rows, 'source_manifest': sources, 'boundary': BOUNDARY,
     }
+    return result
+
+
+def merge_aggregates(chunks, *, empty, total):
+    """Combine disjoint, id-ordered chunks without re-reading or re-extracting cases."""
+    from copy import deepcopy
+    result = deepcopy(empty)
+    for key in ('members', 'counterexamples', 'unknown', 'source_manifest'):
+        result[key] = [row for chunk in chunks for row in chunk[key]]
+    states, model_states, patterns = Counter(), Counter(), defaultdict(list)
+    for chunk in chunks:
+        states.update(chunk['coverage']['profile_states'])
+        model_states.update(chunk['model_extraction']['profile_states'])
+        for row in chunk['patterns']:
+            patterns[row['category'], row['value'], row['kind']].extend(row['case_ids'])
+    scanned = len(result['source_manifest'])
+    ids = [row['case_id'] for row in result['source_manifest']]
+    if len(ids) != len(set(ids)):
+        raise ValueError('aggregate_duplicate_chunk')
+    unavailable = sum(states[state] for state in ('missing', 'stale', 'invalid', 'partial'))
+    result['coverage'] = {'authorized_cases': total, 'scanned_cases': scanned,
+        'complete': scanned == total and all(chunk['coverage']['complete'] for chunk in chunks),
+        'profiles_complete': unavailable == 0, 'profile_states': dict(sorted(states.items()))}
+    result['statistics'] = {**{key: sum(chunk['statistics'][key] for chunk in chunks)
+        for key in ('matched', 'unmatched', 'unknown')}, 'denominator': scanned,
+        'unavailable_profile_count': unavailable,
+        'unavailable_profile_ratio': unavailable / scanned if scanned else None}
+    for index, row in enumerate(result['condition_statistics']):
+        for key in ('matched', 'unmatched', 'unknown'):
+            row[key] = sum(chunk['condition_statistics'][index][key] for chunk in chunks)
+    for index, row in enumerate(result['missingness']):
+        row['missing_count'] = sum(chunk['missingness'][index]['missing_count'] for chunk in chunks)
+        row['denominator'] = states['ready']
+        row['ratio'] = row['missing_count'] / states['ready'] if states['ready'] else None
+    result['patterns'] = [{'category': key[0], 'value': key[1], 'kind': key[2],
+        'case_ids': ids, 'case_count': len(ids)} for key, ids in sorted(patterns.items())]
+    result['model_extraction'] = {'profile_states': dict(sorted(model_states.items())),
+        'candidate_count': sum(chunk['model_extraction']['candidate_count'] for chunk in chunks),
+        'boundary': MODEL_BOUNDARY}
     return result
 
 

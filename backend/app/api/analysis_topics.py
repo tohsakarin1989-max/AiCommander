@@ -10,8 +10,9 @@ from app.database import get_db
 from app.services import analysis_topic_service as service
 from app.services.intelligent_query_tools import ProfileFilters
 from app.services import topic_query_bridge
-from app.services.topic_document import export_topic_document
 from app.services.case_result_export import CaseResultExportError
+from app.services.topic_definitions import TopicWindow, TopicSourceContext
+from typing import Literal
 
 
 router = APIRouter()
@@ -22,6 +23,10 @@ class TopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     notes: str = Field(default='', max_length=4000)
     filters: ProfileFilters = Field(default_factory=ProfileFilters)
+    question: str | None = Field(default=None, min_length=1, max_length=2000)
+    question_kind: Literal['condition_changes', 'case_gaps', 'facility_context'] = 'condition_changes'
+    window: TopicWindow = Field(default_factory=TopicWindow)
+    source_context: TopicSourceContext | None = None
 
 
 class TopicUpdate(BaseModel):
@@ -29,6 +34,11 @@ class TopicUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=120)
     notes: str | None = Field(default=None, max_length=4000)
     paused: bool | None = Field(default=None, strict=True)
+    question: str | None = Field(default=None, min_length=1, max_length=2000)
+    question_kind: Literal['condition_changes', 'case_gaps', 'facility_context'] | None = None
+    filters: ProfileFilters | None = None
+    window: TopicWindow | None = None
+    expected_definition_revision: int | None = Field(default=None, ge=1, strict=True)
 
 
 class TopicFromQuery(BaseModel):
@@ -36,6 +46,12 @@ class TopicFromQuery(BaseModel):
     query_id: UUID
     title: str = Field(min_length=1, max_length=120)
     notes: str = Field(default='', max_length=4000)
+    question: str | None = Field(default=None, min_length=1, max_length=2000)
+    window: TopicWindow = Field(default_factory=TopicWindow)
+
+
+class TopicFromContext(TopicCreate):
+    source_context: TopicSourceContext
 
 
 class TopicQuestion(BaseModel):
@@ -64,8 +80,10 @@ def _call(db, action, *args, **kwargs):
         if str(error) == 'topic_capacity_reached':
             raise HTTPException(429, detail='持续专题过多，请先暂停不再使用的专题',
                                 headers={'Retry-After': '60'}) from error
-        status = 404 if str(error) in {'topic_not_found', 'topic_snapshot_not_found', 'topic_source_not_found'} else 422
+        status = 404 if str(error) in {'topic_not_found', 'topic_snapshot_not_found', 'topic_source_not_found', 'topic_aggregate_not_found'} else 422
         if str(error) == 'topic_paused':
+            status = 409
+        if str(error) == 'topic_definition_conflict':
             status = 409
         if str(error) == 'topic_query_conditions_unsupported':
             raise HTTPException(422, detail='本次查询包含相似度、道路或成果时间等专用条件，不能等价保存为案件专题；请使用画像条件统计后保存。') from error
@@ -78,7 +96,11 @@ def _call(db, action, *args, **kwargs):
 @router.post('', status_code=201)
 def create(payload: TopicCreate, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, response, db)
-    result = _call(db, service.create_topic, payload.title, payload.filters.model_dump(mode='json'), payload.notes)
+    if payload.source_context and payload.source_context.kind == 'query':
+        raise HTTPException(422, detail='请从已完成的查询保存，继承经核验的查询条件')
+    result = _call(db, service.create_topic, payload.title, payload.filters.model_dump(mode='json'), payload.notes,
+        question=payload.question, question_kind=payload.question_kind,
+        window=payload.window.model_dump(), source_context=payload.source_context.model_dump() if payload.source_context else None)
     response.headers['Location'] = f"/api/analysis-topics/{result['id']}"
     return result
 
@@ -93,9 +115,51 @@ def listing(request: Request, response: Response, page: int = Query(1, ge=1, le=
 @router.post('/from-query', status_code=201)
 def from_query(payload: TopicFromQuery, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, response, db)
-    result = _call(db, topic_query_bridge.save_query_as_topic, str(payload.query_id), payload.title, payload.notes)
+    result = _call(db, topic_query_bridge.save_query_as_topic, str(payload.query_id), payload.title, payload.notes,
+        question=payload.question, window=payload.window.model_dump())
     response.headers['Location'] = f"/api/analysis-topics/{result['id']}"
     return result
+
+
+@router.post('/from-context', status_code=201)
+def from_context(payload: TopicFromContext, request: Request, response: Response, db: Session = Depends(get_db)):
+    _authorize(request, response, db)
+    if payload.source_context.kind == 'query':
+        raise HTTPException(422, detail='请从已完成的查询保存，继承经核验的查询条件')
+    source = payload.source_context.model_dump()
+    kind = payload.question_kind
+    if kind == 'condition_changes':
+        kind = {'case': 'case_gaps', 'facility': 'facility_context'}.get(source['kind'], kind)
+    result = _call(db, service.create_topic, payload.title, payload.filters.model_dump(mode='json'), payload.notes,
+        question=payload.question, question_kind=kind, window=payload.window.model_dump(), source_context=source)
+    response.headers['Location'] = f"/api/analysis-topics/{result['id']}"
+    return result
+
+
+@router.get('/aggregations/{job_id}')
+def aggregation(job_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services.profile_aggregate_jobs import read_aggregate_job
+    _authorize(request, response, db)
+    return _call(db, read_aggregate_job, str(job_id))
+
+
+@router.post('/aggregations/{job_id}/cancel')
+def cancel_aggregation(job_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services.profile_aggregate_jobs import cancel_aggregate_job
+    _authorize(request, response, db)
+    return _call(db, cancel_aggregate_job, str(job_id))
+
+
+@router.get('/{topic_id}/definitions')
+def definition_history(topic_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    _authorize(request, response, db)
+    return _call(db, service.definitions, str(topic_id))
+
+
+@router.post('/{topic_id}/cancel')
+def cancel(topic_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
+    _authorize(request, response, db)
+    return _call(db, service.cancel_refresh, str(topic_id))
 
 
 @router.post('/{topic_id}/queries', status_code=201)
@@ -155,7 +219,9 @@ def views(topic_id: UUID, request: Request, response: Response, revision: int = 
 def _download(topic_id, revision, format, request, response, db):
     _authorize(request, response, db)
     try:
-        document, content = _call(db, export_topic_document, str(topic_id), revision, format)
+        from app.services.result_document import export_result
+        snapshot = _call(db, service.read_topic, str(topic_id), revision=revision)['snapshot']
+        document, content = _call(db, export_result, 'topic', snapshot['id'], format)
     except CaseResultExportError as error:
         raise HTTPException(503, detail='文档导出暂不可用，请稍后重试',
                             headers={'Cache-Control': 'no-store'}) from error

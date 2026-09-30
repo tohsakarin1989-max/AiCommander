@@ -48,7 +48,7 @@ export function writeCaseFilterParams(previous: URLSearchParams, filters: CasePa
 export function caseContextPath(target: string, source: URLSearchParams): string {
   const [path, query = ''] = target.split('?')
   const next = new URLSearchParams(query)
-  for (const key of [...filterKeys, 'caseId']) {
+  for (const key of [...filterKeys, 'caseId', 'case_view']) {
     if (!next.has(key)) for (const value of source.getAll(key)) next.append(key, value)
   }
   return `${path}${next.size ? `?${next}` : ''}`

@@ -134,7 +134,8 @@ const CaseBonusAccounting: React.FC = () => {
     }
   }, [queryCaseId])
 
-  const managementContext = selectedAssessment?.management_context
+  const unknownPeriod = selectedAssessment?.management_context?.status === 'unknown_period'
+  const managementContext = unknownPeriod ? undefined : selectedAssessment?.management_context
   const { data: periodCases = [], isLoading: periodCasesLoading } = useQuery<Case[]>({
     queryKey: ['case-bonus-period-cases', selectedId, periodScope, 'all-squads'],
     queryFn: () => caseApi.getBonusPeriodCases(selectedId!, periodScope, { includeAllSquads: true }),
@@ -505,6 +506,7 @@ const CaseBonusAccounting: React.FC = () => {
         </div>
       </header>
 
+      {unknownPeriod && <Alert type="info" showIcon message="考核周期待明确" description="发生时间未知或仅有区间，暂不归入当前季度。材料记录继续保留，不代表案件未完成。" />}
       {renderManagementPanel(managementDisplay)}
 
       <section className="case-bonus-kpis">

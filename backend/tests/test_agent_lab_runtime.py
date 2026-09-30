@@ -348,7 +348,8 @@ def test_dual_domain_tool_uses_case_and_asset_evidence(agent_db: Session):
     assert output["hotspots"][0]["asset_id"] == asset.id
     assert f"asset:{outside_asset.id}" not in output["evidence_refs"]
     assert f"case:{outside_case.id}" not in output["evidence_refs"]
-    assert output["recommendations"]
+    # Spatial proximity alone is no longer used to invent deployment advice.
+    assert output["recommendations"] == []
     assert "不是犯罪预测" in " ".join(output["boundary"])
 
 

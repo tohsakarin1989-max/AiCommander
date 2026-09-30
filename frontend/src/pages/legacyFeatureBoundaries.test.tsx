@@ -1,9 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CaseGraph from './Graphs/CaseGraph'
-import GangAnalysis from './Gangs/GangAnalysis'
 import Jurisdiction from './Jurisdiction/Jurisdiction'
-import { PatrolRouteMap } from './Patrols/Patrols'
 import { visibleNavigation } from '../config/navigation'
 
 const state = vi.hoisted(() => ({ role: 'viewer', path: '/agents',
@@ -25,8 +23,7 @@ vi.mock('@tanstack/react-query', () => ({
   useQuery: (options: typeof state.queries[number]) => {
     state.queries.push(options)
     const key = options.queryKey[0]
-    const data = key === 'gangStatistics' ? { top_gangs: [], total_gangs: 0 } :
-      key === 'cases' || key === 'my-area-scopes' || key === 'jurisdiction-assets' ? [] : undefined
+    const data = key === 'cases' || key === 'my-area-scopes' || key === 'jurisdiction-assets' ? [] : undefined
     return { data, isLoading: false, isError: false }
   },
 }))
@@ -40,27 +37,18 @@ describe('历史页面与 v3 运行中心边界', () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?生成图谱/)
   })
 
-  it('条件组画像没有档案创建假按钮且只读账号不发自动 POST 查询', () => {
-    const html = renderToStaticMarkup(<GangAnalysis />)
-    expect(html).toContain('查看当前画像')
-    expect(html).not.toContain('新建条件组档案')
-    for (const name of ['gangHeatmap', 'crossGangPersons', 'gangTimeline']) {
-      expect(state.queries.find(q => q.queryKey[0] === name)?.enabled).toBe(false)
+  it('已退出的群组和巡逻不因功能标记开启重回正式导航', () => {
+    for (const role of ['viewer', 'analyst', 'admin']) {
+      const paths = visibleNavigation(role, () => true).flatMap(group => group.pages).map(page => page.path)
+      expect(paths).not.toContain('/gangs')
+      expect(paths).not.toContain('/patrols')
     }
   })
 
   it('辖区只读账号明确资产维护权限且不触发部署参考 POST', () => {
     const html = renderToStaticMarkup(<Jurisdiction />)
     expect(html).toContain('地图资产由管理员维护')
-    expect(state.queries.find(q => q.queryKey[0] === 'jurisdiction-patrol-plan')?.enabled).toBe(false)
-  })
-
-  it('没有数据时巡逻固定路线始终明确标记示意与待配置', () => {
-    const html = renderToStaticMarkup(<PatrolRouteMap areaRisks={[]} hotspots={[]} keyLocations={[]} />)
-    expect(html).toContain('路线待配置')
-    expect(html).toContain('4 条示意路径')
-    expect(html).not.toContain('基于风险分析自动规划')
-    expect(html).not.toContain('4 条路线')
+    expect(state.queries.find(q => q.queryKey[0] === 'jurisdiction-patrol-plan')).toBeUndefined()
   })
 
   it('管理员的 v3 运行中心不依赖已关闭的旧 Agent Lab', () => {

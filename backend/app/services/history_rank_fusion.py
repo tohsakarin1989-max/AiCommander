@@ -1,4 +1,4 @@
-"""精确名次融合；只保留两支前 100 项正文，完整名次由轻量分数记录计算。"""
+"""精确名次融合；分支正文受调用预算约束，完整名次由轻量分数记录计算。"""
 import heapq
 
 FUSION_VERSION = 'history-rrf-60-5.1-1'
@@ -6,7 +6,8 @@ MIN_SEMANTIC_SUPPORT = 0.5  # 检索阈值，不是概率；业务效果需另�
 
 
 class HistoryRankFusion:
-    def __init__(self):
+    def __init__(self, *, candidate_capacity=100):
+        self.candidate_capacity = candidate_capacity
         self.scores = []
         self.lexical = []
         self.semantic = []
@@ -25,7 +26,7 @@ class HistoryRankFusion:
             if score is None:
                 continue
             entry = (score, -serial, item)
-            if len(heap) < 100:
+            if len(heap) < self.candidate_capacity:
                 heapq.heappush(heap, entry)
             elif entry[:2] > heap[0][:2]:
                 heapq.heapreplace(heap, entry)
@@ -44,6 +45,6 @@ class HistoryRankFusion:
                 'lexical_rank': ranks[0].get(serial), 'semantic_rank': ranks[1].get(serial),
                 'matching_basis': '结构词项与本地语义联合检索，名次不是准确概率',
                 'versions': {**item['versions'], 'fusion_version': FUSION_VERSION}}))
-        # For limit <= 20, an item outside both top-100 has at most 2/161 support,
-        # below at least limit entries in either branch (>= 1/(60+limit)).
+        # Capacity >= 2*limit+60 bounds an item outside both heaps below
+        # the limit-th item in either branch. Default top-100 retains top-20.
         return [item for _, _, item in sorted(ranked, key=lambda row: row[:2], reverse=True)[:limit]]

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.models.case_pipeline import OutboxEvent
+from app.models.case_source import ChangeDelivery
 
 
 OUTBOX_LEASE_SECONDS = 300
@@ -47,6 +48,7 @@ class OutboxClaimService:
         event.claimed_at = now
         event.lease_until = now + timedelta(seconds=OUTBOX_LEASE_SECONDS)
         event.worker_id = uuid.uuid4().hex
+        OutboxClaimService._delivery(db, event, "processing")
         db.commit()
         db.refresh(event)
         return event, True
@@ -91,6 +93,19 @@ class OutboxClaimService:
         )
         if updated != 1:
             raise OutboxClaimLostError("outbox_claim_lost")
+        event = db.query(OutboxEvent).filter_by(id=event_id).first()
+        OutboxClaimService._delivery(db, event, status, error)
+
+    @staticmethod
+    def _delivery(db, event, status, error=None):
+        if event.domain_change_id is None:
+            return
+        delivery = db.query(ChangeDelivery).filter_by(
+            change_id=event.domain_change_id, consumer=event.event_type).first()
+        if delivery is not None:
+            delivery.state = status
+            delivery.attempts = event.attempts
+            delivery.error = error
 
     @staticmethod
     def _aware(value: datetime | None) -> datetime:

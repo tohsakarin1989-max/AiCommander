@@ -158,7 +158,7 @@ export function buildCaseBonusRows(
       caseId: caseItem.id,
       caseNumber: caseItem.case_number || `#${caseItem.id}`,
       location: caseItem.location || '未填写地点',
-      occurredTime: caseItem.occurred_time,
+      occurredTime: caseItem.occurred_time ?? undefined,
       reportUnit: caseItem.report_unit,
       gateStatus: inferGateStatus(caseItem, assessment),
       missingCount: assessment
@@ -233,7 +233,7 @@ function buildManagementMetrics(metrics: BonusManagementPeriodMetrics): BonusMan
 }
 
 export function buildBonusManagementDisplay(context?: BonusManagementContext): BonusManagementDisplay | null {
-  if (!context) return null
+  if (!context?.period || !context.quarter || !context.annual || context.status === 'unknown_period') return null
   return {
     quarterLabel: context.period.quarter_label,
     annualLabel: context.period.annual_label,

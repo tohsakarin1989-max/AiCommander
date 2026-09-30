@@ -62,6 +62,13 @@ export default function IntelligenceRuntimeCenter() {
       />
       {overviewQuery.isLoading ? <Spin /> : !overview ? <Empty description="运行概览暂不可用" /> : (
         <>
+          <Card title="能力状态（配置不等于连通验收）">
+            <p>确定性业务处理：独立于 Agent Lab；失败或降级不计为模型成功。</p>
+            <p>日常模型查询：{overview.capabilities?.model_query === 'enabled' ? '已允许新查询' : '未启用或状态未知'}；
+              查询模型：{overview.capabilities?.query_model === 'configured_not_validated' ? '已选模型，需单独验证' : '未配置或状态未知'}</p>
+            <p>实验 Agent Lab：{overview.capabilities?.experimental_lab === 'enabled' ? '已启用' : '未启用或状态未知'}。
+              已授权历史读取与取消不受新查询开关影响。</p>
+          </Card>
           <section className="runtime-center__agents">
             {overview.business_agents.map((key, index) => (
               <Card key={key} className="runtime-center__agent">

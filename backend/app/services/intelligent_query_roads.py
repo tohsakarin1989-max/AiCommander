@@ -25,7 +25,8 @@ def road_results(db, args):
             continue
         content = artifact['content']
         route = content.get('route')
-        calculation = route if route is not None else content['matrix']
+        facility = content.get('schema_version') == 'case-facility-comparison-5.2-1'
+        calculation = content['calculation'] if facility else route if route is not None else content['matrix']
         if args.min_detour_ratio is not None:
             ratio = (route or {}).get('detour_reference', {}).get('ratio')
             if type(ratio) not in (int, float) or not math.isfinite(ratio) or ratio < args.min_detour_ratio:
@@ -38,11 +39,14 @@ def road_results(db, args):
             'policy_revision': calculation['policy_revision'], 'analysis_at': calculation['analysis_at'],
             'engine_version': calculation.get('engine_version'),
             'vehicle': calculation['vehicle'], 'created_at': artifact['created_at'],
-            'operation': 'route' if route is not None else 'comparison',
+            'operation': 'facility_comparison' if facility else 'route' if route is not None else 'comparison',
             'evidence_ref': f'road_artifact:{identifier}',
             'boundary': '历史留存的道路参考，不是实际轨迹或当前通行保证。',
             'information_gaps': content.get('information_gaps', [])[:10]}
-        if route is not None:
+        if facility:
+            item.update(candidates=content['result']['candidates'],
+                        coverage=content['result']['coverage'], unresolved=content['result']['unresolved'])
+        elif route is not None:
             item.update(target=content.get('target'), distance_m=route.get('distance_m'),
                         detour_reference=route.get('detour_reference'),
                         alternative_count=len(route.get('alternatives', [])))
@@ -62,6 +66,28 @@ def road_results(db, args):
 
 def validate_road_query_evidence(db, result):
     for card in (result or {}).get('cards', []):
+        if card.get('tool') == 'summarize_results':
+            # Query cards are frozen output, not continuing authorization. The
+            # normal task read/finish/follow-up/export paths all call here.
+            from app.services.case_result_service import CaseResultService
+            from app.models.case_insight import CaseAnalysisRun
+            from app.services.intelligent_query_results import _legacy_result_content
+            for item in card.get('data', {}).get('items', []):
+                try:
+                    if item.get('result_id'):
+                        current = CaseResultService.read(db, item['result_id'])
+                        if current['content_sha256'] != item['content_sha256']:
+                            raise ValueError('changed')
+                    elif item.get('run_id'):
+                        run = db.query(CaseAnalysisRun).filter_by(id=item['run_id']).first()
+                        if run is None:
+                            raise ValueError('missing')
+                        current = _legacy_result_content(db, run)
+                        if current['hypotheses'] != item.get('hypotheses', []) or current['summary'] != item.get('summary'):
+                            raise ValueError('changed')
+                except (ValueError, PermissionError, KeyError, TypeError) as error:
+                    raise PermissionError('query_road_evidence_changed') from error
+            continue
         if card.get('tool') != 'find_road_results':
             continue
         for item in card.get('data', {}).get('items', []):

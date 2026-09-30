@@ -33,6 +33,7 @@ export type ScoreCalibration = { status: string; case_count: number; boundary: s
 
 export type IntelligenceRuntimeOverview = {
   orchestrator: string
+  capabilities?: { deterministic_business: string; model_query: string; query_model: string; experimental_lab: string }
   business_agents: string[]
   versions: {
     algorithms: Array<{ component: string; version: string; checksum: string }>

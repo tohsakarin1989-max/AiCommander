@@ -180,7 +180,8 @@ class GeoAnalysisService:
                 return datetime.min
             return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
-        cases_sorted = sorted(cases, key=lambda c: _strip_tz(c.occurred_time))
+        # An unknown time cannot satisfy a temporal window by sharing datetime.min.
+        cases_sorted = sorted((case for case in cases if case.occurred_time is not None), key=lambda c: _strip_tz(c.occurred_time))
         
         serial_groups = []
         processed = set()

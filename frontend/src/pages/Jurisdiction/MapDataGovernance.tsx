@@ -28,6 +28,7 @@ import {
 } from '../../services'
 import OfflineMapManager from './OfflineMapManager'
 import InternalRoadManager from './InternalRoadManager'
+import MapReadinessPanel from './MapReadinessPanel'
 
 
 const COORDINATE_OPTIONS = [
@@ -186,6 +187,8 @@ export default function MapDataGovernance() {
       void queryClient.invalidateQueries({ queryKey: ['map-foundation-conflicts'] })
       void queryClient.invalidateQueries({ queryKey: ['jurisdiction-assets'] })
       void queryClient.invalidateQueries({ queryKey: ['jurisdiction-summary'] })
+      void queryClient.invalidateQueries({ queryKey: ['map-readiness'] })
+      void queryClient.invalidateQueries({ queryKey: ['facility-dossier'] })
       message.success(
         run.idempotent_replay
           ? '该版本文件已经处理过，未重复写入'
@@ -210,9 +213,10 @@ export default function MapDataGovernance() {
 
   return (
     <>
-    <OfflineMapManager />
-    <InternalRoadManager sources={sources} />
-    <Card className="jurisdiction-card map-governance-card" title="生产地图数据治理" extra={<Tag color="green">管理员</Tag>}>
+    <MapReadinessPanel />
+    <div id="offline-map-management"><OfflineMapManager /></div>
+    <div id="internal-road-management"><InternalRoadManager sources={sources} /></div>
+    <Card id="map-source-management" className="jurisdiction-card map-governance-card" title="生产地图数据治理" extra={<Tag color="green">管理员</Tag>}>
       <Alert
         showIcon
         type="info"

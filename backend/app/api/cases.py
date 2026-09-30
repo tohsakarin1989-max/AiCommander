@@ -14,6 +14,9 @@ from app.services.case_import_table import parse_case_table
 from app.services.case_import_batch_service import acquire_import_batch, create_import_case
 from app.services.case_import_values import TIME_ZONES, normalize_case_row, case_row_preview, allocation_order
 from app.utils.datetimes import utc_datetime
+from app.api.case_source_schemas import CaseLocationDraft, OilMeasurementDraft, OilUnit
+from app.api.case_sources import router as source_router
+from app.services.case_intake_contract import normalize_intake
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_knowledge_service import CaseKnowledgeService
@@ -40,6 +43,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+router.include_router(source_router)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_CASE_IMPORT_ROWS = 1000
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
@@ -51,6 +55,7 @@ BATCH_REVIEW_JOBS: Dict[str, Dict[str, Any]] = {}
 BATCH_REVIEW_JOB_TIMESTAMPS: Dict[str, datetime] = {}
 BATCH_REVIEW_JOB_ACCESS: Dict[str, Dict[str, Any]] = {}
 NULLABLE_CASE_UPDATE_FIELDS = {
+    "occurred_time", "occurred_from", "occurred_to", "time_expression", "discovered_at",
     "location",
     "case_type",
     "description",
@@ -94,6 +99,7 @@ AI_INTAKE_WRITABLE_FIELDS = {
     "description",
     "oil_type",
     "oil_volume",
+    "oil_volume_unit",
     "oil_value",
     "oil_nature",
     "water_cut",
@@ -143,6 +149,7 @@ class CaseVehicleDraft(BaseModel):
     model: Optional[str] = None
     plate_number: Optional[str] = None
     oil_volume: Optional[float] = None
+    oil_volume_unit: OilUnit = "unknown"
     water_cut: Optional[float] = None
     custody_location: Optional[str] = None
     current_location: Optional[str] = None
@@ -168,7 +175,13 @@ class CasePersonDraft(BaseModel):
 class CaseCreate(BaseModel):
     operational_area_id: Optional[int] = None
     case_number: Optional[str] = None
-    occurred_time: datetime
+    occurred_time: Optional[datetime] = None
+    occurred_from: Optional[datetime] = None
+    occurred_to: Optional[datetime] = None
+    time_precision: Optional[Literal['exact', 'interval', 'unknown']] = None
+    time_expression: Optional[str] = Field(default=None, max_length=2000)
+    time_timezone: str = "Asia/Shanghai"
+    discovered_at: Optional[datetime] = None
     location: Optional[str] = None
     latitude: Optional[float] = Field(default=None, ge=-90, le=90)
     longitude: Optional[float] = Field(default=None, ge=-180, le=180)
@@ -177,6 +190,7 @@ class CaseCreate(BaseModel):
     # 涉油案件特征
     oil_type: Optional[str] = None
     oil_volume: Optional[float] = None
+    oil_volume_unit: OilUnit = "unknown"
     oil_value: Optional[int] = None
     facility_type: Optional[str] = None
     facility_owner: Optional[str] = None
@@ -208,10 +222,18 @@ class CaseCreate(BaseModel):
     current_stage: Optional[str] = None
     initial_vehicles: Optional[List[CaseVehicleDraft]] = None
     initial_persons: Optional[List[CasePersonDraft]] = None
+    initial_locations: Optional[List[CaseLocationDraft]] = None
+    initial_measurements: Optional[List[OilMeasurementDraft]] = None
 
 class CaseUpdate(BaseModel):
     case_number: Optional[str] = None
     occurred_time: Optional[datetime] = None
+    occurred_from: Optional[datetime] = None
+    occurred_to: Optional[datetime] = None
+    time_precision: Optional[Literal['exact', 'interval', 'unknown']] = None
+    time_expression: Optional[str] = Field(default=None, max_length=2000)
+    time_timezone: Optional[str] = None
+    discovered_at: Optional[datetime] = None
     location: Optional[str] = None
     case_type: Optional[str] = None
     description: Optional[str] = None
@@ -223,6 +245,7 @@ class CaseUpdate(BaseModel):
     # 涉油案件特征
     oil_type: Optional[str] = None
     oil_volume: Optional[float] = None
+    oil_volume_unit: Optional[OilUnit] = None
     oil_value: Optional[int] = None
     facility_type: Optional[str] = None
     facility_owner: Optional[str] = None
@@ -251,13 +274,22 @@ class CaseUpdate(BaseModel):
     current_stage: Optional[str] = None
     initial_vehicles: Optional[List[CaseVehicleDraft]] = None
     initial_persons: Optional[List[CasePersonDraft]] = None
+    initial_locations: Optional[List[CaseLocationDraft]] = None
+    initial_measurements: Optional[List[OilMeasurementDraft]] = None
 
 class CaseResponse(BaseModel):
     id: int
     updated_at: Optional[datetime] = None
     operational_area_id: Optional[int] = None
     case_number: str
-    occurred_time: datetime
+    occurred_time: Optional[datetime] = None
+    occurred_from: Optional[datetime] = None
+    occurred_to: Optional[datetime] = None
+    time_precision: Optional[str] = None
+    time_expression: Optional[str] = None
+    time_timezone: Optional[str] = None
+    discovered_at: Optional[datetime] = None
+    oil_volume_unit: Optional[str] = None
     location: Optional[str]
     latitude: Optional[float]
     longitude: Optional[float]
@@ -302,7 +334,7 @@ class CaseResponse(BaseModel):
     features: Optional[dict] = None
     status: str
 
-    @field_validator("occurred_time", "report_time")
+    @field_validator("occurred_time", "report_time", "occurred_from", "occurred_to", "discovered_at")
     @classmethod
     def normalize_response_time(cls, value):
         # SQLite 返回无时区时间；显式 UTC 避免浏览器再次按本地时间解释。
@@ -320,6 +352,12 @@ class CaseQualityResponse(BaseModel):
     warnings: List[Dict[str, str]]
     recommendations: List[str]
     facts: Dict[str, Any]
+    rule_version: Optional[str] = None
+    validation: Dict[str, Any] = Field(default_factory=dict)
+    completeness: Dict[str, Any] = Field(default_factory=dict)
+    capabilities: Dict[str, Any] = Field(default_factory=dict)
+    priority_gaps: List[Dict[str, Any]] = Field(default_factory=list)
+    score_purpose: Optional[str] = None
     human_confirmation_required: bool = True
     boundary: str = "质量结果仅用于人工复核，不自动修改案件。"
 
@@ -380,9 +418,15 @@ class BatchReviewRequest(BaseModel):
 @router.post("/quality-preview", response_model=CaseQualityResponse)
 def preview_case_quality(payload: CaseCreate, db: Session = Depends(get_db)):
     """保存前执行确定性质量预检；不创建案件，不写入相关台账。"""
-    draft_data = payload.model_dump()
+    try:
+        draft_data = normalize_intake(payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     vehicle_drafts = draft_data.pop("initial_vehicles", None) or []
     person_drafts = draft_data.pop("initial_persons", None) or []
+    location_drafts = draft_data.pop("initial_locations", None) or []
+    measurement_drafts = draft_data.pop("initial_measurements", None) or []
+    from app.models.case_source import CaseLocation, OilMeasurement
     case = Case(**draft_data)
     vehicles = [
         CaseVehicle(**{key: value for key, value in item.items() if key != "id"})
@@ -396,6 +440,8 @@ def preview_case_quality(payload: CaseCreate, db: Session = Depends(get_db)):
         db,
         case,
         related_data={
+            "locations": [CaseLocation(**{k: v for k, v in row.items() if k != 'id'}) for row in location_drafts],
+            "oil_measurements": [OilMeasurement(**{k: v for k, v in row.items() if k != 'id'}) for row in measurement_drafts],
             "vehicles": vehicles,
             "persons": persons,
             "evidence": [],
@@ -444,6 +490,7 @@ class CaseVehicleCreate(BaseModel):
     model: Optional[str] = None
     plate_number: Optional[str] = None
     oil_volume: Optional[float] = None
+    oil_volume_unit: OilUnit = "unknown"
     water_cut: Optional[float] = None
     custody_location: Optional[str] = None
     current_location: Optional[str] = None
@@ -501,6 +548,8 @@ class CaseEvidenceCreate(BaseModel):
 class CaseEvidenceResponse(CaseEvidenceCreate):
     id: int
     case_id: int
+    evidence_object_id: Optional[int] = None
+    source_reference_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -530,6 +579,7 @@ class OilRecoveryResponse(OilRecoveryCreate):
 
 
 class CaseTipCreate(BaseModel):
+    operational_area_id: Optional[int] = None
     case_id: Optional[int] = None
     reporter_name: Optional[str] = None
     reporter_contact: Optional[str] = None
@@ -561,6 +611,9 @@ def _get_case_or_404(db: Session, case_id: int) -> Case:
 class CaseStatistics(BaseModel):
     """案件统计数据"""
     total_cases: int
+    unknown_time_cases: int = 0
+    interval_time_cases: int = 0
+    time_boundary: str = "周期统计仅统计已明确发生时刻；区间和未知时间单列，不以录入时间代替。"
     today_cases: int
     pending_cases: int
     processing_cases: int
@@ -676,14 +729,6 @@ def _append_experience_issue(issues: List[Dict[str, Any]], case: Case, card: Dic
 
     detail = evidence_gaps[0] if evidence_gaps else "经验卡已生成，需人工确认事实、推断和可复用经验。"
     issues.append(_batch_issue(case, "experience", "medium", "经验卡待人工复核", detail, missing_items=evidence_gaps[:4]))
-
-
-def _existing_experience_card_status(case: Case) -> Optional[str]:
-    features = case.features if isinstance(case.features, dict) else {}
-    intelligence = features.get("intelligence") if isinstance(features.get("intelligence"), dict) else {}
-    card = intelligence.get("experience_card") if isinstance(intelligence.get("experience_card"), dict) else {}
-    status = card.get("manual_review_status")
-    return str(status) if status else None
 
 
 def _append_bonus_issue(issues: List[Dict[str, Any]], case: Case, bonus: Dict[str, Any]) -> None:
@@ -807,6 +852,8 @@ def get_case_statistics(db: Session = Depends(get_db)):
 
     return CaseStatistics(
         total_cases=total_cases,
+        unknown_time_cases=db.query(func.count(Case.id)).filter(Case.occurred_time.is_(None), Case.occurred_from.is_(None)).scalar() or 0,
+        interval_time_cases=db.query(func.count(Case.id)).filter(Case.occurred_time.is_(None), Case.occurred_from.isnot(None)).scalar() or 0,
         today_cases=today_cases,
         pending_cases=pending_cases,
         processing_cases=processing_cases,
@@ -837,49 +884,14 @@ def classify_case_evidence(payload: EvidenceClassifyRequest):
 @router.post("/", response_model=CaseResponse)
 def create_case(case: CaseCreate, db: Session = Depends(get_db)):
     """创建案件"""
-    return CaseService.create_case(
-        db=db,
-        case_number=case.case_number,
-        occurred_time=case.occurred_time,
-        location=case.location,
-        latitude=case.latitude,
-        longitude=case.longitude,
-        case_type=case.case_type,
-        description=case.description,
-        involved_persons=case.involved_persons,
-        involved_items=case.involved_items,
-        loss_amount=case.loss_amount,
-        oil_type=case.oil_type,
-        oil_volume=case.oil_volume,
-        oil_value=case.oil_value,
-        facility_type=case.facility_type,
-        facility_owner=case.facility_owner,
-        security_level=case.security_level,
-        modus_operandi=case.modus_operandi,
-        suspect_roles=case.suspect_roles,
-        vehicle_info=case.vehicle_info,
-        upstream_source=case.upstream_source,
-        downstream_destination=case.downstream_destination,
-        report_time=case.report_time,
-        report_unit=case.report_unit,
-        source_type=case.source_type,
-        source_detail=case.source_detail,
-        police_reported=case.police_reported,
-        case_filed=case.case_filed,
-        police_officer=case.police_officer,
-        police_phone=case.police_phone,
-        security_officers=case.security_officers,
-        oil_nature=case.oil_nature,
-        water_cut=case.water_cut,
-        vehicle_handling=case.vehicle_handling,
-        person_handling=case.person_handling,
-        oil_handling=case.oil_handling,
-        operation_role=case.operation_role,
-        current_stage=case.current_stage,
-        initial_vehicles=[item.model_dump(exclude_unset=True) for item in case.initial_vehicles or []],
-        initial_persons=[item.model_dump(exclude_unset=True) for item in case.initial_persons or []],
-        operational_area_id=case.operational_area_id,
-    )
+    try:
+        values = normalize_intake(case.model_dump(exclude_unset=True))
+        values.setdefault("case_number", None)
+        values.setdefault("occurred_time", None)
+        return CaseService.create_case(db=db, **values)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.get("/page", response_model=CasePageResponse)
 def get_case_page(
@@ -1143,11 +1155,12 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
             quality = CaseQualityService.refresh_case_quality(db, case)
             _append_quality_issues(job["issues"], case, quality)
 
-            experience_status = _existing_experience_card_status(case)
-            card = CaseIntelligenceService.build_experience_card(db, case.id)
-            if experience_status and not card.get("manual_review_status"):
-                card["manual_review_status"] = experience_status
-            _append_experience_issue(job["issues"], case, card)
+            from app.services.experience_state_service import read_experience_state
+            experience = read_experience_state(db, case)
+            # Review only the stored target. New preview contents cannot inherit
+            # confirmation from legacy JSON or a different asset version.
+            if experience["card"] is not None and experience["needs_review"]:
+                _append_experience_issue(job["issues"], case, experience["card"])
             db.refresh(case)
 
             if settings.ENABLE_BONUS_ACCOUNTING:
@@ -1206,24 +1219,10 @@ def update_case_location(
         raise HTTPException(status_code=400, detail="坐标超出中国区域范围，纬度需在18~53，经度需在73~135")
 
     case = _get_case_or_404(db, case_id)
-    case.latitude = payload.latitude
-    case.longitude = payload.longitude
-    case.updated_at = datetime.utcnow()
-    _commit_analysis_relevant_change(
-        db,
-        case,
-        changed_fields={"latitude", "longitude"},
-    )
-    db.refresh(case)
-
     try:
-        from app.services.chain_analysis_service import ChainAnalysisService
-
-        ChainAnalysisService.scan_chain_links(case.id, db)
-    except Exception:
-        pass
-
-    return case
+        return CaseService.update_case(db, case.id, latitude=payload.latitude, longitude=payload.longitude)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.get("/{case_id:int}", response_model=CaseResponse)
 def get_case(case_id: int, db: Session = Depends(get_db)):
@@ -1235,10 +1234,17 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{case_id:int}/profile")
-def get_case_profile(case_id: int, db: Session = Depends(get_db)):
+def get_case_profile(
+    case_id: int,
+    db: Session = Depends(get_db),
+    include_similar: bool = True,
+):
     """获取统一案件画像。该接口只读，不刷新质量评分、不生成经验卡。"""
     try:
-        return CaseProfileService.build_case_profile(db, case_id)
+        return CaseProfileService.build_case_profile(db, case_id, include_similar=include_similar)
+    except SQLAlchemyError:
+        raise HTTPException(503, "案件画像或历史检索暂不可用，不能据此判断没有相关资料",
+                            headers={"Cache-Control": "no-store"}) from None
     except ValueError as exc:
         if str(exc) == "case_not_found":
             raise HTTPException(status_code=404, detail="案件不存在")
@@ -1277,6 +1283,7 @@ def apply_ai_intake_preview(
     case = _get_case_or_404(db, case_id)
     confirmed = set(payload.confirmed_field_names or [])
     applied: List[str] = []
+    changes: Dict[str, Any] = {}
     rejected: List[Dict[str, Any]] = []
     for item in payload.confirmed_fields:
         field = item.field
@@ -1287,12 +1294,13 @@ def apply_ai_intake_preview(
             rejected.append({"field": field, "reason": "字段不允许由 AI 录入写入"})
             continue
         value = _normalize_ai_intake_value(field, item.value)
-        setattr(case, field, value)
+        changes[field] = value
         applied.append(field)
     if applied:
-        case.updated_at = datetime.utcnow()
-        _commit_analysis_relevant_change(db, case, changed_fields=set(applied))
-        db.refresh(case)
+        try:
+            CaseService.update_case(db, case.id, **changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "case_id": case.id,
         "applied_fields": applied,
@@ -1308,11 +1316,15 @@ def update_case(
     db: Session = Depends(get_db)
 ):
     """更新案件"""
-    update_data = case_update.model_dump(exclude_unset=True)
+    existing = _get_case_or_404(db, case_id)
+    try:
+        update_data = normalize_intake(case_update.model_dump(exclude_unset=True), existing)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     has_initial_vehicles = "initial_vehicles" in update_data and update_data["initial_vehicles"] is not None
     has_initial_persons = "initial_persons" in update_data and update_data["initial_persons"] is not None
-    initial_vehicles = update_data.pop("initial_vehicles", None) or []
-    initial_persons = update_data.pop("initial_persons", None) or []
+    initial_vehicles = update_data.pop("initial_vehicles", None)
+    initial_persons = update_data.pop("initial_persons", None)
     for field, value in update_data.items():
         if value is None and field not in NULLABLE_CASE_UPDATE_FIELDS:
             raise HTTPException(status_code=422, detail=f"{field} 不能为空")
@@ -1358,7 +1370,7 @@ def get_nearby_cases(
 def get_case_quality(case_id: int, db: Session = Depends(get_db)):
     """获取案件信息质量评分，评分规则来自业务管理细则。"""
     case = _get_case_or_404(db, case_id)
-    if not case.quality_issues:
+    if not case.quality_issues or case.quality_issues.get("rule_version") != "case-quality-6.1.0-1":
         return CaseQualityService.evaluate_case(db, case)
     return case.quality_issues
 
@@ -1391,13 +1403,12 @@ def get_bonus_period_cases(
     if scope not in {"quarter", "annual"}:
         raise HTTPException(status_code=400, detail="scope must be quarter or annual")
     case = _get_case_or_404(db, case_id)
-    return CaseAutomationService.list_bonus_period_cases(
-        db,
-        case,
-        scope=scope,
-        squad=squad,
-        include_all_squads=include_all_squads,
-    )
+    try:
+        return CaseAutomationService.list_bonus_period_cases(
+            db, case, scope=scope, squad=squad, include_all_squads=include_all_squads,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{case_id:int}/automation-workbench")
@@ -1494,6 +1505,7 @@ def list_case_evidence(case_id: int, db: Session = Depends(get_db)):
 def create_case_evidence(case_id: int, payload: CaseEvidenceCreate, db: Session = Depends(get_db)):
     """新增证据材料目录项，并同步刷新信息质量评分。"""
     case = _get_case_or_404(db, case_id)
+    require_area_write_access(db, case.operational_area_id)
     evidence_data = payload.model_dump(exclude_unset=True)
     classification = CaseAutomationService.classify_evidence_payload(evidence_data)
     if not evidence_data.get("requirement_key") and classification.get("requirement_key"):
@@ -1503,6 +1515,19 @@ def create_case_evidence(case_id: int, payload: CaseEvidenceCreate, db: Session 
     meta = evidence_data.get("meta") or {}
     meta["auto_classification"] = classification
     evidence_data["meta"] = meta
+    from app.models.case_source import EvidenceObject, SourceReference
+    # A path supplied in an old directory entry is metadata, not proof that a
+    # local file exists. Never open, fetch, or hash an arbitrary supplied path.
+    material = EvidenceObject(storage_key=f"metadata-{uuid4().hex}", availability="metadata_only",
+                              media_type=evidence_data.get("evidence_type"),
+                              sensitivity="sensitive" if evidence_data.get("is_sensitive", True) else "internal",
+                              captured_at=evidence_data.get("captured_at"))
+    db.add(material)
+    db.flush()
+    reference = SourceReference(case_id=case_id, evidence_object_id=material.id, kind="evidence", locator={"title": evidence_data.get("title")})
+    db.add(reference)
+    db.flush()
+    evidence_data.update(evidence_object_id=material.id, source_reference_id=reference.id)
     evidence = CaseEvidence(case_id=case_id, **evidence_data)
     db.add(evidence)
     db.flush()
@@ -1592,15 +1617,47 @@ def list_case_tips(
 @router.post("/tips", response_model=CaseTipResponse)
 def create_case_tip(payload: CaseTipCreate, db: Session = Depends(get_db)):
     """新增举报/线索台账。"""
-    if payload.case_id is not None:
-        _get_case_or_404(db, payload.case_id)
-    tip = CaseTip(**payload.model_dump(exclude_unset=True))
+    case = _get_case_or_404(db, payload.case_id) if payload.case_id is not None else None
+    area_id = require_area_write_access(db, case.operational_area_id if case is not None else payload.operational_area_id)
+    if case is not None and payload.operational_area_id not in {None, case.operational_area_id}:
+        raise HTTPException(status_code=422, detail="线索与案件范围不一致")
+    values = payload.model_dump(exclude_unset=True)
+    values["operational_area_id"] = area_id
+    tip = CaseTip(**values)
     db.add(tip)
+    db.flush()
+    if case is not None:
+        _commit_analysis_relevant_change(db, case, changed_fields={"tips"})
+    else:
+        db.commit()
+    db.refresh(tip)
+    return tip
+
+
+@router.patch("/tips/{tip_id:int}", response_model=CaseTipResponse)
+def update_case_tip(tip_id: int, payload: CaseTipCreate, db: Session = Depends(get_db)):
+    """更新核实状态或线索内容，与受影响案件的派生事件同事务提交。"""
+    tip = db.query(CaseTip).filter(CaseTip.id == tip_id).first()
+    if tip is None:
+        raise HTTPException(status_code=404, detail="线索不存在")
+    changes = payload.model_dump(exclude_unset=True)
+    require_area_write_access(db, tip.operational_area_id)
+    if "operational_area_id" in changes and changes["operational_area_id"] != tip.operational_area_id:
+        raise HTTPException(status_code=422, detail="线索不能通过编辑跨范围迁移")
+    affected_ids = {tip.case_id, changes.get("case_id", tip.case_id)} - {None}
+    affected = [_get_case_or_404(db, case_id) for case_id in affected_ids]
+    for case in affected:
+        require_area_write_access(db, case.operational_area_id)
+        if tip.operational_area_id is not None and case.operational_area_id != tip.operational_area_id:
+            raise HTTPException(status_code=422, detail="线索与案件范围不一致")
+    for key, value in changes.items():
+        setattr(tip, key, value)
+    db.flush()
+    for case in affected:
+        CaseQualityService.refresh_case_quality(db, case, commit=False)
+        CasePipelineService.enqueue_case_change(db, case, changed_fields={"tips"})
     db.commit()
     db.refresh(tip)
-    if tip.case_id is not None:
-        case = _get_case_or_404(db, tip.case_id)
-        CaseQualityService.refresh_case_quality(db, case)
     return tip
 
 

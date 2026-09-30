@@ -64,11 +64,6 @@ export const automationAlertApi = {
     return response.data
   },
 
-  seedSimulated: async (): Promise<AutomationAlert[]> => {
-    const response = await api.post('/automation-alerts/simulated')
-    return response.data
-  },
-
   ensureEvent: async (alertId: number): Promise<{ alert_id: number; event_id: number; message: string }> => {
     const response = await api.post(`/automation-alerts/${alertId}/event`)
     return response.data

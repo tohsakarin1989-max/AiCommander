@@ -10,7 +10,7 @@ import time
 
 from app.services.road_calculation_service import calculate_distance_matrix
 from app.services.road_network_service import resolve_network
-from app.services.scorers.facility_roads_v52 import FacilityEvidence, rank_facilities
+from app.services.scorers.facility_roads_v63 import FacilityEvidence, rank_facilities
 from app.services.vehicle_router import RoadLocation, RoadCalculationError
 
 

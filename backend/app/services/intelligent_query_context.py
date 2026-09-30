@@ -6,7 +6,7 @@ import json
 from app.services.intelligent_query_tools import TOOLS, CaseFilters
 
 VERSION = 'query-context-4.3-1'
-CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles', 'summarize_results', 'find_history', 'aggregate_case_profiles'}
+CASE_TOOLS = {'find_cases', 'count_cases', 'compare_periods', 'find_road_results', 'find_case_profiles', 'summarize_results', 'find_history', 'aggregate_case_profiles', 'read_case_process', 'explain_case_result'}
 PAGE_FIELDS = {'page', 'page_size', 'limit'}
 
 
@@ -41,6 +41,24 @@ def remember(conditions, tool, arguments):
 
 def inherit(tool, arguments, conditions, *, question, change_basis=None):
     fields = TOOLS[tool].model_fields
+    # A different tool cannot silently discard facility identity, historical
+    # cutoffs or scenario assumptions inherited from the previous answer.
+    business_defaults = {}
+    for previous in ('read_facility_dossier', 'read_facility_at', 'compare_coverage_scenario',
+                     'read_business_result', 'find_business_results'):
+        saved = conditions['tool_defaults'].get(previous, {})
+        meaningful = {key: value for key, value in saved.items()
+                      if key != 'operational_area_id' and value is not None and value != [] and value != ''}
+        if previous != tool and meaningful:
+            if (previous in {'read_facility_dossier', 'read_facility_at'}
+                    and tool in {'read_facility_dossier', 'read_facility_at'}
+                    and all(key in fields for key in meaningful)):
+                business_defaults.update(meaningful)
+            else:
+                raise ValueError('query_context_tool_cannot_preserve_filters')
+    if (tool != 'explain_case_result'
+            and conditions['tool_defaults'].get('explain_case_result', {}).get('result_id')):
+        raise ValueError('query_context_tool_cannot_preserve_filters')
     if (tool != 'aggregate_case_profiles'
             and conditions['tool_defaults'].get('aggregate_case_profiles', {}).get('conditions')):
         # Ordinary case/date filters cannot represent semantic AND conditions.
@@ -66,7 +84,7 @@ def inherit(tool, arguments, conditions, *, question, change_basis=None):
         # A case count cannot represent a road-result filter. Require a road
         # query or an explicit, traced removal instead of counting all cases.
         raise ValueError('query_context_tool_cannot_preserve_filters')
-    defaults = dict(conditions['tool_defaults'].get(tool, {}))
+    defaults = {**business_defaults, **conditions['tool_defaults'].get(tool, {})}
     if tool in CASE_TOOLS:
         defaults = {k: v for k, v in defaults.items() if k not in CaseFilters.model_fields and k not in {'start', 'end'}}
         defaults.update(conditions['case_filters'])

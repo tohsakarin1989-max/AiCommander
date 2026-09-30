@@ -69,6 +69,21 @@ describe('统一成果展示', () => {
     result.content.facts_summary.recorded_fields.occurred_time = '2026-09-10T14:00:00Z'
     expect(renderToStaticMarkup(<CaseResultPanel caseId={1} result={result} />)).not.toContain('存储值未注明时区')
   })
+  it('组合版显示固定来源，基础版本明确道路未就绪', () => {
+    const result = fixture()
+    result.composition_status = 'road_not_ready'
+    expect(renderToStaticMarkup(<CaseResultPanel caseId={1} result={result} />)).toContain('当前道路组合未就绪')
+    result.composition_status = 'ready'
+    result.content.schema_version = 'case-result-composition-6.0.0-1'
+    result.content.composition = { base_result_id: 'base-1', base_content_sha256: 'base-hash',
+      road_artifact_id: 'road-1', road_content_sha256: 'road-hash',
+      branch: { principal_user_id: 1, area_ids: [1], purpose: 'current_conditions_reference' } }
+    result.content.road_versions = { network_id: 'network-1', analysis_at: '2026-09-27T00:00:00Z' }
+    result.content.candidates[0].road_distance_m = 3000
+    const html = renderToStaticMarkup(<CaseResultPanel caseId={1} result={result} />)
+    for (const value of ['道路与生产条件比较后的来源候选', '3.00 公里', 'base-1', 'road-1', 'network-1', '同一冻结组合']) expect(html).toContain(value)
+    expect(html).not.toContain('当前道路组合未就绪')
+  })
 })
 
 describe('固定成果地图输入', () => {
@@ -91,5 +106,16 @@ describe('固定成果地图输入', () => {
     expect(hypothesisSupportLabel({ ruleSupport: 72.5 })).toBe('规则支持度：72.5（非概率）')
     expect(hypothesisSupportLabel({ confidence: 0.8 })).toContain('未经概率校准')
     expect(hypothesisSupportLabel({ ruleSupport: Number.NaN })).toContain('未提供有效')
+  })
+  it('组合地图使用冻结入口，不将原空间圆圈或直线伪装成道路', () => {
+    const result = fixture()
+    result.content.composition = { base_result_id: 'base', base_content_sha256: 'b', road_artifact_id: 'road', road_content_sha256: 'r',
+      branch: { principal_user_id: 1, area_ids: [1], purpose: 'current_conditions_reference' } }
+    result.content.road_map = { map_snapshot_id: 'map-1', production_asset_ids: [13], warnings: [],
+      reference_points: [{ id: '13', rank: 1, title: '可信入口', latitude: 46, longitude: 125 }] }
+    const map = caseResultMapModel(result)
+    expect(map.hypothesisRegions).toEqual([])
+    expect(map.productionAssetIds).toEqual([13])
+    expect(map.referencePoints?.[0]).toMatchObject({ id: '13', title: '可信入口', longitude: 125 })
   })
 })

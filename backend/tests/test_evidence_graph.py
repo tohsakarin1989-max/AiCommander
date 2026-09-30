@@ -176,6 +176,8 @@ def test_evidence_graph_marks_drafts_unresolved_refs_and_inferred_links_for_revi
     db = _session()
     case = _case(db, "EG-REVIEW")
     related = _case(db, "EG-RELATED", latitude=46.62, longitude=125.12)
+    from app.services.case_pipeline_service import CasePipelineService
+    from app.services.chain_analysis_service import ChainAnalysisService
     link = ChainLink(
         case_id_a=case.id,
         case_id_b=related.id,
@@ -185,6 +187,9 @@ def test_evidence_graph_marks_drafts_unresolved_refs_and_inferred_links_for_revi
         distance_km=2.3,
         time_diff_days=4,
         reasoning="仅基于时空和环节条件形成的待确认假设。",
+        source_hash_a=CasePipelineService.source_hash(db, case),
+        source_hash_b=CasePipelineService.source_hash(db, related),
+        algorithm_version=ChainAnalysisService.ALGORITHM_VERSION,
     )
     db.add(link)
     db.commit()

@@ -28,6 +28,9 @@ class ChainLink(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     confirmed_by = Column(String(100), nullable=True)
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    source_hash_a = Column(String(64), nullable=True)
+    source_hash_b = Column(String(64), nullable=True)
+    algorithm_version = Column(String(40), nullable=True)
 
     from_case = relationship("Case", foreign_keys=[case_id_a])
     to_case = relationship("Case", foreign_keys=[case_id_b])

@@ -17,8 +17,9 @@ from app.models.map_foundation import MapSnapshot, MapSnapshotFeature
 from app.repositories.spatial_repository import SpatialRepository
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 from app.services.scorers.dual_domain_v34 import (
-    DualDomainV34, VERSION as SCORER_VERSION, SOURCE_TYPES, STORAGE_TYPES, ROAD_TYPES,
+    SOURCE_TYPES, STORAGE_TYPES, ROAD_TYPES,
 )
+from app.services.scorers.dual_domain_v60 import DualDomainV60, VERSION as SCORER_VERSION
 
 
 CASE_INSIGHT_ALGORITHM_VERSION = SCORER_VERSION
@@ -182,7 +183,8 @@ class CaseInsightService:
                     if hypotheses
                     else "当前证据不足，未生成候选。"
                 )
-                run.information_gaps = [] if hypotheses else ["当前范围内缺少可支撑推断的生产设施、道路或历史案件"]
+                run.information_gaps = ([] if hypotheses else ["当前范围内缺少可支撑推断的生产设施、道路或历史案件"])
+                run.information_gaps.append("基础空间算法不生成囤储候选；村屯邻近、地图用途不能替代案件或经验线索。")
 
             db.refresh(profile)
             db.refresh(snapshot)
@@ -408,14 +410,14 @@ class CaseInsightService:
         db.refresh(feedback)
         return feedback
 
-    _build_candidates = staticmethod(DualDomainV34._build_candidates)
-    _source_candidates = staticmethod(DualDomainV34._source_candidates)
-    _storage_candidates = staticmethod(DualDomainV34._storage_candidates)
-    _activity_candidate = staticmethod(DualDomainV34._activity_candidate)
-    _route_candidates = staticmethod(DualDomainV34._route_candidates)
-    _confidence = staticmethod(DualDomainV34._confidence)
-    _source_asset_id = staticmethod(DualDomainV34._source_asset_id)
-    _point_region = staticmethod(DualDomainV34._point_region)
+    _build_candidates = staticmethod(DualDomainV60._build_candidates)
+    _source_candidates = staticmethod(DualDomainV60._source_candidates)
+    _storage_candidates = staticmethod(DualDomainV60._storage_candidates)
+    _activity_candidate = staticmethod(DualDomainV60._activity_candidate)
+    _route_candidates = staticmethod(DualDomainV60._route_candidates)
+    _confidence = staticmethod(DualDomainV60._confidence)
+    _source_asset_id = staticmethod(DualDomainV60._source_asset_id)
+    _point_region = staticmethod(DualDomainV60._point_region)
 
     @staticmethod
     def run_to_dict(db: Session, run: CaseAnalysisRun) -> dict[str, Any]:
