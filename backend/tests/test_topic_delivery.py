@@ -7,6 +7,7 @@ from xml.etree import ElementTree
 import pytest
 
 from app.models.map_foundation import UserAreaScope
+from app.models.case_source import CaseLocation
 from app.services import analysis_topic_service as topics
 from app.services import intelligent_query_tasks as queries
 from app.services import topic_document as documents
@@ -72,6 +73,10 @@ async def test_place_query_cannot_become_an_unfiltered_case_topic(query_db):
 
 def test_views_use_historical_profile_coordinates_and_selected_revision(query_db):
     case = add_case(query_db, 'MAP', description='井场发现软管。', latitude=46.5, longitude=125.1)
+    query_db.add(CaseLocation(case_id=case.id, role='incident', precision='exact',
+        description='合成案发位置', source_note='专题历史地图冻结测试的明确地点',
+        geometry={'type': 'Point', 'coordinates': [125.1, 46.5]}))
+    query_db.flush()
     profile(query_db, case)
     topic = topics.create_topic(query_db, '地图专题', {})
     topics.refresh_topic(query_db, topic['id'])

@@ -168,7 +168,7 @@ def test_supplement_creates_revision_bound_process_and_keeps_previous_frozen(db,
     CasePipelineService.process_event(db, first_event.id)
     first = db.query(CaseAnalysisProfile).one()
     original = deepcopy(first.payload)
-    assert first.schema_version == CASE_PROFILE_SCHEMA_VERSION == "6.3.0"
+    assert first.schema_version == CASE_PROFILE_SCHEMA_VERSION == "8.0.0"
     old_process = first.payload["semantics"]["process"]
     assert old_process["source_revision_id"] == db.query(CaseRevision).one().id
     assert old_process["structured_context"]["measurements"][0]["reference"]["value"]["unit"] == "liter"

@@ -126,6 +126,8 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise ValueError('invalid_query_question')
     user = _identity(db)
+    if parent_query_id is not None and initial_context is not None:
+        raise ValueError('query_context_conflict')
     if parent_query_id and question_type is None:
         parent, _ = _owned(db, parent_query_id)
         question_type = (parent.input_payload or {}).get('question_type')
@@ -141,8 +143,6 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
         case_id = selected_preset['arguments'].get('case_id')
         if case_id is not None:
             initial_context = {'source_case_id': case_id}
-    if parent_query_id is not None and initial_context is not None:
-        raise ValueError('query_context_conflict')
     if topic_source is not None:
         from app.services.topic_query_bridge import validate_topic_source
         from app.services.intelligent_query_context import empty_conditions, remember

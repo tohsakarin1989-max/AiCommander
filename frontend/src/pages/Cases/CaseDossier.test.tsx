@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { caseDossierView, CaseDossierPanel, CaseQualityStatus } from './CaseDossier'
+import { caseDossierView, CaseDossierPanel, CaseQualityStatus, hasCurrentCaseQuality } from './CaseDossier'
 import type { CaseQuality } from '../../types'
 
 export const qualityFixture: CaseQuality = {
+  rule_version: 'case-quality-8.0.0-1',
   score: 66, level: 'medium', category_scores: {}, missing_required: [], warnings: [], recommendations: [], facts: {},
   validation: { status: 'valid', can_save: true, errors: [], warnings: [] },
   completeness: { status: 'partial', stage: 'recorded', gaps: [] },
@@ -23,5 +24,25 @@ describe('分组案件档案与资料状态', () => {
     expect(html).not.toContain('66'); expect(html).not.toContain('额外第四项')
     expect(html).toContain('资料就绪'); expect(html).toContain('运行状态另行检查'); expect(html).toContain('不代表案件办结')
     expect(renderToStaticMarkup(<CaseQualityStatus quality={{ ...qualityFixture, validation: undefined }} />)).toContain('不以历史分数表示完整性')
+  })
+  it.each(['case-quality-6.1', undefined])('旧规则 %s 不显示为当前合格或再次催办', ruleVersion => {
+    const quality = { ...qualityFixture, rule_version: ruleVersion }
+    const html = renderToStaticMarkup(<CaseQualityStatus quality={quality} />)
+    expect(hasCurrentCaseQuality(quality)).toBe(false)
+    expect(html).toContain('历史规则结果'); expect(html).toContain('尚未按本版规则评估')
+    expect(html).not.toContain('录入格式有效'); expect(html).not.toContain('关键补充')
+    expect(html).not.toContain('66'); expect(html).not.toContain('资料就绪')
+  })
+  it('后端明确标记过期时，纵使留有旧验证字段也仅显示历史状态', () => {
+    const quality = { ...qualityFixture, state: 'stale' }
+    expect(hasCurrentCaseQuality(quality)).toBe(false)
+    expect(renderToStaticMarkup(<CaseQualityStatus quality={quality} />)).toContain('不作为当前缺项或待办')
+    expect(hasCurrentCaseQuality(qualityFixture)).toBe(true)
+  })
+  it.each(['loading', 'unavailable'] as const)('读取 %s 时不以缓存质量代替当前状态', readState => {
+    const html = renderToStaticMarkup(<CaseQualityStatus quality={qualityFixture} readState={readState} />)
+    expect(html).toContain(readState === 'loading' ? '正在读取' : '暂不可读')
+    expect(html).not.toContain('录入格式有效'); expect(html).not.toContain('关键补充')
+    expect(html).not.toContain('资料就绪')
   })
 })

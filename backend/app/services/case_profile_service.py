@@ -59,11 +59,22 @@ class CaseProfileService:
         payload = _as_dict((saved.get("data") or {}).get("payload")) if saved["status"] == "ready" else {}
         quality = payload.get("quality") or case.quality_issues
         if quality:
-            from app.services.case_quality_service import QUALITY_RULE_VERSION, CaseQualityService
+            from app.services.case_quality_service import QUALITY_RULE_VERSION
             if quality.get("rule_version") != QUALITY_RULE_VERSION:
-                # Read-only reinterpretation of validity, not a saved score or
-                # task. Old cached missing-investigation prompts must not recur.
-                quality = CaseQualityService.evaluate_case(db, case)
+                # GET reuses saved results. An old rule's prompts are history,
+                # not current requirements; only the background pipeline may
+                # replace them with a newly evaluated result.
+                quality = {
+                    "state": "stale",
+                    "rule_version": quality.get("rule_version"),
+                    "score": quality.get("score"),
+                    "level": quality.get("level"),
+                    "score_purpose": "historical_reference_only",
+                    "missing_required": [],
+                    "priority_gaps": [],
+                    "historical_result": quality,
+                    "reason": "历史规则结果仅供查看，不作为当前缺项或待办；读取不重新分析。",
+                }
         else:
             quality = {"missing_required": [], "state": "not_generated"}
         features = _as_dict(case.features)

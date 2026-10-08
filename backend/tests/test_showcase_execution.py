@@ -16,6 +16,9 @@ def test_real_pipeline_returns_evidence_and_keeps_original_facts(monkeypatch):
     assert result['execution_kind'] == 'live_deterministic'
     assert result['original_facts_unchanged'] is True
     assert result['profile']['payload']
+    assert result['case']['initial_locations'][0]['role'] == 'incident'
+    assert result['profile']['payload']['analysis_applicability']['incident_point'] == {
+        'latitude': 46.6, 'longitude': 125.1}
     assert 1 <= len(result['analysis']['hypotheses']) <= 3
     assert all(item['evidence_refs'] for item in result['analysis']['hypotheses'])
     assert all(item['counter_evidence'] or item['information_gaps']
@@ -39,7 +42,12 @@ def test_insufficient_coordinates_does_not_invent_candidates():
     assert result['analysis']['hypotheses'] == []
     assert result['analysis']['information_gaps']
     assert result['original_facts_unchanged'] is True
-    assert result['trace'][3]['result_status'] == 'degraded'
+    assert result['analysis']['status'] == 'insufficient_data'
+    assert result['profile']['payload']['analysis_applicability']['incident_point'] is None
+    # Insufficient input is not a service failure and must not enqueue a fake
+    # completed/degraded analysis merely to keep the old rehearsal trace shape.
+    assert 'id' not in result['analysis']
+    assert 'CaseInsightService' not in [step['service'] for step in result['trace']]
 
 
 def test_fault_injection_exercises_actual_model_fallback():

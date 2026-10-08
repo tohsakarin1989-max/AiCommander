@@ -50,7 +50,7 @@ import CaseSourceDetails from './CaseSourceDetails'
 import CaseEntityDetails from './CaseEntityDetails'
 import CaseEvidenceFiles from './CaseEvidenceFiles'
 import RecordIntake from './RecordIntake'
-import { CaseDossierNavigation, CaseDossierPanel, CaseQualityStatus, caseDossierView } from './CaseDossier'
+import { CaseDossierNavigation, CaseDossierPanel, CaseQualityStatus, caseDossierView, hasCurrentCaseQuality } from './CaseDossier'
 import { formatCaseTime, formatOilVolume, formatStoredTime, formCaseTime } from '../../utils/caseValues'
 import CaseResultPanel from '../../components/CaseResult/CaseResultPanel'
 import CaseResultMap from '../../components/CaseResult/CaseResultMap'
@@ -60,7 +60,7 @@ import { businessContextPath } from '../../services/businessNavigation'
 import BusinessReturnLink from '../../components/BusinessReturnLink'
 import { caseImportsApi, type ImportCorrectionResult, type RecentImportBatch } from '../../services/caseImports'
 import { caseStewardApi } from '../../services/caseSteward'
-import type { BatchReviewResult, BonusAssessment, Case, CaseCreate, CaseQualityPreview, CaseUpdatePayload } from '../../types'
+import type { BatchReviewResult, BonusAssessment, Case, CaseCreate, CaseQuality, CaseQualityPreview, CaseUpdatePayload } from '../../types'
 import type { ChainLink } from '../../types'
 import { chainPresentation } from './chainPresentation'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -313,17 +313,17 @@ const CaseWorkspace: React.FC = () => {
     retry: false,
   })
 
-  const renderQualityBadge = (caseItem: Case) => {
-    if (!caseItem.quality_issues?.validation) {
+  const renderQualityBadge = (quality?: Partial<CaseQuality> | null) => {
+    if (!hasCurrentCaseQuality(quality)) {
       return <span style={{ color: 'var(--ink-3)' }}>—</span>
     }
     return (
       <span
         className="tag"
-        style={{ '--tag-c': caseItem.quality_issues.validation.can_save ? 'var(--ok)' : 'var(--warn)' } as React.CSSProperties}
+        style={{ '--tag-c': quality.validation.can_save ? 'var(--ok)' : 'var(--warn)' } as React.CSSProperties}
         title="仅表示字段格式，不代表案件完成度"
       >
-        {caseItem.quality_issues.validation.can_save ? '格式有效' : '格式待修正'}
+        {quality.validation.can_save ? '格式有效' : '格式待修正'}
       </span>
     )
   }
@@ -1486,7 +1486,7 @@ const CaseWorkspace: React.FC = () => {
                               </span>
                             ) : <span style={{ color: 'var(--ink-3)' }}>—</span>}
                           </td>
-                          <td>{renderQualityBadge(caseItem)}</td>
+                          <td>{renderQualityBadge(caseItem.quality_issues)}</td>
                           <td>
                             <span className={`tag ${statusTagClass[caseItem.status] || ''}`}>
                               {statusLabel[caseItem.status] || caseItem.status}
@@ -1602,11 +1602,12 @@ const CaseWorkspace: React.FC = () => {
                   <CaseDossierPanel view="overview" active={dossierView}>
                   <div className="detail-section">
                     <div className="ds-head">资料状态与报送</div>
-                    <CaseQualityStatus quality={selectedCase.quality_issues} />
+                    <CaseQualityStatus quality={caseProfile?.quality}
+                      readState={profileQuery.isError ? 'unavailable' : resultLoading ? 'loading' : 'ready'} />
                     <div className="detail-grid">
                       <div className="kv">
                         <span className="k">录入有效性</span>
-                        <span className="v">{renderQualityBadge(selectedCase)}</span>
+                        <span className="v">{renderQualityBadge(profileQuery.isError || resultLoading ? undefined : caseProfile?.quality)}</span>
                       </div>
                       {selectedCase.report_time && (
                         <div className="kv">

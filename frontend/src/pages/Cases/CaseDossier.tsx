@@ -19,7 +19,19 @@ export function CaseDossierNavigation() {
 export function CaseDossierPanel({ view, active, children }: { view: CaseDossierView; active: CaseDossierView; children: ReactNode }) {
   return active === view ? <section className="case-dossier-panel" aria-label={caseDossierViews[view]}>{children}</section> : null
 }
-export function CaseQualityStatus({ quality }: { quality?: Partial<CaseQuality> | null }) {
+type ReadQuality = Partial<CaseQuality> & { state?: string }
+const CURRENT_QUALITY_RULE = 'case-quality-8.0.0-1'
+export function hasCurrentCaseQuality(quality?: ReadQuality | null): quality is ReadQuality & { validation: NonNullable<CaseQuality['validation']> } {
+  return quality?.state !== 'stale' && quality?.rule_version === CURRENT_QUALITY_RULE && !!quality.validation
+}
+export function CaseQualityStatus({ quality, readState = 'ready' }: {
+  quality?: ReadQuality | null; readState?: 'ready' | 'loading' | 'unavailable'
+}) {
+  if (readState === 'loading') return <p role="status">正在读取本版资料状态，暂不使用旧缓存判断。</p>
+  if (readState === 'unavailable') return <p role="alert">本版资料状态暂不可读，不能据此判断没有缺项。</p>
+  if (quality?.state === 'stale' || (quality?.validation && !hasCurrentCaseQuality(quality))) {
+    return <p>当前只有历史规则结果，尚未按本版规则评估；历史分值仅供参考，不作为当前缺项或待办。打开页面不会重新分析。</p>
+  }
   if (!quality?.validation) return <p>本版资料预检尚未形成，不以历史分数表示完整性。</p>
   return <div className="case-quality-status">
     <p>{quality.validation.can_save ? '录入格式有效' : '存在需修正的格式问题'}；{quality.completeness?.status === 'sufficient' ? '当前未提示关键缺口' : '部分资料仍可补充'}。不代表案件办结。</p>

@@ -97,7 +97,7 @@ export default function Showcase() {
           {result?.map_features && <Suspense fallback={<p role="status">正在加载地图组件…</p>}>
             <ShowcaseMap casePoint={casePoint} facilities={result.map_features} /></Suspense>}
           {result?.analysis && <section className="showcase-section"><h3>02 / 候选与反向证据</h3>
-            <p>算法：{result.analysis.algorithm_version} · {result.analysis.summary}</p>
+            <p>{result.analysis.algorithm_version ? `算法：${result.analysis.algorithm_version}` : '当前条件不足或不适用，未运行来源推断'} · {result.analysis.summary}</p>
             {result.analysis.hypotheses.length === 0 && <p>没有候选；不为展示补造推断。</p>}
             {result.analysis.hypotheses.map(item => <article className="showcase-candidate" key={item.id}>
               <h4>{item.title}</h4><p>{item.claim}</p><p>规则支持度：{item.score}（不是准确概率）</p>
@@ -106,7 +106,7 @@ export default function Showcase() {
               <details><summary>证据编号与边界</summary><Lines values={item.evidence_refs} /><p>{item.boundary}</p></details>
             </article>)}<Lines values={result.analysis.information_gaps} /></section>}
           {result?.brief && <section className="showcase-section"><h3>03 / 上一完整周期简报</h3><p>{result.brief.summary}</p>
-            <p>案件按案发时间比较上一完整周期，画像处理量按生成时间统计。本次即时研判不倒填进历史周期；变化不足时不强行生成部署建议。</p>
+            <p>简报按发现/查获时间比较上一完整周期，未知时间单列，画像处理量按生成时间统计。本次即时研判不倒填进历史周期；变化不足时不强行生成部署建议。</p>
             <Lines values={result.brief.information_gaps} /><details><summary>简报引用</summary><Lines values={result.brief.evidence_refs} /></details></section>}
           {result?.fault && <div className="showcase-notice">故障演练：注入模型超时 {result.fault.calls} 次，实际执行器返回 {result.fault.status}，降级方式 {result.fault.fallback_mode}。</div>}
           {result?.trace && <section className="showcase-section"><h3>真实调用轨迹</h3><ol>{result.trace.map(step => <li key={step.sequence}>

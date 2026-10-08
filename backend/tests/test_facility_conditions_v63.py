@@ -246,14 +246,21 @@ def test_road_exclusion_unknown_and_no_path_are_distinct_in_full_output(prepared
 def bind_revision(prepared):
     from app.models.case import Case
     from app.models.case_pipeline import CaseAnalysisProfile
+    from app.services.case_pipeline_service import CasePipelineService
+    from app.services.case_result_service import CaseResultService
     from app.services.case_source_service import CaseSourceService
     db, _, _ = prepared
     case = db.get(Case, 1)
     revision, _ = CaseSourceService.capture_change(db, case)
     profile = db.get(CaseAnalysisProfile, "profile-1")
     profile.source_revision_id = revision.id
+    profile.payload = CasePipelineService.build_profile_payload(db, case)
+    db.flush()
+    # A snapshot frozen before the revision existed cannot be rebound by
+    # mutating its profile. Freeze a matching source-backed result instead.
+    source, _ = CaseResultService.create_current(db, case.id)
     db.commit()
-    return case, profile, revision
+    return case, profile, revision, source
 
 
 def edit_and_restore(db, case):
@@ -268,8 +275,9 @@ def edit_and_restore(db, case):
 
 
 def test_revision_round_trip_cannot_start_or_publish_new_roads_but_history_reads(prepared, tmp_path):
-    db, source, _ = prepared
-    case, profile, first = bind_revision(prepared)
+    db, _, calls = prepared
+    case, profile, first, source = bind_revision(prepared)
+    prepared = db, source, calls
     content = compare(prepared, tmp_path)
     saved = freeze_road_artifact(db, content)
     db.commit()
@@ -288,8 +296,9 @@ def test_revision_round_trip_cannot_start_or_publish_new_roads_but_history_reads
 
 def test_revision_round_trip_during_routing_is_rejected_before_return(prepared, tmp_path, monkeypatch):
     from app.services import facility_road_batches as batches
-    db, _, _ = prepared
-    case, _, _ = bind_revision(prepared)
+    db, _, calls = prepared
+    case, _, _, source = bind_revision(prepared)
+    prepared = db, source, calls
     original = batches.calculate_distance_matrix
     changed = False
     def matrix(*args, **kwargs):

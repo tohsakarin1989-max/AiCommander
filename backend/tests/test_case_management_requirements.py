@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -208,7 +209,8 @@ def test_case_update_can_clear_existing_bonus_indicator_fields():
     assert vehicle.vehicle_type is None
 
 
-def test_case_profile_uses_structured_vehicle_person_and_evidence():
+@pytest.mark.parametrize("location_role", ["incident", "discovery", None])
+def test_case_profile_uses_structured_vehicle_person_and_evidence(location_role):
     db = _session()
     client = _client(db)
     occurred_time = datetime.utcnow() - timedelta(minutes=30)
@@ -220,6 +222,9 @@ def test_case_profile_uses_structured_vehicle_person_and_evidence():
             "location": "采油一厂某井场",
             "latitude": 39.9,
             "longitude": 116.4,
+            "initial_locations": [{"role": location_role, "precision": "exact",
+                                   "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                                   "source_note": "仅用于验证明确地点角色的合成资料"}] if location_role else [],
             "case_type": "涉油盗窃",
             "description": "群众举报有人驾驶白色皮卡盗运原油。",
             "report_time": (occurred_time + timedelta(minutes=20)).isoformat(),
@@ -277,7 +282,8 @@ def test_case_profile_uses_structured_vehicle_person_and_evidence():
     assert profile["vehicles"][0]["plate_number"] == "辽A12345"
     assert profile["actors"]["persons"][0]["name"] == "王某"
     assert profile["quality"]["facts"]["vehicle_count"] == 1
-    assert profile["analysis_readiness"]["regional_analysis"]["data_state"] == "ready"
+    assert profile["analysis_readiness"]["regional_analysis"]["data_state"] == (
+        "ready" if location_role == "incident" else "partial")
     assert profile["analysis_readiness"]["history_retrieval"]["data_state"] == "ready"
     assert profile["analysis_readiness"]["road_comparison"]["runtime_state"] == "not_checked"
     assert not {"gang", "patrol", "roundtable"} & set(profile["analysis_readiness"])
@@ -321,7 +327,8 @@ def test_case_tip_ledger_can_attach_to_case():
     assert tips[0]["verification_status"] == "verified"
 
 
-def test_preprocess_has_deterministic_fallback_without_llm():
+@pytest.mark.parametrize("location_role", ["incident", "discovery", None])
+def test_preprocess_has_deterministic_fallback_without_llm(location_role):
     db = _session()
     client = _client(db)
     occurred_time = datetime.utcnow() - timedelta(minutes=40)
@@ -333,6 +340,9 @@ def test_preprocess_has_deterministic_fallback_without_llm():
             "location": "二号井场",
             "latitude": 39.91,
             "longitude": 116.41,
+            "initial_locations": [{"role": location_role, "precision": "exact",
+                                   "geometry": {"type": "Point", "coordinates": [116.41, 39.91]},
+                                   "source_note": "仅用于验证明确地点角色的合成资料"}] if location_role else [],
             "case_type": "涉油盗窃",
             "description": "巡逻发现蓝色厢货车转运落地原油，现场留有油迹。",
             "report_time": (occurred_time + timedelta(minutes=25)).isoformat(),
@@ -351,8 +361,10 @@ def test_preprocess_has_deterministic_fallback_without_llm():
     assert result is not None
     assert result["preprocess_mode"] == "versioned_profile"
     assert result["management"]["report_quality_score"] > 0
-    assert result["analysis_readiness"]["spacetime"] == "ready"
-    assert result["analysis_readiness"]["area_profile"] == "ready"
+    expected_readiness = "ready" if location_role == "incident" else "partial"
+    assert result["analysis_readiness"]["spacetime"] == expected_readiness
+    assert result["analysis_readiness"]["area_profile"] == (
+        "ready" if location_role == "incident" else "missing_geo")
     assert "gang" not in result["analysis_readiness"]
     assert result["facts"]["oil"]["oil_nature"] == "落地原油"
     assert result["scene_conditions"]["monitoring_status"] == "技防/照明/监控情况待核实"

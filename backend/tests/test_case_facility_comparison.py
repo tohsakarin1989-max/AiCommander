@@ -5,12 +5,14 @@ from copy import deepcopy
 import pytest
 
 from app.models.case import Case
+from app.models.case_source import CaseLocation
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.case_pipeline import CaseAnalysisProfile
 from app.models.internal_roads import InternalRoadImport, InternalRoadFeatureVersion, InternalRoadReview
 from app.models.map_foundation import MapSource, MapSnapshot, MapSnapshotFeature, JurisdictionAssetVersion
 from app.models.road_network import RoadNetworkVersion, RoadAccessMembership
 from app.services.case_pipeline_service import CasePipelineService
+from app.services.case_analysis_applicability import allows
 from app.services.case_result_service import CaseResultService
 from app.services.case_road_jobs import enqueue_comparison, process_comparison
 from app.services.case_road_status import automatic_comparison_status
@@ -47,6 +49,18 @@ def prepared(ready, monkeypatch):
     db = ready
     case = db.get(Case, 1)
     profile = db.get(CaseAnalysisProfile, "profile-1")
+    # These fixtures exercise real road-job lifecycles, not discovery-only
+    # records. Declare the synthetic incident point and source clue explicitly,
+    # then derive applicability through the same rules used by the application.
+    case.description = "合成记录：现场明确记录打孔盗油痕迹。"
+    db.add(CaseLocation(case_id=case.id, role="incident", description="合成案发点",
+        precision="exact", geometry={"type": "Point", "coordinates": [125.0, 46.0]},
+        source_note="仅用于设施道路比较及任务生命周期测试"))
+    db.flush()
+    # Preserve this legacy fixture's revision lifecycle; individual revision
+    # tests capture revisions explicitly. No applicability result is fabricated.
+    profile.payload = CasePipelineService.build_profile_payload(db, case)
+    assert allows(profile.payload, "road_analysis")
     db.get(MapSnapshot, "map-1").status = "current"
     profile.is_current = True
     profile.source_hash = CasePipelineService.source_hash(db, case)

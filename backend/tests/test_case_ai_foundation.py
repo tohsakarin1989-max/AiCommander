@@ -14,6 +14,7 @@ from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle
 from app.models.conclusion import Conclusion
 from app.models.meeting import Meeting
 from app.models.report import Report
+from app.services.case_quality_service import CaseQualityService
 
 
 def _session() -> Session:
@@ -161,6 +162,9 @@ def test_case_profile_aggregates_case_foundation_without_mutating_get():
     payload = response.json()
     assert payload["case"]["id"] == case.id
     assert payload["quality"]["score"] == 68
+    assert payload["quality"]["state"] == "stale"
+    assert payload["quality"]["historical_result"] == original_quality
+    assert payload["quality_gaps"] == []
     assert payload["related"]["vehicles"][0]["plate_number"] == "黑A12345"
     assert payload["related"]["evidence"][0]["title"] == "现场照片"
     assert payload["ai_summary"]["summary"] == case.description
@@ -213,6 +217,8 @@ def test_processing_card_groups_case_gaps_and_routes_to_human_review():
     db = _session()
     client = _client(db)
     case = _seed_case(db, card_status="pending")
+    # Current requirements come from an explicit saved evaluation, not GET.
+    CaseQualityService.refresh_case_quality(db, case)
 
     response = client.get(f"/api/cases/{case.id}/processing-card")
 
@@ -280,6 +286,7 @@ def test_processing_card_is_prioritized_in_suggestion_center():
     db = _session()
     client = _client(db)
     case = _seed_case(db, card_status="draft")
+    CaseQualityService.refresh_case_quality(db, case)
 
     response = client.get("/api/suggestions/", params={"limit": 20})
 
