@@ -32,21 +32,31 @@ export function CaseSourceVersionCard({ source }: { source: CaseSourceRevisionDe
 
 export default function CaseSourceDetails({ caseId, revision }: { caseId: number; revision?: string | null }) {
   const { user, sessionEpoch } = useAuth()
+  return <ScopedCaseSourceDetails key={`${caseId}:${user?.id}:${sessionEpoch}:${revision}`} caseId={caseId} revision={revision} />
+}
+
+function ScopedCaseSourceDetails({ caseId, revision }: { caseId: number; revision?: string | null }) {
+  const { user, sessionEpoch } = useAuth()
   const [selected, setSelected] = useState<number | null>(null)
+  const [pages, setPages] = useState<Array<number | undefined>>([undefined])
+  const [referencePages, setReferencePages] = useState<Array<number | undefined>>([undefined])
   const key = [caseId, user?.id, sessionEpoch, revision]
-  const sources = useQuery({ queryKey: ['case-sources', ...key], queryFn: ({ signal }) => caseApi.getCaseSources(caseId, signal), retry: false })
+  const sources = useQuery({ queryKey: ['case-sources', ...key, pages[pages.length - 1], referencePages[referencePages.length - 1]], queryFn: ({ signal }) => caseApi.getCaseSources(caseId, signal, { before_revision: pages[pages.length - 1], before_reference: referencePages[referencePages.length - 1], references_limit: 50 }), retry: false })
   const locations = useQuery({ queryKey: ['case-locations', ...key], queryFn: ({ signal }) => caseApi.getCaseLocations(caseId, signal), retry: false })
   const measures = useQuery({ queryKey: ['case-measurements', ...key], queryFn: ({ signal }) => caseApi.getCaseMeasurements(caseId, signal), retry: false })
   const detail = useQuery({ queryKey: ['case-source-revision', ...key, selected], queryFn: ({ signal }) => caseApi.getCaseSourceRevision(caseId, selected!, signal), enabled: Boolean(selected), retry: false })
   return <div className="detail-section case-source-details">
     <h3>来源修订</h3><p>原始提交与后续修改保留各自版本；下面的地点和数量是业务记录，不是系统推断。</p>
-    {sources.isError ? <p role="alert">来源暂不可读，不能据此判断没有来源。</p> : sources.isPending ? <p role="status">正在读取来源…</p> : <>
-      <p>当前来源：{sources.data.current_revision_id ? `第 ${sources.data.revisions.find(item => item.id === sources.data.current_revision_id)?.revision ?? '待核对'} 版` : '尚未记录来源修订'}</p>
-      <p>{sources.data.boundary}{sources.data.next_before_revision ? ' 本页展示最近 50 个修订。' : ''}</p>
+    {sources.isError ? <p role="alert">来源暂不可读，不能据此判断没有来源。<button className="btn-ghost-sm" onClick={() => void sources.refetch()}>重试本页</button><button className="btn-ghost-sm" disabled={pages.length === 1 && referencePages.length === 1} onClick={() => { setPages([undefined]); setReferencePages([undefined]); setSelected(null) }}>返回最近记录</button></p> : sources.isPending ? <p role="status">正在读取来源…</p> : <>
+      <p>当前来源：{sources.data.current_revision_id ? `第 ${sources.data.current_revision ?? sources.data.revisions.find(item => item.id === sources.data.current_revision_id)?.revision ?? '待核对'} 版` : '尚未记录来源修订'}</p>
+      <p>{sources.data.boundary}</p>
       <ul>{sources.data.revisions.map(item => <li key={item.id}><button className="btn-ghost-sm" onClick={() => setSelected(item.id)}>查看第 {item.revision} 版</button> · {formatStoredTime(item.created_at)}<details><summary>来源校验信息</summary><small>{item.source_hash}</small></details></li>)}</ul>
-      {!!sources.data.references.length && <details><summary>出处索引</summary><pre>{JSON.stringify(sources.data.references, null, 2)}</pre></details>}
+      <nav aria-label="来源版本分页"><button className="btn-ghost-sm" disabled={pages.length === 1 || sources.isFetching} onClick={() => { setPages(previous => previous.slice(0, -1)); setSelected(null) }}>较新版本</button><span>第 {pages.length} 页</span><button className="btn-ghost-sm" disabled={!sources.data.next_before_revision || sources.isFetching} onClick={() => { setPages(previous => [...previous, sources.data.next_before_revision!]); setSelected(null) }}>更早版本</button></nav>
+      {!!sources.data.references.length && <details><summary>出处索引</summary><pre>{JSON.stringify(sources.data.references, null, 2)}</pre>
+        <nav aria-label="出处索引分页"><button className="btn-ghost-sm" disabled={referencePages.length === 1 || sources.isFetching} onClick={() => setReferencePages(previous => previous.slice(0, -1))}>上一页</button><span>第 {referencePages.length} 页</span><button className="btn-ghost-sm" disabled={!sources.data.next_before_reference || sources.isFetching} onClick={() => setReferencePages(previous => [...previous, sources.data.next_before_reference!])}>下一页</button></nav>
+      </details>}
     </>}
-    {selected && <section aria-label="来源版本原文">{detail.isError ? <p role="alert">该版本不可读取，未使用其他版本替代。</p> : detail.isPending ? <p>正在读取…</p> : detail.data ? <CaseSourceVersionCard source={detail.data} /> : <p role="alert">该版本资料暂不可读。</p>}</section>}
+    {selected && !sources.isError && <section aria-label="来源版本原文">{detail.isError ? <p role="alert">该版本不可读取，未使用其他版本替代。</p> : detail.isPending ? <p>正在读取…</p> : detail.data ? <CaseSourceVersionCard source={detail.data} /> : <p role="alert">该版本资料暂不可读。</p>}</section>}
     <h3>地点角色</h3>{locations.isError ? <p role="alert">地点明细暂不可读。</p> : locations.isPending ? <p>正在读取…</p> : locations.data.length ? <ul>{locations.data.map((item, index) => <li key={item.id ?? index}>
       <strong>{locationRoleLabels[item.role]}</strong>：{item.description || '未填写地点原文'}<small>精度：{{ exact: '精确位置', area: '区域', unknown: '未知' }[item.precision]}；{item.geometry ? `已记录 ${item.geometry.type} 几何` : '未提供几何，不作为精确道路端点'}。{item.source_note}</small>
     </li>)}</ul> : <p>尚未补录独立地点角色，可保留未知。</p>}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { isResultKind, resultKinds, resultPath, resultsApi } from '../../services/results'
+import { isResultKind, materialCatalogPath, materialFilename, materialSourcePath, resultKinds, resultPath, resultsApi } from '../../services/results'
 import type { ResultMaterial } from '../../services/results'
 import { knowledgeApi } from '../../services/knowledge'
 import { buildReportReviewPresentation } from './reportPresentationModel'
@@ -18,7 +18,7 @@ export function MaterialDocument({ material }: { material: ResultMaterial }) {
       : <p className={block.kind === 'source' ? 'material-source' : undefined} key={index}>{block.text}</p>)}
   </article>
 }
-export default function MaterialReader({ material, identity, allowed, onSaved }: { material: ResultMaterial; identity: string; allowed: boolean; onSaved: () => void }) {
+export default function MaterialReader({ material, identity, allowed, onSaved, context }: { material: ResultMaterial; identity: string; allowed: boolean; onSaved: () => void; context?: URLSearchParams }) {
   const [exporting, setExporting] = useState(false)
   const [notice, setNotice] = useState('')
   const active = useRef(true)
@@ -33,12 +33,15 @@ export default function MaterialReader({ material, identity, allowed, onSaved }:
       const blob = await resultsApi.document(material, format, abort.signal)
       if (!active.current || abort.signal.aborted) return
       const url = URL.createObjectURL(blob); const link = document.createElement('a')
-      link.href = url; link.download = `材料-${material.content_sha256.slice(0, 16)}.${format}`; link.click()
+      link.href = url; link.download = materialFilename(material, format); link.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000); setNotice('已导出当前内容版本，未重新分析。')
     } catch { if (active.current && !abort.signal.aborted) setNotice('导出未完成。请核对权限、内容版本或本地渲染服务，未生成省略内容的替代材料。') }
     finally { if (active.current) setExporting(false) }
   }
   return <section className="material-reader" aria-label="统一成果阅读">
+    <nav className="material-actions" aria-label="材料返回路径"><Link className="btn-ghost" to={materialCatalogPath(context)}>返回原目录条件</Link>
+      {isResultKind(context?.get('fromKind') ?? null) && /^[A-Za-z0-9_-]{1,80}$/.test(context?.get('fromId') || '') && <Link className="btn-ghost" to={resultPath(context!.get('fromKind') as ResultMaterial['kind'], context!.get('fromId')!, context)}>返回引用此资料的材料</Link>}
+    </nav>
     <header><p>{resultKinds[material.kind]} · {material.created_at}</p><h1>{material.title}</h1></header>
     <p>正在阅读固定版本。正文、引用和导出使用同一内容，不随原始资料后续更新而改写。</p>
     <div className="material-actions"><button className="btn-ghost" disabled={exporting} onClick={() => void download('docx')}>导出本版 Word</button>
@@ -50,7 +53,7 @@ export default function MaterialReader({ material, identity, allowed, onSaved }:
     {material.experience_review && <section aria-label="经验确认状态"><h2>经验确认状态</h2><p>{experienceStates[material.experience_review.status] || '状态待核'} · {material.experience_review.reviewer_label || '尚无确认人'}</p><p>{material.experience_review.review_note}</p><small>这是当前人工确认记录，不改写上方冻结正文。</small></section>}
     <details><summary>引用与版本</summary><p>内容摘要：<code>{material.content_sha256}</code></p>
       <p>结构版本：{material.schema_version}</p><ul>{material.sources.map((source, i) => <li key={i}>
-        {isResultKind(source.kind) ? <Link to={resultPath(source.kind, source.id)}>{resultKinds[source.kind]} #{source.id}</Link> : <span>{source.kind} #{source.id}</span>}
+        {isResultKind(source.kind) ? <Link to={materialSourcePath(source, material, context)}>{resultKinds[source.kind]} #{source.id}</Link> : <span>{source.kind} #{source.id}</span>}
         <small> · {source.content_sha256}</small></li>)}</ul></details>
     <ul className="material-boundary">{material.boundary.map((line, i) => <li key={i}>{line}</li>)}</ul>
     <MaterialJudgment key={`${material.kind}:${material.id}:${material.content_sha256}`} identity={identity} material={material} allowed={allowed} onSaved={onSaved} />

@@ -2,6 +2,7 @@ from app.models.ai_model import AIModel
 from app.models.query_scope_revision import QueryScopeRevision
 from app.models.map_package_import import MapPackageImport, MapPackageImportChunk
 from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
+from app.models.case_submission import CaseSubmissionReceipt
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.case_facility_association import CaseFacilityAssociation
 from app.models.case_source import (CaseLocation, OilMeasurement, CaseRevision, DomainChange,
@@ -65,6 +66,7 @@ __all__ = [
     "CaseImportBatch",
     "CaseImportRow",
     "CaseImportTemplate",
+    "CaseSubmissionReceipt",
     "AIModel",
     "Case",
     "CaseFacilityAssociation",

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import api from './api'
-import { resultsApi, isResultKind, resultPath } from './results'
+import { resultsApi, isResultKind, resultPath, materialCatalogPath, materialSourcePath, materialFilename, type ResultItem } from './results'
 vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 describe('统一材料接口', () => {
   beforeEach(() => vi.resetAllMocks())
@@ -25,5 +25,21 @@ describe('统一材料接口', () => {
   it('路径仅允许固定成果类型，编号编码', () => {
     expect(isResultKind('__proto__')).toBe(false); expect(isResultKind('conclusion')).toBe(true)
     expect(resultPath('topic', 'a/b')).toBe('/reports?kind=topic&resultId=a%2Fb')
+  })
+  it('目录、来源与返回路径保留检索、类型、分页和业务对象，不带入旧材料ID', () => {
+    const context = new URLSearchParams('kind=meeting&resultId=9&subject=case&subjectId=42&catalogQ=管线&catalogKind=meeting&catalogOffset=40&fromId=old&fromKind=case&caseId=42&statuses=pending&statuses=processing')
+    const path = resultPath('meeting', '10', context)
+    const params = new URLSearchParams(path.split('?')[1])
+    expect(params.get('catalogQ')).toBe('管线'); expect(params.get('catalogOffset')).toBe('40'); expect(params.get('subjectId')).toBe('42')
+    expect(params.get('resultId')).toBe('10'); expect(params.has('fromId')).toBe(false)
+    expect(params.get('caseId')).toBe('42'); expect(params.getAll('statuses')).toEqual(['pending', 'processing'])
+    const catalog = new URLSearchParams(materialCatalogPath(context).split('?')[1])
+    expect(catalog.has('resultId')).toBe(false); expect(catalog.get('catalogKind')).toBe('meeting')
+    const source = new URLSearchParams(materialSourcePath({ kind: 'case', id: 'source', content_sha256: 'a' }, { kind: 'meeting', id: '9', content_sha256: 'b' }, context).split('?')[1])
+    expect(source.get('fromKind')).toBe('meeting'); expect(source.get('fromId')).toBe('9'); expect(source.get('catalogOffset')).toBe('40')
+  })
+  it('文件名可识别类型、标题、日期、冻结版本，去掉路径和控制字符', () => {
+    const item = { kind: 'topic', title: '9月/管线:对照\u0000', created_at: '2026-09-30T12:00:00Z', content_sha256: 'a'.repeat(64) } as ResultItem
+    expect(materialFilename(item, 'docx')).toBe('专题材料-9月_管线_对照_-2026-09-30-aaaaaaaa.docx')
   })
 })

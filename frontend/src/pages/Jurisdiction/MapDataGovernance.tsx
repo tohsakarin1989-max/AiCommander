@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Button,
@@ -58,10 +58,11 @@ function previewStatus(preview?: MapPreview | null) {
   return 2
 }
 
-export default function MapDataGovernance() {
+export default function MapDataGovernance({ initialAreaId }: { initialAreaId?: number } = {}) {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const [sourceForm] = Form.useForm()
+  const appliedArea = useRef<number>()
   const [templateForm] = Form.useForm<TemplateFormValues>()
   const [selectedSourceId, setSelectedSourceId] = useState<number>()
   const [selectedTemplateId, setSelectedTemplateId] = useState<number>()
@@ -80,11 +81,16 @@ export default function MapDataGovernance() {
     enabled: user?.role === 'admin',
   })
   useEffect(() => {
+    if (initialAreaId != null && appliedArea.current !== initialAreaId && areasQuery.data?.some(item => item.id === initialAreaId)) {
+      sourceForm.setFieldValue('operational_area_id', initialAreaId)
+      appliedArea.current = initialAreaId
+      return
+    }
     if (!sourceForm.getFieldValue('operational_area_id') && areasQuery.data?.length) {
-      const area = areasQuery.data.find(item => item.is_default) ?? areasQuery.data[0]
+      const area = areasQuery.data.find(item => item.id === initialAreaId) ?? areasQuery.data.find(item => item.is_default) ?? areasQuery.data[0]
       sourceForm.setFieldValue('operational_area_id', area.id)
     }
-  }, [areasQuery.data, sourceForm])
+  }, [areasQuery.data, sourceForm, initialAreaId])
   const templatesQuery = useQuery({
     queryKey: ['map-foundation-templates', selectedSourceId],
     queryFn: () => mapFoundationApi.listTemplates(selectedSourceId),
@@ -214,7 +220,7 @@ export default function MapDataGovernance() {
   return (
     <>
     <MapReadinessPanel />
-    <div id="offline-map-management"><OfflineMapManager /></div>
+    <div id="offline-map-management"><OfflineMapManager initialAreaId={initialAreaId} /></div>
     <div id="internal-road-management"><InternalRoadManager sources={sources} /></div>
     <Card id="map-source-management" className="jurisdiction-card map-governance-card" title="生产地图数据治理" extra={<Tag color="green">管理员</Tag>}>
       <Alert

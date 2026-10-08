@@ -1,4 +1,5 @@
 import api from './api'
+import { caseContextPath } from './caseContext'
 
 export const resultKinds = { case: '案件成果', topic: '专题材料', facility: '设施材料', situation: '态势简报', meeting: '会议报告', query: '助手查询', experience: '经验与历史报告', conclusion: '历史结论' } as const
 export type ResultKind = keyof typeof resultKinds
@@ -20,7 +21,33 @@ export interface ResultMaterial extends ResultItem {
   map?: { state: string; reason?: string; map_snapshot_id?: string; point_count?: number }
 }
 export const isResultKind = (value: string | null): value is ResultKind => !!value && Object.prototype.hasOwnProperty.call(resultKinds, value)
-export const resultPath = (kind: ResultKind, id: string | number) => `/reports?kind=${kind}&resultId=${encodeURIComponent(String(id))}`
+export function materialCatalogParams(context?: URLSearchParams) {
+  const params = new URLSearchParams(context ? caseContextPath('/reports', context).split('?')[1] : '')
+  for (const name of ['meetingId', 'subject', 'subjectId', 'catalogQ', 'catalogKind', 'catalogOffset']) {
+    const value = context?.get(name)
+    if (value) params.set(name, value)
+  }
+  return params
+}
+export function resultPath(kind: ResultKind, id: string | number, context?: URLSearchParams) {
+  const params = new URLSearchParams({ kind, resultId: String(id) })
+  materialCatalogParams(context).forEach((value, name) => params.append(name, value))
+  return `/reports?${params}`
+}
+export function materialCatalogPath(context?: URLSearchParams) {
+  const params = materialCatalogParams(context).toString()
+  return `/reports${params ? `?${params}` : ''}`
+}
+export function materialSourcePath(source: ResultSource, current: ResultSource, context?: URLSearchParams) {
+  const params = new URLSearchParams(resultPath(source.kind, source.id, context).split('?')[1])
+  params.set('fromKind', current.kind); params.set('fromId', current.id)
+  return `/reports?${params}`
+}
+export function materialFilename(material: ResultItem, format: 'docx' | 'pdf') {
+  const title = material.title.replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '_').trim().replace(/[. ]+$/g, '').slice(0, 90) || '未命名材料'
+  const date = /^\d{4}-\d{2}-\d{2}/.exec(material.created_at)?.[0] || '日期待核'
+  return `${resultKinds[material.kind]}-${title}-${date}-${material.content_sha256.slice(0, 8)}.${format}`
+}
 export const materialRequestKey = () => crypto.randomUUID()
 export const resultsApi = {
   list: async (params: { q?: string; kind?: ResultKind; offset?: number; limit?: number; subject_kind?: string; subject_id?: string }, signal?: AbortSignal) =>

@@ -1,15 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
-from typing import Any, Dict, List, Optional, Literal
+from typing import Annotated, Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from uuid import uuid4
-from app.database import get_db, require_area_write_access
+from app.database import AreaWriteAccessError, get_db, require_area_write_access
 from app.config import settings
 from app.services.case_service import CaseService
 from app.services.case_search_service import CaseSearchService
+from app.services.case_submission_service import (
+    SubmissionConflictError, SubmissionIdentityError, SubmissionUnavailableError,
+    create_case_submission, submission_status,
+)
+from app.services.case_time_window import filter_case_time_window
 from app.services.case_import_table import parse_case_table
 from app.services.case_import_batch_service import acquire_import_batch, create_import_case
 from app.services.case_import_values import TIME_ZONES, normalize_case_row, case_row_preview, allocation_order
@@ -610,6 +616,7 @@ def _get_case_or_404(db: Session, case_id: int) -> Case:
 
 class CaseStatistics(BaseModel):
     """案件统计数据"""
+    timezone: str = "Asia/Shanghai"
     total_cases: int
     unknown_time_cases: int = 0
     interval_time_cases: int = 0
@@ -783,18 +790,27 @@ def get_case_statistics(db: Session = Depends(get_db)):
     获取案件统计数据
     用于智慧大屏和仪表板展示
     """
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=now.weekday())
     month_start = today_start.replace(day=1)
+    today_end = today_start + timedelta(days=1)
+    week_end = week_start + timedelta(days=7)
+    month_end = (month_start + timedelta(days=32)).replace(day=1)
+
+    def exact_count(start, end):
+        # Trends count known instants only. Intervals/unknown remain separate,
+        # rather than being assigned to an invented day at either endpoint.
+        return db.query(func.count(Case.id)).filter(
+            Case.occurred_time >= utc_datetime(start),
+            Case.occurred_time < utc_datetime(end),
+        ).scalar() or 0
 
     # 总数统计
     total_cases = db.query(func.count(Case.id)).scalar() or 0
 
     # 今日案件
-    today_cases = db.query(func.count(Case.id)).filter(
-        Case.occurred_time >= today_start
-    ).scalar() or 0
+    today_cases = exact_count(today_start, today_end)
 
     # 状态统计
     pending_cases = db.query(func.count(Case.id)).filter(
@@ -810,14 +826,10 @@ def get_case_statistics(db: Session = Depends(get_db)):
     ).scalar() or 0
 
     # 本周案件
-    this_week_cases = db.query(func.count(Case.id)).filter(
-        Case.occurred_time >= week_start
-    ).scalar() or 0
+    this_week_cases = exact_count(week_start, week_end)
 
     # 本月案件
-    this_month_cases = db.query(func.count(Case.id)).filter(
-        Case.occurred_time >= month_start
-    ).scalar() or 0
+    this_month_cases = exact_count(month_start, month_end)
 
     # 带地理坐标的案件
     cases_with_geo = db.query(func.count(Case.id)).filter(
@@ -840,10 +852,7 @@ def get_case_statistics(db: Session = Depends(get_db)):
     for i in range(6, -1, -1):
         day = today_start - timedelta(days=i)
         day_end = day + timedelta(days=1)
-        count = db.query(func.count(Case.id)).filter(
-            Case.occurred_time >= day,
-            Case.occurred_time < day_end
-        ).scalar() or 0
+        count = exact_count(day, day_end)
         daily_trend.append({
             'date': day.strftime('%Y-%m-%d'),
             'label': day.strftime('%m/%d'),
@@ -882,16 +891,47 @@ def classify_case_evidence(payload: EvidenceClassifyRequest):
 
 
 @router.post("/", response_model=CaseResponse)
-def create_case(case: CaseCreate, db: Session = Depends(get_db)):
-    """创建案件"""
+def create_case(case: CaseCreate, db: Session = Depends(get_db),
+                idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None):
+    """创建案件；可选提交标识使同一用户的网络重试不会重复入库。"""
     try:
         values = normalize_intake(case.model_dump(exclude_unset=True))
         values.setdefault("case_number", None)
         values.setdefault("occurred_time", None)
+        if idempotency_key is not None:
+            return create_case_submission(db, key=idempotency_key,
+                request_payload=case.model_dump(mode="json"), values=values)
         return CaseService.create_case(db=db, **values)
+    except SubmissionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SubmissionIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except SubmissionUnavailableError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AreaWriteAccessError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class CaseSubmissionStatus(BaseModel):
+    status: Literal["completed", "unconfirmed"]
+    case_id: Optional[int] = None
+
+
+@router.get("/submissions/{key}", response_model=CaseSubmissionStatus)
+def get_case_submission(key: str, response: Response, db: Session = Depends(get_db)):
+    """只返回本人当前可访问的保存结果；未确认不代表请求没有执行。"""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return submission_status(db, key)
+    except SubmissionIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
 
 @router.get("/page", response_model=CasePageResponse)
 def get_case_page(
@@ -1010,11 +1050,10 @@ def get_cases(
         query = query.filter(Case.quality_score <= max_quality_score)
 
     # 日期范围筛选
-    if start_date:
-        query = query.filter(Case.occurred_time >= utc_datetime(start_date))
-    if end_date:
-        query = query.filter(Case.occurred_time < utc_datetime(end_date) if end_exclusive
-                             else Case.occurred_time <= utc_datetime(end_date))
+    try:
+        query = filter_case_time_window(query, start_date, end_date, end_exclusive=end_exclusive)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # 地理坐标筛选
     if missing_location is True:

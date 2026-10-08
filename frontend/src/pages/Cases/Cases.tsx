@@ -61,6 +61,8 @@ import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import { canAccessAgentLab } from '../../config/features'
 import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
+import { caseSaveFailure, prepareCaseSubmission, resolveCaseSubmission, type CaseSubmission } from './caseSubmission'
+import { useCaseLeaveGuard } from './useCaseLeaveGuard'
 import { summarizeBatchReview } from './batchReviewPresentation'
 import { summarizeCaseQualityPreview } from './caseQualityPreview'
 import { buildCaseSearchParams, parseCaseDeepLinkId, caseDetailKey, visibleCaseDetail, returnToCaseListParams } from './caseSearch'
@@ -181,13 +183,22 @@ const Cases: React.FC = () => {
   const [message, messageContextHolder] = messageFactory.useMessage()
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [editingCase, setEditingCase] = useState<Case | null>(null)
+  const [entryDirty, setEntryDirty] = useState(false)
+  const [submission, setSubmission] = useState<CaseSubmission | null>(null)
+  const submissionRef = useRef<CaseSubmission | null>(null)
+  const [saveFailure, setSaveFailure] = useState('')
+  const [saveConflict, setSaveConflict] = useState(false)
+  const [savePreparing, setSavePreparing] = useState(false)
+  const saveBusy = useRef(false)
+  const [savedCaseId, setSavedCaseId] = useState<number | null>(null)
+  useCaseLeaveGuard(entryDirty || Boolean(submission))
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<CaseImportResult | null>(null)
   const [importOperationalAreaId, setImportOperationalAreaId] = useState<number | undefined>()
   const [importWorksheet, setImportWorksheet] = useState('')
   const [importHeaderRow, setImportHeaderRow] = useState(1)
-  const [importTimeZone, setImportTimeZone] = useState<'UTC' | 'Asia/Shanghai'>('UTC')
+  const [importTimeZone, setImportTimeZone] = useState<'UTC' | 'Asia/Shanghai'>('Asia/Shanghai')
   const [importFieldMapping, setImportFieldMapping] = useState<Record<string, string | null>>({})
   const [importCorrectionBusy, setImportCorrectionBusy] = useState(false)
   const applyImportConfiguration = useCallback((settings: CaseImportOptions) => {
@@ -238,6 +249,11 @@ const Cases: React.FC = () => {
   const { bonusAccountingEnabled, agentLabEnabled } = useRuntimeFeatures()
   const navigate = useNavigate()
   const editRequestRef = useRef(0)
+  const entryMounted = useRef(true)
+  useEffect(() => {
+    entryMounted.current = true
+    return () => { entryMounted.current = false; editRequestRef.current += 1 }
+  }, [])
   const [batchReviewResult, setBatchReviewResult] = useState<BatchReviewResult | null>(null)
   const areaScopesQuery = useQuery({
     queryKey: ['my-area-scopes'],
@@ -364,49 +380,48 @@ const Cases: React.FC = () => {
     setActiveLocationCaseId(missingLocationCases[0].id)
   }, [locationModalVisible, missingLocationCases, activeLocationCaseId])
 
-  const createMutation = useMutation({
-    mutationFn: caseApi.createCase,
-    onSuccess: () => {
-      message.success('创建成功')
-      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
-      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
-      queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
-      setIsModalVisible(false)
-      form.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['cases'] })
-      queryClient.invalidateQueries({ queryKey: ['case-profile'] })
-      queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
-      queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
-      queryClient.invalidateQueries({ queryKey: ['case-pipeline-status'] })
-      queryClient.invalidateQueries({ queryKey: ['case-analysis-profile'] })
-      queryClient.invalidateQueries({ queryKey: ['case-automatic-insights'] })
-    },
-  })
-
   const qualityPreviewMutation = useMutation<CaseQualityPreview, Error, CaseCreate>({
     mutationFn: caseApi.previewCaseQuality,
   })
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: CaseUpdatePayload }) =>
-      caseApi.updateCase(id, data),
-    onSuccess: () => {
-      message.success('更新成功')
-      queryClient.invalidateQueries({ queryKey: ['case-chain-links'] })
-      queryClient.invalidateQueries({ queryKey: ['chain-map-data'] })
-      queryClient.invalidateQueries({ queryKey: ['case-unified-result'] })
-      setIsModalVisible(false)
-      setEditingCase(null)
-      form.resetFields()
-      queryClient.invalidateQueries({ queryKey: ['cases'] })
-      queryClient.invalidateQueries({ queryKey: ['case-bonus-assessment'] })
-      queryClient.invalidateQueries({ queryKey: ['case-automation-workbench'] })
-      queryClient.invalidateQueries({ queryKey: ['case-profile'] })
-      queryClient.invalidateQueries({ queryKey: ['case-processing-card'] })
-      queryClient.invalidateQueries({ queryKey: ['case-diagram'] })
-      queryClient.invalidateQueries({ queryKey: ['case-pipeline-status'] })
-      queryClient.invalidateQueries({ queryKey: ['case-analysis-profile'] })
-      queryClient.invalidateQueries({ queryKey: ['case-automatic-insights'] })
+  const completeSave = (id: number) => {
+    if (!entryMounted.current) return
+    message.success('保存已确认，正在打开本案')
+    submissionRef.current = null; editRequestRef.current += 1
+    setSubmission(null); setEntryDirty(false); setSaveFailure(''); setSaveConflict(false)
+    setIsModalVisible(false); setEditingCase(null); form.resetFields(); setSavedCaseId(id)
+    for (const key of ['case-chain-links', 'chain-map-data', 'case-unified-result', 'cases', 'case-sources', 'case-source-revision', 'case-locations', 'case-measurements', 'case-bonus-assessment', 'case-automation-workbench', 'case-profile', 'case-processing-card', 'case-diagram', 'case-pipeline-status', 'case-analysis-profile', 'case-automatic-insights']) {
+      void queryClient.invalidateQueries({ queryKey: [key] })
+    }
+  }
+  // Navigate after the saved render has disabled the leave guard.
+  useEffect(() => {
+    if (savedCaseId === null) return
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.set('caseId', String(savedCaseId)); next.set('case_view', 'overview'); next.delete('create'); return next })
+    setSavedCaseId(null)
+  }, [savedCaseId, setSearchParams])
+  const saveMutation = useMutation({
+    mutationFn: async ({ attempt, retry = false, checkOnly = false }: { attempt: CaseSubmission; retry?: boolean; checkOnly?: boolean }) => {
+      if (retry || checkOnly) return resolveCaseSubmission(attempt, caseApi, retry)
+      return attempt.caseId !== undefined
+        ? (await caseApi.updateCase(attempt.caseId, attempt.payload as CaseUpdatePayload)).id
+        : (await caseApi.createCase(attempt.payload as CaseCreate, attempt.key)).id
+    },
+    onSuccess: id => {
+      if (!entryMounted.current) return
+      if (id !== null) completeSave(id)
+      else setSaveFailure('暂未查到可确认的保存结果（也可能是权限发生变化）。原输入和凭证仍保留，不能据此认定未保存；可使用原请求安全重试或联系管理员核对。')
+    },
+    onError: (error, variables) => {
+      if (!entryMounted.current) return
+      const failure = caseSaveFailure(error)
+      setSaveFailure(failure.state === 'rejected' && (variables.retry || variables.checkOnly)
+        ? `${failure.message} 但原提交结果仍未确认，原凭证与输入继续锁定；请联系管理员核对，不能另建。` : failure.message)
+      // A receipt lookup failure says nothing about the original write.
+      if (failure.state === 'rejected' && !variables.checkOnly && !variables.retry) {
+        submissionRef.current = null; setSubmission(null)
+      }
+      setSaveConflict(previous => previous || failure.state === 'conflict')
     },
   })
 
@@ -474,8 +489,9 @@ const Cases: React.FC = () => {
   })
 
   const structureMutation = useMutation({
-    mutationFn: (text: string) => caseApi.structureCaseText(text),
-    onSuccess: (data, sourceText) => {
+    mutationFn: ({ text }: { text: string; requestId: number }) => caseApi.structureCaseText(text),
+    onSuccess: (data, { text: sourceText, requestId }) => {
+      if (requestId !== editRequestRef.current || submissionRef.current || saveBusy.current) return
       const application = buildCaseAiIntakeApplication(data, sourceText)
       const patch = {
         ...application.patch,
@@ -487,6 +503,7 @@ const Cases: React.FC = () => {
         }
       })
       form.setFieldsValue(patch)
+      setEntryDirty(true)
       setAiIntakeSourceText(sourceText)
       if (application.shouldOpenAdvancedFields) {
         setShowAdvancedFields(true)
@@ -624,7 +641,7 @@ const Cases: React.FC = () => {
     setImportPreview(null)
     setImportWorksheet('')
     setImportHeaderRow(1)
-    setImportTimeZone('UTC')
+    setImportTimeZone('Asia/Shanghai')
     setImportFieldMapping({})
     setImportOperationalAreaId(defaultWritableOperationalAreaId)
     previewImportMutation.reset()
@@ -632,7 +649,9 @@ const Cases: React.FC = () => {
   }
 
   const handleCreate = () => {
+    if (submissionRef.current) { setIsModalVisible(true); return }
     editRequestRef.current += 1
+    setEntryDirty(false); setSaveFailure(''); setSaveConflict(false)
     setEditingCase(null)
     form.resetFields()
     qualityPreviewMutation.reset()
@@ -662,7 +681,15 @@ const Cases: React.FC = () => {
     setIsModalVisible(true)
   }
 
+  useEffect(() => {
+    if (searchParams.get('create') !== '1' || areaScopesQuery.isPending) return
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('create'); return next }, { replace: true })
+    if (user?.role === 'admin' || user?.role === 'analyst') handleCreate()
+  }, [searchParams, areaScopesQuery.isPending])
+
   const handleEdit = async (caseItem: Case) => {
+    if (submissionRef.current) { setIsModalVisible(true); message.warning('请先核对上一笔提交，不能覆盖未确认的输入。'); return }
+    setEntryDirty(false); setSaveFailure(''); setSaveConflict(false)
     const requestId = editRequestRef.current + 1
     editRequestRef.current = requestId
     setEditingCase(caseItem)
@@ -726,6 +753,7 @@ const Cases: React.FC = () => {
   }
 
   const handleBonusVehicleScopeChange = (checked: boolean) => {
+    setEntryDirty(true)
     setBonusDraftTouched(prev => ({ ...prev, vehicles: true }))
     const rows = form.getFieldValue('initial_vehicles')
     form.setFieldsValue({
@@ -735,6 +763,7 @@ const Cases: React.FC = () => {
   }
 
   const handleBonusPersonScopeChange = (checked: boolean) => {
+    setEntryDirty(true)
     setBonusDraftTouched(prev => ({ ...prev, persons: true }))
     const rows = form.getFieldValue('initial_persons')
     form.setFieldsValue({
@@ -744,13 +773,16 @@ const Cases: React.FC = () => {
   }
 
   const handleSubmit = async () => {
+    if (saveBusy.current || submissionRef.current || !entryMounted.current) return
     let values: Record<string, unknown>
     try {
       values = await form.validateFields()
     } catch (error) {
-      console.error('Validation failed:', error)
+      setSaveFailure('请检查表单中标出的必填或格式问题，输入已保留。')
       return
     }
+    // Two clicks can await field validation together; only the first may prepare a write.
+    if (saveBusy.current || submissionRef.current || !entryMounted.current) return
     const payload = buildCaseEntrySubmitPayload(values, {
       mode: editingCase ? 'edit' : 'create',
       includeVehicleDrafts: !editingCase || bonusDraftLoadState.vehicles || bonusDraftTouched.vehicles,
@@ -759,49 +791,62 @@ const Cases: React.FC = () => {
       includeMeasurements: sourceCollectionsLoaded.measurements,
       hadIncidentLocations,
     })
-    const persist = () => {
-      if (editingCase) {
-        updateMutation.mutate({
-          id: editingCase.id,
-          data: payload as CaseUpdatePayload,
-        })
-      } else {
-        createMutation.mutate(payload as CaseCreate)
-      }
-    }
-
+    saveBusy.current = true; setSavePreparing(true); setSaveFailure('')
+    let confirmed = false
     try {
-      const preview = await qualityPreviewMutation.mutateAsync(payload as CaseCreate)
-      const summary = summarizeCaseQualityPreview(preview)
-      if (!summary.canSave) {
-        message.error(summary.description)
-        return
+      try {
+        const preview = await qualityPreviewMutation.mutateAsync(payload as CaseCreate)
+        if (!entryMounted.current) return
+        const summary = summarizeCaseQualityPreview(preview)
+        if (!summary.canSave) { setSaveFailure(summary.description); return }
+        confirmed = !summary.requiresConfirmation || await modal.confirm({
+          title: summary.title,
+          content: <div><p>{summary.description}</p><p style={{ color: 'var(--ink-3)' }}>{preview.boundary}</p></div>,
+          okText: '已核对，继续保存', cancelText: '返回补充',
+        })
+      } catch {
+        if (!entryMounted.current) return
+        confirmed = await modal.confirm({
+          title: '服务端预检暂不可用', content: '核心案件保存不依赖智能体。可返回稍后重试，也可由人工确认后继续保存。',
+          okText: '人工确认，继续保存', cancelText: '返回检查',
+        })
       }
-      if (!summary.requiresConfirmation) {
-        persist()
-        return
-      }
-      modal.confirm({
-        title: summary.title,
-        content: (
-          <div>
-            <p>{summary.description}</p>
-            <p style={{ color: 'var(--ink-3)' }}>{preview.boundary}</p>
-          </div>
-        ),
-        okText: '已核对，继续保存',
-        cancelText: '返回补充',
-        onOk: persist,
-      })
-    } catch (error) {
-      modal.confirm({
-        title: '服务端预检暂不可用',
-        content: '核心案件保存不依赖智能体。可返回稍后重试，也可由人工确认后继续保存。',
-        okText: '人工确认，继续保存',
-        cancelText: '返回检查',
-        onOk: persist,
-      })
+      if (!confirmed || !entryMounted.current) return
+      const attempt = prepareCaseSubmission(payload, editingCase?.id)
+      submissionRef.current = attempt; setSubmission(attempt)
+      await saveMutation.mutateAsync({ attempt })
+    } catch {
+      // onError explains the write outcome without clearing the form.
+    } finally {
+      saveBusy.current = false; setSavePreparing(false)
     }
+  }
+
+  const confirmSubmission = async (retry: boolean) => {
+    const attempt = submissionRef.current
+    if (!attempt || saveBusy.current || (retry && saveConflict)) return
+    saveBusy.current = true
+    try {
+      if (retry && attempt.caseId !== undefined && !await modal.confirm({
+        title: '把本次原输入重新保存到同一案件？',
+        content: '上一笔编辑可能已经生效。重试不会新增案件，但会重新提交本次原输入；如有其他人同时修改，请先人工核对。',
+        okText: '已核对，重新保存本案', cancelText: '先不重试',
+      })) return
+      if (!entryMounted.current) return
+      await saveMutation.mutateAsync({ attempt, retry, checkOnly: !retry })
+    }
+    catch { /* Preserve the original attempt; onError supplies an inline explanation. */ }
+    finally { saveBusy.current = false }
+  }
+
+  const cancelEntry = async () => {
+    if (saveBusy.current) return
+    if (submissionRef.current) {
+      if (await modal.confirm({ title: '保存结果尚未确认', content: '关闭窗口不会撤销服务器上的提交。本页会继续保留输入和原凭证，点击录入可继续核对；不要刷新页面或另建案件。', okText: '暂时收起，保留本页输入', cancelText: '继续核对' })) setIsModalVisible(false)
+      return
+    }
+    if (entryDirty && !await modal.confirm({ title: '放弃本次未保存输入？', content: '取消后这些输入会清除；返回填写可继续保留。', okText: '放弃输入', cancelText: '返回填写' })) return
+    editRequestRef.current += 1; setIsModalVisible(false); setEditingCase(null); setEntryDirty(false); setSaveFailure(''); form.resetFields()
   }
 
   // 侧边栏状态复选框切换
@@ -866,7 +911,7 @@ const Cases: React.FC = () => {
       message.warning('请先粘贴案情文本')
       return
     }
-    structureMutation.mutate(String(text))
+    structureMutation.mutate({ text: String(text), requestId: editRequestRef.current })
   }
 
   const handleBatchReview = () => {
@@ -1079,6 +1124,7 @@ const Cases: React.FC = () => {
     <div className={`page page-cases${selectedCase ? ' has-dossier' : ''}`}>
       {modalContextHolder}
       {messageContextHolder}
+      {submission && !isModalVisible && <Alert type="warning" showIcon message="还有一笔保存结果未确认，原输入和凭证仅保留在本页。" action={<Button onClick={() => setIsModalVisible(true)}>继续核对本次提交</Button>} />}
       {/* 预处理状态提醒 */}
       {user?.role === 'admin' && preprocessStatus && (
         <Alert
@@ -1749,14 +1795,14 @@ const Cases: React.FC = () => {
         open={isModalVisible}
         forceRender
         onOk={handleSubmit}
-        onCancel={() => {
-          setIsModalVisible(false)
-          setEditingCase(null)
-          form.resetFields()
-        }}
+        onCancel={() => void cancelEntry()}
         width={760}
-        confirmLoading={qualityPreviewMutation.isPending || createMutation.isPending || updateMutation.isPending}
-        okText="确认"
+        confirmLoading={savePreparing || saveMutation.isPending}
+        okButtonProps={{ disabled: Boolean(submission) }}
+        cancelButtonProps={{ disabled: savePreparing || saveMutation.isPending }}
+        closable={!savePreparing && !saveMutation.isPending}
+        maskClosable={false}
+        okText="保存案件"
         cancelText="取消"
         styles={{
           content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
@@ -1764,7 +1810,13 @@ const Cases: React.FC = () => {
           footer:  { borderTop: '1px solid var(--line)' },
         }}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
+        {saveFailure && <Alert type={submission ? 'warning' : 'error'} showIcon role="alert" message={saveFailure} />}
+        {submission && <div style={{ marginTop: 12 }}>
+          <p>本次输入已锁定，核对前不改写提交内容。{submission.caseId === undefined ? `提交凭证：${submission.key}` : `编辑案件 #${submission.caseId}`}</p>
+          {submission.caseId === undefined && <Button loading={saveMutation.isPending} onClick={() => void confirmSubmission(false)}>核对保存结果</Button>}
+          <Button disabled={saveConflict || saveMutation.isPending} onClick={() => void confirmSubmission(true)}>{submission.caseId === undefined ? '使用原请求安全重试' : '将原输入重新保存到本案'}</Button>
+        </div>}
+        <Form form={form} layout="vertical" style={{ marginTop: 8 }} disabled={Boolean(submission) || savePreparing} onValuesChange={() => setEntryDirty(true)}>
           <div className="cases-ai-assistant">
             <div className="cases-ai-assistant__head">
               <div>
@@ -1780,7 +1832,7 @@ const Cases: React.FC = () => {
             <TextArea
               rows={4}
               value={aiIntakeText}
-              onChange={event => setAiIntakeText(event.target.value)}
+              onChange={event => { setAiIntakeText(event.target.value); setEntryDirty(true) }}
               placeholder="粘贴原始案情：时间、地点、发现方式、涉油数量、车辆/人员处置、报案立案等。点击后自动填入下方可编辑字段。"
             />
             <div className="cases-ai-assistant__actions">
@@ -1931,7 +1983,7 @@ const Cases: React.FC = () => {
                           lng={longitude}
                           operationalAreaId={selectedOperationalAreaId}
                           onChange={(lat, lng) => {
-                            setFieldsValue({ latitude: lat, longitude: lng })
+                            if (!submissionRef.current && !saveBusy.current) { setFieldsValue({ latitude: lat, longitude: lng }); setEntryDirty(true) }
                           }}
                         />
                       </Form.Item>
@@ -2322,9 +2374,9 @@ const Cases: React.FC = () => {
           <label htmlFor="case-import-time-zone">文件中未标时区的时间</label>
           <Select id="case-import-time-zone" aria-label="导入时间解释" style={{ width: '100%' }}
             value={importTimeZone} disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
-            options={[{ value: 'UTC', label: 'UTC（兼容旧版）' }, { value: 'Asia/Shanghai', label: '北京时间（UTC+8）' }]}
+            options={[{ value: 'Asia/Shanghai', label: '单位业务时间：北京时间（UTC+8）' }, { value: 'UTC', label: 'UTC 世界协调时（仅适用于原表确用 UTC 或旧模板）' }]}
             onChange={value => { setImportTimeZone(value); setImportPreview(null) }} />
-          <p className="cases-import-hint">已有 Z 或时区偏移的时间保持原义。更改后须重新预览；已入库批次不会因更改时区被重复导入。</p>
+          <p className="cases-import-hint">新文件默认按单位业务时间解释，请先核对。已有 Z 或时区偏移的时间保持原义；模板沿用其原设置，旧模板未标时区时仍按旧版 UTC 解释。更改后须重新预览，不批量改写已入库时间。</p>
         </div>
         {writableAreaScopes.length > 1 ? (
           <div style={{ marginBottom: 14 }}>

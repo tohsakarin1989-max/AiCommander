@@ -245,3 +245,63 @@ def test_business_timezone_buckets_cross_utc_month_day_and_weekday(facility_db):
     assert result["cases"]["items"][0]["occurred_time"] == "2026-09-30T17:00:00+00:00"
     assert result["events"]["items"][0]["occurred_time"] == "2026-09-30T17:00:00+00:00"
     assert result["window"]["start_date"] == "2026-09-30T17:00:00+00:00"
+
+
+def test_unknown_and_interval_times_keep_counts_without_invented_time_buckets(facility_db):
+    db = facility_db
+    for identifier, precision in ((5, "unknown"), (6, "interval")):
+        row = Case(id=identifier, case_number=f"FAC-{precision}", operational_area_id=1,
+            occurred_time=None, time_precision=precision, time_timezone="Asia/Shanghai",
+            occurred_from=datetime(2026, 9, 30, 16) if precision == "interval" else None,
+            occurred_to=datetime(2026, 10, 1, 16) if precision == "interval" else None,
+            time_expression="具体时间待核", latitude=46, longitude=125,
+            facility_type="井口", oil_type="原油", description="已记录条件")
+        db.add(row)
+        db.flush()
+        add_profile(db, row)
+    db.commit()
+
+    result = build_region_content(db)
+    assert result["cases"]["total"] == result["statistics"]["case_count"] == 5
+    stats = result["statistics"]
+    assert (stats["exact_time_cases"], stats["interval_time_cases"], stats["unknown_time_cases"]) == (3, 1, 1)
+    assert sum(row["count"] for row in stats["hour_day"]) == 3
+    assert sum(row["case_count"] for row in stats["monthly"]) == 3
+    assert sum(row["case_count"] for row in stats["spatial_monthly"]) == 2
+    assert "精确时刻" in stats["time_boundary"] and "区间" in result["boundary"]
+    cases = {row["id"]: row for row in result["cases"]["items"]}
+    assert cases[5]["occurred_time"] is None and cases[5]["time_precision"] == "unknown"
+    assert cases[6]["occurred_time"] is None and cases[6]["time_precision"] == "interval"
+    assert cases[6]["occurred_from"] == "2026-09-30T16:00:00+00:00"
+    assert cases[6]["occurred_to"] == "2026-10-01T16:00:00+00:00"
+    assert cases[6]["time_timezone"] == "Asia/Shanghai"
+    references = {row["case_id"]: row for row in result["facilities"]["items"][0]["condition_comparison"]["reference_cases"]}
+    for identifier in (5, 6):
+        assert references[identifier]["occurred_time"] is None
+        assert references[identifier]["time_precision"] == cases[identifier]["time_precision"]
+        assert references[identifier]["production_validity"]["incident_state"] == "unknown"
+
+
+def test_interval_windows_include_overlap_and_zero_width_without_assigning_a_month(facility_db):
+    db = facility_db
+    # [start, end) query: closed intervals ending at start still may overlap;
+    # intervals beginning at end and exact instants at end do not.
+    start, end = datetime(2026, 10, 1), datetime(2026, 10, 2)
+    intervals = [(datetime(2026, 9, 30), start), (start, start), (end, end)]
+    db.add_all([Case(id=5 + index, case_number=f"FAC-INTERVAL-{index}", operational_area_id=1,
+        occurred_time=None, occurred_from=left, occurred_to=right, time_precision="interval",
+        latitude=46, longitude=125) for index, (left, right) in enumerate(intervals)])
+    db.add_all([
+        Case(id=8, case_number="FAC-UNKNOWN", operational_area_id=1, occurred_time=None, time_precision="unknown"),
+        Case(id=9, case_number="FAC-EXACT-END", operational_area_id=1, occurred_time=end),
+    ])
+    db.commit()
+
+    result = build_region_content(db, start_date=start, end_date=end)
+    assert {row["id"] for row in result["cases"]["items"]} == {5, 6}
+    assert result["cases"]["total"] == result["statistics"]["interval_time_cases"] == 2
+    assert result["statistics"]["unknown_time_cases"] == 0
+    assert result["statistics"]["exact_time_cases"] == 0
+    assert result["statistics"]["monthly"] == []
+    assert result["statistics"]["hour_day"] == []
+    assert result["statistics"]["spatial_monthly"] == []

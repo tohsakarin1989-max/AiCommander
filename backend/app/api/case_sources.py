@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, 
 from hashlib import sha256
 from uuid import uuid4
 from datetime import datetime
+from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.database import get_db, require_area_write_access
@@ -44,6 +45,8 @@ def list_measurements(case_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{case_id:int}/sources")
 def list_sources(case_id: int, limit: int = Query(50, ge=1, le=200), before_revision: int | None = None,
+                 references_limit: int = Query(200, ge=1, le=200), before_reference: int | None = None,
+                 reference_kind: Literal["evidence"] | None = None,
                  db: Session = Depends(get_db)):
     _case(db, case_id)
     query = db.query(CaseRevision).filter_by(case_id=case_id)
@@ -51,12 +54,19 @@ def list_sources(case_id: int, limit: int = Query(50, ge=1, le=200), before_revi
     if before_revision is not None:
         query = query.filter(CaseRevision.revision < before_revision)
     rows = query.order_by(CaseRevision.revision.desc()).limit(limit + 1).all()
-    references = db.query(SourceReference).filter_by(case_id=case_id).order_by(SourceReference.id.desc()).limit(200).all()
+    references_query = db.query(SourceReference).filter_by(case_id=case_id)
+    if reference_kind is not None:
+        references_query = references_query.filter_by(kind=reference_kind)
+    if before_reference is not None:
+        references_query = references_query.filter(SourceReference.id < before_reference)
+    references = references_query.order_by(SourceReference.id.desc()).limit(references_limit + 1).all()
     return {"case_id": case_id, "current_revision_id": latest.id if latest else None,
+            "current_revision": latest.revision if latest else None,
             "revisions": [{key: value for key, value in _values(row).items() if key != "payload"} for row in rows[:limit]],
             "next_before_revision": rows[limit - 1].revision if len(rows) > limit else None,
-            "references": [_values(row) for row in references],
-            "references_limit": 200,
+            "references": [_values(row) for row in references[:references_limit]],
+            "next_before_reference": references[references_limit - 1].id if len(references) > references_limit else None,
+            "references_limit": references_limit,
             "status": "available" if latest else "not_recorded",
             "boundary": "来源版本从 v6.1 实际写入开始记录；不伪造此前修订历史。"}
 

@@ -252,8 +252,9 @@ async def list_assets(
     source: Optional[str] = None,
     status: Optional[str] = "active",
     operational_area_id: Optional[int] = Query(default=None, ge=1),
-    skip: int = 0,
-    limit: int = Query(200, le=1000),
+    keyword: Optional[str] = Query(default=None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> List[JurisdictionAsset]:
     """查询辖区基础要素，支持按类型、来源和状态筛选。"""
@@ -263,6 +264,7 @@ async def list_assets(
         source=source,
         status=status,
         operational_area_id=operational_area_id,
+        keyword=keyword,
         skip=skip,
         limit=limit,
     )

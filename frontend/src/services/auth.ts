@@ -28,6 +28,7 @@ export interface UserCreatePayload {
   display_name?: string
   password: string
   role: UserRole
+  area_scopes?: AreaScopeGrant[]
 }
 
 export interface UserUpdatePayload {
@@ -43,6 +44,11 @@ export interface UserAreaScope {
   area_name: string
   access_level: 'read' | 'write' | 'manage'
   is_default: boolean
+}
+
+export interface AreaScopeGrant {
+  operational_area_id: number
+  access_level: 'read' | 'write' | 'manage'
 }
 
 export const authApi = {
@@ -76,6 +82,14 @@ export const authApi = {
     return response.data
   },
   users: {
+    scopes: async (id: number) => {
+      const response = await api.get<UserAreaScope[]>(`/auth/users/${id}/area-scopes`)
+      return response.data
+    },
+    replaceScopes: async (id: number, scopes: AreaScopeGrant[], expectedScopes?: AreaScopeGrant[]) => {
+      const response = await api.put<UserAreaScope[]>(`/auth/users/${id}/area-scopes`, { scopes, expected_scopes: expectedScopes })
+      return response.data
+    },
     list: async () => {
       const response = await api.get<AuthUser[]>('/auth/users')
       return response.data

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
@@ -314,6 +315,7 @@ class JurisdictionService:
         operational_area_id: Optional[int] = None,
         limit: int = 200,
         skip: int = 0,
+        keyword: Optional[str] = None,
     ) -> List[JurisdictionAsset]:
         query = db.query(JurisdictionAsset)
         if asset_type:
@@ -324,6 +326,10 @@ class JurisdictionService:
             query = query.filter(JurisdictionAsset.status == status)
         if operational_area_id is not None:
             query = query.filter(JurisdictionAsset.operational_area_id == operational_area_id)
+        if keyword and keyword.strip():
+            term = keyword.strip()
+            query = query.filter(or_(JurisdictionAsset.name.contains(term, autoescape=True),
+                                     JurisdictionAsset.external_id.contains(term, autoescape=True)))
         return query.order_by(JurisdictionAsset.id.desc()).offset(skip).limit(limit).all()
 
     @staticmethod

@@ -38,6 +38,23 @@ describe('统一材料入口与历史边界', () => {
     expect(html).toContain('当前限定来源')
     expect(html).toContain('kind=meeting&amp;resultId=9')
   })
+  it('打开材料和来源返回链接保留目录条件与页码', () => {
+    state.params = 'kind=meeting&resultId=9&subject=case&subjectId=42&catalogQ=管线&catalogKind=meeting&catalogOffset=40&fromKind=topic&fromId=original'
+    state.data!.sources = [{ kind: 'case', id: 'source-result', content_sha256: 'b'.repeat(64) }]
+    const html = renderToStaticMarkup(<Reports />)
+    expect(state.requested[0].queryKey).toContain('管线'); expect(state.requested[0].queryKey).toContain(40)
+    expect(html).toContain('返回原目录条件'); expect(html).toContain('返回引用此资料的材料'); expect(html).toContain('第 3 页')
+    expect(html).toContain('catalogOffset=40'); expect(html).toContain('fromKind=meeting&amp;fromId=9')
+    expect(html).toContain('kind=topic&amp;resultId=original&amp;subject=case')
+  })
+  it('从全局导航带入caseId时限定本案材料并保留案件筛选回跳', () => {
+    state.params = 'caseId=42&case_view=materials&keyword=管线&statuses=pending&statuses=processing'
+    const html = renderToStaticMarkup(<Reports />)
+    expect(state.requested[0].queryKey.slice(-2)).toEqual(['case', '42'])
+    expect(html).toContain('当前限定来源：案件 #42')
+    expect(html).toContain('返回来源案件'); expect(html).toContain('statuses=pending&amp;statuses=processing')
+    expect(html).toContain('kind=meeting&amp;resultId=9&amp;keyword=')
+  })
   it('目录失败隐藏缓存，不冒充空结果或零总数', () => {
     state.listError = true
     const html = renderToStaticMarkup(<Reports />)

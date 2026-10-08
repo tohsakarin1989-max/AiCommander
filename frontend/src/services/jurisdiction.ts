@@ -345,6 +345,7 @@ export interface WellAttentionOverview {
 
 export const jurisdictionApi = {
   listAssets: async (params?: {
+    keyword?: string
     asset_type?: string
     source?: string
     status?: string

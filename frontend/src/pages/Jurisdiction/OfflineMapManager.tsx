@@ -6,9 +6,10 @@ import { useEffect, useState } from 'react'
 import { mapFoundationApi } from '../../services'
 
 
-export default function OfflineMapManager() {
+export default function OfflineMapManager({ initialAreaId }: { initialAreaId?: number } = {}) {
   const queryClient = useQueryClient()
-  const [areaId, setAreaId] = useState<number>()
+  const [areaId, setAreaId] = useState<number | undefined>(initialAreaId)
+  useEffect(() => { if (initialAreaId != null) setAreaId(initialAreaId) }, [initialAreaId])
   const [bundleId, setBundleId] = useState<number>()
 
   const areasQuery = useQuery({ queryKey: ['operational-areas'], queryFn: mapFoundationApi.listAreas })

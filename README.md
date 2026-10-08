@@ -1,4 +1,4 @@
-# AiCommander v6.5.0-stable 源码
+# AiCommander v7.0.0-stable 源码
 
 涉油案件数智研判与防控辅助系统。围绕案件资料治理、模式识别、时空规律、链条线索、
 热点区域、研判报告和部署建议提供辅助能力，所有 AI 结论均保留人工复核边界。
@@ -17,7 +17,8 @@ v4.3新增受控专题追问，v4.4交付完整周期态势与真实覆盖方案
 v6.0 统一案件读取、不可变道路组合成果、来源变更与人工确认，停用旧风险分并分离日常查询/实验开关，见 [v6.0 发布说明](docs/releases/v6.0.0-stable.md)。
 v6.2 完成 v6.1 资料骨架收尾，增加设施稳定身份、跨台账人工对应及撤销、业务有效期与系统获知时间、地图计算资料清单和设施侧材料关联，见 [v6.2 发布说明](docs/releases/v6.2.0-stable.md)。
 v6.3 的案件过程、三路历史检索和候选条件继续保留；v6.4 增加无模型业务预设、持续问题、后台完整统计续跑及实质变化提醒，v6.5 统一案件、设施、专题、会议和经验材料的阅读、同版地图/导出及可选人工判断。旧结论工厂与无消费者的执行型旧入口退出，原始业务资料和历史人工记录不删除。
-当前源码已收口为 **v6.5.0-stable**；见 [发布与迁移说明](docs/releases/v6.5.0-stable.md)、[综合验证](docs/validation/2026-09-30-v65-implementation.md)。本轮按授权统一发布 GitHub，实际远端结果另行核对；源码版本不等于目标服务器部署。回退须使用相容应用/数据库备份并保护升级后的新增原始资料；真实内网模型、现场负载和业务效果仍分别待验。
+当前源码为 **v7.0.0-stable**，聚焦可靠首用与内网启用：首次配置厂区和账号范围，首页直接录案/查案/查井/取材料，新增案件安全重试，完整翻阅来源与附件，修复区间时间和材料回跳，核对离线交付及联合恢复。保留已有业务，不包含后续 v7.1—v7.5 的全部深化。
+见 [v7.0 发布与迁移说明](docs/releases/v7.0.0-stable.md)、[综合验证](docs/validation/2026-09-30-v70-implementation.md)、[7.x 路线图](docs/superpowers/specs/2026-09-30-v7x-upgrade-roadmap.md)。本轮未自动提交或发布 GitHub；源码版本不等于目标服务器部署。回退须使用相容应用/数据库/地图备份并保护升级后的新增原始资料；真实内网模型、现场负载和业务效果仍分别待验。上一版说明保留在 [v6.5](docs/releases/v6.5.0-stable.md)。
 见 [4.x升级路线图](./docs/superpowers/specs/2026-09-10-v4x-upgrade-roadmap.md)、
 [v4.0实施清单](./docs/superpowers/plans/2026-09-10-v4.0-implementation.md)及
 [v4.5发布说明](./docs/releases/v4.5.0-stable.md)。远端发布状态以GitHub Release为准，源码Stable不等于现场投产。
@@ -69,9 +70,9 @@ SQLite、本地前后端和测试命令见 [QUICKSTART.md](./QUICKSTART.md)。
 
 ## 生产部署
 
-当前源码版本为 **v6.5.0-stable**，已整合资料与设施底座、案件过程、历史检索、持续问题及统一材料；保留人工判断和历史报告，不自动改写原始案件或创建执行任务。
+当前源码版本为 **v7.0.0-stable**，优先使用[当前内网启用与恢复主手册](docs/current-intranet-operations.zh-CN.md)。已整合资料与设施底座、案件过程、历史检索、持续问题及统一材料；保留人工判断和历史报告，不自动改写原始案件或创建执行任务。
 升级必须使用同时具备 PostGIS 和 pgvector 的数据库镜像，不可直接沿用旧纯 PostGIS 默认镜像。
-功能、验证边界、完整迁移至 `v65r01`、后台消费者和保护新增原始资料的回退步骤见 [v6.5 发布说明](docs/releases/v6.5.0-stable.md)。`ENABLE_LEGACY_OPERATIONS_MODULES` 必须为 false；不要清空现用数据库或以替换旧程序代替兼容恢复。
+功能、验证边界、完整迁移至 `v70s01`、后台消费者和保护新增原始资料的回退步骤见 [v7.0 发布说明](docs/releases/v7.0.0-stable.md)。内网使用预构建模式并提供批准的离线交付清单；导出/道路/地图构建按实际准备能力启用。`ENABLE_LEGACY_OPERATIONS_MODULES` 必须为 false；不要清空现用数据库或以替换旧程序代替兼容恢复。
 源码版本不代表目标服务器已部署，真实内网模型未验证时仍显示未启用。
 
 开发用 `docker-compose.yml` 包含源码挂载和热重载，不能用于服务器生产上线。生产部署使用：
@@ -92,8 +93,7 @@ sudo sh ./scripts/deploy-production.sh
 - HTTPS 反向代理样例、部署预检、升级前自动备份、迁移版本健康检查
 - 日志轮转和固定基础镜像 digest
 
-完整安装、下载来源、旧数据迁移、HTTPS、备份恢复和回滚步骤见
-[服务器部署与运维手册](./docs/server-deployment-runbook.zh-CN.md)。
+当前安装、离线清单、完整恢复与回退步骤见[当前内网启用与恢复主手册](./docs/current-intranet-operations.zh-CN.md)。历史下载来源、旧数据迁移及 HTTPS 参考保留在[旧运维手册](./docs/server-deployment-runbook.zh-CN.md)，不要照抄旧镜像版本。
 
 ## 可选 Agent Lab
 
@@ -159,7 +159,7 @@ npm run build
 
 `v3.6.0-stable` 已完成后端 452 项、前端 29 个测试文件共 121 项测试、类型检查、生产构建、
 SQLite/PostGIS 迁移、断网地图验证、Redis 故障恢复、隔离部署与备份恢复，以及连续五轮业务链路彩排。
-最终迁移版本为 `a3e6b7c8d940`；生产部署需要固定摘要的 PostgreSQL 16/PostGIS 镜像。
+上述历史版本迁移头为 `a3e6b7c8d940`；当前 v7.0 迁移头为 `v70s01`，需要固定摘要且同时含 PostGIS/pgvector 的 PostgreSQL 16 镜像。
 目标服务器、单位网络、HTTPS、业务适用性和实际节时效果仍须现场确认，不代表已经正式投产。
 详见 [v3.6.0-stable 发布说明](./docs/releases/v3.6.0-stable.md)。
 

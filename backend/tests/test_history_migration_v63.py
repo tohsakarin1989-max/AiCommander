@@ -24,7 +24,7 @@ def exercise_upgrade(url, monkeypatch):
                                 "VALUES(1,'SYN63-STRUCTURAL','夜里。',1)"))
     migrate(url, 'head')
     with engine.connect() as connection:
-        assert connection.scalar(text('SELECT version_num FROM alembic_version')) == 'v65r01'
+        assert connection.scalar(text('SELECT version_num FROM alembic_version')) == 'v70s01'
         assert connection.scalar(text('SELECT description FROM cases WHERE id=1')) == '夜里。'
     model = SimpleNamespace(state='ready', model_version='synthetic-v63-pg',
         encode=lambda value: [1., 0.] if value == '另一种完全不同表述。' else [0., 1.])

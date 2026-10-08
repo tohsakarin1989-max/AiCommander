@@ -13,6 +13,7 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.services.case_history_fragments import FRAGMENT_INDEX_VERSION, condition_term, fragment_reference
 from app.services.case_history_index_service import cached_features, content_hash, rule_version
 from app.services.case_search_service import CaseSearchService
+from app.services.case_time_window import case_time_fields, TIME_WINDOW_BOUNDARY
 from app.services.case_semantic_evidence import freeze_sources, snapshot_payload, text_hash
 from app.services.case_semantic_service import build_semantic_profile
 from app.services.local_embedding_service import LocalEmbeddingError, get_local_embedder, normalized_vector
@@ -72,6 +73,12 @@ def validate_fragment_item(db, item):
     case = db.scalar(select(Case).where(Case.id == item['case_id']).execution_options(populate_existing=True))
     if case is None:
         raise ValueError('history_case_unavailable')
+    time_fields = case_time_fields(case)
+    # Older frozen results did not project time metadata. New results must not
+    # carry stale/forged dates alongside an otherwise valid text reference.
+    if any(field in item for field in time_fields) and any(
+            item.get(field) != value for field, value in time_fields.items()):
+        raise ValueError('history_time_changed')
     source_type, source_id = item['source_type'], item['source_id']
     versions = item['versions']
     fragment = item['fragment']
@@ -350,6 +357,7 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             if fragment.source_type == 'legacy_experience_card':
                 evidence['id'] = f'case:{case.id}'
             item = {'source_type': fragment.source_type, 'source_id': int(fragment.source_id),
+                **case_time_fields(case),
                 'case_id': case.id, 'case_number': case.case_number, 'title': title, 'snippet': fragment.quote,
                 'route': f'/cases?caseId={case.id}', 'versions': versions, 'evidence_refs': [evidence, *refs],
                 'profile_state': 'indexed_fragment', 'derived_state': 'available', **comparison,
@@ -413,4 +421,4 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                 'process_indexed_cases': process_current, 'process_missing_cases': max(0, total - process_current),
                 'process_index_state': 'current' if process_current == total else 'partial' if process_current else 'not_ready'},
             'items': ranked[:limit],
-            'boundary': '片段索引检索仅提供少量历史参考，不是全量统计；索引缺失、过期或预算未完成不能解释为没有历史资料。共同条件、不同表述和语义相近均须核对适用性，不成为当前案件事实，排序不是准确概率。'}
+            'boundary': '片段索引检索仅提供少量历史参考，不是全量统计；索引缺失、过期或预算未完成不能解释为没有历史资料。共同条件、不同表述和语义相近均须核对适用性，不成为当前案件事实，排序不是准确概率。' + TIME_WINDOW_BOUNDARY}

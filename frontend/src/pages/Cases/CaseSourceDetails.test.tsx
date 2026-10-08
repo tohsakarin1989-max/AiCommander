@@ -3,15 +3,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CaseSourceDetails, { CaseSourceVersionCard } from './CaseSourceDetails'
 import type { CaseSourceRevisionDetail } from '../../types'
 
-const state = vi.hoisted(() => ({ failed: false }))
+const state = vi.hoisted(() => ({ failed: false, more: false }))
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, sessionEpoch: 3 }) }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: ({ queryKey }: { queryKey: unknown[] }) => ({ isError: state.failed, isPending: false,
-  data: queryKey[0] === 'case-sources' ? { current_revision_id: 25, revisions: [{ id: 25, revision: 1, source_hash: 'hash-abc', created_at: '2026-09-27T04:00:00Z' }], references: [], boundary: '原始提交版本' }
+  data: queryKey[0] === 'case-sources' ? { current_revision_id: 25, revisions: [{ id: 25, revision: 1, source_hash: 'hash-abc', created_at: '2026-09-27T04:00:00Z' }], references: [], boundary: '原始提交版本', next_before_revision: state.more ? 4 : null }
     : queryKey[0] === 'case-measurements' ? [{ id: 1, value: 0, unit: 'unknown', stage: 'seized' }] : [],
 }) }))
 
 describe('来源详情只展示当前可读记录', () => {
-  beforeEach(() => { state.failed = false })
+  beforeEach(() => { state.failed = false; state.more = false })
+  it('有历史游标时提供更早版本；切换案件或修订会重置详情和分页状态', () => {
+    state.more = true
+    const html = renderToStaticMarkup(<CaseSourceDetails caseId={7} />)
+    expect(html).toContain('来源版本分页'); expect(html).toContain('>更早版本</button>')
+    expect(CaseSourceDetails({ caseId: 7 }).key).not.toBe(CaseSourceDetails({ caseId: 8 }).key)
+    expect(CaseSourceDetails({ caseId: 7, revision: 'a' }).key).not.toBe(CaseSourceDetails({ caseId: 7, revision: 'b' }).key)
+  })
   it('版本序号不是主键；未知量纲与无地点明确显示', () => {
     const html = renderToStaticMarkup(<CaseSourceDetails caseId={7} />)
     expect(html).toContain('当前来源：第 1 版')

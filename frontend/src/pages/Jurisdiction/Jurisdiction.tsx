@@ -37,6 +37,7 @@ import {
 } from '../../services'
 import JurisdictionAssetMap from './JurisdictionAssetMap'
 import MapDataGovernance from './MapDataGovernance'
+import FacilityLookup from '../../components/Facility/FacilityLookup'
 import { useAuth } from '../../auth/AuthContext'
 import { useRegionalContext } from '../../services/useRegionalContext'
 import RegionalControls from '../../components/Facility/RegionalControls'
@@ -450,7 +451,8 @@ export default function Jurisdiction() {
         </div>
       </section>
 
-      <MapDataGovernance />
+      <FacilityLookup key={activeAreaId ?? 'none'} areaId={activeAreaId} />
+      <MapDataGovernance initialAreaId={activeAreaId ?? undefined} />
       {!canManageAssets && <Alert type="info" message="地图资产由管理员维护，当前账号可查看授权范围内的资产与研判" />}
 
       <Row gutter={[16, 16]}>

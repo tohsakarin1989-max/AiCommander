@@ -40,10 +40,18 @@ const Workbench: React.FC = () => {
     queryFn: () => workbenchApi.daily({ limit: PAGE_SIZE, offset }),
     refetchInterval: 60_000,
   })
+  const quickActions = <nav className="daily-actions" aria-label="常用工作">
+    {user?.role !== 'viewer' && <Link className="btn-primary" to="/cases?create=1">录案件</Link>}
+    <Link className="btn-ghost" to="/cases">查案件</Link>
+    <Link className="btn-ghost" to="/jurisdiction#facility-lookup">查井场</Link>
+    <Link className="btn-ghost" to="/reports">取材料</Link>
+    {user?.role === 'admin' && <Link className="btn-ghost" to="/settings/setup">首次启用检查</Link>}
+  </nav>
 
   if (query.isPending) {
     return <div className="page-scrollable daily-workbench" aria-busy="true">
       <h1>日常工作</h1>
+      {quickActions}
       <div className="daily-loading" role="status">正在读取日常工作</div>
       <div className="daily-placeholder" aria-hidden="true" />
       <DailyReviewPreview />
@@ -54,6 +62,7 @@ const Workbench: React.FC = () => {
   if (!data) {
     return <div className="page-scrollable daily-workbench">
       <h1>日常工作</h1>
+      {quickActions}
       <section className="daily-message" role="alert">
         <h2>工作台暂不可用</h2>
         <p>当前无法确认案件数量和分析状态，可以直接进入案件页面。</p>
@@ -85,6 +94,7 @@ const Workbench: React.FC = () => {
         </button>
       </div>
     </header>
+    {quickActions}
 
     <section aria-label="案件与分析状态" className="daily-summary">
       <dl>

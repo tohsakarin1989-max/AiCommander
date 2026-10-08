@@ -47,6 +47,8 @@ def test_local_embedding_runtime_is_opt_in_and_model_mount_is_read_only():
 
 
 def test_document_runtime_is_optional_and_keeps_host_dependencies_out_of_image():
+    import yaml
+
     root = Path(__file__).resolve().parents[2]
     dockerfile = (root / 'backend/Dockerfile').read_text()
     override = (root / 'docker-compose.document-renderer.yml').read_text()
@@ -59,7 +61,13 @@ def test_document_runtime_is_optional_and_keeps_host_dependencies_out_of_image()
     assert 'USER 10001:10001' in dockerfile
     assert 'document-renderer/node_modules' in ignored
     assert 'target: document-renderer' in override
-    assert 'celery:' not in override and 'ports:' not in override
+    services = yaml.safe_load(override)['services']
+    assert set(services) == {'backend', 'celery'}
+    # Clean build installs need the core image shared by consumers. Building
+    # it must not switch them to the optional document runtime or expose ports.
+    assert services['celery'] == {'build': {'context': './backend', 'target': 'runtime'}}
+    assert services['backend']['build']['target'] == 'document-renderer'
+    assert 'ports:' not in override
 
 
 def production_settings(**overrides):

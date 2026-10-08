@@ -33,6 +33,7 @@ export const navigation: { label: string; pages: NavigationPage[] }[] = [
     { label: '自动化实验', path: '/intelli-inspect', analystOnly: true, feature: 'showcase' },
   ] },
   { label: '系统运维', pages: [
+    { label: '首次启用', path: '/settings/setup', adminOnly: true },
     { label: '系统配置', path: '/settings', adminOnly: true }, { label: '用户与权限', path: '/settings/users', adminOnly: true },
     { label: '预处理维护', path: '/cases/features', adminOnly: true },
     { label: '智能运行运维', path: '/agents', adminOnly: true },

@@ -5,7 +5,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
-from app.utils.datetimes import utc_datetime
+from app.services.case_time_window import filter_case_time_window
 
 
 class CaseSearchService:
@@ -36,10 +36,7 @@ class CaseSearchService:
                 field.ilike(f"%{literal}%", escape="\\")
                 for field in (Case.case_number, Case.location, Case.description, Case.case_type)
             )))
-        if start_date is not None:
-            query = query.filter(Case.occurred_time >= utc_datetime(start_date))
-        if end_date is not None:
-            query = query.filter(Case.occurred_time < utc_datetime(end_date))
+        query = filter_case_time_window(query, start_date, end_date)
         if has_geo is True:
             query = query.filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
         elif has_geo is False:
