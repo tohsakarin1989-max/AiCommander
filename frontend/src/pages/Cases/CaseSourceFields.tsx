@@ -10,6 +10,9 @@ export const measurementStageLabels = { involved: '涉案记录', seized: '查�
 export function CaseTimeFields({ form }: { form: FormInstance }) {
   const precision = Form.useWatch('time_precision', form) || 'unknown'
   return <section aria-label="案件时间记录">
+    <Form.Item name="discovered_at" label="现场发现／查获时间（已掌握时填写）"><DatePicker showTime style={{ width: '100%' }} /></Form.Item>
+    <details className="case-entry-section"><summary>实际案发时间及时间原文（另行掌握时补充）</summary>
+    <p>发现、查获或接报时刻不自动作为案发时刻；只知道接报时间时，可在简要经过中保留原文。</p>
     <Form.Item name="time_precision" label="发生时间的明确程度" initialValue="unknown">
       <Select options={[{ value: 'exact', label: '已知精确时刻' }, { value: 'interval', label: '已知时间区间' }, { value: 'unknown', label: '时间尚不明确' }]} />
     </Form.Item>
@@ -24,10 +27,8 @@ export function CaseTimeFields({ form }: { form: FormInstance }) {
       ]}><DatePicker showTime style={{ width: '100%' }} /></Form.Item></Col>
     </Row>}
     <Form.Item name="time_expression" label="原文时间表述"><Input placeholder="如：昨晚、九月上旬；不会据此自动编造时刻" /></Form.Item>
-    <Row gutter={12}>
-      <Col xs={24} sm={12}><Form.Item name="time_timezone" label="记录时区" initialValue="Asia/Shanghai"><Select options={[{ value: 'Asia/Shanghai', label: '北京时间（UTC+8）' }, { value: 'UTC', label: 'UTC' }]} /></Form.Item></Col>
-      <Col xs={24} sm={12}><Form.Item name="discovered_at" label="发现时间（与发生时间分开）"><DatePicker showTime style={{ width: '100%' }} /></Form.Item></Col>
-    </Row>
+    </details>
+    <Form.Item name="time_timezone" label="记录时区" initialValue="Asia/Shanghai"><Select options={[{ value: 'Asia/Shanghai', label: '北京时间（UTC+8）' }, { value: 'UTC', label: 'UTC' }]} /></Form.Item>
   </section>
 }
 

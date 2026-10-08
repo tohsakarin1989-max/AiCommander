@@ -65,6 +65,17 @@ export interface MapIngestRun {
   idempotent_replay: boolean
 }
 
+export interface MapLedgerDeclaration {
+  mode: 'full' | 'incremental'
+  scope_key: string
+  scope_description: string
+  valid_from: string
+  valid_to: string
+  origin?: 'administrator_declaration'
+  source_id?: number
+  operational_area_id?: number
+}
+
 export interface MapConflict {
   id: number
   run_id: string
@@ -257,9 +268,11 @@ export const mapFoundationApi = {
     file: File,
     sourceRevision?: string,
     planToken?: string,
+    ledgerDeclaration?: MapLedgerDeclaration,
   ): Promise<MapIngestRun> => {
     const body = fileBody(file)
     if (planToken) body.append('plan_token', planToken)
+    if (ledgerDeclaration) body.append('ledger_declaration', JSON.stringify(ledgerDeclaration))
     const response = await api.post<MapIngestRun>(
       `/map-sources/${sourceId}/ingest`,
       body,

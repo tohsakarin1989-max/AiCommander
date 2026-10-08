@@ -22,17 +22,19 @@ class CaseProcessingCardService:
         gap_groups = CaseProcessingCardService._gap_groups(db, case, profile, bonus_assessment=bonus_assessment)
         priority = CaseProcessingCardService._priority(gap_groups)
         actions = CaseProcessingCardService._actions(case, gap_groups)
-        quality_pending = profile.get("quality", {}).get("state") == "not_generated"
+        quality_state = profile.get("quality", {}).get("state", "ready")
         return {
             "case_id": case.id,
             "case_number": case.case_number,
-            "status": "needs_review" if gap_groups else "awaiting_profile" if quality_pending else "ready",
+            "status": ("needs_review" if gap_groups else "awaiting_profile" if quality_state == "not_generated"
+                       else "stale" if quality_state == "stale" else "ready"),
             "priority": priority,
             "gap_groups": gap_groups,
             "impacted_modules": sorted({module for group in gap_groups for module in group.get("impacted_modules", [])}),
             "suggested_actions": actions,
             "manual_review_required": bool(gap_groups),
             "profile_snapshot": {
+                "quality_state": quality_state,
                 "quality_score": profile.get("quality", {}).get("score", profile.get("quality", {}).get("quality_score")),
                 "has_evidence": profile.get("availability", {}).get("has_evidence"),
                 "has_confirmed_experience": profile.get("availability", {}).get("has_confirmed_experience"),

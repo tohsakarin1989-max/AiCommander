@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import RegionalAnalysisView from '../../components/Facility/RegionalAnalysisView'
 import SpaceTimeAnalysis from '../Cases/SpaceTimeAnalysis'
 import './AreaAnalysis.css'
+import { regionalContextPath } from '../../services/regionalContext'
 
 export function regionalViewPath(search: string, hash: string, view: 'conditions' | 'time') {
   const params = new URLSearchParams(search)
@@ -16,6 +17,7 @@ export default function AreaAnalysis() {
     <nav className="regional-view-navigation" aria-label="区域研判视图">
       <Link className="btn-ghost" to={regionalViewPath(search, hash, 'conditions')} aria-current={view === 'conditions' ? 'page' : undefined}>设施条件与时间线</Link>
       <Link className="btn-ghost" to={regionalViewPath(search, hash, 'time')} aria-current={view === 'time' ? 'page' : undefined}>时间规律</Link>
+      <Link className="btn-ghost" to={regionalContextPath('/assistant', new URLSearchParams(search))}>带本页条件询问助手</Link>
     </nav>
     {view === 'time' ? <SpaceTimeAnalysis embedded /> : <RegionalAnalysisView />}
   </div>

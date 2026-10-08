@@ -37,9 +37,10 @@ def test_case_time_is_not_import_or_profile_time_and_end_is_exclusive(search_db)
 
 def test_brief_freezes_comparison_and_new_input_creates_new_revision(search_db):
     from app.services.deployment_advisor_service import DeploymentAdvisorService
+    from app.services.situation_temporal_changes import closed_window as brief_window
     as_of = datetime(2026, 9, 11, 3, tzinfo=timezone.utc)
-    window = closed_window(as_of, 'daily')
-    case = add_case(search_db, 'CURRENT', occurred_time=window.current_start)
+    window = brief_window(as_of, 'daily')
+    case = add_case(search_db, 'CURRENT', occurred_time=window.current_start, discovered_at=window.current_start)
     search_db.commit()
     first, reused = DeploymentAdvisorService.generate_brief(search_db,
         operational_area_id=1, period_type='daily', as_of=as_of)
@@ -47,7 +48,7 @@ def test_brief_freezes_comparison_and_new_input_creates_new_revision(search_db):
     same, reused = DeploymentAdvisorService.generate_brief(search_db,
         operational_area_id=1, period_type='daily', as_of=as_of + timedelta(hours=1))
     assert reused and same.id == first.id
-    case.occurred_time = window.previous_start
+    case.discovered_at = window.previous_start
     search_db.commit()
     second, reused = DeploymentAdvisorService.generate_brief(search_db,
         operational_area_id=1, period_type='daily', as_of=as_of)
@@ -69,7 +70,7 @@ def test_changes_require_real_increase_and_do_not_invent_probability(search_db):
     window = closed_window(as_of, 'daily')
     search_db.info['authorized_area_ids'] = (1,)
     for index in range(3):
-        add_case(search_db, f'NEW-{index}', occurred_time=window.current_start)
+        add_case(search_db, f'NEW-{index}', occurred_time=window.current_start, discovered_at=window.current_start)
     search_db.commit()
     changes = case_changes(search_db, 1, window)
     recommendations = change_recommendations(changes, '一区')

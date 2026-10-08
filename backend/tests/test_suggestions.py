@@ -142,7 +142,6 @@ def test_suggestions_unifies_real_review_work_items_without_patrol_dispatch():
     assert payload["total"] == len(items)
     types = {item["type"] for item in items}
     assert {
-        "data_quality",
         "bonus",
         "alert",
         "review",
@@ -150,6 +149,7 @@ def test_suggestions_unifies_real_review_work_items_without_patrol_dispatch():
         "report_quality",
         "workflow",
     }.issubset(types)
+    assert not any(item['type'] == 'data_quality' and item['target_id'] == case.id for item in items)
     actions = {item["action"] for item in items}
     assert "create_patrol" not in actions
     assert "preprocess_case" not in actions
@@ -347,6 +347,7 @@ def test_no_optional_artifacts_does_not_manufacture_daily_tasks(monkeypatch):
     db = _session()
     monkeypatch.setattr(suggestions.settings, "ENABLE_BONUS_ACCOUNTING", False)
     db.add(Case(case_number="SUG-OPTIONAL", occurred_time=datetime.utcnow(), location="合成地点",
+                case_type="其他", report_unit="合成单位", source_type="巡逻发现", report_time=datetime.utcnow(),
                 latitude=46.6, longitude=125.0, description="已有完整记录，但没有手工生成的经验卡或报告。",
                 quality_issues={"score": 100, "missing_required": []}, status="pending"))
     db.add(Meeting(meeting_id="NO-REPORT", case_ids=[], status="completed", completed_at=datetime.utcnow()))
@@ -363,6 +364,7 @@ def test_finished_experience_is_not_reopened_as_daily_work(monkeypatch, review_s
     db = _session()
     monkeypatch.setattr(suggestions.settings, "ENABLE_BONUS_ACCOUNTING", False)
     db.add(Case(case_number="SUG-CARD", occurred_time=datetime.utcnow(), location="合成地点",
+                case_type="其他", report_unit="合成单位", source_type="巡逻发现", report_time=datetime.utcnow(),
                 latitude=46.6, longitude=125.0, description="合成记录", status="pending",
                 quality_issues={"score": 100, "missing_required": []},
                 features={"intelligence": {"experience_card": {"summary": "已处理卡", "manual_review_status": review_status}}}))
@@ -436,6 +438,7 @@ def test_conclusion_reference_revocation_removes_item_and_summary(monkeypatch):
     db.add_all([OperationalArea(id=i, code=f"SUG-{i}", name="合成辖区") for i in (1, 2)])
     db.flush()
     db.add_all([Case(id=i, case_number=f"SUG-REF-{i}", operational_area_id=i,
+                     case_type="其他", report_unit="合成单位", source_type="巡逻发现", report_time=datetime(2026, 9, 1),
                      occurred_time=datetime(2026, 9, 1), description="合成记录", location="合成地点",
                      latitude=46.6, longitude=125.0, status="pending",
                      quality_issues={"score": 100, "missing_required": []}) for i in (1, 2)])

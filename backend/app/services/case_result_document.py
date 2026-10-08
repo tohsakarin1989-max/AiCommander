@@ -190,7 +190,30 @@ def build_case_result_document(result: dict) -> CaseResultDocument:
     ]
     for ref in content["facts_summary"]["evidence_refs"]:
         blocks.append(DocumentBlock("source", ref))
-    if not content.get("composition"):
+    applicability = content.get("analysis_applicability")
+    if applicability:
+        from app.services.case_analysis_applicability import STATUS_LABELS
+        blocks.append(DocumentBlock("heading", "资料适用范围与分析状态"))
+        blocks.append(DocumentBlock("paragraph", applicability["boundary"]))
+        for item in applicability["entries"]:
+            blocks.append(DocumentBlock("paragraph", f"{item['label']}：{STATUS_LABELS.get(item['status'], '待核对')}。{item['reason']}"))
+            blocks.extend(DocumentBlock("source", ref) for ref in item.get("evidence_refs", []))
+        if content.get("recorded_locations"):
+            blocks.append(DocumentBlock("table", "已记录地点角色", tuple(
+                ({"incident": "案发", "discovery": "发现/查获", "mentioned": "原文提及", "custody": "保管", "source_candidate": "来源线索"}.get(row.get("role"), "角色未明"),
+                 f"{row.get('description') or '未记录描述'}；位置精度：{row.get('precision') or '未知'}")
+                for row in content["recorded_locations"])))
+        handling = content.get("recorded_handling") or {}
+        if handling:
+            blocks.append(DocumentBlock("heading", "本单位处置及已知反馈"))
+            for key, label in (("person_handling", "人员处理"), ("vehicle_handling", "车辆处理"), ("oil_handling", "油品处理")):
+                blocks.append(DocumentBlock("paragraph", f"{label}：{_text(handling.get(key))}"))
+            for field, item in handling.get("police_feedback", {}).items():
+                value = ("是" if item.get("value") else "否") if item.get("state") == "known" else (
+                    "历史值来源未确认" if item.get("state") == "legacy_unverified" else "未知/未获反馈")
+                blocks.append(DocumentBlock("paragraph", f"{'是否报案' if field == 'police_reported' else '是否立案'}：{value}"))
+            blocks.append(DocumentBlock("paragraph", handling["boundary"]))
+    if not content.get("composition") and content["candidates"]:
         blocks.append(DocumentBlock("paragraph", "本版本为基础空间成果，未绑定当前道路组合；空间接近不表示道路可达，候选仅供历史参考。"))
     blocks.append(DocumentBlock("heading", "关键缺项"))
     for gap in content["information_gaps"]["profile"]:

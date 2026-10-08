@@ -43,7 +43,7 @@ from app.services.case_insight_service import CaseInsightService
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.case_service import CaseService
 from app.services.deployment_advisor_service import DeploymentAdvisorService
-from app.services.situation_change_service import closed_window
+from app.services.situation_temporal_changes import closed_window
 from app.services.offline_map_service import MAX_BUNDLE_BYTES, OfflineMapService
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 
@@ -260,12 +260,23 @@ def run_rehearsal_rounds(
             db=db,
             case_number=f"V36-DEMO-{rehearsal_started:%Y%m%d%H%M%S}-{sequence:02d}",
             occurred_time=occurred_time,
+            discovered_at=occurred_time,
             location="脱敏演示网格",
             latitude=float(anchor.latitude) + sequence * 0.0001,
             longitude=float(anchor.longitude) + sequence * 0.0001,
+            initial_locations=[{
+                "role": "incident",
+                "description": "脱敏演示案发点",
+                "precision": "exact",
+                "geometry": {"type": "Point", "coordinates": [
+                    float(anchor.longitude) + sequence * 0.0001,
+                    float(anchor.latitude) + sequence * 0.0001,
+                ]},
+                "source_note": "合成演练显式声明的案发点，非从发现地点推定。",
+            }],
             case_type="涉油盗窃",
             description=(
-                "脱敏演示案件：夜间发现生产设施油品异常，"
+                "脱敏演示案件：夜间现场明确记录打孔盗油痕迹，"
                 "需结合地图和历史条件核查。"
             ),
             oil_type="原油",
@@ -441,8 +452,16 @@ def run_rehearsal_rounds(
             raise RuntimeError("candidate_count_out_of_bounds")
         if evidence_coverage != 1.0 or counter_coverage != 1.0:
             raise RuntimeError("candidate_evidence_incomplete")
-        expected_recommendations = 0 if sequence < 3 else 1
-        if recommendation_count != expected_recommendations:
+        # v8.1 presents one grounded new-information reference before there are
+        # enough independent records for repeated conditions. It does not call
+        # the first record a pattern or create an execution task.
+        expected_attention = "new_information" if sequence == 1 else "repeated_conditions"
+        attention = brief.comparison_snapshot["attention"]["items"]
+        if (len(attention) != 1 or attention[0]["object_key"] != f"area:{area.id}"
+                or attention[0]["state"] != expected_attention
+                or attention[0]["support_record_count"] != sequence):
+            raise RuntimeError("rehearsal_attention_grounding_inconsistent")
+        if recommendation_count != 1:
             raise RuntimeError("recommendation_count_out_of_bounds")
         if (brief.comparison_snapshot['current']['case_count'] != sequence
                 or brief.comparison_snapshot['previous']['case_count'] != 0):
@@ -485,7 +504,7 @@ def run_rehearsal_rounds(
                 "brief_id": brief.id,
                 "brief_replay": brief_replay,
                 "recommendation_count": recommendation_count,
-                "recommendation_expectation": 'no_material_change' if sequence < 3 else 'material_case_count_change',
+                "recommendation_expectation": expected_attention,
                 "formal_case_changed": formal_domain_changed,
                 "formal_domain_changed": formal_domain_changed,
                 "execution_task_created": execution_task_created,

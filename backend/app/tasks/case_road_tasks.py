@@ -8,6 +8,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models.case_pipeline import OutboxEvent
 from app.services.case_road_jobs import EVENT_TYPE, process_comparison
+from app.services.case_road_scenario_jobs import EVENT_TYPE as SCENARIO_EVENT_TYPE, process as process_scenarios
 from app.services.case_road_triggers import REQUEST_TYPE, process_request
 from app.services.coverage_road_jobs import EVENT_TYPE as COVERAGE_EVENT_TYPE, process as process_coverage
 from app.services.road_evaluation_jobs import EVENT_TYPE as EVALUATION_EVENT_TYPE, process as process_evaluation
@@ -24,7 +25,7 @@ def process_next_comparison():
     with SessionLocal() as db:
         now = datetime.now(timezone.utc)
         selected = db.execute(select(OutboxEvent.id, OutboxEvent.event_type).where(
-            OutboxEvent.event_type.in_((EVENT_TYPE, REQUEST_TYPE, COVERAGE_EVENT_TYPE, EVALUATION_EVENT_TYPE, REFRESH_EVENT_TYPE, UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE, DEPENDENCY_EVENT_TYPE)),
+            OutboxEvent.event_type.in_((EVENT_TYPE, REQUEST_TYPE, COVERAGE_EVENT_TYPE, EVALUATION_EVENT_TYPE, REFRESH_EVENT_TYPE, UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE, DEPENDENCY_EVENT_TYPE, SCENARIO_EVENT_TYPE)),
             or_(and_(OutboxEvent.status.in_(('pending', 'retry')), OutboxEvent.available_at <= now),
                 and_(OutboxEvent.event_type == REQUEST_TYPE, OutboxEvent.status == 'waiting_dependency',
                      OutboxEvent.available_at <= now),
@@ -34,6 +35,9 @@ def process_next_comparison():
         if selected is None:
             return {'selected': 0}
         identifier, kind = selected
+        if kind == SCENARIO_EVENT_TYPE:
+            return {'selected': 1, **process_scenarios(db, identifier,
+                artifact_root=Path(settings.MAP_PACKAGE_ROOT) / 'road-graphs')}
         if kind in (REFRESH_EVENT_TYPE, UPGRADE_EVENT_TYPE, HISTORY_EVENT_TYPE, DEPENDENCY_EVENT_TYPE):
             return {'selected': 1, **process_refresh(db, identifier)}
         if kind == REQUEST_TYPE:

@@ -11,7 +11,7 @@ CATEGORIES = {'method', 'place_condition', 'time_condition'}
 VERSION = 'situation-semantic-changes-4.4-1'
 
 
-def semantic_window(db, area_id, start, end):
+def semantic_window(db, area_id, start, end, *, case_ids=None):
     if 'authorized_area_ids' not in db.info:
         raise PermissionError('situation_read_scope_required')
     allowed = db.info['authorized_area_ids']
@@ -19,7 +19,11 @@ def semantic_window(db, area_id, start, end):
         raise PermissionError('situation_area_forbidden')
     query = db.query(Case, CaseAnalysisProfile).outerjoin(CaseAnalysisProfile,
         (CaseAnalysisProfile.case_id == Case.id) & CaseAnalysisProfile.is_current.is_(True)).filter(
-        Case.operational_area_id == area_id, Case.occurred_time >= start, Case.occurred_time < end)
+        Case.operational_area_id == area_id)
+    if case_ids is None:
+        query = query.filter(Case.occurred_time >= start, Case.occurred_time < end)
+    else:
+        query = query.filter(Case.id.in_(case_ids))
     rows = query.populate_existing().order_by(Case.id, CaseAnalysisProfile.id).yield_per(100)
     groups, evidence, rules = defaultdict(set), defaultdict(list), set()
     total, readable = 0, 0

@@ -18,7 +18,7 @@ export interface ShowcaseRecord {
     case?: { description: string; location: string; occurred_time: string; latitude: number | null; longitude: number | null }
     map_features?: { name: string; latitude: number; longitude: number }[]
     profile?: { id: string; schema_version: string; dictionary_version: string; quality_score: number; payload: Record<string, unknown> }
-    analysis?: { id: string; status: string; algorithm_version: string; summary: string; information_gaps: string[];
+    analysis?: { id?: string; status: string; algorithm_version?: string; summary: string; information_gaps: string[];
       hypotheses: { id: string; title: string; claim: string; score: number; evidence_refs: string[];
         supporting_evidence: string[]; counter_evidence: string[]; information_gaps: string[]; boundary: string }[] }
     brief?: { summary: string; evidence_refs: string[]; information_gaps: string[] }

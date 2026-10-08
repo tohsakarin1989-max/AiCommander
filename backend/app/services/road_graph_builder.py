@@ -7,8 +7,11 @@ for inspection and never replace an existing graph or the current map.
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
+import time
 
 from app.services.road_graph_artifact import graph_inventory_sha256
 from app.services.vehicle_router import ENGINE_VERSION, RoadCalculationError
@@ -19,7 +22,41 @@ def _digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def compile_local_graph(source_pbf: Path, output: Path, *, expected_source_sha256: str):
+def _compile_command(command, log, *, cancel_event=None, timeout_seconds=1200):
+    if cancel_event is not None and cancel_event.is_set():
+        raise RoadCalculationError('road_calculation_cancelled')
+    process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RoadCalculationError('road_calculation_cancelled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RoadCalculationError('road_graph_build_timeout')
+            try:
+                code = process.wait(timeout=min(.1, remaining))
+                if code != 0:
+                    raise RoadCalculationError('road_graph_build_failed')
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if cancel_event is not None and cancel_event.is_set():
+            raise RoadCalculationError('road_calculation_cancelled')
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def compile_local_graph(source_pbf: Path, output: Path, *, expected_source_sha256: str,
+                        cancel_event=None, timeout_seconds=1200):
+    if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds <= 1200:
+        raise ValueError('road_graph_build_timeout_invalid')
+    if cancel_event is not None and cancel_event.is_set():
+        raise RoadCalculationError('road_calculation_cancelled')
     if importlib.metadata.version('pyvalhalla') != ENGINE_VERSION:
         raise RoadCalculationError('road_engine_version_mismatch')
     from valhalla import PYVALHALLA_DIR
@@ -40,9 +77,9 @@ def compile_local_graph(source_pbf: Path, output: Path, *, expected_source_sha25
     config_path.write_text(json.dumps(config))
     try:
         with (output / 'build.log').open('wb') as log:
-            subprocess.run([str(PYVALHALLA_DIR / 'bin' / 'valhalla_build_tiles'), '-j', '1',
+            _compile_command([str(PYVALHALLA_DIR / 'bin' / 'valhalla_build_tiles'), '-j', '1',
                             '-c', str(config_path.resolve()), str(source_pbf)],
-                           stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200)
+                           log, cancel_event=cancel_event, timeout_seconds=timeout_seconds)
     except (subprocess.SubprocessError, OSError) as error:
         raise RoadCalculationError('road_graph_build_failed') from error
     if _digest(source_pbf) != expected_source_sha256:

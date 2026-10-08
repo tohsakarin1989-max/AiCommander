@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
-import { caseHistoryApi, type CaseHistoryResult, type HistoryProcessComparison, type ProcessTextReference } from '../../services/caseHistory'
+import { caseHistoryApi, type CaseHistoryResult, type HistoryContrastEvidence, type HistoryProcessComparison, type HistoryTextReference, type ProcessTextReference } from '../../services/caseHistory'
 import { businessContextPath } from '../../services/businessNavigation'
 
 const kinds: Record<string, string> = { stated: '原文陈述', negated: '原文否定', uncertain: '不确定', inferred: '推断' }
@@ -12,6 +12,32 @@ const dimensions: Record<string, string> = { action: '动作', time: '时间', o
 function ProcessQuote({ label, reference }: { label: string; reference: ProcessTextReference }) {
   return <div><strong>{label}</strong><blockquote>{reference.quote}</blockquote>
     <small>{reference.field} · 字符 {reference.start + 1} 至 {reference.end} · 修订 #{reference.source_revision_id}</small></div>
+}
+function ContrastQuote({ label, reference, revision }: { label: string; reference: HistoryTextReference; revision: number | null }) {
+  return <div><strong>{label}</strong><blockquote>{reference.quote}</blockquote>
+    <small>{reference.field} · 字符 {reference.start + 1} 至 {reference.end} · {revision === null ? '修订未形成，保留来源摘要' : `修订 #${revision}`}</small></div>
+}
+function ContrastEvidence({ value, historicalRevision }: { value: HistoryContrastEvidence; historicalRevision: number | null }) {
+  const current = value.current_source
+  const currentRevision = 'case_id' in current ? current.source_revision_id : null
+  const currentLabel = 'case_id' in current ? `当前案 #${current.case_id}` : '当前问题'
+  return <>
+    <p>有共同背景，但明确记载的条件不同；未提及或不确定不作反例。</p>
+    <details><summary>双侧原文与版本依据</summary>
+      {value.shared_conditions.map((row, index) => <section key={`shared:${index}`} aria-label="共同背景的双侧依据">
+        <h5>共同背景：{conditions([row.condition])}</h5>
+        <ContrastQuote label={currentLabel} reference={row.current_reference} revision={currentRevision} />
+        <ContrastQuote label="历史资料" reference={row.historical_reference} revision={historicalRevision} />
+      </section>)}
+      {value.different_conditions.map((row, index) => <section key={`different:${index}`} aria-label="明确差异的双侧依据">
+        <h5>明确差异：当前 {conditions([row.current_condition])}；历史 {conditions([row.historical_condition])}</h5>
+        <ContrastQuote label={currentLabel} reference={row.current_reference} revision={currentRevision} />
+        <ContrastQuote label="历史资料" reference={row.historical_reference} revision={historicalRevision} />
+      </section>)}
+      <small>当前来源摘要：{'case_id' in current ? current.source_text_hash : current.query_sha256}</small>
+    </details>
+    <small>{value.boundary}</small>
+  </>
 }
 function ProcessComparison({ value }: { value: HistoryProcessComparison }) {
   const labels = { stated_match: '共同明确陈述（不是事实链）', negated_match: '共同否定（不是行为支持）',
@@ -60,7 +86,13 @@ export function CaseHistoryContent({ result, context, originPath = '/cases' }: {
     {!result.coverage.complete && <p role="status">本次检索未完成全部范围，以下是部分结果，不能据此判断没有其他相关资料。</p>}
     {!indexed && !!result.coverage.missing_derived_sources && <p>有 {result.coverage.missing_derived_sources} 项来源缺少当前画像或索引，仅作词项检索，未重新抽取案情。</p>}
     {result.items.length === 0 && result.coverage.complete && <p>本次条件未找到匹配的历史参考，不表示案件没有线索。</p>}
-    <ul>{result.items.map(item => <li key={`${item.source_type}:${item.source_id}`}>
+    {result.purpose === 'mixed' && <p>自动提供最多两项相似参考和一项差异对照；有明确依据才展示，不为凑数量补齐。</p>}
+    {(['similar', 'contrast'] as const).map(purpose => {
+      const items = result.items.filter(item => (item.purpose ?? 'similar') === purpose)
+      if (!items.length) return null
+      const label = purpose === 'contrast' ? '差异对照' : '相似参考'
+      return <section key={purpose} aria-label={label}><h4>{label}</h4>
+    <ul>{items.map(item => <li key={`${item.source_type}:${item.source_id}`}>
       <Link to={context ? businessContextPath(item.route, context, originPath) : item.route}>{item.title}</Link>
       <p>{item.snippet}</p>
       {item.fragment && <details><summary>命中片段与原文位置</summary>
@@ -74,14 +106,15 @@ export function CaseHistoryContent({ result, context, originPath = '/cases' }: {
         const shared = item.shared_conditions.filter(condition => condition[2] === kind)
         return shared.length > 0 && <p key={kind}>{kind === 'stated' ? '共同陈述条件' : kind === 'negated' ? '共同否定（不计行为支持）' : '共同不确定或推断（不计支持）'}：{conditions(shared)}</p>
       })}
-      {!!item.different_conditions.length && <p>不同表述：{conditions(item.different_conditions)}</p>}
+      {!!item.different_conditions.length && <p>{purpose === 'contrast' ? '历史资料的明确差异' : '不同表述'}：{conditions(item.different_conditions)}</p>}
+      {item.contrast_evidence && <ContrastEvidence value={item.contrast_evidence} historicalRevision={item.fragment?.source_revision_id ?? null} />}
       {!!item.unmatched_query_conditions.length && <details><summary>本案条件在该资料中尚未匹配</summary>
-        <p>{conditions(item.unmatched_query_conditions)}</p></details>}
+        <p>{conditions(item.unmatched_query_conditions)}</p><small>尚未匹配不等于明确否定，不作为反例。</small></details>}
       {item.process_comparison ? <ProcessComparison value={item.process_comparison} />
-        : item.source_type === 'case' && <p>本份参考未包含双侧过程对照，仅按已列片段和条件核对，不补造环节。</p>}
+        : item.source_type === 'case' && !item.contrast_evidence && <p>本份参考未包含双侧过程对照，仅按已列片段和条件核对，不补造环节。</p>}
       <details><summary>来源版本</summary><dl>{Object.entries(item.versions).map(([key, value]) =>
         <div key={key}><dt>{key}</dt><dd>{value ?? '未形成'}</dd></div>)}</dl></details>
-    </li>)}</ul>
+    </li>)}</ul></section>})}
     <small>{result.boundary}</small>
   </>
 }
@@ -94,8 +127,10 @@ export function CaseHistoryPreview({ result, context }: { result: CaseHistoryRes
     {result.semantic_index_state === 'not_enabled' && <p>使用本地规则与词项，语义模型未启用。</p>}
     {!result.items.length && <p>{result.coverage.complete ? '当前条件未找到历史参考，不表示没有线索。' : '暂未取得参考，不能视为没有相关资料。'}</p>}
     <ul>{result.items.slice(0, 3).map(item => <li key={`${item.source_type}:${item.source_id}`}>
+      <strong>{item.purpose === 'contrast' ? '差异对照' : '相似参考'} · </strong>
       <Link to={businessContextPath(item.route, context, '/cases')}>{item.title}</Link>
       <p>{item.shared_conditions.length ? conditions(item.shared_conditions) : '词项命中，结构条件尚待核对'}</p>
+      {item.purpose === 'contrast' && <p>历史资料明确不同：{conditions(item.different_conditions)}。未提及不作反例。</p>}
     </li>)}</ul>
     <Link to={businessContextPath(`/cases?caseId=${result.source_case_id}&case_view=relations`, context, '/cases')}>查看相似条件、差异与原文依据</Link>
   </>
@@ -109,7 +144,7 @@ export default function CaseHistoryReferences({ caseId, revision, compact = fals
   const { user, sessionEpoch } = useAuth()
   const [context] = useSearchParams()
   const historical = historyReferenceUnavailable(context)
-  const query = useQuery({ queryKey: ['case-history', caseId, user?.id, sessionEpoch, revision, historical],
+  const query = useQuery({ queryKey: ['case-history', caseId, user?.id, sessionEpoch, revision, historical, 'mixed-8.1'],
     queryFn: ({ signal }) => caseHistoryApi.read(caseId, signal), enabled: !!user && !historical,
     retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false })
   const result = !query.isError && query.data?.source_case_id === caseId ? query.data : undefined

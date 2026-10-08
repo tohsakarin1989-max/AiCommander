@@ -57,7 +57,26 @@ class CaseProfileService:
         related = CaseProfileService._related(db, case.id)
         saved = saved_profile if saved_profile is not None else read_saved_profile(db, case)
         payload = _as_dict((saved.get("data") or {}).get("payload")) if saved["status"] == "ready" else {}
-        quality = case.quality_issues or payload.get("quality") or {"missing_required": [], "state": "not_generated"}
+        quality = payload.get("quality") or case.quality_issues
+        if quality:
+            from app.services.case_quality_service import QUALITY_RULE_VERSION
+            if quality.get("rule_version") != QUALITY_RULE_VERSION:
+                # GET reuses saved results. An old rule's prompts are history,
+                # not current requirements; only the background pipeline may
+                # replace them with a newly evaluated result.
+                quality = {
+                    "state": "stale",
+                    "rule_version": quality.get("rule_version"),
+                    "score": quality.get("score"),
+                    "level": quality.get("level"),
+                    "score_purpose": "historical_reference_only",
+                    "missing_required": [],
+                    "priority_gaps": [],
+                    "historical_result": quality,
+                    "reason": "历史规则结果仅供查看，不作为当前缺项或待办；读取不重新分析。",
+                }
+        else:
+            quality = {"missing_required": [], "state": "not_generated"}
         features = _as_dict(case.features)
         experience_state = read_experience_state(db, case)
         experience_card = experience_state["card"] or {}

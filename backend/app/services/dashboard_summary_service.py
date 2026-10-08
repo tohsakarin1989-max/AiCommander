@@ -18,9 +18,12 @@ class DashboardSummaryService:
     @staticmethod
     def build(db: Session, *, operational_area_id: int | None, days: int,
               as_of: datetime | None = None, map_limit: int = 500, activity_limit: int = 20,
-              start_date: datetime | None = None, end_date: datetime | None = None) -> dict:
+              start_date: datetime | None = None, end_date: datetime | None = None,
+              time_basis: str = 'legacy_incident') -> dict:
         measured_at = utc_datetime(as_of or datetime.now(timezone.utc))
         end = utc_datetime(end_date) if end_date else measured_at
+        if time_basis != 'legacy_incident' and not end_date:
+            end = end.astimezone(timezone(timedelta(hours=8))).replace(hour=0, minute=0, second=0, microsecond=0)
         start = utc_datetime(start_date) if start_date else end - timedelta(days=days)
         duration = end - start
         if duration <= timedelta(0) or duration > timedelta(days=3660):
@@ -32,16 +35,24 @@ class DashboardSummaryService:
         if operational_area_id is not None:
             cases = cases.filter(Case.operational_area_id == operational_area_id)
             wells = wells.filter(JurisdictionAsset.operational_area_id == operational_area_id)
-        current = cases.filter(Case.occurred_time >= start, Case.occurred_time < end)
-        previous = cases.filter(Case.occurred_time >= previous_start, Case.occurred_time < start)
+        temporal, typed_points, unbucketed = None, {}, 0
+        if time_basis != 'legacy_incident':
+            from app.services.dashboard_temporal_projection import project
+            temporal, day_counts, unbucketed, typed_points = project(db, operational_area_id, start, end, time_basis)
+            current = cases.filter(Case.id.in_(temporal['current']['case_ids']))
+            previous = cases.filter(Case.id.in_(temporal['previous']['case_ids']))
+        else:
+            current = cases.filter(Case.occurred_time >= start, Case.occurred_time < end)
+            previous = cases.filter(Case.occurred_time >= previous_start, Case.occurred_time < start)
         current_count, previous_count = current.count(), previous.count()
 
         # SQLite 时间按 UTC 存储；按北京时间归桶，PostgreSQL 使用显式时区转换。
         day_expression = (func.date(func.datetime(Case.occurred_time, "+8 hours"))
                           if db.get_bind().dialect.name == "sqlite"
                           else func.date(func.timezone("Asia/Shanghai", Case.occurred_time)))
-        day_counts = {str(day): count for day, count in current.with_entities(
-            day_expression, func.count(Case.id)).group_by(day_expression).all()}
+        if temporal is None:
+            day_counts = {str(day): count for day, count in current.with_entities(
+                day_expression, func.count(Case.id)).group_by(day_expression).all()}
         business_timezone = timezone(timedelta(hours=8))
         day = start.astimezone(business_timezone).date()
         last_day = (end - timedelta(microseconds=1)).astimezone(business_timezone).date()
@@ -50,9 +61,13 @@ class DashboardSummaryService:
             trend.append({"date": day.isoformat(), "count": day_counts.get(day.isoformat(), 0)})
             day += timedelta(days=1)
 
-        mapped = current.filter(Case.latitude.between(-90, 90), Case.longitude.between(-180, 180))
+        mapped = current.filter(Case.id.in_(typed_points)) if temporal else current.filter(
+            Case.latitude.between(-90, 90), Case.longitude.between(-180, 180))
         coordinate_count = mapped.count()
         map_cases = mapped.order_by(Case.occurred_time.desc(), Case.id.desc()).limit(map_limit).all()
+        def point(item):
+            return typed_points.get(item.id, {'latitude': None, 'longitude': None}) if temporal else {
+                'latitude': item.latitude, 'longitude': item.longitude}
         map_wells = wells.filter(JurisdictionAsset.latitude.between(-90, 90),
                                  JurisdictionAsset.longitude.between(-180, 180))
         mapped_well_count = map_wells.count()
@@ -81,7 +96,7 @@ class DashboardSummaryService:
                 "title": f"{category or '未分类案件'}较上期增加 {delta} 起",
                 "current_count": count, "previous_count": count - delta,
                 "evidence": [{"case_id": item.id, "case_number": item.case_number,
-                              "latitude": item.latitude, "longitude": item.longitude} for item in examples],
+                              **point(item)} for item in examples],
                 "boundary": "数量变化事实，不代表风险等级或因果关系；下列为样例案件，非全部统计依据。",
             })
 
@@ -117,7 +132,7 @@ class DashboardSummaryService:
                 'case_profile_id': run.case_profile_id, 'map_snapshot_id': run.map_snapshot_id,
                 'algorithm_version': run.algorithm_version,
                 'evidence': [{'case_id': case.id, 'case_number': case.case_number,
-                              'latitude': case.latitude, 'longitude': case.longitude}],
+                              **point(case)}],
             })
             seen_cases.add(case.id)
             if len(insight_attention) >= limit:
@@ -126,24 +141,33 @@ class DashboardSummaryService:
 
         well_count = wells.count()
         activity = dashboard_activity(db, cases, analysis_query, start=start, end=end, limit=activity_limit)
+        if temporal:
+            # Activity timestamps describe registration/processing, not location
+            # roles. Do not jump a discovery map to untyped legacy coordinates.
+            for group in ('activities', 'recent_results'):
+                for item in activity[group]:
+                    item.update(typed_points.get(item['case_id'], {'latitude': None, 'longitude': None,
+                        'location_role': None}))
         return {
             **activity,
-            "schema_version": 1, "operational_area_id": operational_area_id,
+            "schema_version": 2 if temporal else 1, "operational_area_id": operational_area_id,
+            "time_basis": time_basis, "temporal_comparison": temporal,
+            "trend_unbucketed_cases": unbucketed,
             "as_of": measured_at, "state": "ready" if current_count or well_count or analyses or activity["activities"] else "empty",
             "period": {"start": start, "end": end, "previous_start": previous_start,
                        "previous_end": start, "days": duration.total_seconds() / 86400, "timezone": "Asia/Shanghai"},
             "metrics": {"cases": current_count, "previous_cases": previous_count,
                         "change": current_count - previous_count, "registered_wells": well_count,
                         "analysis_results": analyses},
-            "definitions": {"cases": "完整授权范围、按案发时间，含缺坐标案件；起止区间左闭右开",
+            "definitions": {"cases": temporal['boundary'] if temporal else "完整授权范围、按案发时间，含缺坐标案件；起止区间左闭右开",
                             "registered_wells": "查询时范围内状态为 active 的登记井数，非历史井数",
                             "analysis_results": "本期完成或降级完成的双域研判运行次数，按完成时间，含历史案件重算；不等同于已保存成果份数",
-                            "trend": "按北京时间自然日归桶，首尾可能为不足一天的时段"},
+                            "trend": f"按北京时间自然日归桶；本期有 {unbucketed} 起仅有跨日区间，不强行归入某一天" if temporal else "按北京时间自然日归桶，首尾可能为不足一天的时段"},
             "trend": trend, "attention": attention,
             "attention_scan": {"limit": scan_limit, "truncated": len(run_window) > scan_limit,
                                "ordering": "completed_at_desc"},
             "map": {"cases": [{"id": item.id, "case_number": item.case_number,
-                               "latitude": item.latitude, "longitude": item.longitude,
+                               **point(item),
                                "case_type": item.case_type} for item in map_cases],
                     "wells": [{"id": item.id, "name": item.name, "latitude": item.latitude,
                                "longitude": item.longitude} for item in well_items],

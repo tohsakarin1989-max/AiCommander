@@ -9,6 +9,7 @@ import { ComputabilityContent, FacilityIdentityContent, FacilityTemporalContent,
 import FacilityCaseLinkForm, { FacilityCaseLinkRevoke } from './FacilityCaseLinkForm'
 import FacilityMaterialActions from './FacilityMaterialActions'
 import FacilityDataIssues, { LedgerOriginalButton } from './FacilityDataIssues'
+import { AttentionItemContent } from './AttentionGrounds'
 import './FacilityAnalysis.css'
 
 export const sectionLabels: Record<keyof FacilityDossier['sections'], string> = {
@@ -105,6 +106,7 @@ export function FacilityDossierContent({ data, params, sourceSnapshot, changedSe
     </>}
     {!!changedSections.length && <p role="status">本次读取变化：{changedSections.map(name => sectionLabels[name as keyof typeof sectionLabels] || name).join('、')}。</p>}
     {historical && <p className="facility-current-boundary" role="status">下方台账、案件关联、道路和成果按当前权限与资料读取。它们不是上述历史时点的完整还原，案件统计仍使用原来的起止时间窗。</p>}
+    {data.attention_grounding && <AttentionItemContent item={data.attention_grounding} />}
     {Object.entries(sectionLabels).map(([key, label]) => <section key={key} aria-label={label}>
       <h3>{historical ? '当前读取 · ' : ''}{label}</h3>{data.sections[key as keyof typeof sectionLabels]
         ? <FacilitySectionContent section={data.sections[key as keyof typeof sectionLabels]} params={params} allowRecord={key === 'record_links' && allowRecord} allowManage={allowManage} />
@@ -168,6 +170,7 @@ export default function FacilityDossierDrawer() {
     {context.error ? <Alert type="error" message={context.error} /> : query.isError
       ? <Alert type="warning" message="设施不存在、当前不可访问或资料读取失败；未展示旧缓存。" action={<button onClick={() => void query.refetch()}>重试</button>} />
       : data ? <><button className="btn-ghost" onClick={() => void query.refetch()} disabled={query.isFetching}>刷新资料</button>
+        <Link className="btn-ghost" to={`/assistant?assetId=${context.assetId}`}>按当前资料询问本设施关注依据</Link>
         <FacilityMaterialActions key={identity} assetId={context.assetId!} allowed={user?.role === 'admin' || user?.role === 'analyst'} filters={filters} />
         <FacilityDossierContent data={data} params={params} sourceSnapshot={context.mapSnapshot ?? params.get('facility_source_snapshot') ?? undefined} changedSections={changedSections} allowManage={user?.role === 'admin'} allowRecord={user?.role === 'admin' || user?.role === 'analyst'} /></>
         : <div role="status"><Spin /> 正在读取设施资料…</div>}

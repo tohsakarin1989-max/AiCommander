@@ -151,6 +151,9 @@ def validate_fragment_item(db, item, *, source_case_id=None):
         if current is None or comparison != compare_processes(
                 process_comparison_input(db, current), process_comparison_input(db, case)):
             raise ValueError('history_comparison_evidence_changed')
+    if item.get('purpose', 'similar') == 'contrast':
+        from app.services.case_history_contrast import validate_evidence
+        validate_evidence(db, item, values, source_case_id=source_case_id)
     return case
 
 
@@ -158,12 +161,15 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                      reuse_only=False, query_conditions=None, deadline=None,
                      exclude_case_sources=None, source_types=None, experience_status='confirmed',
                      cancelled=lambda: False, embedding_model=None, semantic_only=False,
-                     min_similarity=MIN_SEMANTIC_SUPPORT, candidate_area_ids=None):
+                     min_similarity=MIN_SEMANTIC_SUPPORT, candidate_area_ids=None, purpose='similar',
+                     observations=None, query_vector_cache=None):
     from app.services.case_history_retrieval import (HistoryUnavailable, SCAN_SECONDS, business_conditions,
                                                     compare, lexical_terms, source_values, _asset_access,
                                                     get_local_embedder, build_semantic_profile)
     if 'authorized_area_ids' not in db.info:
         raise HistoryUnavailable('history_unavailable')
+    if purpose not in {'similar', 'contrast'}:
+        raise ValueError('invalid_history_purpose')
     area, allowed = (filters or {}).get('operational_area_id'), db.info['authorized_area_ids']
     if area is not None and allowed is not None and area not in allowed:
         raise HistoryUnavailable('history_unavailable')
@@ -192,6 +198,11 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             from app.services.case_history_fragments import current_semantics
             from app.services.case_source_service import CaseSourceService
             query_semantics, _ = current_semantics(db, source.id, source_values(source), CaseSourceService.latest_revision(db, source.id))
+        if purpose == 'contrast' and not query_semantics:
+            from app.services.case_semantic_service import TEXT_FIELDS
+            query_semantics = build_semantic_profile(
+                {key: value for key, value in source_values(source).items() if key in TEXT_FIELDS}
+                if source_query else {'description': query})
         conditions = query_conditions if query_conditions is not None else business_conditions(
             query_semantics or build_semantic_profile({'description': query}))
         terms = lexical_terms(query)
@@ -264,9 +275,18 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             CaseHistoryIndex.payload['fragments']['version'].as_string() == version,
             _current_parent_revision(), current_profile,
             CaseHistoryIndex.payload['fragments']['process_state'].as_string() == 'current')) or 0
+        all_source_fragments = base
+        retrieval_conditions = conditions
+        candidate_fragment_total = fragment_total
+        if purpose == 'contrast':
+            from app.services.case_history_contrast import opposite_conditions, recall_clauses
+            clauses.extend(recall_clauses(Fragment, conditions))
+            base = all_source_fragments.where(*recall_clauses(Fragment, conditions))
+            retrieval_conditions = opposite_conditions(conditions)
+            candidate_fragment_total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
         capacity = max(100, 3 * limit + 60)
         branches, branch_counts, truncated = {}, {}, False
-        for branch, tokens in (('structural', {condition_term(item) for item in conditions}), ('lexical', terms)):
+        for branch, tokens in (('structural', {condition_term(item) for item in retrieval_conditions}), ('lexical', terms)):
             if interrupted():
                 branches[branch], branch_counts[branch] = [], 0
                 continue
@@ -285,7 +305,13 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
         semantic_state, vector = embedder.state, None
         if semantic_state == 'ready' and not interrupted():
             try:
-                vector = embedder.encode(query)
+                cache_key = (embedder.model_version, query)
+                if query_vector_cache is not None and cache_key in query_vector_cache:
+                    vector = query_vector_cache[cache_key]
+                else:
+                    vector = embedder.encode(query)
+                    if query_vector_cache is not None:
+                        query_vector_cache[cache_key] = vector
             except LocalEmbeddingError:
                 semantic_state = 'unavailable'
         vector_total, semantic_distances = 0, {}
@@ -312,7 +338,7 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             semantic_distances = {row.id: float(row.distance) for row in rows[:capacity]
                                   if row.distance is not None and math.isfinite(row.distance)}
             branch_counts['semantic'] = len(branches['semantic'])
-            if vector_total < fragment_total:
+            if vector_total < candidate_fragment_total:
                 semantic_state = 'partial'
         elif semantic_state == 'ready':
             semantic_state = 'partial'
@@ -326,6 +352,21 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
         assets = {row.id: row for row in db.scalars(select(KnowledgeAsset).where(KnowledgeAsset.id.in_(
             [int(row.source_id) for row in fragments if row.source_type == 'experience_card']))
             .execution_options(populate_existing=True))} if fragments else {}
+        contrast_fragments = {}
+        source_revision_id = db.scalar(select(func.max(CaseRevision.id)).where(CaseRevision.case_id == source.id)) if source else None
+        if purpose == 'contrast' and fragments and not interrupted():
+            from app.services.case_history_contrast import explicit_conditions, opposite_conditions
+            tokens = {condition_term(item) for item in explicit_conditions(conditions) | opposite_conditions(conditions)}
+            support = all_source_fragments.where(Fragment.case_id.in_(cases),
+                Fragment.id.in_(select(CaseHistoryPosting.fragment_id).where(
+                    CaseHistoryPosting.branch == 'structural', CaseHistoryPosting.term.in_(tokens))))
+            rows = list(db.scalars(support.order_by(Fragment.case_id, Fragment.id).limit(capacity * 20 + 1)))
+            truncated |= len(rows) > capacity * 20
+            for row in rows[:capacity * 20]:
+                contrast_fragments.setdefault((row.case_id, row.source_type, row.source_id), []).append(row)
+        current_source = ({'case_id': source.id, 'source_revision_id': source_revision_id,
+                           'source_text_hash': _case_hash(source)} if source_query and source else
+                          {'query': query, 'query_sha256': text_hash(query)})
         ranks = {branch: {key: rank for rank, key in enumerate(items, 1)} for branch, items in branches.items()}
         valid, invalidated, checked_cases, invalidated_cases = [], 0, set(), set()
         for fragment in fragments:
@@ -367,13 +408,30 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                 versions['content_hash'] = fragment.source_hash
             comparison = compare(query, conditions, fragment.quote, {tuple(row) for row in fragment.conditions})
             # Purely opposite assertions are evidence of difference, not a positive retrieval match.
-            if comparison['different_conditions'] and not comparison['shared_conditions']:
+            if purpose == 'similar' and comparison['different_conditions'] and not comparison['shared_conditions']:
                 continue
+            contrast_evidence = None
+            if purpose == 'contrast':
+                from app.services.case_history_contrast import build_evidence, CONTRAST_VERSION
+                contrast_evidence = build_evidence(query_semantics, conditions, features[1],
+                    contrast_fragments.get((fragment.case_id, fragment.source_type, fragment.source_id), []),
+                    current_source=current_source)
+                if contrast_evidence is None:
+                    continue
+                differences = {tuple(row['historical_condition']) for row in contrast_evidence['different_conditions']}
+                if not differences.intersection(tuple(row) for row in fragment.conditions):
+                    continue
+                comparison.update(
+                    shared_conditions=[row['condition'] for row in contrast_evidence['shared_conditions']],
+                    different_conditions=[row['historical_condition'] for row in contrast_evidence['different_conditions']],
+                    unmatched_query_conditions=[list(row) for row in sorted(conditions - features[1])])
+                versions['contrast_version'] = CONTRAST_VERSION
             evidence = {'id': f'case:{case.id}' if fragment.source_type == 'case' else f'knowledge_asset:{fragment.source_id}',
                 'source_text_hash': fragment.source_hash, 'reference': fragment_reference(fragment)}
             if fragment.source_type == 'legacy_experience_card':
                 evidence['id'] = f'case:{case.id}'
             item = {'source_type': fragment.source_type, 'source_id': int(fragment.source_id),
+                'purpose': purpose,
                 **case_time_fields(case),
                 'case_id': case.id, 'case_number': case.case_number, 'title': title, 'snippet': fragment.quote,
                 'route': f'/cases?caseId={case.id}', 'versions': versions, 'evidence_refs': [evidence, *refs],
@@ -391,8 +449,13 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                 'operational_area_id': case.operational_area_id,
                 'score': round(sum(1 / (60 + values[fragment.id]) for values in ranks.values() if fragment.id in values), 8),
                 'matching_basis': '结构条件、词项与本地语义独立召回后融合；名次不是准确概率'}
+            if contrast_evidence is not None:
+                item['contrast_evidence'] = contrast_evidence
+                item['matching_basis'] = '明确反极性条件独立召回，并有同一来源的共同背景；差异对照不是正向匹配或准确概率'
+                item['source_shared_conditions'] = comparison['shared_conditions']
+                item['source_different_conditions'] = comparison['different_conditions']
             try:
-                validate_fragment_item(db, item)
+                validate_fragment_item(db, item, source_case_id=source_case_id)
             except (KeyError, TypeError, ValueError):
                 invalidated += 1
                 invalidated_cases.add(case.id)
@@ -418,7 +481,7 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                     item['process_comparison'] = compare_processes(
                         current_process, process_comparison_input(db, cases[item['case_id']]))
         timed_out = interrupted()
-        vector_missing = max(0, fragment_total - vector_total) if embedder.state == 'ready' else 0
+        vector_missing = max(0, candidate_fragment_total - vector_total) if embedder.state == 'ready' else 0
         if invalidated and embedder.state == 'ready':
             semantic_state = 'partial'
             vector_missing += invalidated
@@ -430,12 +493,17 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             'source_revision_id': source_revision_id,
             'scope_hash': text_hash(json.dumps(allowed, sort_keys=True)), 'filters': filters or {},
             'retrieval_version': RETRIEVAL_VERSION, 'embedding_model_version': embedder.model_version if vector else None,
-            'fusion_version': FUSION_VERSION}
+            'fusion_version': FUSION_VERSION, 'purpose': purpose, 'source_query': source_query}
         if reuse_only:
             context.update(reuse_only=True, conditions=[list(item) for item in sorted(conditions)])
         if source_types:
             context.update(source_types=sorted(source_types), experience_status=experience_status)
+        if observations is not None:
+            observations.update(checked_cases=checked_cases, recalled_fragments=ids,
+                validated_fragments={row['fragment']['id'] for row in valid}, matched_sources=seen,
+                branches={key: set(values) for key, values in branches.items()})
         return {'schema_version': 'case-history-6.3-1', 'state': 'partial' if partial else 'ready',
+            'purpose': purpose, 'degraded': partial or semantic_state != 'ready',
             'mode': 'hybrid_local' if vector_total else 'lexical_fallback', 'retrieval_mode': 'fragment_index',
             'index_state': 'pending' if total and not indexed_cases else 'partial' if missing or invalidated or incomplete_sources else 'ready',
             'semantic_index_state': semantic_state, 'source_case_id': source_case_id, 'query_context': context,
@@ -446,6 +514,7 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                 'scan_complete': not timed_out, 'recency_limit': None, 'complete': not partial, 'budget_seconds': SCAN_SECONDS,
                 'indexed_cases': indexed_cases, 'missing_index_cases': missing_cases, 'missing_experience_indexes': missing_assets,
                 'indexed_fragments': fragment_total, 'recalled_fragments': len(ids), 'validated_fragments': len(valid),
+                'eligible_fragments': candidate_fragment_total,
                 'invalidated_fragments': invalidated, 'branch_counts': branch_counts, 'recall_limit': capacity,
                 'recall_truncated': truncated, 'cancelled': bool(cancelled()), 'execution_mode': 'indexed_reference_lookup',
                 'process_indexed_cases': process_current, 'process_missing_cases': max(0, total - process_current),

@@ -6,7 +6,7 @@ from init_fresh_db import initialize_empty_database
 
 def test_explicit_fresh_target_initializes_and_refuses_second_run(tmp_path):
     url = f"sqlite:///{tmp_path / 'new-v61.db'}"
-    assert initialize_empty_database(url, confirmed=True) == "v75r01"
+    assert initialize_empty_database(url, confirmed=True) == "v80f01"
     engine = create_engine(url)
     with engine.begin() as connection:
         connection.execute(text("INSERT INTO cases(case_number,description,time_precision) VALUES ('SYNTHETIC','保留原文','unknown')"))

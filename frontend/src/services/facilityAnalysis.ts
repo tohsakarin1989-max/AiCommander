@@ -1,4 +1,5 @@
 import api from './api'
+import type { AttentionItem } from '../types/attention'
 
 export type EvidenceState = 'ready' | 'empty' | 'missing' | 'stale' | 'restricted' | 'unavailable' | 'partial'
 export interface FacilityEvidence {
@@ -53,6 +54,7 @@ export interface FacilityDossier {
   identity?: FacilityIdentity
   temporal_context?: FacilityTemporalContext
   computability?: FacilityComputability
+  attention_grounding?: AttentionItem & { version: string }
 }
 export interface FacilityIdentityItem {
   identity_id: number; source_id: number; source_name: string; source_record_id: string

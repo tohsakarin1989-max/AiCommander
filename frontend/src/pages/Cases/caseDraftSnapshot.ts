@@ -2,11 +2,13 @@ import { formCaseTime, serializeCaseTime } from '../../utils/caseValues'
 import type { CaseEditSnapshot } from '../../services/cases'
 import { CASE_AI_INTAKE_FORM_FIELDS } from './caseAiIntake'
 import { caseLocationDraft } from './caseLocationDraft'
+import { knownFeedbackValue } from './caseFeedback'
 
 const timeFields = new Set(['occurred_time', 'occurred_from', 'occurred_to', 'discovered_at', 'report_time', 'measured_at'])
 const formFields = new Set([...CASE_AI_INTAKE_FORM_FIELDS, 'operational_area_id', 'latitude', 'longitude', 'loss_amount', 'security_level',
   'upstream_source', 'downstream_destination', 'involved_items', 'suspect_roles', 'initial_vehicles', 'initial_persons', 'initial_locations',
-  'initial_measurements', 'bonus_has_vehicle', 'bonus_has_person', 'bonus_has_oil', 'bonus_has_police'])
+  'initial_measurements', 'bonus_has_vehicle', 'bonus_has_person', 'bonus_has_oil', 'bonus_has_police',
+  'feedback_changed_fields', 'feedback_initial_known_fields', 'entry_location_role'])
 
 export function entryFormValues(values: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(values).filter(([field]) => formFields.has(field)))
@@ -39,6 +41,8 @@ export function restoreEntryValues(values: Record<string, unknown>): Record<stri
 export function editSnapshotValues(snapshot: CaseEditSnapshot): Record<string, unknown> {
   const row = snapshot.case
   return restoreEntryValues(entryFormValues({ ...row,
+    police_reported: knownFeedbackValue(row, 'police_reported'), case_filed: knownFeedbackValue(row, 'case_filed'),
+    feedback_changed_fields: [], feedback_initial_known_fields: row.feedback_known_fields || [], entry_location_role: 'unknown',
     time_precision: row.time_precision || (row.occurred_time ? 'exact' : row.occurred_from && row.occurred_to ? 'interval' : 'unknown'),
     time_timezone: row.time_timezone || 'Asia/Shanghai', oil_volume_unit: row.oil_volume_unit || 'unknown',
     initial_vehicles: snapshot.initial_vehicles.map(vehicle => ({ id: vehicle.id, vehicle_type: vehicle.vehicle_type,

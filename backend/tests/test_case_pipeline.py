@@ -26,6 +26,7 @@ from app.models.case_source import CaseRevision
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimService
 from app.services.case_service import CaseService
+from app.services.case_quality_service import QUALITY_RULE_VERSION
 
 
 @pytest.fixture
@@ -210,7 +211,8 @@ def test_pipeline_generates_versioned_profile_without_overwriting_case(db_sessio
     profile = db_session.query(CaseAnalysisProfile).one()
     assert profile.case_id == case.id
     assert profile.is_current is True
-    assert profile.payload["spatial_grid"] == "46.60:125.10"
+    # Legacy untyped coordinates are preserved, not promoted to an incident grid.
+    assert profile.payload["spatial_grid"] is None
     assert len(profile.payload["critical_gaps"]) <= 3
     state = db_session.query(CasePipelineState).one()
     assert state.status == "completed"
@@ -331,7 +333,7 @@ def test_quality_rule_fields_enqueue_and_refresh_profile(db_session: Session):
     assert not {"police_officer", "police_phone"} & {
         item["field"] for item in quality["missing_required"]
     }
-    assert quality["rule_version"].startswith("case-quality-6.1")
+    assert quality["rule_version"] == QUALITY_RULE_VERSION
     assert quality["validation"]["can_save"] is True
 
 

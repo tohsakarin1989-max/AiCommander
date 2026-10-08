@@ -17,6 +17,11 @@ from app.services.case_automation_service import CaseAutomationService
     ("没报案，未确认立案。", False, None),
     ("现场暂不报案，公安决定不立案。", False, False),
     ("不是未报案，不能说未立案。", None, None),
+    ("现场查获后移交公安。", None, None),
+    ("公安接收车辆，后续反馈未知。", None, None),
+    ("公安已受案。", None, None),
+    ("人员移交公安，未报案，是否立案不详。", False, None),
+    ("已报案并将车辆移交公安。", True, None),
 ])
 def test_negation_uncertainty_conflict_and_acceptance_are_not_affirmation(text, reported, filed):
     result = CaseAutomationService.structure_case_text(text)

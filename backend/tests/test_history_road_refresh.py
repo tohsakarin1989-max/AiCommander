@@ -131,6 +131,7 @@ def create_refresh(db, areas=(1,)):
 def test_history_requeues_existing_result_once_per_batch_with_original_scope(delegated):
     db, result_id = delegated
     before = dict(db.info)
+    original_description = db.get(Case, 1).description
     first = create_refresh(db)
     assert refresh.process(db, first)['created'] == 1
     assert db.info == before
@@ -142,7 +143,7 @@ def test_history_requeues_existing_result_once_per_batch_with_original_scope(del
     assert {job.payload['history_refresh_event_id'] for job in jobs} == {first, second}
     assert all(job.payload['scope'] == [1] and job.payload['user_id'] == 1
                and job.payload['result_id'] == result_id for job in jobs)
-    assert db.get(Case, 1).description == '合成记录'
+    assert db.get(Case, 1).description == original_description
 
 
 @pytest.mark.parametrize('change', ['other_scope', 'revoked', 'cancelled'])

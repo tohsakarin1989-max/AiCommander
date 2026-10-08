@@ -22,14 +22,22 @@ def authorized_history(request: Request, response: Response,
                        q: str = Query("", max_length=2000),
                        source_case_id: int | None = Query(None, gt=0),
                        operational_area_id: int | None = Query(None, gt=0),
+                       purpose: Literal["similar", "contrast"] = Query("similar"),
+                       include_contrast: bool = Query(False),
                        limit: int = Query(3, ge=1, le=20), db: Session = Depends(get_db)):
     from app.services.case_history_retrieval import CaseHistoryRetrieval, HistoryUnavailable
     if getattr(request.state, "principal", None) is None:
         raise HTTPException(401, "请先登录")
     response.headers["Cache-Control"] = "no-store"
     try:
+        if include_contrast:
+            if source_case_id is None or q.strip() or purpose != 'similar' or limit != 3:
+                raise ValueError('case_reference_mix_requires_source_case')
+            return CaseHistoryRetrieval.case_references(db, source_case_id=source_case_id,
+                filters={"operational_area_id": operational_area_id})
         return CaseHistoryRetrieval.search(db, query=q, source_case_id=source_case_id,
-                                           filters={"operational_area_id": operational_area_id}, limit=limit)
+                                           filters={"operational_area_id": operational_area_id}, limit=limit,
+                                           purpose=purpose)
     except HistoryUnavailable:
         raise HTTPException(404, "历史参考不可访问或来源已失效", headers={"Cache-Control": "no-store"}) from None
     except ValueError:

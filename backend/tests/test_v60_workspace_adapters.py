@@ -65,6 +65,8 @@ def test_daily_and_compat_reads_do_not_extract_search_or_generate(db_session, ca
     assert workspace["detail_profile"]["data"]["standard_profile"] == workspace["profile"]
     assert workspace["detail_profile"]["data"]["ai_summary"]["summary"] == case.description
     assert workspace["detail_profile"]["data"]["ai_summary"]["legacy_summary"]["state"] == "historical_unversioned"
+    assert workspace["detail_profile"]["data"]["quality"]["state"] == "stale"
+    assert workspace["detail_profile"]["data"]["quality"]["historical_result"] == case.quality_issues
     CaseProfileService.build_case_profile(db_session, case.id)
     CaseProcessingCardService.build_processing_card(db_session, case.id)
     CaseAutomationService.build_automation_workbench(db_session, case, include_bonus=False)

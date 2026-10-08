@@ -1,0 +1,9 @@
+.case-result__scenario-table { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.case-result__scenario-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.case-result__scenario-table caption { text-align: left; padding: 0 0 10px; color: var(--ink-2); }
+.case-result__scenario-table th,
+.case-result__scenario-table td { min-width: 150px; padding: 10px 12px; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+.case-result__scenario-table thead th { background: var(--bg-2); color: var(--ink-1); font-weight: 600; }
+.case-result__scenario-table p { margin: 5px 0 0; color: var(--ink-2); }
+.case-result__scenarios h5 { margin: 16px 0 8px; font-size: inherit; }
+.case-result__scenarios small { margin: 4px 0 8px; color: var(--ink-2); }

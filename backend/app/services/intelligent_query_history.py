@@ -33,6 +33,8 @@ def validate_history_query_evidence(db, result):
             data = card['data']
             if data['schema_version'] not in {'case-history-5.1-1', 'case-history-6.3-1'} or not isinstance(data['items'], list):
                 raise ValueError('invalid_history_contract')
+            if data.get('purpose', 'similar') not in {'similar', 'contrast', 'mixed'}:
+                raise ValueError('invalid_history_purpose')
             source = data.get('source_case_id')
             if source is not None and _source_hash(_case(db, source)) != data['query_context']['source_text_hash']:
                 raise ValueError('source_changed')
@@ -43,6 +45,17 @@ def validate_history_query_evidence(db, result):
                 if revision_id != data['query_context'].get('source_revision_id'):
                     raise ValueError('source_revision_changed')
             for item in data['items']:
+                if item.get('purpose', 'similar') not in {'similar', 'contrast'}:
+                    raise ValueError('invalid_history_item_purpose')
+                if (data.get('purpose') != 'mixed'
+                        and item.get('purpose', 'similar') != data.get('purpose', 'similar')):
+                    raise ValueError('history_purpose_changed')
+                if item.get('purpose') == 'contrast':
+                    binding = item['contrast_evidence']['current_source']
+                    if data['query_context'].get('source_query') and binding.get('case_id') != source:
+                        raise ValueError('history_contrast_source_changed')
+                    if 'query_sha256' in binding and binding['query_sha256'] != data['query_context']['query_sha256']:
+                        raise ValueError('history_contrast_query_changed')
                 if data['schema_version'] == 'case-history-6.3-1':
                     from app.services.case_history_fragment_search import validate_fragment_item
                     validate_fragment_item(db, item, source_case_id=source)

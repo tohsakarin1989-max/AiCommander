@@ -66,7 +66,7 @@ def _require_current_case_profile(db, case, profile, versions):
 
 
 def _production_context(db, asset_id, *, valid_at=None, valid_from=None, valid_to=None, known_at,
-                        knowledge_mode="retrospective"):
+                        knowledge_mode="retrospective", end_inclusive=True):
     """Resolve declared historical production; never backfill from today's map."""
     if valid_at is None and valid_from is None:
         return {"state": "unknown", "asset_id": asset_id, "valid_at": None,
@@ -74,7 +74,8 @@ def _production_context(db, asset_id, *, valid_at=None, valid_from=None, valid_t
                 "gaps": ["案件缺少明确发生时间，未用当前生产资料填补历史条件"]}
     try:
         context = resolve_conditions(db, asset_id, valid_at=valid_at, valid_from=valid_from, valid_to=valid_to,
-                                     known_at=known_at, knowledge_mode=knowledge_mode, frozen=True)
+                                     known_at=known_at, knowledge_mode=knowledge_mode, frozen=True,
+                                     end_inclusive=end_inclusive)
         source_id = ((context.get("snapshot") or {}).get("attributes") or {}).get("source_id")
         source_ids = {identifier for group in context.get("groups", {}).values() for segment in group.get("segments", [])
                       for identifier in segment.get("source_ids", [])}

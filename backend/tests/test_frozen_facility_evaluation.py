@@ -44,6 +44,9 @@ def dataset(comparison, labels=False, negative=False):
 
 def test_old_scorer_and_frozen_road_pool_show_rank_difference(comparison, monkeypatch):
     db, _, content, _ = comparison
+    # This fixture evaluates the historical proximity baseline, not the new
+    # 8.x applicability-gated live algorithm. Keep its installed version explicit.
+    monkeypatch.setattr('app.services.frozen_insight_inputs.CASE_INSIGHT_ALGORITHM_VERSION', 'dual-domain-6.0.0-1')
     frozen = dataset(comparison, labels=True)
     def no_live(*args, **kwargs):
         raise AssertionError('replay must not retrieve or route live inputs')

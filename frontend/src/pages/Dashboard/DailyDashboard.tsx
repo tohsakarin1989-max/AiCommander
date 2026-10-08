@@ -6,7 +6,8 @@ import { FullscreenOutlined, FullscreenExitOutlined, ReloadOutlined } from '@ant
 import { useAuth } from '../../auth/AuthContext'
 import { useRegionalContext } from '../../services/useRegionalContext'
 import { dossierSourcePath, regionalContextPath } from '../../services/regionalContext'
-import { dashboardWindow, rollingWindowParams } from './dashboardWindow'
+import { dashboardAreaParams, dashboardWindow, rollingWindowParams } from './dashboardWindow'
+import TemporalChangeExplanation from '../Situation/TemporalChangeExplanation'
 import { useSearchParams } from 'react-router-dom'
 import { getDashboardSummary } from '../../services/dashboard'
 import DashboardRiskMap, { type DashboardMapLayer } from './DashboardRiskMap'
@@ -28,6 +29,8 @@ export default function DailyDashboard() {
   const areaId = regional.ready ? regional.areaId : null
   const windowSelection = dashboardWindow(regional.params)
   const days = windowSelection.days
+  const timeBasis = windowSelection.timeBasis
+  const timeLabel = { discovery: '发现／查获', incident: '案发', entry: '录入', legacy_incident: '历史案发口径' }[timeBasis]
   const [layer, setLayer] = useState<DashboardMapLayer>('cases')
   const [focus, setFocus] = useState<[number, number] | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
@@ -45,19 +48,19 @@ export default function DailyDashboard() {
     return () => { window.clearInterval(timer); document.removeEventListener('fullscreenchange', onFullscreen) }
   }, [])
   const summary = useQuery({
-    queryKey: ['cases', 'dashboard', user?.id, sessionEpoch, areaId, days, windowParams],
-    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 20, windowParams),
-    enabled: areaId != null && !windowSelection.allHistory, refetchInterval: 30_000, retry: 1,
+    queryKey: ['cases', 'dashboard', user?.id, sessionEpoch, areaId, days, windowParams, timeBasis],
+    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 20, windowParams, timeBasis),
+    enabled: areaId != null && !windowSelection.allHistory && !windowSelection.error, refetchInterval: 30_000, retry: 1,
   })
-  const authorizedSummary = !windowSelection.allHistory && regional.ready && mayShowCachedDashboard(summary.error) && mayShowCachedDashboard(scopes.error) ? summary.data : undefined
+  const authorizedSummary = !windowSelection.error && !windowSelection.allHistory && regional.ready && mayShowCachedDashboard(summary.error) && mayShowCachedDashboard(scopes.error) ? summary.data : undefined
   useEffect(() => {
     if (windowSelection.rolling && authorizedSummary) {
       setSearchParams(previous => rollingWindowParams(previous, days, authorizedSummary.period), { replace: true })
     }
   }, [authorizedSummary, windowSelection.rolling, days, setSearchParams])
   const allActivity = useQuery({
-    queryKey: ['cases', 'dashboard-activities', user?.id, sessionEpoch, areaId, days, windowParams],
-    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 100, windowParams),
+    queryKey: ['cases', 'dashboard-activities', user?.id, sessionEpoch, areaId, days, windowParams, timeBasis],
+    queryFn: ({ signal }) => getDashboardSummary(areaId!, days, signal, 100, windowParams, timeBasis),
     enabled: moreActivity && areaId != null && !!authorizedSummary, refetchInterval: moreActivity ? 30_000 : false,
     retry: 1,
   })
@@ -97,14 +100,21 @@ export default function DailyDashboard() {
         }}>
           <option value="custom">当前共享时间窗</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option>
         </select></label>
-        <Link to={regionalContextPath('/area-analysis', regional.params)}>区域条件对照</Link>
+        <label>时间口径<select aria-label="大屏时间口径" value={timeBasis} onChange={event => {
+          const basis = event.target.value; setSearchParams(previous => { const next = new URLSearchParams(previous); next.set('time_basis', basis); return next })
+        }}><option value="discovery">发现／查获</option><option value="incident">有依据的案发时间</option><option value="entry">录入进度</option>
+          {timeBasis === 'legacy_incident' && <option value="legacy_incident">历史案发口径</option>}
+        </select></label>
+        <Link to={regionalContextPath('/area-analysis', dashboardAreaParams(regional.params, timeBasis))}>
+          {timeBasis === 'legacy_incident' ? '区域条件对照' : '查看区域全历史资料'}</Link>
         <button aria-label="刷新" title="刷新" onClick={() => void summary.refetch()} disabled={areaId == null || windowSelection.allHistory || summary.isFetching}><ReloadOutlined /></button>
         <button className="daily-fullscreen" onClick={() => void toggleFullscreen()}>{fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}{fullscreen ? '退出全屏' : '全屏投屏'}</button>
       </div>
     </header>
+    {windowSelection.error && <p role="alert">{windowSelection.error}</p>}
     {windowSelection.allHistory && <p role="status">已保留全部授权历史条件。周期大屏需要有限时间窗，请明确选择最近 7 天或 30 天；全部历史总量与时间线可在“区域条件对照”继续查看。</p>}
     <div className="daily-status" role="status">
-      {data ? <><span>北京时间 {formatTime(data.period.start)} — {formatTime(data.period.end)}（截止不含）</span>
+      {data ? <><span>按{timeLabel}时间 · 北京时间 {formatTime(data.period.start)} — {formatTime(data.period.end)}（截止不含）</span>
         <span className={stale ? 'daily-warning' : ''}>{stale ? '数据已过期，请刷新' : summary.isFetching ? '正在更新' : windowSelection.rolling ? '每 30 秒更新滚动时间窗' : '固定共享时间窗，每 30 秒复核资料'}</span></>
         : <span>{windowSelection.allHistory ? '全部历史条件已保留，尚未选择有限周期。' : scopes.isError || summary.isError ? '数据读取失败，不能视为无案件。' : scopes.isPending || summary.isFetching ? '正在读取完整授权数据…' : '当前没有可查看的辖区。'}</span>}
       {fullscreenError && <span className="daily-warning">浏览器不支持全屏，可继续在当前窗口使用。</span>}
@@ -116,7 +126,7 @@ export default function DailyDashboard() {
     {data && <>
       <section className="daily-metrics" aria-label="统一口径态势指标">
         {[
-          { label: '本期案件', value: data.metrics.cases, unit: '起', note: '按案发时间统计，包含无坐标案件', detail: data.definitions.cases },
+          { label: '本期记录', value: data.metrics.cases, unit: '条', note: `按${timeLabel}时间，包含无坐标记录`, detail: data.definitions.cases },
           { label: '较上一同长度周期', value: `${data.metrics.change > 0 ? '+' : ''}${data.metrics.change}`, unit: '起', note: `上期 ${data.metrics.previous_cases} 起，按相同时间长度比较`, detail: '数量增减不直接代表风险变化' },
           { label: '范围内登记井', value: data.metrics.registered_wells, unit: '口', note: '当前有效登记井，非历史井数', detail: data.definitions.registered_wells },
           { label: '完成研判次数', value: data.metrics.analysis_results, unit: '次', note: '按完成时间，含降级完成和重算', detail: data.definitions.analysis_results },
@@ -174,7 +184,7 @@ export default function DailyDashboard() {
         </aside>
       </div>
       <div className="daily-bottom-grid">
-      <section className="daily-trend"><div className="daily-panel-heading"><h2>案件发生趋势</h2><p>{data.definitions.trend}</p></div>
+      <section className="daily-trend"><div className="daily-panel-heading"><h2>{timeLabel}记录趋势</h2><p>{data.definitions.trend}</p></div>
         <div className="daily-trend-columns">{data.trend.map((item, index) => <div key={item.date} className="daily-trend-column" title={`${item.date}：${item.count} 起`}>
           <span>{item.count}</span><div className="daily-trend-track"><div style={{ height: `${heights[index]}%` }} /></div><span>{item.date.slice(5)}</span>
         </div>)}</div>
@@ -183,6 +193,9 @@ export default function DailyDashboard() {
         { name: '正常完成', count: data.completion.completed }, { name: '降级完成', count: data.completion.degraded },
       ].map(item => <div key={item.name}><span>{item.name}</span><meter aria-label={item.name} min={0} max={Math.max(data.metrics.analysis_results, 1)} value={item.count} /><strong>{item.count}</strong></div>) : <p>暂无状态统计</p>}<p>按研判运行完成时间统计</p></section>
       </div>
+      {data.temporal_comparison && <details><summary>补录、更正与时间不确定性说明</summary>
+        <TemporalChangeExplanation comparison={data.temporal_comparison} />
+      </details>}
     </>}
     <Drawer title="本期最新动态（最多 100 条）" open={moreActivity} onClose={() => setMoreActivity(false)} getContainer={() => root.current!} width={480}>
       {data && mayShowCachedDashboard(allActivity.error) ? <><p role="status">{allActivity.isError ? '刷新失败，以下为缓存记录' : allActivity.isFetching ? '正在更新' : ''}</p><DashboardActivityList key={`${areaId}:${days}`} items={allActivity.data?.activities ?? EMPTY} caseParams={regional.params} auto={false} onLocate={point => { setLayer('cases'); setFocus(point); setMoreActivity(false) }} /></> : <p>数据不可访问，请重新确认权限。</p>}

@@ -160,35 +160,26 @@ def get_suggestions(
             db.rollback()
             logger.exception("Failed to build processing card suggestion for case %s", case.id)
 
-        missing_geo = case.latitude is None or case.longitude is None
-        if missing_geo:
-            add_item(
-                item_id=f"case-geo-{case.id}",
-                item_type="data_quality",
-                priority="medium",
-                title=f"补全案件坐标：{case.case_number}",
-                description="该案件缺少经纬度，暂不能进入地图研判、热点识别和路径条件复盘。",
-                target_type="case",
-                target_id=case.id,
-                action="open_case",
-                created_at=case.updated_at or case.created_at,
-            )
-        quality = case.quality_issues or CaseQualityService.evaluate_case(db, case)
-        quality_score = quality.get("score")
-        if quality.get("level") == "low" or (quality_score is not None and quality_score < 70):
+        # A missing incident endpoint is an analysis limit, not an employee
+        # assignment. Legacy completeness scores must not recreate this task.
+        from app.services.case_quality_service import QUALITY_RULE_VERSION
+        quality = case.quality_issues or {}
+        if quality.get("rule_version") != QUALITY_RULE_VERSION:
+            quality = CaseQualityService.evaluate_case(db, case)
+        errors = quality.get("validation", {}).get("errors", [])
+        if errors:
             add_item(
                 item_id=f"case-quality-{case.id}",
                 item_type="data_quality",
-                priority="high" if (quality.get("score") or 0) < 50 else "medium",
-                title=f"复核案件质量：{case.case_number}",
-                description="该案件存在信息质量缺口，可能影响后续研判、报告引用和复盘沉淀。",
+                priority="high",
+                title=f"核对记录格式：{case.case_number}",
+                description="记录含明确格式错误，请核对原始资料；未知信息不作为必须补齐事项。",
                 target_type="case",
                 target_id=case.id,
                 action="open_case",
                 created_at=case.quality_updated_at or case.updated_at or case.created_at,
                 meta={
-                    "score": quality.get("score"),
-                    "missing_count": len(quality.get("missing_required") or []),
+                    "validation_errors": errors,
                 },
             )
 

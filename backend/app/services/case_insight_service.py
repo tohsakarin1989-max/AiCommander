@@ -19,7 +19,9 @@ from app.services.outbox_claim_service import OutboxClaimLostError, OutboxClaimS
 from app.services.scorers.dual_domain_v34 import (
     SOURCE_TYPES, STORAGE_TYPES, ROAD_TYPES,
 )
-from app.services.scorers.dual_domain_v60 import DualDomainV60, VERSION as SCORER_VERSION
+from app.services.scorers.dual_domain_v60 import DualDomainV60
+from app.services.scorers.dual_domain_v80 import DualDomainV80, VERSION as SCORER_VERSION
+from app.services.case_analysis_applicability import allows
 
 
 CASE_INSIGHT_ALGORITHM_VERSION = SCORER_VERSION
@@ -33,7 +35,9 @@ class CaseInsightService:
         db: Session,
         profile: CaseAnalysisProfile,
         snapshot: MapSnapshot,
-    ) -> OutboxEvent:
+    ) -> OutboxEvent | None:
+        if not allows(profile.payload, "source_inference"):
+            return None
         key = hashlib.sha256(
             f"insight:{profile.id}:{snapshot.id}:{CASE_INSIGHT_ALGORITHM_VERSION}".encode()
         ).hexdigest()
@@ -129,6 +133,10 @@ class CaseInsightService:
                     "status": "superseded",
                     "idempotent_replay": False,
                 }
+            if not allows(profile.payload, "source_inference"):
+                OutboxClaimService.finish(db, event_id=event.id, worker_id=worker_id, status="completed")
+                db.commit()
+                return {"event_id": event.id, "status": "completed", "outcome": "analysis_not_applicable"}
             existing = (
                 db.query(CaseAnalysisRun)
                 .filter(
@@ -170,7 +178,7 @@ class CaseInsightService:
             db.flush()
             CaseInsightService._activate_run_hypotheses(db, run)
 
-            if case.latitude is None or case.longitude is None:
+            if not profile.payload.get("analysis_applicability", {}).get("incident_point"):
                 run.status = "degraded"
                 run.summary = "证据不足，未生成空间候选。"
                 run.information_gaps = ["案件缺少经纬度，无法执行案件—地图空间融合"]
@@ -360,7 +368,7 @@ class CaseInsightService:
         missing = 0
         for profile, case in rows[:size]:
             snapshot = snapshots.get(case.operational_area_id)
-            if snapshot is None:
+            if snapshot is None or not allows(profile.payload, "source_inference"):
                 continue
             paired += 1
             existing = (
@@ -410,7 +418,7 @@ class CaseInsightService:
         db.refresh(feedback)
         return feedback
 
-    _build_candidates = staticmethod(DualDomainV60._build_candidates)
+    _build_candidates = staticmethod(DualDomainV80._build_candidates)
     _source_candidates = staticmethod(DualDomainV60._source_candidates)
     _storage_candidates = staticmethod(DualDomainV60._storage_candidates)
     _activity_candidate = staticmethod(DualDomainV60._activity_candidate)

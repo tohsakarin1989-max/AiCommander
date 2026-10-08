@@ -7,6 +7,7 @@ const labels: Record<string, string> = { ...importFieldLabels, initial_vehicles:
   initial_locations: '地点明细（整组）', initial_measurements: '测量明细（整组）', bonus_has_vehicle: '车辆资料开关',
   bonus_has_person: '人员资料开关', bonus_has_oil: '涉油资料开关', bonus_has_police: '报案资料开关', time_precision: '时间精度', time_timezone: '记录时区' }
 Object.assign(labels, { values: '草稿表单内容（整份）', assistant_text: '辅助录入原文', assistant_source_text: '提取时原文', had_incident_locations: '原有案发地点明细状态' })
+Object.assign(labels, { entry_location_role: '本次地点角色', feedback_changed_fields: '已明确修改的反馈字段', feedback_initial_known_fields: '原记录已确认的反馈字段' })
 
 const display = (value: unknown) => value == null || value === '' ? '未填写' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
 

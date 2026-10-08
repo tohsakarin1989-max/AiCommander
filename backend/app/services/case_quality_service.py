@@ -14,7 +14,7 @@ from app.services.case_quality_rules import (
 )
 from app.services.case_semantic_mentions import extract_term_assertions
 
-QUALITY_RULE_VERSION = "case-quality-6.1.0-1"
+QUALITY_RULE_VERSION = "case-quality-8.0.0-1"
 ALLOWED_SOURCE_TYPES = {"巡逻发现", "群众举报", "领导指派", "公安机关线索", "技防预警", "红色网格上报", "作业区反馈", "其他"}
 ALLOWED_OIL_NATURES = {"被盗原油", "落地原油", "收缴油品", "回收原油", "其他"}
 ALLOWED_OPERATION_ROLES = {"主导", "联合", "配合", "协助"}
@@ -65,6 +65,7 @@ def _spatial_input(case, locations):
     spatial = {"location": case.location, "latitude": case.latitude, "longitude": case.longitude}
     incidents = [row for row in locations if row.role == "incident"]
     if not incidents:
+        spatial.update(latitude=None, longitude=None)
         return spatial
     spatial.update(latitude=None, longitude=None)
     spatial["location"] = spatial["location"] or next((row.description for row in incidents if row.description), None)
@@ -130,16 +131,16 @@ class CaseQualityService:
         has_oil = bool(case.oil_type or case.oil_nature or recovery or measurements) or case.oil_volume is not None or "oil" in signals
         for field, label, affected in (
             ("description", "案情描述", ("history_retrieval", "material_export")),
-            ("location", "案发地点或区域", ("regional_analysis", "road_comparison")),
+            ("location", "记录地点或区域", ("regional_analysis",)),
             ("case_type", "案件类型", ("history_retrieval",)),
         ):
             if _is_blank(spatial["location"] if field == "location" else getattr(case, field, None)):
                 gap(field, label, "缺少该资料会限制对应分析，未知可保留，不阻止保存。", affected)
         precision = time_precision(case)
-        if precision == "unknown":
-            gap("occurred_time", "发生时间范围待明确", "可记录大致时段或保留未知，不补造精确时刻。", ("regional_analysis",))
+        if precision == "unknown" and not case.discovered_at:
+            gap("occurred_time", "发生和发现时间未知", "统计时单列未知，不以录入时间替代。", ("regional_analysis",), "analysis_limit")
         if not _valid_geo(spatial):
-            gap("latitude/longitude", "案发位置待定位", "地点描述可先保存；没有可信点坐标时不能进行精确道路比较。", ("regional_analysis", "road_comparison"))
+            gap("latitude/longitude", "尚无明确案发点", "保留发现地点或区域背景，不要求补造案发位置或启动道路任务。", ("road_comparison",), "analysis_limit")
         for field, label in (("report_time", "报送时间"), ("report_unit", "报送/责任单位"), ("source_type", "案件线索来源")):
             if _is_blank(getattr(case, field, None)):
                 gap(field, label, "报送资料待补充；与案件结论及分析任务完成状态独立。", (), "reporting")
@@ -156,7 +157,7 @@ class CaseQualityService:
                     gap(field, label, "案件已进入移交或结案阶段，仅补充实际适用的处理情况。", (), "stage_material")
         if has_oil:
             if not case.oil_nature and not any(row.oil_nature for row in recovery):
-                gap("oil_nature", "油品性质", "油品性质未知时不能推定其来源。", ("history_retrieval",))
+                gap("oil_nature", "油品性质", "油品性质未知时不能推定其来源。", ("history_retrieval",), "analysis_limit")
             if case.oil_volume is None and not measurements and not any(row.volume_tons is not None for row in recovery):
                 gap("oil_volume", "油量或测量记录", "数量未知可保留；案件数量与回收检斤记录分开。", (), "measurement")
             if case.oil_volume is not None and getattr(case, "oil_volume_unit", None) in (None, "unknown"):
@@ -185,7 +186,8 @@ class CaseQualityService:
         occurred, reported = utc_instant(case.occurred_time), utc_instant(case.report_time)
         if precision == "exact" and occurred and reported and reported < occurred:
             warning("report_time", "报送时间早于已记录的发生时刻，请核对二者含义。")
-        if case.case_filed and not case.police_reported:
+        from app.services.case_feedback_semantics import known_feedback_value
+        if known_feedback_value(case, "case_filed") is True and known_feedback_value(case, "police_reported") is False:
             warning("case_filed", "已立案但未标记是否报案，请核对。")
         for field, options, label in (
             ("source_type", ALLOWED_SOURCE_TYPES, "线索来源"), ("oil_nature", ALLOWED_OIL_NATURES, "油品性质"),
@@ -204,7 +206,7 @@ class CaseQualityService:
         capabilities = CaseQualityService.build_analysis_readiness({"case": {**case_data, **spatial, "time_precision": precision}})
         priorities = [{"field": item["field"], "label": item["label"], "reason": item["message"],
                        "category": "validation", "affected_capabilities": []} for item in errors]
-        priorities = (priorities + gaps)[:3]
+        priorities = (priorities + [item for item in gaps if item["category"] != "analysis_limit"])[:3]
         # Compatibility only; never use this score as completion, risk or inference confidence.
         reference_score = round(max(0, 100 - min(len(gaps), 10) * 7 - min(len(errors), 3) * 10), 2)
         return {
@@ -214,7 +216,9 @@ class CaseQualityService:
             "capabilities": capabilities, "priority_gaps": priorities,
             "score": reference_score, "level": "high" if reference_score >= 80 else "medium" if reference_score >= 60 else "low",
             "score_purpose": "legacy_reference_not_case_completion", "category_scores": {"legacy_reference": reference_score},
-            "missing_required": [{key: item[key] for key in ("field", "label", "reason")} for item in gaps],
+            "analysis_limits": [item for item in gaps if item["category"] == "analysis_limit"],
+            "missing_required": [{key: item[key] for key in ("field", "label", "reason")} for item in gaps
+                                 if item["category"] != "analysis_limit"],
             "warnings": warnings, "recommendations": [item["reason"] for item in priorities],
             "facts": {
                 "has_vehicle_signal": has_vehicle, "has_person_signal": has_person, "has_oil_signal": has_oil,

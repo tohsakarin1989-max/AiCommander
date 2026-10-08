@@ -7,6 +7,7 @@ import CaseRoadPath from './CaseRoadPath'
 import CaseRoadHistory from './CaseRoadHistory'
 import CaseFacilityComparison from './CaseFacilityComparison'
 import FacilityEvaluationArchive from './FacilityEvaluationArchive'
+import CaseRoadScenarios from './CaseRoadScenarios'
 
 export function LegacyCandidateReference({ currentFacility, children }: { currentFacility: boolean; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -142,6 +143,7 @@ function ComparisonSession({ resultId, hash, legacyCandidates, frozen, awaitingC
     {(status === 'failed' || status === 'paused' || status === 'not_available') && <button type="button" onClick={() => setAttempt(value => value + 1)}>刷新结果</button>}
     {status === 'ready' && facility && artifact && <>
       <CaseFacilityComparison content={facility} onSelect={setPathTarget} />
+      <CaseRoadScenarios artifactId={artifact.id} artifactHash={artifact.content_sha256} resultId={resultId} resultHash={hash} />
       {pathTarget !== null && <CaseRoadPath key={`${facility.result_id}:${artifact.id}:${pathTarget}`}
         comparison={facility} artifact={artifact} assetId={pathTarget} onUnavailable={invalidateComparison} />}
       {!frozen && <CaseResultDownload resultId={resultId} hash={hash} road={{ id: artifact.id, content_sha256: artifact.content_sha256 }} />}

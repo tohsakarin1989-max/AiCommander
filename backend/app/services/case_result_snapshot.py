@@ -114,6 +114,15 @@ def assemble_case_result(
         ],
     }
     # Old snapshots without process keep exactly their historical hash contract.
+    if profile.payload.get("analysis_applicability"):
+        from app.services.case_analysis_applicability import allows, reason
+        content["analysis_applicability"] = profile.payload["analysis_applicability"]
+        content["recorded_locations"] = profile.payload.get("recorded_locations", [])
+        content["recorded_handling"] = profile.payload.get("recorded_handling", {})
+        if run is None and not allows(profile.payload, "source_inference"):
+            content["analysis_status"] = next(item["status"] for item in
+                content["analysis_applicability"]["entries"] if item["kind"] == "source_inference")
+            content["information_gaps"]["analysis"] = [reason(profile.payload, "source_inference")]
     if process is not None:
         content["versions"]["source_revision_id"] = profile.source_revision_id
     encoded = _canonical(content)

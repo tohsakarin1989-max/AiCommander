@@ -88,11 +88,9 @@ def exercise_upgrade(url):
         assert "case_facility_associations" in inspect(db).get_table_names()
     # The database stays at v6.2. Newer import services require later migrations.
     # Exercise new FKs and immutable-history contract through the identity service.
-    from app.models.case import Case
-    from app.models.case_source import SourceReference
+    from app.models.case_source import CaseRevision, SourceReference
     from app.models.case_facility_association import CaseFacilityAssociation
     from app.models.map_foundation import FacilitySourceIdentity
-    from app.services.case_source_service import CaseSourceService
     from app.services.facility_identity_service import FacilityIdentityService
     with Session(engine) as db:
         db.info["authorized_area_ids"] = None
@@ -113,7 +111,13 @@ def exercise_upgrade(url):
             assert "FROM facility_source_identities" in locked_queries[1]
             assert "FROM operational_areas" in locked_queries[2]
             assert "FROM facility_source_identities" in locked_queries[3]
-        revision, _ = CaseSourceService.capture_change(db, db.get(Case, 1))
+        # Keep this migration test at its declared v6.2 schema. Today's Case ORM
+        # requires newer columns, so seed the historical revision contract here.
+        payload = {"description": "合成原始案情", "oil_volume": 120, "oil_volume_unit": "unknown"}
+        revision = CaseRevision(case_id=1, revision=1, payload=payload,
+            source_hash=hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest())
+        db.add(revision)
+        db.flush()
         reference = SourceReference(case_id=1, source_revision_id=revision.id, kind="case_text", locator={"quote": "合成原始案情"})
         db.add(reference)
         db.flush()

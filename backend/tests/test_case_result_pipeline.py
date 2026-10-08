@@ -34,7 +34,10 @@ def test_case_save_returns_before_automatic_profile_result_and_get_is_read_only(
     assert db_session.query(CaseResultSnapshot).count() == 1
     allow_case(db_session, case)
     latest = CaseResultService.latest(db_session, case.id)
-    assert latest["content"]["analysis_status"] == "not_generated"
+    # A legacy primary coordinate is not a declared incident point. The useful
+    # profile-only result is complete without scheduling unsuitable deep work.
+    assert latest["content"]["analysis_status"] == "insufficient_data"
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.insights.requested").count() == 0
     assert latest["content"]["candidates"] == []
     assert latest["freshness"] == "current"
     assert CaseResultService.latest(db_session, case.id)["id"] == latest["id"]

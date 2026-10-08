@@ -28,6 +28,7 @@ from app.services.intelligent_query_initial_context import freeze_initial_contex
 from app.services.intelligent_query_business import validate_business_query_evidence
 from app.services.intelligent_query_presets import QueryPreset
 from app.agent_runtime.execution_contract import TaskEnvelope
+from app.services.business_answer import validate_answer
 
 
 TASK_TYPE = 'intelligent_query'
@@ -88,10 +89,17 @@ def _view(row):
             'result': row.result_summary, 'result_kind': 'historical_query_snapshot',
             'preset': (row.input_payload or {}).get('preset'),
             'followup_context': (row.input_payload or {}).get('followup_context'),
-            'initial_context': (row.input_payload or {}).get('initial_context')}
+            'initial_context': (row.input_payload or {}).get('initial_context'),
+            'question_type': (row.input_payload or {}).get('question_type'),
+            'source_context': (row.input_payload or {}).get('source_context'),
+            'condition_changes': (row.input_payload or {}).get('condition_changes', []),
+            'clarification': (row.runtime_state or {}).get('clarification') if row.status == 'waiting_clarification' else None}
 
 
 def _validate_context(db, row, user):
+    if (row.input_payload or {}).get('question_type'):
+        from app.services.business_query_lifecycle import validate_context
+        return validate_context(db, row, user)
     context = (row.input_payload or {}).get('followup_context')
     initial = (row.input_payload or {}).get('initial_context')
     if context is not None and initial is not None:
@@ -113,17 +121,28 @@ def _validate_context(db, row, user):
     return context
 
 
-def create_query(db, question, parent_query_id=None, initial_context=None, preset=None, *, topic_source=None):
+def create_query(db, question, parent_query_id=None, initial_context=None, preset=None,
+                 question_type=None, source_context=None, *, topic_source=None):
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise ValueError('invalid_query_question')
     user = _identity(db)
+    if parent_query_id is not None and initial_context is not None:
+        raise ValueError('query_context_conflict')
+    if parent_query_id and question_type is None:
+        parent, _ = _owned(db, parent_query_id)
+        question_type = (parent.input_payload or {}).get('question_type')
+    if question_type is not None:
+        if initial_context is not None or preset is not None or topic_source is not None:
+            raise ValueError('query_context_conflict')
+        from app.services.business_query_lifecycle import create
+        return create(db, question, question_type, source_context, parent_query_id)
+    if source_context is not None:
+        raise ValueError('business_answer_question_type_required')
     selected_preset = QueryPreset.model_validate(preset).model_dump(mode='json') if preset is not None else None
     if selected_preset and initial_context is None and parent_query_id is None:
         case_id = selected_preset['arguments'].get('case_id')
         if case_id is not None:
             initial_context = {'source_case_id': case_id}
-    if parent_query_id is not None and initial_context is not None:
-        raise ValueError('query_context_conflict')
     if topic_source is not None:
         from app.services.topic_query_bridge import validate_topic_source
         from app.services.intelligent_query_context import empty_conditions, remember
@@ -149,7 +168,7 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
     # UPDATE obtains the same lock on SQLite and PostgreSQL without broker I/O.
     db.execute(update(User).where(User.id == user.id).values(id=User.id))
     pending = db.query(AgentRun.id).filter(AgentRun.task_type == TASK_TYPE,
-        AgentRun.created_by == user.id, AgentRun.status.in_(['queued', 'running'])).count()
+        AgentRun.created_by == user.id, AgentRun.status.in_(['queued', 'running', 'waiting_clarification'])).count()
     if pending >= 4:
         db.rollback()
         raise ValueError('query_capacity_reached')
@@ -186,7 +205,16 @@ def read_query(db, run_id):
     validate_road_query_evidence(db, row.result_summary)
     validate_history_query_evidence(db, row.result_summary)
     validate_business_query_evidence(db, row.result_summary)
+    validate_answer(db, row.result_summary)
+    if row.status == 'waiting_clarification':
+        from app.services.business_query_lifecycle import expire_waiting
+        expire_waiting(db, row)
     return _view(row)
+
+
+def clarify_query(db, run_id, reply):
+    from app.services.business_query_lifecycle import clarify
+    return clarify(db, run_id, reply)
 
 
 def cancel_query(db, run_id):
@@ -208,6 +236,10 @@ def claim_query(db, run_id):
     if row.data_version != _current_stamp(db, user, row):
         raise PermissionError('query_scope_changed')
     _validate_context(db, row, user)
+    if row.status == 'queued' and (row.input_payload or {}).get('question_type'):
+        from app.services.business_query_lifecycle import refresh_for_execution
+        refresh_for_execution(db, row)
+        db.flush()
     now = datetime.now(timezone.utc)
     attempt = row.attempt_count + 1
     changed = db.execute(update(AgentRun).where(AgentRun.id == row.id,
@@ -221,6 +253,14 @@ def claim_query(db, run_id):
 
 
 def finish_query(db, run_id, attempt, result):
+    row = db.query(AgentRun).filter_by(id=run_id, task_type=TASK_TYPE).first()
+    if row is not None and (row.input_payload or {}).get('question_type'):
+        from app.services.business_query_budget import finish
+        return finish(db, run_id, attempt, result, _publish_query)
+    return _publish_query(db, run_id, attempt, result)
+
+
+def _publish_query(db, run_id, attempt, result):
     row, user = _owned(db, run_id)
     if row.data_version != _current_stamp(db, user, row):
         return False
@@ -228,14 +268,32 @@ def finish_query(db, run_id, attempt, result):
     validate_road_query_evidence(db, result)
     validate_history_query_evidence(db, result)
     validate_business_query_evidence(db, result)
+    validate_answer(db, result)
     if result.get('status') not in FINAL_RUN_STATUSES:
         raise ValueError('invalid_query_result_status')
+    from app.services.business_query_budget import check as check_budget
+    budget = db.info.get('business_execution_budget')
+    check_budget(db, poll=True)
+    encoded = jsonable_encoder(result)
+    check_budget(db, poll=True)
     now = datetime.now(timezone.utc)
+    timeout = 120
+    if (row.input_payload or {}).get('question_type'):
+        consumed = (row.runtime_state or {}).get('consumed', {'active_ms': 0, 'tool_steps': 0})
+        started = row.started_at.replace(tzinfo=timezone.utc) if row.started_at.tzinfo is None else row.started_at
+        result['chain_usage'] = {**result.get('chain_usage', consumed),
+            'active_ms': consumed['active_ms'] + max(0, round((now - started).total_seconds() * 1000))}
+        encoded['chain_usage'] = result['chain_usage']
+        if isinstance(result.get('answer'), dict) and isinstance(result['answer'].get('time_scope_versions'), dict):
+            result['answer']['time_scope_versions']['condition_changes'] = row.input_payload.get('condition_changes', [])
+            encoded['answer']['time_scope_versions']['condition_changes'] = row.input_payload.get('condition_changes', [])
+        if result.get('error_code') != 'query_budget_exhausted':
+            timeout = max(0, 120 - consumed['active_ms'] / 1000)
     changed = db.execute(update(AgentRun).where(AgentRun.id == row.id,
         AgentRun.status == 'running', AgentRun.attempt_count == attempt,
-        AgentRun.started_at > now - timedelta(seconds=120))
+        AgentRun.started_at > now - timedelta(seconds=timeout))
         .execution_options(synchronize_session=False)
-        .values(status=result['status'], result_summary=jsonable_encoder(result), completed_at=now))
+        .values(status=result['status'], result_summary=encoded, completed_at=now))
     if changed.rowcount:
         db.refresh(row)
         partial_scans = [card for card in result.get('cards', [])
@@ -264,7 +322,10 @@ def finish_query(db, run_id, attempt, result):
                 output_tokens=usage.get('output_tokens') or 0, duration_ms=usage['duration_ms'],
                 error_code='token_usage_unavailable' if usage['token_state'] == 'unavailable' else None)
         _event(db, row, 'query_finished')
-    db.commit()
+    if budget is None:
+        db.commit()
+    else:
+        check_budget(db, poll=False)
     return changed.rowcount == 1
 
 
@@ -318,7 +379,15 @@ async def execute_query(db, run_id, *, model=None):
     row = db.query(AgentRun).filter_by(id=run_id).one()
     envelope = row.input_payload.get('task_envelope')
     try:
-        if request.get('preset'):
+        if request.get('question_type'):
+            from app.services.business_answer import run_business_answer
+            from app.services.business_query_budget import for_run
+            result = run_business_answer(db, request['question_type'], request['source_context'],
+                cancelled=cancelled, envelope=envelope, consumed=(row.runtime_state or {}).get('consumed'),
+                version_note=(row.runtime_state or {}).get('version_note'),
+                history_area_filter=row.input_payload.get('history_area_filter'),
+                budget=for_run(db, row, cancelled=cancelled))
+        elif request.get('preset'):
             from app.services.intelligent_query_presets import run_preset
             result = await run_preset(db, question, request['preset'], cancelled=cancelled,
                 context=request['followup_context'] or request['initial_context'], envelope=envelope)

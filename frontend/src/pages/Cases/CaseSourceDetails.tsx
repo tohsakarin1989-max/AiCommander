@@ -5,6 +5,7 @@ import { caseApi } from '../../services/cases'
 import { formatCaseTime, formatOilVolume, formatStoredTime } from '../../utils/caseValues'
 import type { CaseSourceRevisionDetail } from '../../types'
 import { locationRoleLabels, measurementStageLabels } from './CaseSourceFields'
+import { feedbackDescription } from './caseFeedback'
 
 export function CaseSourceVersionCard({ source }: { source: CaseSourceRevisionDetail }) {
   const original = source.payload?.case
@@ -22,6 +23,8 @@ export function CaseSourceVersionCard({ source }: { source: CaseSourceRevisionDe
       <div><dt>油品与数量</dt><dd>{original.oil_type || '油品未记录'} · {formatOilVolume(original.oil_volume, original.oil_volume_unit)}</dd></div>
       {original.discovered_at && <div><dt>发现时间</dt><dd>{formatStoredTime(original.discovered_at, 'YYYY-MM-DD HH:mm', original.time_timezone || 'Asia/Shanghai')}</dd></div>}
       {original.report_unit && <div><dt>报送单位</dt><dd>{original.report_unit}</dd></div>}
+      <div><dt>本版已知公安反馈</dt><dd>{feedbackDescription(original, 'police_reported')}；{feedbackDescription(original, 'case_filed')}</dd></div>
+      <div><dt>本版处置记录</dt><dd>人员：{original.person_handling || '未掌握'}；车辆：{original.vehicle_handling || '未掌握'}；油品：{original.oil_handling || '未掌握'}。移交不代表公安已办结。</dd></div>
     </dl>
     <h5>保存的案情原文</h5><p className="case-source-original">{original.description?.trim() || '该次保存未填写案情原文。'}</p>
     {!!locations.length && <><h5>该版本的地点记录</h5><ul>{locations.map((item, index) => <li key={index}>{locationRoleLabels[item.role]}：{item.description || '地点原文未填写'}（{{ exact: '精确位置', area: '仅知区域', unknown: '位置未明确' }[item.precision]}）</li>)}</ul></>}

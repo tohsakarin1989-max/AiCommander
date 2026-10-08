@@ -1,5 +1,6 @@
 import type { CaseCreate, CaseUpdatePayload } from '../../types'
 import { serializeCaseTime } from '../../utils/caseValues'
+import { feedbackSubmission } from './caseFeedback'
 
 export type CaseEntrySubmitMode = 'create' | 'edit'
 
@@ -10,6 +11,7 @@ export interface CaseEntrySubmitPayloadOptions {
   includeLocations?: boolean
   includeMeasurements?: boolean
   hadIncidentLocations?: boolean
+  legacyCoordinates?: { latitude?: number | null; longitude?: number | null }
 }
 
 export interface CaseEntrySubmitValues extends Record<string, unknown> {
@@ -61,19 +63,26 @@ export function buildCaseEntrySubmitPayload(
   const {
     bonus_has_vehicle,
     bonus_has_person,
-    bonus_has_oil,
-    bonus_has_police,
+    bonus_has_oil: _oilScope,
+    bonus_has_police: _policeScope,
     initial_vehicles,
     initial_persons,
     initial_locations,
     initial_measurements,
     involved_persons: _legacyPersons,
     vehicle_info: _legacyVehicles,
+    feedback_changed_fields: _feedbackChanges,
+    feedback_initial_known_fields: _initialKnownFeedback,
+    feedback_known_fields: _feedbackKnown,
+    police_reported: _reported,
+    case_filed: _filed,
+    entry_location_role,
     ...caseValues
   } = values
 
   const payload: Record<string, unknown> = {
     ...caseValues,
+    ...feedbackSubmission(values, options.mode),
     occurred_time: toIsoString(caseValues.occurred_time),
     report_time: toIsoString(caseValues.report_time),
   }
@@ -93,6 +102,20 @@ export function buildCaseEntrySubmitPayload(
         ? { type: 'Point', coordinates: [ui_longitude, ui_latitude] }
         : ui_latitude !== undefined || ui_longitude !== undefined ? null : row.geometry ?? null, precision: row.precision || 'unknown',
     }))
+    if (entry_location_role && (options.mode === 'create' || entry_location_role !== 'unknown')) {
+      const role = entry_location_role === 'unknown' ? 'mentioned' : entry_location_role
+      const exact = entry_location_role !== 'unknown' && typeof values.latitude === 'number' && typeof values.longitude === 'number'
+      const place = { role, description: values.location || null,
+        geometry: exact ? { type: 'Point', coordinates: [values.longitude, values.latitude] } : null,
+        precision: exact ? 'exact' : 'unknown' }
+      const rows = payload.initial_locations as Array<Record<string, unknown>>
+      if ((place.description || place.geometry) && !rows.some(row => row.role === role && row.description === place.description && JSON.stringify(row.geometry) === JSON.stringify(place.geometry))) rows.push(place)
+      if (options.mode === 'create') { payload.latitude = null; payload.longitude = null }
+      else if (entry_location_role !== 'incident') {
+        payload.latitude = options.legacyCoordinates?.latitude ?? null
+        payload.longitude = options.legacyCoordinates?.longitude ?? null
+      }
+    }
     // The typed incident record owns the primary map point. Discovery/custody points never replace it.
     const incidents = (payload.initial_locations as Array<Record<string, unknown>>).filter(row => row.role === 'incident')
     if (incidents.length || options.hadIncidentLocations) {
@@ -129,20 +152,7 @@ export function buildCaseEntrySubmitPayload(
     payload.initial_persons = personDrafts
   }
 
-  if (options.mode === 'edit' && bonus_has_oil === false) {
-    payload.oil_nature = null
-    payload.oil_volume = null
-    payload.oil_volume_unit = 'unknown'
-    payload.water_cut = null
-    payload.oil_handling = null
-  }
-
-  if (options.mode === 'edit' && bonus_has_police === false) {
-    payload.police_reported = false
-    payload.case_filed = false
-    payload.police_officer = null
-    payload.police_phone = null
-  }
+  // Hiding optional material fields is not a declaration of no oil, no report or no filing.
 
   return payload as Partial<CaseCreate> | CaseUpdatePayload
 }

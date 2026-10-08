@@ -50,10 +50,13 @@ def require_result_access(db: Session, snapshot: dict) -> None:
                     versions["profile_schema"], versions["dictionary_version"])
         if profile is None or tuple(profile)[:5] != expected:
             raise CaseResultAccessError()
-        if (content.get("semantics") or {}).get("process") is not None:
+        if (content.get("semantics") or {}).get("process") is not None or content.get("analysis_applicability"):
             revision_id = versions["source_revision_id"]
             if profile.source_revision_id != revision_id:
                 raise CaseResultAccessError()
+            for entry in (content.get("analysis_applicability") or {}).get("entries", []):
+                if entry.get("evidence_refs", []) != ([f"case_revision:{revision_id}"] if revision_id is not None else []):
+                    raise CaseResultAccessError()
             if revision_id is not None and db.scalar(select(CaseRevision.id).where(
                     CaseRevision.id == revision_id, CaseRevision.case_id == case_id,
                     CaseRevision.source_hash == versions["case_source_hash"])) is None:

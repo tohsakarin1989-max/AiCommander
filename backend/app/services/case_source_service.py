@@ -38,6 +38,15 @@ def field_value(row, column):
     return float(value) if value is not None and isinstance(column.type, Float) else json_value(value)
 
 
+def case_payload(case):
+    # Omit the new, absent marker for pre-v8 sources. An upgrade alone must not
+    # invalidate every immutable historical revision or invent a confirmation.
+    return {column.name: field_value(case, column)
+            for column in Case.__table__.columns
+            if column.name not in DERIVED_FIELDS
+            and not (column.name == "feedback_known_fields" and case.feedback_known_fields is None)}
+
+
 class CaseSourceService:
     @staticmethod
     def latest_revision(db, case_id):
@@ -48,8 +57,7 @@ class CaseSourceService:
         db.flush()
         # Keep the single-case write path lean; batch reads below use the same
         # canonical fields and encoding, with equivalence covered in tests.
-        payload = {"case": {column.name: field_value(case, column)
-                            for column in Case.__table__.columns if column.name not in DERIVED_FIELDS}}
+        payload = {"case": case_payload(case)}
         for key, model in DETAIL_MODELS.items():
             records = db.query(model).filter(model.case_id == case.id).order_by(model.id).all()
             payload[key] = [{column.name: field_value(row, column)
@@ -82,8 +90,7 @@ class CaseSourceService:
             for offset in range(0, len(cases), 400):
                 batch = cases[offset:offset + 400]
                 ids = [case.id for case in batch]
-                values = {case.id: {"case": {column.name: field_value(case, column)
-                    for column in Case.__table__.columns if column.name not in DERIVED_FIELDS},
+                values = {case.id: {"case": case_payload(case),
                     **{key: [] for key in DETAIL_MODELS}} for case in batch}
                 for key, model in DETAIL_MODELS.items():
                     for row in db.query(model).populate_existing().filter(model.case_id.in_(ids)).order_by(model.id):

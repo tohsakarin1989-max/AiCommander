@@ -22,7 +22,7 @@ from app.services.case_source_service import CaseSourceService
 from app.models.case_source import DomainChange
 
 
-CASE_PROFILE_SCHEMA_VERSION = "6.3.0"
+CASE_PROFILE_SCHEMA_VERSION = "8.0.0"
 CASE_DICTIONARY_VERSION = SEMANTIC_RULE_VERSION
 ANALYSIS_RELEVANT_FIELDS = {
     "operational_area_id",
@@ -70,6 +70,7 @@ ANALYSIS_RELEVANT_FIELDS = {
     "tips",
     "occurred_from", "occurred_to", "time_precision", "time_expression", "time_timezone", "discovered_at",
     "oil_volume_unit", "security_level", "locations", "measurements", "source_links",
+    "feedback_known_fields",
 }
 
 
@@ -500,7 +501,7 @@ class CasePipelineService:
         overall = "ready" if statuses and all(item == "ready" for item in statuses) else "partial"
         if statuses and all(str(item).startswith("missing") for item in statuses):
             overall = "missing"
-        return {
+        payload = {
             "schema_version": CASE_PROFILE_SCHEMA_VERSION,
             "dictionary_version": CASE_DICTIONARY_VERSION,
             "case_id": case.id,
@@ -564,6 +565,27 @@ class CasePipelineService:
             "overall_readiness": overall,
             "boundary": "派生画像不改写案件原始事实；缺项只作录入提示。",
         }
+        from app.services.case_analysis_applicability import assess
+        source = revision.payload if revision is not None else CaseSourceService.source_payload(db, case)
+        payload["analysis_applicability"] = assess(
+            source, payload["semantics"], source_revision_id=revision.id if revision else None)
+        # A legacy coordinate is not an incident endpoint. Original coordinates
+        # remain in the immutable source revision, never edited here.
+        point = payload["analysis_applicability"]["incident_point"] or {}
+        payload["analysis_facts"].update(latitude=point.get("latitude"), longitude=point.get("longitude"))
+        payload["spatial_grid"] = CasePipelineService._spatial_grid(point.get("latitude"), point.get("longitude"))
+        payload["recorded_locations"] = source.get("locations", [])
+        from app.services.case_feedback_semantics import known_feedback_value, feedback_state
+        payload["recorded_handling"] = {
+            "current_stage": case.current_stage,
+            "person_handling": case.person_handling, "vehicle_handling": case.vehicle_handling,
+            "oil_handling": case.oil_handling,
+            "police_feedback": {field: {"value": known_feedback_value(case, field),
+                                        "state": feedback_state(case, field)}
+                                for field in ("police_reported", "case_filed")},
+            "boundary": "本单位处置与公安后续反馈分别记录，不由分析完成推定办结。",
+        }
+        return payload
 
     @staticmethod
     def source_clues(db: Session, case: Case) -> list[dict[str, Any]]:

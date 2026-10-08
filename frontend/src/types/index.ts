@@ -698,6 +698,7 @@ export interface Case extends CaseTime {
   source_detail?: string
   police_reported?: boolean
   case_filed?: boolean
+  feedback_known_fields?: Array<'police_reported' | 'case_filed'> | null
   police_officer?: string
   police_phone?: string
   security_officers?: string[]

@@ -24,8 +24,8 @@ def test_replay_uses_production_scorer_without_live_queries(db_session, monkeypa
     profile = db_session.query(CaseAnalysisProfile).filter_by(case_id=case.id, is_current=True).one()
     db_session.info['authorized_area_ids'] = (case.operational_area_id,)
     original = CaseInsightService._build_candidates(db_session, case, profile, snapshot)
-    assert {item['hypothesis_type'] for item in original} == {'possible_source', 'transfer_route'}
-    assert len(original) == 2  # A storage map point alone is not storage evidence.
+    assert {item['hypothesis_type'] for item in original} == {'possible_source'}
+    assert len(original) == 1  # Nearby roads are not evidence of a transfer route.
     frozen = capture_inputs(db_session, case_id=case.id, profile_id=profile.id, snapshot_id=snapshot.id)
     assert frozen['payload']['classification'] == 'internal_sensitive'
     assert replay_inputs(frozen)['candidates'] == original

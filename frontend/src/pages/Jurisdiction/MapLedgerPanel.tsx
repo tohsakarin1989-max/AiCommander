@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Input, Select, Space, Upload } from 'antd'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
-import { mapFoundationApi, type MapTemplateCreate } from '../../services/mapFoundation'
+import { mapFoundationApi, type MapTemplateCreate, type MapLedgerDeclaration } from '../../services/mapFoundation'
 import { mapLedgerImportsApi, type MapLedgerPreview } from '../../services/mapLedgerImports'
 import MapLedgerTemplateForm from './MapLedgerTemplateForm'
 import MapImportPlan from './MapImportPlan'
 import MapIngestHistory from './MapIngestHistory'
+import MapLedgerDeclarationForm, { emptyLedgerDeclaration, ledgerDeclarationPayload, type LedgerDeclarationDraft } from './MapLedgerDeclaration'
 import { downloadMapFile, mapImportError, mapPreviewCanCommit } from './mapLedgerPresentation'
 
 export default function MapLedgerPanel({ sourceId, onChanged, onDirtyChange }: {
@@ -18,10 +19,11 @@ export default function MapLedgerPanel({ sourceId, onChanged, onDirtyChange }: {
   const [busy, setBusy] = useState(false), [failure, setFailure] = useState(''), [notice, setNotice] = useState('')
   const [historyDirty, setHistoryDirty] = useState(false), [templateDirty, setTemplateDirty] = useState(false)
   const [pendingWrite, setPendingWrite] = useState(false)
+  const [declaration, setDeclaration] = useState<LedgerDeclarationDraft>(emptyLedgerDeclaration)
   const mounted = useRef(true), busyRef = useRef(false)
-  const attempt = useRef<{ file: File; templateId: number; revision: string; planToken: string } | null>(null)
+  const attempt = useRef<{ file: File; templateId: number; revision: string; planToken: string; declaration?: MapLedgerDeclaration } | null>(null)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  useEffect(() => { onDirtyChange(!!file || historyDirty || templateDirty || pendingWrite); return () => onDirtyChange(false) }, [file, historyDirty, templateDirty, pendingWrite, onDirtyChange])
+  useEffect(() => { onDirtyChange(!!file || historyDirty || templateDirty || pendingWrite || declaration.mode !== 'unknown'); return () => onDirtyChange(false) }, [file, historyDirty, templateDirty, pendingWrite, declaration.mode, onDirtyChange])
   const historyDirtyChanged = useCallback((dirty: boolean) => setHistoryDirty(dirty), [])
   const contract = useQuery({ queryKey: ['map-import-fields', user?.id, sessionEpoch], queryFn: ({ signal }) => mapLedgerImportsApi.fields(signal), gcTime: 0 })
   const templates = useQuery({ queryKey: ['map-foundation-templates', user?.id, sessionEpoch, sourceId], queryFn: () => mapFoundationApi.listTemplates(sourceId), gcTime: 0 })
@@ -36,7 +38,9 @@ export default function MapLedgerPanel({ sourceId, onChanged, onDirtyChange }: {
   const inspect = (selectedFile = file) => act(async () => {
     if (!selectedFile) return
     setPreview(null)
-    const result = await mapLedgerImportsApi.preview(sourceId, selectedFile, templateId)
+    const scope = ledgerDeclarationPayload(declaration)
+    const result = await (scope ? mapLedgerImportsApi.preview(sourceId, selectedFile, templateId, undefined, scope)
+      : mapLedgerImportsApi.preview(sourceId, selectedFile, templateId))
     if (mounted.current) setPreview(result)
   })
   const saveTemplate = (payload: MapTemplateCreate) => act(async () => {
@@ -49,14 +53,15 @@ export default function MapLedgerPanel({ sourceId, onChanged, onDirtyChange }: {
   const ingest = () => act(async () => {
     if (!attempt.current) {
       if (!file || !templateId || !preview || !mapPreviewCanCommit(preview)) return
-      attempt.current = { file, templateId, revision, planToken: preview.plan_token }
+      attempt.current = { file, templateId, revision, planToken: preview.plan_token, declaration: ledgerDeclarationPayload(declaration) }
     }
     setPendingWrite(true)
     const frozen = attempt.current
     try {
-      const run = await mapFoundationApi.ingest(sourceId, frozen.templateId, frozen.file, frozen.revision, frozen.planToken)
+      const run = await (frozen.declaration ? mapFoundationApi.ingest(sourceId, frozen.templateId, frozen.file, frozen.revision, frozen.planToken, frozen.declaration)
+        : mapFoundationApi.ingest(sourceId, frozen.templateId, frozen.file, frozen.revision, frozen.planToken))
       if (!mounted.current) return
-      attempt.current = null; setPendingWrite(false); setFile(null); setPreview(null)
+      attempt.current = null; setPendingWrite(false); setFile(null); setPreview(null); setDeclaration(emptyLedgerDeclaration)
       setNotice(`批次 ${run.id} 已确认：新增 ${run.created_assets}，更新 ${run.updated_assets}。完整逐行结果见最近批次；身份待对应和异常可继续处理。`)
       void queryClient.invalidateQueries({ queryKey: ['map-ingest-runs'] }); onChanged()
     } catch (error) {
@@ -87,6 +92,8 @@ export default function MapLedgerPanel({ sourceId, onChanged, onDirtyChange }: {
         busy={busy || pendingWrite || historyDirty} onSave={payload => void saveTemplate(payload)} onDirtyChange={() => setTemplateDirty(true)} />
     </details>}
     <h4>选择文件并核对差异</h4>
+    <MapLedgerDeclarationForm sourceId={sourceId} value={declaration} disabled={busy || pendingWrite || historyDirty}
+      onChange={value => { setDeclaration(value); setPreview(null); setFailure('') }} />
     <Input aria-label="台账来源修订" placeholder="来源修订，例如：2026-10 月度台账；不填则由文件摘要辨识" value={revision}
       disabled={busy || pendingWrite} onChange={event => { setRevision(event.target.value); setPreview(null) }} />
     <Upload accept=".csv,.xlsx,.xlsm,.xltx,.xltm" showUploadList={false} disabled={busy || pendingWrite || !contract.isSuccess}

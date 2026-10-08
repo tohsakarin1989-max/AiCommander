@@ -103,6 +103,12 @@ class FacilityRouteRequest(BaseModel):
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
 
 
+class ScenarioRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    artifact_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    option_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]] = Field(min_length=1, max_length=2)
+
+
 class ResultTimeBudget(ResultRouteRequest):
     metric: Literal['time']
     seconds: float = Field(gt=0, le=7200, strict=True, allow_inf_nan=False)
@@ -383,3 +389,41 @@ def road_history(result_id: str, limit: int = Query(10, ge=1, le=20),
 def automatic_comparison(result_id: str, db: Session = Depends(read_session)):
     from app.services.case_road_status import automatic_comparison_status
     return _artifact_read(automatic_comparison_status, db, result_id)
+
+
+@router.get('/artifacts/{artifact_id}/scenario-options')
+def case_scenario_options(artifact_id: str, db: Session = Depends(read_session)):
+    from app.services.case_road_scenarios import scenario_options
+    return _artifact_read(scenario_options, db, artifact_id)
+
+
+@router.post('/artifacts/{artifact_id}/scenarios')
+def create_case_scenarios(artifact_id: str, payload: ScenarioRequest, db: Session = Depends(read_session)):
+    from app.services.case_road_scenario_jobs import enqueue
+    def create(session):
+        try:
+            result = enqueue(session, artifact_id, payload.artifact_sha256, payload.option_ids)
+            session.commit()
+            return result
+        except Exception:
+            session.rollback()
+            raise
+    return _artifact_read(create, db)
+
+
+@router.get('/artifacts/{artifact_id}/scenarios')
+def latest_case_scenarios(artifact_id: str, db: Session = Depends(read_session)):
+    from app.services.case_road_scenario_jobs import latest_job
+    return _artifact_read(latest_job, db, artifact_id)
+
+
+@router.get('/scenarios/{event_id}')
+def case_scenario_status(event_id: str, db: Session = Depends(read_session)):
+    from app.services.case_road_scenario_jobs import read_job
+    return _artifact_read(read_job, db, event_id)
+
+
+@router.post('/scenarios/{event_id}/cancel')
+def cancel_case_scenario(event_id: str, db: Session = Depends(read_session)):
+    from app.services.case_road_scenario_jobs import cancel
+    return _artifact_read(cancel, db, event_id)

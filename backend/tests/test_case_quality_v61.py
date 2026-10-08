@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.models.case import Case, CasePerson, CaseVehicle
-from app.services.case_quality_service import CaseQualityService
+from app.services.case_quality_service import CaseQualityService, QUALITY_RULE_VERSION
 
 
 def case_record(**changes):
@@ -44,7 +44,7 @@ def test_quality_layers_allow_unknown_and_limit_priorities_without_completion_sc
     assert result["completeness"]["status"] == "partial"
     assert len(result["priority_gaps"]) <= 3
     assert result["score_purpose"] == "legacy_reference_not_case_completion"
-    assert result["rule_version"].startswith("case-quality-6.1")
+    assert result["rule_version"] == QUALITY_RULE_VERSION
     assert set(result["capabilities"]) == {
         "history_retrieval", "regional_analysis", "road_comparison", "material_export",
     }

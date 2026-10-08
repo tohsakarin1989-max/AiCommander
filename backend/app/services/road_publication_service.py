@@ -23,6 +23,7 @@ from app.services.road_source_revision import source_revision
 from app.services.vehicle_router import ENGINE_VERSION
 from app.services.public_road_access import NODE_POLICY_VERSION
 from app.services.road_refresh_jobs import enqueue_publication
+from app.services.road_retained_source import install_retained_source, verify_retained_source
 
 
 def _authorize(db):
@@ -38,6 +39,7 @@ def _authorize(db):
 def _check(db, row):
     manifest = row.source_manifest
     if (row.builder_version != BUILDER_VERSION or row.engine_version != ENGINE_VERSION
+            or manifest.get('private_scenario') is not None
             or row.status not in ('building', 'ready')
             or manifest.get('build_status') not in ('built_not_published', 'published')):
         raise ValueError('road_publish_candidate_invalid')
@@ -85,9 +87,14 @@ def publish_road_candidate(db, network_id: str, *, work_root: Path, artifact_roo
         if ready_binding is not None:
             verify_graph_artifact(artifact_root, ready_binding)
             key = ready_binding.artifact_key
+            retained = frozen.get('retained_source')
+            if retained is not None:
+                verify_retained_source(artifact_root, retained)
         else:
             key = install_graph_artifact(Path(work_root) / network_id / 'compiled' / 'tiles',
                                          artifact_root, expected_sha256=digest)
+            retained = install_retained_source(Path(work_root) / network_id / 'filtered' / 'eligible.osm.pbf',
+                artifact_root, expected_source_sha256=frozen['filter_result']['output_sha256'])
         _authorize(db)
         row = db.execute(select(RoadNetworkVersion).where(RoadNetworkVersion.id == network_id)
             .with_for_update().execution_options(populate_existing=True)).scalar_one()
@@ -102,6 +109,7 @@ def publish_road_candidate(db, network_id: str, *, work_root: Path, artifact_roo
         if row.source_manifest != frozen:
             raise ValueError('road_publish_candidate_changed')
         manifest = {**frozen, 'build_status': 'published',
+                    'retained_source': retained,
                     'publication': {'published_at': datetime.now(timezone.utc).isoformat(),
                                     'published_by': db.info['principal_user_id'], 'artifact_key': key}}
         changed = db.execute(update(RoadNetworkVersion).where(RoadNetworkVersion.id == network_id,

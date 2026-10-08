@@ -41,6 +41,7 @@ def select_network(db, *, analysis_at: datetime, vehicle: VehicleAssumption,
                or_(RoadAccessMembership.valid_until.is_(None), RoadAccessMembership.valid_until > current),
                RoadNetworkVersion.policy_revision == RoadAccessGroup.policy_revision,
                RoadNetworkVersion.status == 'ready', RoadNetworkVersion.engine_version == engine_version,
+               RoadNetworkVersion.builder_version.not_like('private-road-%'),
                RoadNetworkVersion.valid_from <= instant,
                or_(RoadNetworkVersion.valid_until.is_(None), RoadNetworkVersion.valid_until > instant))
         .order_by(RoadNetworkVersion.valid_from.desc(), RoadNetworkVersion.created_at.desc(),
@@ -91,9 +92,14 @@ def resolve_network(db, network_id: str, *, analysis_at: datetime,
              RoadNetworkVersion.policy_revision == RoadAccessGroup.policy_revision)).mappings().first()
     if row is None:
         raise RoadNetworkUnavailable()
-    if row['status'] != 'ready':
-        raise RoadNetworkUnavailable('road_network_not_ready')
     manifest = row['source_manifest']
+    is_private = (row['builder_version'].startswith('private-road-')
+                  or isinstance(manifest, dict) and manifest.get('private_scenario') is not None)
+    if is_private:
+        from app.services.road_scenario_networks import validate_private_network
+        validate_private_network(db, row, analysis_at=analysis_at, vehicle=vehicle)
+    elif row['status'] != 'ready':
+        raise RoadNetworkUnavailable('road_network_not_ready')
     internal_areas = manifest.get('internal_area_ids') if isinstance(manifest, dict) else None
     if not isinstance(internal_areas, list) or any(type(value) is not int or value <= 0 for value in internal_areas):
         raise RoadNetworkUnavailable('road_network_integrity_metadata_invalid')

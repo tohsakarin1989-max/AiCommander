@@ -31,7 +31,7 @@ from app.services.case_import_table import parse_case_table
 from app.services.case_import_values import normalize_case_row
 
 
-DATASET_VERSION = 'showcase-synthetic-2'
+DATASET_VERSION = 'showcase-synthetic-3'
 SCENARIOS = ('normal', 'missing_location', 'model_unavailable')
 ANCHOR_TIME = datetime(2026, 9, 8, 12, tzinfo=timezone.utc)
 
@@ -97,7 +97,7 @@ def _execute(db, scenario):
         'location': '合成演示网格（非真实地点）',
         'latitude': None if scenario == 'missing_location' else 46.6,
         'longitude': None if scenario == 'missing_location' else 125.1,
-        'case_type': '涉油盗窃', 'description': '合成案例：夜间发现井口原油损失，存在车辆转运线索，来源与去向待核验。',
+        'case_type': '涉油盗窃', 'description': '合成案例：夜间现场明确记录打孔盗油痕迹，存在车辆转运线索，来源与去向待核验。',
         'oil_type': '原油', 'oil_volume': 1.5, 'facility_type': '井口',
         'modus_operandi': '车辆转运', 'operational_area_id': area.id,
     }
@@ -118,7 +118,16 @@ def _execute(db, scenario):
         return table, values
 
     table, values = step('CaseTableParser', import_table)
-    payload = {**values, 'case_number': 'SYNTHETIC-001', 'operational_area_id': area.id}
+    # A legacy CSV latitude/longitude pair does not establish its location role.
+    # Declare this fixture's separate source annotation explicitly, just as the
+    # business intake contract requires; never bypass the applicability rules.
+    location = {'role': 'incident', 'description': values['location'],
+                'precision': 'unknown' if scenario == 'missing_location' else 'exact',
+                'geometry': None if scenario == 'missing_location' else {
+                    'type': 'Point', 'coordinates': [values['longitude'], values['latitude']]},
+                'source_note': '固定合成样本显式声明案发地点角色；不是从 CSV 坐标自动推定。'}
+    payload = {**values, 'case_number': 'SYNTHETIC-001', 'operational_area_id': area.id,
+               'initial_locations': [location]}
     digest = hashlib.sha256(json.dumps(jsonable_encoder({'case': payload, 'dataset': DATASET_VERSION,
         'map': {'latitude': asset.latitude, 'longitude': asset.longitude, 'attributes': asset.attributes}}),
         sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -136,9 +145,18 @@ def _execute(db, scenario):
     profile = db.query(CaseAnalysisProfile).filter_by(case_id=case.id, is_current=True).one()
     insight_event = CaseInsightService.enqueue_analysis(db, profile, snapshot)
     db.commit()
-    step('CaseInsightService', lambda: CaseInsightService.process_event(db, insight_event.id))
-    run = db.query(CaseAnalysisRun).filter_by(case_id=case.id).one()
-    analysis = CaseInsightService.run_to_dict(db, run)
+    if insight_event is not None:
+        step('CaseInsightService', lambda: CaseInsightService.process_event(db, insight_event.id))
+        run = db.query(CaseAnalysisRun).filter_by(case_id=case.id).one()
+        analysis = CaseInsightService.run_to_dict(db, run)
+    else:
+        applicability = profile.payload['analysis_applicability']
+        source_assessment = next(item for item in applicability['entries']
+                                 if item['kind'] == 'source_inference')
+        analysis = {'status': source_assessment['status'], 'hypotheses': [],
+                    'summary': source_assessment['reason'],
+                    'information_gaps': [source_assessment['reason']],
+                    'analysis_applicability': applicability}
     brief, _ = step('DeploymentAdvisorService', lambda: DeploymentAdvisorService.generate_brief(
         db, operational_area_id=area.id, period_type='daily', as_of=datetime.now(timezone.utc)))
     fault = None

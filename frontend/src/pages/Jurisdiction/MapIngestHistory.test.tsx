@@ -2,11 +2,15 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import MapIngestHistory from './MapIngestHistory'
+import type { MapLedgerClaim } from '../../services/mapLedgerImports'
+import { ledgerBatchClaim } from './mapLedgerBatch.fixtures'
 
 const state = vi.hoisted(() => ({ cursor: 0, hooks: [] as unknown[], failed: false, epoch: 1,
   buttons: [] as Array<{ label: string; disabled?: boolean; onClick: () => void }>,
   inputs: {} as Record<string, { value: string; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }>,
   pages: [] as Array<(page: number) => void>, queries: [] as unknown[][], retryPreview: vi.fn(), retry: vi.fn(),
+  claimItems: null as null | MapLedgerClaim[], batchClaims: [] as MapLedgerClaim[],
+  rowSelection: null as null | { selectedRowKeys: number[]; onChange: (keys: number[]) => void; getCheckboxProps: (row: MapLedgerClaim) => { disabled: boolean } },
 }))
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(), useEffect: vi.fn(),
   useState: (initial: unknown) => { const index = state.cursor++; if (!(index in state.hooks)) state.hooks[index] = initial
@@ -18,12 +22,15 @@ vi.mock('../../services/mapLedgerImports', () => ({ mapLedgerImportsApi: { retry
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }), useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
   state.queries.push(queryKey)
   const items = queryKey[0] === 'map-ingest-runs' ? [{ id: 'parent-run', filename: '合成原表.csv', source_revision: '原修订', counts: {}, table_metadata: { sheet_name: '生产', header_row: 2 } }]
-    : [{ id: 12, row_number: 7, status: 'quarantined', raw_payload: { 井号: 'A', 产量: '错误值', 单位: '吨' }, plan: { classification: 'failed', groups: [] } },
+    : state.claimItems || [{ id: 12, row_number: 7, status: 'quarantined', raw_payload: { 井号: 'A', 产量: '错误值', 单位: '吨' }, plan: { classification: 'failed', groups: [] } },
       { id: 13, row_number: 8, status: 'published', raw_payload: { 井号: 'B' }, plan: { classification: 'new', groups: [] } }]
   return { isSuccess: !state.failed, isError: state.failed, data: { items, total: 55 }, refetch: vi.fn() }
 } }))
 vi.mock('./MapImportPlan', () => ({ default: () => <p>修正预览已读</p>, MapPlanDetails: () => null }))
 vi.mock('./MapFieldDecision', () => ({ default: () => null }))
+vi.mock('./MapBatchCorrection', () => ({ default: ({ claims }: { claims: MapLedgerClaim[] }) => {
+  state.batchClaims = claims; return <p>批量待核 {claims.length} 行</p>
+} }))
 vi.mock('antd', () => ({
   Alert: ({ message }: { message: string }) => <p>{message}</p>, Space: ({ children }: { children: ReactNode }) => <div>{children}</div>, Select: () => null,
   Input: (props: { 'aria-label': string; value: string; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }) => {
@@ -33,8 +40,10 @@ vi.mock('antd', () => ({
     state.buttons.push({ label: String(children), disabled, onClick }); return <button disabled={disabled}>{children}</button>
   },
   Pagination: ({ onChange }: { onChange: (page: number) => void }) => { state.pages.push(onChange); return null },
-  Table: ({ dataSource, columns }: { dataSource: Record<string, unknown>[]; columns: Array<{ dataIndex?: string; render?: (value: unknown, item: Record<string, unknown>) => ReactNode }> }) =>
-    <div>{dataSource.map((item, index) => <div key={index}>{columns.map((column, col) => <span key={col}>{column.render ? column.render(item[column.dataIndex || ''], item) : String(item[column.dataIndex || ''])}</span>)}</div>)}</div>,
+  Table: ({ dataSource, columns, rowSelection }: { dataSource: Record<string, unknown>[]; rowSelection?: typeof state.rowSelection; columns: Array<{ dataIndex?: string; render?: (value: unknown, item: Record<string, unknown>) => ReactNode }> }) => {
+    if (rowSelection) state.rowSelection = rowSelection
+    return <div>{dataSource.map((item, index) => <div key={index}>{columns.map((column, col) => <span key={col}>{column.render ? column.render(item[column.dataIndex || ''], item) : String(item[column.dataIndex || ''])}</span>)}</div>)}</div>
+  },
 }))
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 function render() { state.cursor = 0; state.buttons = []; state.pages = []
@@ -43,6 +52,7 @@ function button(label: string, index = 0) { return state.buttons.filter(item => 
 function chooseRow() { render(); button('查看逐行回执').onClick(); render(); button('修正这一行').onClick(); render() }
 describe('台账最近批次的异常续做行为', () => {
   beforeEach(() => { state.cursor = 0; state.hooks = []; state.failed = false; state.epoch = 1; state.queries = []; vi.clearAllMocks()
+    state.claimItems = null; state.rowSelection = null; state.batchClaims = []
     state.retryPreview.mockResolvedValue({ plan_token: 'row-plan', publishable: true, drift: [] })
     state.retry.mockResolvedValue({ id: 'child-run' }) })
   it('失败预览保留完整原列；提交失联后保留同一凭证重试，不重新导成功行', async () => {
@@ -76,5 +86,22 @@ describe('台账最近批次的异常续做行为', () => {
     state.failed = true; state.epoch = 2; const html = render()
     expect(html).toContain('批次读取失败'); expect(html).not.toContain('查看逐行回执')
     expect(state.queries).toContainEqual(['map-ingest-runs', 8, 2, 3, 20])
+  })
+  it('跨页保留同因选择，成功、已修订及不同错误不可混选，逐行入口不并行改同批', () => {
+    const first = ledgerBatchClaim(1, 'parent-run')
+    const second = ledgerBatchClaim(2, 'parent-run')
+    const consumed = { ...ledgerBatchClaim(3, 'parent-run'), retry_superseded: true }
+    const otherError = { ...ledgerBatchClaim(4, 'parent-run'), plan: { ...first.plan!, errors: [{ code: 'invalid_coordinate', field: 'geometry', message: '坐标不是数字' }] } }
+    state.claimItems = [first, consumed]
+    render(); button('查看逐行回执').onClick(); render()
+    expect(state.rowSelection!.getCheckboxProps(consumed).disabled).toBe(true)
+    state.rowSelection!.onChange([1]); render()
+    expect(state.batchClaims.map(row => row.id)).toEqual([1]); expect(button('修正这一行').disabled).toBe(true)
+    state.pages[1](2); state.claimItems = [second, otherError]; render()
+    expect(state.rowSelection!.getCheckboxProps(otherError).disabled).toBe(true)
+    button('选中本页同因异常').onClick(); render()
+    expect(state.batchClaims.map(row => row.id)).toEqual([1, 2])
+    state.rowSelection!.onChange([1, 2, 4]); const html = render()
+    expect(state.batchClaims.map(row => row.id)).toEqual([1, 2]); expect(html).toContain('同一字段和错误')
   })
 })

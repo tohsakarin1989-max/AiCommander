@@ -102,14 +102,14 @@ def capture_inputs(db, *, case_id, profile_id, snapshot_id, candidate_family='al
     if CasePipelineService.source_hash(db, case) != profile.source_hash:
         raise ValueError('evaluation_profile_source_changed')
     capture = CapturingRepository()
-    if case.latitude is not None and case.longitude is not None:
-        method = (CaseInsightService._source_candidates if candidate_family == 'possible_source'
-                  else CaseInsightService._build_candidates)
-        method(db, case, profile, snapshot, capture)
+    scorer, _ = resolve_scorer(CASE_INSIGHT_ALGORITHM_VERSION)
+    method = scorer._source_candidates if candidate_family == 'possible_source' else scorer._build_candidates
+    method(db, case, profile, snapshot, capture)
     payload = {'schema': SCHEMA, 'classification': 'internal_sensitive',
         'algorithm_version': CASE_INSIGHT_ALGORITHM_VERSION, 'scorer_checksum': scorer_checksum(),
         'case': {key: getattr(case, key) for key in CASE_FIELDS},
-        'profile': {'id': profile.id, 'source_hash': profile.source_hash, 'profile_version': profile.profile_version},
+        'profile': {'id': profile.id, 'source_hash': profile.source_hash,
+                    'profile_version': profile.profile_version, 'payload': deepcopy(profile.payload)},
         'map': {'id': snapshot.id, 'operational_area_id': snapshot.operational_area_id,
                 'feature_watermark': snapshot.feature_watermark},
         'queries': capture.queries,
@@ -134,7 +134,7 @@ def replay_inputs(envelope, *, scorer_policy='captured'):
             and payload.get('scorer_checksum') != fingerprint)):
         raise ValueError('frozen_algorithm_unavailable')
     case = SimpleNamespace(**payload['case'])
-    if case.latitude is None or case.longitude is None:
+    if not version.startswith('dual-domain-8.') and (case.latitude is None or case.longitude is None):
         return {'status': 'empty', 'candidates': [], 'information_gaps': ['案件缺少坐标，未生成空间候选。']}
     family = payload.get('candidate_family', 'all')
     if family not in ('all', 'possible_source'):

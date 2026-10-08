@@ -14,6 +14,7 @@ from app.services.case_result_export import CaseResultExportError
 from app.services.intelligent_query_initial_context import InitialQueryContext
 from app.services.runtime_capabilities import query_creation_enabled
 from app.services.intelligent_query_presets import QueryPreset
+from app.services.business_answer import QuestionType, SourceContext, ClarificationReply
 
 
 router = APIRouter()
@@ -25,11 +26,17 @@ class QueryCreate(BaseModel):
     parent_query_id: UUID | None = None
     initial_context: InitialQueryContext | None = None
     preset: QueryPreset | None = None
+    question_type: QuestionType | None = None
+    source_context: SourceContext | None = None
 
     @model_validator(mode='after')
     def single_context(self):
         if self.parent_query_id is not None and self.initial_context is not None:
             raise ValueError('query_context_conflict')
+        if self.question_type is not None and (self.initial_context is not None or self.preset is not None):
+            raise ValueError('query_context_conflict')
+        if self.source_context is not None and self.question_type is None and self.parent_query_id is None:
+            raise ValueError('business_answer_question_type_required')
         return self
 
 
@@ -70,7 +77,9 @@ def create(payload: QueryCreate, request: Request, response: Response, db: Sessi
     result = _call(db, service.create_query, payload.query,
                    str(payload.parent_query_id) if payload.parent_query_id else None,
                    payload.initial_context.model_dump(mode='json') if payload.initial_context else None,
-                   payload.preset.model_dump(mode='json') if payload.preset else None)
+                   payload.preset.model_dump(mode='json') if payload.preset else None,
+                   payload.question_type,
+                   payload.source_context.model_dump(mode='json', exclude_unset=True, exclude_none=True) if payload.source_context else None)
     response.headers['Location'] = f"/api/intelligent-queries/{result['id']}"
     return result
 
@@ -85,6 +94,15 @@ def read(run_id: UUID, request: Request, response: Response, db: Session = Depen
 def cancel(run_id: UUID, request: Request, response: Response, db: Session = Depends(get_db)):
     _authorize(request, db, response)
     return _call(db, service.cancel_query, str(run_id))
+
+
+@router.post('/{run_id}/clarifications')
+def clarify(run_id: UUID, payload: ClarificationReply, request: Request, response: Response,
+            db: Session = Depends(get_db)):
+    _authorize(request, db, response)
+    if not query_creation_enabled(settings):
+        raise HTTPException(404, detail='新智能查询未启用；已有任务仍可读取或取消')
+    return _call(db, service.clarify_query, str(run_id), payload.model_dump())
 
 
 def _download(run_id, format, request, response, db):

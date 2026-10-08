@@ -100,7 +100,7 @@ export function QueryResult({ card }: { card: QueryCard }) {
     {'total' in data && card.tool !== 'aggregate_case_profiles' && <p>共 {textValue(data.total)} 条，本次展示 {rows.length} 条。</p>}
     {card.tool === 'find_road_results' && <p>本批读取 {rows.length} 份历史道路成果，不是案件总数。
       {data.next_page != null && `可继续查询第 ${textValue(data.next_page)} 批。`}</p>}
-    {rows.length > 0 && !['find_history', 'aggregate_case_profiles'].includes(card.tool) && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
+    {rows.length > 0 && !['find_history', 'aggregate_case_profiles', 'business_attention'].includes(card.tool) && <ul className="query-records">{rows.map((row, index) => <li key={textValue(row.id ?? row.run_id ?? index)}>
       {card.tool === 'find_cases' && typeof row.id === 'number'
         ? <Link to={`/cases?caseId=${row.id}`}>{textValue(row.case_number)}</Link>
         : <strong>{card.tool === 'find_road_results' ? (row.operation === 'route' ? '留存参考路径' : '留存距离比较') : textValue(row.case_number ?? row.name ?? row.run_id ?? row.id)}</strong>}

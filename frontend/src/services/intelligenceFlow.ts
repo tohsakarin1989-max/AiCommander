@@ -1,4 +1,5 @@
 import api from './api'
+import type { AttentionGrounding } from '../types/attention'
 import type { CaseProcess } from './caseProcess'
 
 export type SemanticReference = {
@@ -134,8 +135,29 @@ export type SituationBriefResult = {
   recommendations: DeploymentRecommendationResult[]
   comparison_snapshot?: {
     timezone: string
-    previous: { start: string; end: string; case_count: number; profile_versions_generated: number }
-    current: { start: string; end: string; case_count: number; profile_versions_generated: number }
+    attention?: AttentionGrounding
+    time_basis?: 'discovery' | 'incident' | 'entry'
+    time_basis_label?: string
+    boundary?: string
+    quality?: {
+      denominator: number; denominator_label: string; unknown_time_count: number; unknown_time_ratio: number | null
+      unclear_place_count: number; unclear_place_ratio: number | null
+      unstructured_method_count: number; unstructured_method_ratio: number | null; boundary: string
+    }
+    change_origins?: {
+      recent_registered: { case_ids: number[]; count: number; label: string }
+      late_entry: { case_ids: number[]; count: number; label: string }
+      entry_time_uncertain: { case_ids: number[]; count: number; label: string }
+      corrections: { items: { case_id: number; revision_id: number; change_id: number; change_type: string }[]; count: number; label: string }
+      withdrawals: { audit_ids: number[]; count: number; label: string }
+      boundary: string
+    }
+    snapshot_change?: {
+      state: 'comparable' | 'incomparable'; reason?: string; material_changed?: boolean; boundary?: string
+      items: { kind: string; case_ids: number[]; label: string }[]
+    }
+    previous: { start: string; end: string; case_count: number; profile_versions_generated: number; uncertain_count?: number }
+    current: { start: string; end: string; case_count: number; profile_versions_generated: number; uncertain_count?: number }
     semantic_changes?: {
       state: string; boundary: string; information_gaps: string[]
       previous: { case_count: number; readable_case_count: number }
