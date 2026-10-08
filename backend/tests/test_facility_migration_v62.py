@@ -1,11 +1,14 @@
 """Synthetic SQLite / explicitly disposable PostgreSQL v6.2 migration checks."""
+from datetime import datetime, timezone
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import MetaData, Table, create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,46 @@ def migrate(url, revision, direction="upgrade"):
         "DATABASE_URL": str(url), "SECRET_KEY": "synthetic-v62-only", "ENABLE_VECTOR_DB": "false",
         "ENABLE_AGENT_LAB": "false", "AGENT_MODE": "off", "AGENT_USE_EXTERNAL_MODEL": "false"})
     assert result.returncode == 0, result.stderr
+
+
+def seed_v62_ingest(db):
+    """Seed the v6.2 import shape, not today's expanded import service contract."""
+    metadata = MetaData()
+    tables = {name: Table(name, metadata, autoload_with=db.connection(), resolve_fks=False)
+              for name in ("map_sources", "map_import_templates", "map_ingest_runs",
+                           "jurisdiction_assets", "facility_source_identities",
+                           "map_feature_claims", "jurisdiction_asset_versions")}
+    assert "expected_structure" not in tables["map_import_templates"].c
+    raw = {"id": "SYN-WELL", "name": "Synthetic", "type": "well",
+           "lon": "125.1", "lat": "46.6", "from": "2026-01-01T00:00:00Z"}
+    content = b"id,name,type,lon,lat,from\nSYN-WELL,Synthetic,well,125.1,46.6,2026-01-01T00:00:00Z\n"
+    normalized = {"external_id": "SYN-WELL", "name": "Synthetic", "asset_type": "well",
+                  "longitude": 125.1, "latitude": 46.6, "valid_from": raw["from"]}
+    db.execute(tables["map_sources"].insert().values(id=1, source_key="synthetic-v62",
+        name="合成来源", source_type="ledger", operational_area_id=1, trust_rank=100, status="active"))
+    db.execute(tables["map_import_templates"].insert().values(id=1, source_id=1, name="合成模板",
+        coordinate_system="wgs84", header_row=1, axis_order="lon_lat", coordinate_unit="degree",
+        version=1, is_active=True, field_mapping={"external_id": "id", "name": "name",
+            "asset_type": "type", "longitude": "lon", "latitude": "lat", "valid_from": "from"}))
+    db.execute(tables["map_ingest_runs"].insert().values(id="synthetic-v62-run", source_id=1,
+        template_id=1, filename="synthetic.csv", source_revision="synthetic-1", status="completed",
+        file_hash=hashlib.sha256(content).hexdigest(), idempotency_key="synthetic-v62-import",
+        total_rows=1, valid_rows=1, quarantined_rows=0, created_assets=1, updated_assets=0, created_by=1))
+    db.execute(tables["jurisdiction_assets"].insert().values(id=2, operational_area_id=1,
+        external_id="SYN-WELL", name="Synthetic", asset_type="well", source="imported",
+        longitude=125.1, latitude=46.6, status="active"))
+    db.execute(tables["facility_source_identities"].insert().values(id=1, source_id=1,
+        operational_area_id=1, native_asset_id=2, identity_key="id:SYN-WELL",
+        source_record_id="SYN-WELL", asset_type="well", identity_kind="exact_id"))
+    db.execute(tables["map_feature_claims"].insert().values(id=1, run_id="synthetic-v62-run",
+        source_id=1, row_number=2, source_record_id="SYN-WELL", source_revision="synthetic-1",
+        raw_payload=raw, normalized_payload=normalized,
+        raw_hash=hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest(),
+        status="accepted", asset_id=2, source_identity_id=1))
+    db.execute(tables["jurisdiction_asset_versions"].insert().values(id=2, asset_id=2, version=1,
+        source_claim_id=1, snapshot=normalized, change_type="imported", source_identity_id=1,
+        valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        known_at=datetime(2026, 2, 1, tzinfo=timezone.utc), temporal_status="declared"))
 
 
 def exercise_upgrade(url):
@@ -43,23 +86,17 @@ def exercise_upgrade(url):
         assert db.scalar(text("SELECT count(*) FROM facility_identity_decisions")) == 0
         assert tuple(db.execute(text("SELECT description,oil_volume,oil_volume_unit FROM cases WHERE id=1")).one()) == ("合成原始案情", 120, "unknown")
         assert "case_facility_associations" in inspect(db).get_table_names()
-    # Exercise new FKs and immutable-history contract through the actual services.
+    # The database stays at v6.2. Newer import services require later migrations.
+    # Exercise new FKs and immutable-history contract through the identity service.
     from app.models.case import Case
     from app.models.case_source import SourceReference
     from app.models.case_facility_association import CaseFacilityAssociation
     from app.models.map_foundation import FacilitySourceIdentity
     from app.services.case_source_service import CaseSourceService
     from app.services.facility_identity_service import FacilityIdentityService
-    from app.services.map_foundation_service import MapFoundationService
     with Session(engine) as db:
         db.info["authorized_area_ids"] = None
-        source = MapFoundationService.create_source(db, {"source_key": "synthetic-v62", "name": "合成来源",
-            "source_type": "ledger", "operational_area_id": 1})
-        template = MapFoundationService.create_template(db, {"source_id": source.id, "name": "合成模板", "coordinate_system": "wgs84",
-            "field_mapping": {"external_id": "id", "name": "name", "asset_type": "type", "longitude": "lon", "latitude": "lat", "valid_from": "from"}})
-        MapFoundationService.ingest(db, source_id=source.id, template_id=template.id, filename="synthetic.csv",
-            content=b"id,name,type,lon,lat,from\nSYN-WELL,Synthetic,well,125.1,46.6,2026-01-01T00:00:00Z\n",
-            source_revision="synthetic-1", created_by=1)
+        seed_v62_ingest(db)
         identity = db.query(FacilitySourceIdentity).one()
         locked_queries = []
         def record_locks(_connection, _cursor, statement, _parameters, _context, _executemany):
