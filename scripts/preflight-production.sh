@@ -113,18 +113,21 @@ case "$APP_VERSION" in
     *)
         [ "$ALEMBIC_TARGET" = "head" ] \
             || fail "v3.1 及以上候选部署必须使用 ALEMBIC_TARGET=head"
-        case "$APP_VERSION" in
-          5.*|6.*)
+        # The schema requires both extensions from v5 onward, including future
+        # major versions. Do not let a new release fall back to a name check.
+        application_major="${APP_VERSION%%.*}"
+        case "$application_major" in
+            ''|*[!0-9]*) fail "APP_VERSION 主版本格式无效" ;;
+        esac
+        if [ "$application_major" -ge 5 ]; then
             sh "$ROOT_DIR/scripts/check-postgres-image.sh" "$POSTGIS_IMAGE" \
                 || fail "v5.1+ 数据库镜像不满足离线迁移条件，请参照 local-history-embedding.zh-CN.md"
-            ;;
-          *)
+        else
           case "$POSTGIS_IMAGE" in
             *postgis*@sha256:????????????????????????????????????????????????????????????????) ;;
             *) fail "v3.1 及以上必须配置带 sha256 摘要的 PostGIS 镜像 POSTGIS_IMAGE" ;;
           esac
-          ;;
-        esac
+        fi
         ;;
 esac
 
@@ -168,5 +171,36 @@ bootstrap_value="$(tr -d '\r\n' < "$SECRETS_DIR/bootstrap_token")"
 
 compose config >/dev/null \
     || fail "Docker Compose 生产配置无效"
+
+if [ "${deployment_image_mode:-build}" = prebuilt ]; then
+    application_major="${APP_VERSION%%.*}"
+    if [ "$application_major" -ge 7 ]; then
+        delivery_manifest="$(read_env OFFLINE_DELIVERY_MANIFEST)"
+        delivery_root="$(read_env OFFLINE_DELIVERY_ROOT)"
+        [ -n "$delivery_manifest" ] && [ -n "$delivery_root" ] \
+            || fail "v7+ 内网预构建部署须配置 OFFLINE_DELIVERY_MANIFEST 和 OFFLINE_DELIVERY_ROOT"
+        command -v python3 >/dev/null 2>&1 || fail "交付清单核对需要本机 Python 3.10+（标准库，不在线安装）"
+        python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
+            || fail "交付清单核对需要 Python 3.10+，请使用批准的离线运行环境"
+        delivery_platform="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')" \
+            || fail "无法核对目标Docker架构"
+        set -- --require-capability core
+        if [ "$(read_env ENABLE_ROAD_ANALYSIS)" = true ]; then
+            set -- "$@" --require-capability roads --require-capability documents
+        elif [ "$(read_env ENABLE_DOCUMENT_EXPORT)" = true ]; then
+            set -- "$@" --require-capability documents
+        fi
+        if [ "$(read_env ENABLE_MAP_BUILD)" = true ]; then
+            set -- "$@" --require-capability map_build
+        fi
+        delivery_services="$(production_services)"
+        # The consumer rejects empty/invalid JSON, including a failed compose.
+        compose config --format json $delivery_services | \
+            python3 "$ROOT_DIR/scripts/verify-offline-delivery.py" "$delivery_manifest" \
+                --root "$delivery_root" --version "$APP_VERSION" --platform "$delivery_platform" --purpose delivery \
+                --check-images --probe-runtime --compose-stdin "$@" \
+            || fail "交付文件、镜像或选中能力未通过核对；尚未迁移或启动业务服务"
+    fi
+fi
 
 echo "生产部署预检通过: 域名 ${APP_DOMAIN}，版本 ${APP_VERSION}，端口 ${APP_PORT}"

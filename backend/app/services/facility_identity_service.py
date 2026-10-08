@@ -329,8 +329,18 @@ class FacilityIdentityService:
         def material(row):
             values = row.snapshot
             attrs = values.get("attributes") or {}
-            return {key: values.get(key) for key in ("asset_type", "geometry", "latitude", "longitude", "status")}, {
-                key: value for key, value in attrs.items() if key not in {"source_id", "source_key", "source_revision", "source_trust_rank", "source_identity_id", "identity_decision_id"}}
+            facts = {key: value for key, value in attrs.items() if key not in {
+                "source_id", "source_key", "source_revision", "source_trust_rank", "source_identity_id",
+                "identity_decision_id", "field_groups", "original_coordinate_unit", "coordinate_transformation"}}
+            # A different receipt/decision is provenance, not conflicting data.
+            # Availability and effective intervals remain material conditions.
+            facts["field_group_states"] = {key: group.get("state") for key, group in (attrs.get("field_groups") or {}).items()
+                                           if group.get("state") not in {None, "set", "not_provided"}}
+            facts["field_group_intervals"] = {key: [group.get("valid_from"), group.get("valid_to")]
+                for key, group in (attrs.get("field_groups") or {}).items()
+                if key in {"water_cut", "production"} and group.get("state") == "set"
+                and [group.get("valid_from"), group.get("valid_to")] != [attrs.get("production_valid_from"), attrs.get("production_valid_to")]}
+            return {key: values.get(key) for key in ("asset_type", "geometry", "latitude", "longitude", "status")}, facts
         if any(material(row) != material(choices[0]) for row in choices[1:]):
             return {**result, "state": "conflict", "gaps": ["同等可信来源在该时点的资料存在冲突，未自动选为事实"]}
         selected = max(choices, key=lambda row: (_utc(row.known_at, stored=True), row.id))

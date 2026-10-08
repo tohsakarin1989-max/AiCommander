@@ -31,10 +31,11 @@ from app.services.scorers.dual_domain_v34 import SOURCE_TYPES
 from app.services.vehicle_router import RoadLocation
 from app.services.facility_identity_service import FacilityIdentityService
 from app.services.facility_conditions_v63 import entrance_state
+from app.services.facility_temporal_conditions import case_window, resolve_conditions, group_match, validate_temporal_access
 from app.utils.geo import bounding_box, haversine_km
 
 
-RECALL_VERSION = "facility-recall-6.3-1"
+RECALL_VERSION = "facility-recall-7.5-1"
 SOURCE_EXCLUDED = frozenset({"public_map", "osm", "openstreetmap", "public_reference"})
 FACILITY_TERMS = {"well": {"油井", "采油井", "井口"}, "valve": {"阀门"},
                   "station": {"站库", "集油站"}, "pipeline_node": {"管线", "输油管线"}}
@@ -64,22 +65,28 @@ def _require_current_case_profile(db, case, profile, versions):
     return revision_id
 
 
-def _production_context(db, asset_id, *, valid_at, known_at):
+def _production_context(db, asset_id, *, valid_at=None, valid_from=None, valid_to=None, known_at,
+                        knowledge_mode="retrospective"):
     """Resolve declared historical production; never backfill from today's map."""
-    if valid_at is None:
+    if valid_at is None and valid_from is None:
         return {"state": "unknown", "asset_id": asset_id, "valid_at": None,
                 "known_at": known_at.isoformat(), "version_id": None, "snapshot": None,
                 "gaps": ["案件缺少明确发生时间，未用当前生产资料填补历史条件"]}
     try:
-        context = FacilityIdentityService.get_asset_at(db, asset_id, valid_at=valid_at, known_at=known_at)
+        context = resolve_conditions(db, asset_id, valid_at=valid_at, valid_from=valid_from, valid_to=valid_to,
+                                     known_at=known_at, knowledge_mode=knowledge_mode, frozen=True)
         source_id = ((context.get("snapshot") or {}).get("attributes") or {}).get("source_id")
+        source_ids = {identifier for group in context.get("groups", {}).values() for segment in group.get("segments", [])
+                      for identifier in segment.get("source_ids", [])}
         if source_id is not None:
+            source_ids.add(source_id)
+        for source_id in source_ids:
             source = db.query(MapSource).populate_existing().filter_by(id=source_id, status="active").first()
             if source is None or source.source_type in SOURCE_EXCLUDED:
                 raise LookupError("facility_production_source_unavailable")
         return context
     except (PermissionError, LookupError):
-        return {"state": "unavailable", "asset_id": asset_id, "valid_at": valid_at.isoformat(),
+        return {"state": "unavailable", "asset_id": asset_id, "valid_at": valid_at.isoformat() if valid_at else None,
                 "known_at": known_at.isoformat(), "version_id": None, "snapshot": None,
                 "gaps": ["该时点生产资料的来源不可用，未借用其他或当前来源"]}
 
@@ -94,7 +101,9 @@ def _production_refs(context):
                         ("source_identity_id", "facility_identity"), ("identity_decision_id", "facility_identity_decision")):
         if context.get(key) is not None:
             refs.append(f"{prefix}:{context[key]}")
-    return refs
+    refs.extend(ref for group in context.get("groups", {}).values() for segment in group.get("segments", [])
+                for ref in segment.get("evidence_refs", []))
+    return sorted(set(refs))
 
 
 def _current_source_guard(db, snapshot_asset, current_asset, analysis_at):
@@ -220,7 +229,9 @@ def verified_entrances(db, *, assets: dict, network_id, analysis_at, vehicle) ->
     return result
 
 
-def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: datetime, vehicle) -> dict:
+def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: datetime, vehicle,
+                         scan_state=None, on_scan_checkpoint=None, scan_limit=None,
+                         scan_budget_seconds=5) -> dict:
     if "authorized_area_ids" not in db.info or type(db.info.get("principal_user_id")) is not int:
         raise PermissionError("facility_recall_scope_required")
     source = CaseResultService.read(db, result_id)
@@ -242,44 +253,73 @@ def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: da
         raise ValueError("facility_recall_origin_missing")
     origin = RoadLocation(latitude=facts["latitude"], longitude=facts["longitude"])
     standard = content["facts_summary"]["recorded_fields"]
-    known_at = datetime.now(timezone.utc)
-    try:
-        occurred_at = _utc(datetime.fromisoformat(standard["occurred_time"].replace("Z", "+00:00")))
-    except (KeyError, TypeError, ValueError, AttributeError):
-        occurred_at = None
-    if "time_precision" in standard and standard["time_precision"] != "exact":
-        occurred_at = None
-    history = history_context(db, source)
+    state = dict(scan_state or {})
+    known_at = (datetime.fromisoformat(state["known_at"]) if state else datetime.now(timezone.utc))
+    window = case_window(standard)
+    temporal_args = {key: datetime.fromisoformat(window[key]) if window[key] else None
+                     for key in ("valid_at", "valid_from", "valid_to")}
+    history = (state["history"] if state else
+               history_context(db, source, known_at=known_at, knowledge_mode="retrospective"))
+    if state and (state["result_id"] != result_id or state["content_sha256"] != source["content_sha256"]
+                  or state["versions"] != versions):
+        raise ValueError("facility_scan_source_changed")
     min_lat, max_lat, min_lon, max_lon = bounding_box(origin.latitude, origin.longitude, 50)
     query = db.query(MapSnapshotFeature, JurisdictionAsset).populate_existing().join(JurisdictionAsset, JurisdictionAsset.id == MapSnapshotFeature.asset_id).filter(MapSnapshotFeature.snapshot_id == snapshot.id,
         MapSnapshotFeature.status == "active", MapSnapshotFeature.asset_type.in_(SOURCE_TYPES),
         MapSnapshotFeature.latitude.between(min_lat, max_lat), MapSnapshotFeature.longitude.between(min_lon, max_lon))
-    heap, scanned, within_radius, complete = [], 0, 0, True
-    deadline = time.monotonic() + 5
-    for asset, current_asset in query.order_by(MapSnapshotFeature.asset_id).yield_per(100):
+    heap = [tuple(entry[:3]) + (entry[3],) for entry in state.get("heap", [])]
+    heapq.heapify(heap)
+    scanned, within_radius = state.get("scanned", 0), state.get("within_radius", 0)
+    cursor, complete = state.get("cursor", 0), bool(state.get("scan_complete"))
+    deadline = time.monotonic() + scan_budget_seconds
+    def save_scan():
+        nonlocal state
+        state = {**state, "result_id": result_id, "content_sha256": source["content_sha256"],
+                 "versions": versions, "known_at": known_at.isoformat(), "history": history,
+                 "cursor": cursor, "scanned": scanned, "within_radius": within_radius,
+                 "scan_complete": complete, "heap": heap}
+        if on_scan_checkpoint is not None:
+            on_scan_checkpoint(json.loads(json.dumps(state)))
+    if not state:
+        save_scan()  # Freeze retrieval/known-time before the first potentially slow row.
+    remaining = query.filter(MapSnapshotFeature.asset_id > cursor).order_by(MapSnapshotFeature.asset_id)
+    scan_rows = [] if complete else (remaining.limit(scan_limit + 1).all() if scan_limit else remaining.yield_per(100))
+    complete = True
+    processed = 0
+    for asset, current_asset in scan_rows:
+        if scan_limit is not None and processed >= scan_limit:
+            complete = False
+            break
         if time.monotonic() >= deadline:
             complete = False
             break
         scanned += 1
+        processed += 1
+        cursor = asset.asset_id
         distance = haversine_km(origin.latitude, origin.longitude, asset.latitude, asset.longitude) * 1000
         if distance > 50_000 or asset.source in SOURCE_EXCLUDED:
             continue
         within_radius += 1
         guard = _current_source_guard(db, asset, current_asset, analysis_at)
         verified = bool(asset.verified) and guard["state"] == "ready"
-        temporal = _production_context(db, asset.asset_id, valid_at=occurred_at, known_at=known_at)
+        temporal = _production_context(db, asset.asset_id, **temporal_args, known_at=known_at)
         historical_snapshot = temporal.get("snapshot") or {}
         attributes = historical_snapshot.get("attributes") or {}
-        production_verified = (verified and temporal["state"] == "ready" and historical_snapshot.get("verified") is True
-                               and historical_snapshot.get("status") == "active")
-        oil = ("unknown" if not production_verified or not standard.get("oil_type") or not attributes.get("oil_type") else
-               "matched" if standard["oil_type"] == attributes["oil_type"] else "different")
-        facility_type = historical_snapshot.get("asset_type")
+        details = temporal.get("groups", {}).get("details", {})
+        production_verified = (verified and details.get("coverage") == "full" and all(
+            row["values"].get("verified") is True and row["values"].get("status") == "active" for row in details.get("segments", [])))
+        oil = (group_match(temporal, "details", lambda value: None if not standard.get("oil_type") or not value.get("oil_type")
+                           else standard["oil_type"] == value["oil_type"]) if production_verified else "unknown")
+        detail_values = [row["values"] for row in details.get("segments", []) if row["state"] == "ready"]
+        facility_type = detail_values[0].get("asset_type") if detail_values and all(
+            row.get("asset_type") == detail_values[0].get("asset_type") for row in detail_values) else None
+        if detail_values and all(row.get("oil_type") == detail_values[0].get("oil_type") for row in detail_values):
+            attributes = {**attributes, "oil_type": detail_values[0].get("oil_type")}
         expected_types = FACILITY_TERMS.get(facility_type, set())
         facility = ("unknown" if not production_verified or not standard.get("facility_type") or not expected_types else
                     "matched" if standard["facility_type"] in expected_types else "different")
-        production = production_comparison(attributes=attributes, verified=production_verified,
-                                           case_fields=standard, case_facts=facts)
+        production = production_comparison(attributes=attributes, verified=verified,
+                                           case_fields=standard, case_facts=facts, temporal_context=temporal)
         historical = facility_history_match(history, asset_type=facility_type,
                                              oil_type=attributes.get("oil_type"), verified=production_verified)
         item = {"asset_id": asset.asset_id, "name": asset.name, "area_id": asset.operational_area_id,
@@ -303,11 +343,28 @@ def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: da
             heapq.heappush(heap, entry)
         elif key > heap[0][:3]:
             heapq.heapreplace(heap, entry)
-    # One final source lookup may itself exhaust the budget, including on the
-    # last row. Do not mark that scan complete merely because no next row exists.
+    # Conservatively yield if the last source lookup itself used up the slice.
+    # The persisted cursor means a later claim can confirm the exhausted range
+    # without recalculating that row.
     complete = complete and time.monotonic() < deadline
+    save_scan()
+    if on_scan_checkpoint is not None and not complete:
+        return {"pending": True, "scan_state": state}
     assets = {item[3]["asset_id"]: item[3] for item in sorted(heap, reverse=True)}
-    entrances = verified_entrances(db, assets=assets, network_id=network_id, analysis_at=analysis_at, vehicle=vehicle)
+    entrances = {int(key): value for key, value in state.get("entrances", {}).items()}
+    entrance_cursor = state.get("entrance_cursor", 0)
+    asset_ids = list(assets)
+    while entrance_cursor < len(asset_ids):
+        if on_scan_checkpoint is not None and time.monotonic() >= deadline:
+            return {"pending": True, "scan_state": state}
+        batch_size = 25 if on_scan_checkpoint is not None else len(asset_ids)
+        chosen = asset_ids[entrance_cursor:entrance_cursor + batch_size]
+        entrances.update(verified_entrances(db, assets={key: assets[key] for key in chosen},
+            network_id=network_id, analysis_at=analysis_at, vehicle=vehicle))
+        entrance_cursor += len(chosen)
+        state = {**state, "entrances": entrances, "entrance_cursor": entrance_cursor,
+                 "entrance_total": len(asset_ids)}
+        save_scan()
     rows, points = [], {}
     for asset_id, asset in assets.items():
         all_entries = entrances.get(asset_id, [])
@@ -335,7 +392,9 @@ def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: da
         "history": history,
         "coverage": {"scanned": scanned, "within_radius": within_radius, "selected": len(rows),
                      "radius_m": 50_000, "complete": complete and within_radius <= 100,
-                     "scan_complete": complete, "scan_budget_seconds": 5, "candidate_limit": 100,
+                     "scan_complete": complete, "scan_budget_seconds": scan_budget_seconds, "candidate_limit": 100,
+                     "entrance_facilities_checked": entrance_cursor, "entrance_facilities_total": len(assets),
+                     "entrance_check_complete": entrance_cursor == len(assets),
                      "unselected_in_radius": max(0, within_radius - len(rows))},
         "boundary": "授权快照内50公里生产设施；属性条件参与召回。未选尽或未扫完时不宣称全域最优；入口未知不猜测。"}
     payload = json.loads(json.dumps(payload, ensure_ascii=False))
@@ -344,6 +403,9 @@ def freeze_facility_pool(db, *, result_id: str, network_id: str, analysis_at: da
 
 def require_current_pool_source(db, pool):
     """Reject stale automatic computation; historical reads remain available."""
+    if pool.get("dependency_context"):
+        from app.services.facility_dependency_guard import require_dependencies
+        require_dependencies(db, pool["dependency_context"])
     versions = pool["versions"]
     profile = db.query(CaseAnalysisProfile).populate_existing().filter_by(id=versions["case_profile_id"]).first()
     case = db.query(Case).populate_existing().filter_by(id=profile.case_id).first() if profile else None
@@ -367,7 +429,10 @@ def require_current_pool_source(db, pool):
         temporal = item.get("production_context")
         if temporal is not None:
             valid_at = datetime.fromisoformat(temporal["valid_at"]) if temporal.get("valid_at") else None
-            current = _production_context(db, item["asset_id"], valid_at=valid_at, known_at=datetime.now(timezone.utc))
+            current = _production_context(db, item["asset_id"], valid_at=valid_at,
+                valid_from=datetime.fromisoformat(temporal["query_interval"]["from"]) if temporal.get("query_interval") else None,
+                valid_to=datetime.fromisoformat(temporal["query_interval"]["to"]) if temporal.get("query_interval") else None,
+                known_at=datetime.now(timezone.utc))
             if _production_signature(current) != item["production_context_sha256"]:
                 raise ValueError("facility_pool_production_changed")
 
@@ -391,6 +456,12 @@ def validate_pool_access(db, pool):
         validate_history_access(db, pool["history"])
     for asset in pool["assets"]:
         temporal = asset.get("production_context")
+        if temporal and temporal.get("schema_version") == "facility-temporal-7.3-1":
+            try:
+                validate_temporal_access(db, temporal)
+            except (LookupError, PermissionError) as error:
+                raise PermissionError("facility_pool_production_unavailable") from error
+            continue
         if not temporal or temporal.get("version_id") is None:
             continue
         for identifier in set([temporal["version_id"], *temporal.get("supporting_version_ids", [])]):

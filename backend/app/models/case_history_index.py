@@ -87,3 +87,15 @@ class CaseHistoryPosting(Base):
     branch = Column(String(20), primary_key=True)
     term = Column(String(640), primary_key=True)
     case_id = Column(Integer, ForeignKey('cases.id', ondelete='CASCADE'), nullable=False, index=True)
+
+
+class CaseHistoryVectorReuse(Base):
+    """Worker-only encoded vectors; no quote, source identity or authorization copy."""
+    __tablename__ = 'case_history_vector_reuse'
+
+    text_sha256 = Column(String(64), primary_key=True)
+    encoder_fingerprint = Column(String(64), primary_key=True)
+    dimension = Column(Integer, primary_key=True)
+    model_version = Column(String(100), nullable=False)
+    embedding = Column(VECTOR().with_variant(JSON(), 'sqlite'), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

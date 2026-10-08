@@ -227,10 +227,32 @@ class CaseService:
         if records is None:
             return
         allowed = set(model.__table__.columns.keys()) - {"id", "case_id"}
-        for row in db.query(model).filter_by(case_id=case_id).all():
-            db.delete(row)
+        existing = {row.id: row for row in db.query(model).filter_by(case_id=case_id).all()}
+        seen = set()
+        # Validate the complete replacement before changing any detail. Missing
+        # IDs mean new records, never a guessed match by value or array position.
         for record in records:
-            db.add(model(case_id=case_id, **{key: val for key, val in record.items() if key in allowed}))
+            identifier = record.get("id")
+            if identifier is None:
+                continue
+            if type(identifier) is not int or identifier <= 0:
+                raise ValueError("invalid_detail_id")
+            if identifier in seen:
+                raise ValueError("duplicate_detail_id")
+            if identifier not in existing:
+                raise ValueError("detail_id_not_in_case")
+            seen.add(identifier)
+        for record in records:
+            values = {key: val for key, val in record.items() if key in allowed}
+            identifier = record.get("id")
+            if identifier is None:
+                db.add(model(case_id=case_id, **values))
+            else:
+                for key, value in values.items():
+                    setattr(existing[identifier], key, value)
+        for identifier, row in existing.items():
+            if identifier not in seen:
+                db.delete(row)
         db.flush()
 
     @staticmethod
@@ -412,6 +434,7 @@ class CaseService:
         initial_locations: list | None = None,
         initial_measurements: list | None = None,
         source_links: list | None = None,
+        commit: bool = True,
         **kwargs
     ) -> Optional[Case]:
         """在一个事务中更新案件标量、人员车辆、质量和派生任务。"""
@@ -470,11 +493,13 @@ class CaseService:
             if source_links is not None:
                 changed_fields.add("source_links")
             CasePipelineService.enqueue_case_change(db, case, changed_fields=changed_fields)
-            db.commit()
+            if commit:
+                db.commit()
         except Exception:
             db.rollback()
             raise
-        db.refresh(case)
+        if commit:
+            db.refresh(case)
         
         # History index updates are delivered by the committed Outbox event.
         return case

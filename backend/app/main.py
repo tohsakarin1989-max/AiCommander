@@ -4,11 +4,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api import agent_runs, auth, case_imports, case_insights, case_pipeline, case_steward, cases, deployment_advisor, dual_domain_pilot, governance, meetings, models, reports, suggestions, system_config, deployment, map_foundation, map_mcp, offline_maps, assistant, websocket, agents, graphs, events, meeting_templates, health, jurisdiction, case_intelligence, automation_alerts, chain_links, knowledge, map_steward, runtime, situation, workbench
 from app.api import map_package_imports
+from app.api import derived_operations
+from app.api import map_ingest_originals
 from app.api import intelligent_queries
 from app.api import analysis_topics
 from app.api import facility_analysis
 from app.api import showcase
 from app.api import case_results
+from app.api import case_drafts
 from app.api import results
 from app.api import road_analysis
 from app.cors import build_cors_origins
@@ -77,6 +80,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Result-Content-SHA256", "X-Result-Template"],
 )
 
 # 注册路由
@@ -84,6 +88,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
+app.include_router(case_drafts.router, prefix="/api/case-drafts", tags=["case-drafts"])
 app.include_router(case_imports.router, prefix="/api/case-imports", tags=["case-imports"])
 app.include_router(case_pipeline.router, prefix="/api", tags=["case-pipeline"])
 app.include_router(case_insights.router, prefix="/api", tags=["case-insights"])
@@ -115,6 +120,7 @@ app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(meeting_templates.router, prefix="/api/meeting-templates", tags=["meeting-templates"])
 app.include_router(jurisdiction.router, prefix="/api/jurisdiction", tags=["jurisdiction"])
 app.include_router(map_foundation.router, prefix="/api", tags=["map-foundation"])
+app.include_router(map_ingest_originals.router, prefix="/api", tags=["map-foundation-originals"])
 app.include_router(offline_maps.router, prefix="/api", tags=["offline-maps"])
 app.include_router(map_package_imports.router, prefix="/api", tags=["offline-map-imports"])
 app.include_router(case_intelligence.router, prefix="/api/case-intelligence", tags=["case-intelligence"])
@@ -123,6 +129,7 @@ app.include_router(chain_links.router, prefix="/api/chain-links", tags=["chain-l
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(workbench.router, prefix="/api/workbench", tags=["workbench"])
 app.include_router(situation.router, prefix="/api/situation", tags=["situation"])
+app.include_router(derived_operations.router, prefix="/api/admin/derived-tasks", tags=["derived-operations"])
 
 @app.get("/")
 async def root():

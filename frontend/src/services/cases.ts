@@ -95,9 +95,22 @@ export interface CaseImportOptions {
   field_mapping?: Record<string, string | null>
 }
 
+export interface CaseEditSnapshot {
+  case: Case
+  initial_vehicles: CaseVehicle[]
+  initial_persons: CasePerson[]
+  initial_locations: CaseLocation[]
+  initial_measurements: CaseMeasurement[]
+  source_revision: number
+}
+
 export const caseApi = {
-  getCaseSources: async (id: number, signal?: AbortSignal): Promise<CaseSources> =>
-    (await api.get(`/cases/${id}/sources`, { signal })).data,
+  getEditSnapshot: async (id: number, signal?: AbortSignal): Promise<CaseEditSnapshot> =>
+    (await api.get(`/cases/${id}/edit-snapshot`, { signal })).data,
+  updateEditSnapshot: async (id: number, revision: number, payload: CaseUpdatePayload): Promise<{ case: Case }> =>
+    (await api.put(`/cases/${id}/edit-snapshot`, { expected_revision: revision, case_payload: payload })).data,
+  getCaseSources: async (id: number, signal?: AbortSignal, params?: { before_revision?: number; limit?: number; before_reference?: number; references_limit?: number; reference_kind?: 'evidence' }): Promise<CaseSources & { next_before_reference?: number | null; current_revision?: number | null }> =>
+    (await api.get(`/cases/${id}/sources`, { signal, params })).data,
   getCaseSourceRevision: async (id: number, revision: number, signal?: AbortSignal): Promise<CaseSourceRevisionDetail> =>
     (await api.get(`/cases/${id}/sources/${encodeURIComponent(revision)}`, { signal })).data,
   getSourceReference: async (caseId: number, reference: number, signal?: AbortSignal): Promise<{ id: number; availability: string; locator: { title?: string }; evidence?: { media_type?: string; sha256?: string } }> =>
@@ -199,8 +212,10 @@ export const caseApi = {
   /**
    * 创建案件
    */
-  createCase: async (data: CaseCreate): Promise<Case> => {
-    const response = await api.post<Case>('/cases', data)
+  getCaseSubmission: async (key: string): Promise<{ status: 'completed' | 'unconfirmed'; case_id: number | null }> =>
+    (await api.get(`/cases/submissions/${encodeURIComponent(key)}`)).data,
+  createCase: async (data: CaseCreate, key?: string): Promise<Case> => {
+    const response = await api.post<Case>('/cases', data, key ? { headers: { 'Idempotency-Key': key } } : undefined)
     return response.data
   },
 

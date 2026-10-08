@@ -110,12 +110,24 @@ class AuthService:
         display_name: Optional[str],
         password: str,
         role: str,
+        area_scopes: Optional[list[dict]] = None,
     ) -> User:
         normalized = AuthService.normalize_username(username)
         if role not in AuthService.ROLES:
             raise ValueError("不支持的用户角色")
         if db.query(User).filter(User.username == normalized).first():
             raise ValueError("用户名已存在")
+        if area_scopes is not None:
+            area_ids = [scope["operational_area_id"] for scope in area_scopes]
+            if len(set(area_ids)) != len(area_ids):
+                raise ValueError("厂区范围不能重复")
+            if any(scope["access_level"] not in {"read", "write", "manage"} for scope in area_scopes):
+                raise ValueError("不支持的范围权限")
+            active_ids = {row.id for row in db.query(OperationalArea).filter(
+                OperationalArea.id.in_(area_ids), OperationalArea.status == "active"
+            ).all()}
+            if active_ids != set(area_ids):
+                raise ValueError("请选择有效的厂区范围")
         user = User(
             username=normalized,
             display_name=(display_name or normalized).strip()[:100],
@@ -131,7 +143,7 @@ class AuthService:
             .filter(OperationalArea.is_default.is_(True))
             .first()
         )
-        if default_area is None:
+        if default_area is None and area_scopes is None:
             default_area = OperationalArea(
                 code="default-factory",
                 name="默认厂区",
@@ -140,13 +152,12 @@ class AuthService:
             )
             db.add(default_area)
             db.flush()
-        db.add(
-            UserAreaScope(
-                user_id=user.id,
-                operational_area_id=default_area.id,
-                access_level="manage" if role == "admin" else "write" if role == "analyst" else "read",
-            )
-        )
+        scopes = area_scopes if area_scopes is not None else [{
+            "operational_area_id": default_area.id,
+            "access_level": "manage" if role == "admin" else "write" if role == "analyst" else "read",
+        }]
+        for scope in scopes:
+            db.add(UserAreaScope(user_id=user.id, **scope))
         db.commit()
         db.refresh(user)
         return user

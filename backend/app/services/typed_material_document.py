@@ -18,6 +18,9 @@ LABELS = {
     'information_gaps': '信息缺口', 'boundary': '适用边界', 'version': '版本',
     'profile_id': '画像编号', 'profile_version': '画像版本', 'source_version': '来源版本',
     'valid_from': '有效起始', 'valid_to': '有效截止', 'known_at': '入库截止', 'valid_at': '适用时刻',
+    'query_interval': '完整业务时间区间', 'from': '区间起始', 'to': '区间截止',
+    'knowledge_mode': '资料获知口径', 'coverage': '覆盖情况', 'late_supplement': '包含后来补录资料',
+    'groups': '字段组', 'segments': '适用分段', 'end_inclusive': '包含终点', 'values': '分段资料',
     'start_date': '统计起始', 'end_date': '统计截止', 'distance_km': '直线距离（公里）',
     'distance_m': '道路距离（米）', 'map_snapshot_id': '地图快照', 'map_snapshots': '地图版本',
     'read_mode': '读取方式', 'schema_version': '内容结构版本', 'asset_updated_at': '设施更新时间',
@@ -45,6 +48,7 @@ LABELS = {
     'generation_mode': '形成方式', 'versions': '引用版本', 'ai_output': '原保存的模型输出',
 }
 STATES = {'ready': '可用', 'partial': '部分资料可用', 'empty': '未记录', 'missing': '缺失',
+    'as_known': '当时已知', 'retrospective': '现在回看历史', 'full': '全区间覆盖',
     'restricted': '受限', 'unknown': '未知', 'stale': '已过期', 'candidate': '候选参考',
     'well': '井', 'draft': '草稿', 'confirmed': '已人工确认', 'archived': '已归档', 'published': '原记录已发布',
     'flagged': '已人工标记', 'rejected': '原记录未采纳', 'daily': '每日', 'weekly': '每周',
@@ -77,6 +81,8 @@ def build(kind, identifier, digest, title, body, sources, boundary):
     if kind == 'facility':
         fields('设施身份与位置', body['facility'])
         fields('本材料时间条件', body['filters'])
+        if body.get('temporal_context'):
+            fields('本材料设施历史条件与完整时间区间', body['temporal_context'])
         labels = {'production': '生产与台账资料', 'record_links': '明确记录关联（不等于来源认定）',
             'nearby_cases': '空间邻近案件（不等于涉案）', 'candidate_links': '候选关联与反向依据',
             'events': '独立事件', 'results': '已有研判成果', 'roads': '道路与可信入口',

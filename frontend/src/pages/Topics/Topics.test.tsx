@@ -6,6 +6,7 @@ import { TopicLinkedViews } from './TopicViews'
 import { TopicForm } from './TopicForm'
 import type { Topic, TopicViews } from '../../services/analysisTopics'
 import { filterLines } from './topicPresentation'
+import { contextQuestionKind, topicPresets } from './topicPresets'
 
 const id = '11111111-1111-4111-8111-111111111111'
 const state = vi.hoisted(() => ({ role: 'analyst', error: undefined as unknown, data: undefined as Topic | undefined,
@@ -34,6 +35,23 @@ const views: TopicViews = { snapshot_id: 'frozen', content_sha256: 'digest', bou
 describe('专题共享成果界面', () => {
   beforeEach(() => {
     state.role = 'analyst'; state.error = undefined; state.data = undefined; state.queries = []; state.listItems = []
+  })
+  it('三种预设只走现有类型，案件和设施必须从对象入口带入', () => {
+    expect(topicPresets.map(item => item.kind)).toEqual(['condition_changes', 'case_gaps', 'facility_context'])
+    expect(contextQuestionKind({ kind: 'case', id: 8 })).toBe('case_gaps')
+    expect(contextQuestionKind({ kind: 'facility', id: 9 })).toBe('facility_context')
+    const html = renderToStaticMarkup(<MemoryRouter><TopicForm pending={false} onCreate={() => undefined} /></MemoryRouter>)
+    expect(html).toContain('href="/cases"')
+    expect(html).toContain('href="/jurisdiction#facility-lookup"')
+    expect(html).toContain('预设只填写已有的关注类型和时间窗口')
+  })
+  it('静音独立于暂停，保留查看和恢复更新入口', () => {
+    state.data = { id, title: '静音专题', notes: '', filters: {}, paused: true, notification_policy: 'muted',
+      refresh_state: 'ready', last_error: null, created_at: '', next_refresh_at: null }
+    const html = renderPage()
+    expect(html).toContain('恢复首页变化提示')
+    expect(html).toContain('恢复自动更新')
+    expect(html).toContain('此设置不改变自动更新状态')
   })
   it('当前专题后台完成后列表同步显示最新状态，不保留等待更新', () => {
     state.data = { id, title: '已完成专题', notes: '', filters: {}, paused: false,
@@ -89,7 +107,7 @@ describe('专题共享成果界面', () => {
     expect(html).not.toContain('本次条件未找到匹配')
   })
   it('新专题不要求逐案选择，语义条件与否定分开呈现', () => {
-    const html = renderToStaticMarkup(<TopicForm pending={false} onCreate={vi.fn()} />)
+    const html = renderToStaticMarkup(<MemoryRouter><TopicForm pending={false} onCreate={vi.fn()} /></MemoryRouter>)
     expect(html).toContain('全部授权案件')
     expect(html).toContain('不需要逐案选择')
     expect(html).not.toContain('case_id')

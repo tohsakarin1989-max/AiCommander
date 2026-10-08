@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.database import require_area_write_access
@@ -14,8 +14,60 @@ from app.services.case_import_table import FIELDS, MAX_ROWS
 from app.services.case_import_values import normalize_case_row, allocation_order
 from app.services.case_service import CaseService
 from app.services.map_foundation_service import MAX_CELL_TEXT_LENGTH
+from app.utils.datetimes import utc_datetime
 
 logger = logging.getLogger(__name__)
+
+
+def list_import_batches(
+    db: Session, *, page: int = 1, page_size: int = 20,
+    operational_area_id: int | None = None,
+) -> dict[str, Any]:
+    """List authorized receipts, without replaying work or returning source text.
+
+    The ORM scope applies before both count and pagination. Row status is the
+    authority after corrections; older receipts without rows remain readable but
+    must not promise a retry or pretend that duplicates were measured per row.
+    """
+    if not 1 <= page <= 10000 or not 1 <= page_size <= 100:
+        raise HTTPException(status_code=422, detail="分页范围无效")
+    query = db.query(CaseImportBatch)
+    if operational_area_id is not None:
+        query = query.filter(CaseImportBatch.operational_area_id == operational_area_id)
+    total = query.count()
+    batches = query.order_by(CaseImportBatch.created_at.desc(), CaseImportBatch.id.desc()).offset(
+        (page - 1) * page_size,
+    ).limit(page_size).all()
+    counts: dict[str, dict[str, int]] = {}
+    if batches:
+        for batch_id, status, count in db.query(
+            CaseImportRow.batch_id, CaseImportRow.status, func.count(CaseImportRow.id),
+        ).filter(CaseImportRow.batch_id.in_([batch.id for batch in batches])).group_by(
+            CaseImportRow.batch_id, CaseImportRow.status,
+        ).all():
+            counts.setdefault(batch_id, {})[status] = count
+    levels = db.info.get("area_access_levels")
+    items = []
+    for batch in batches:
+        statuses = counts.get(batch.id, {})
+        receipt = batch.result or {}
+        table = receipt.get("table") or {}
+        row_total = sum(statuses.values())
+        success = statuses.get("created", 0) if statuses else receipt.get("created")
+        failed = statuses.get("failed", 0) if statuses else (
+            len(receipt["errors"]) if isinstance(receipt.get("errors"), list) else None
+        )
+        can_write = levels is None or levels.get(batch.operational_area_id) in {"write", "manage"}
+        items.append({
+            "batch_id": batch.id, "created_at": utc_datetime(batch.created_at),
+            "operational_area_id": batch.operational_area_id,
+            "total": row_total if statuses else receipt.get("total"),
+            "success": success, "failed": failed, "duplicate": None,
+            "state": ("partial" if failed else "completed") if statuses else "legacy_receipt",
+            "retry_available": bool(statuses and failed and can_write),
+            "worksheet": table.get("worksheet"), "time_zone": table.get("time_zone"),
+        })
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def _get_batch(db: Session, batch_id: str) -> CaseImportBatch:

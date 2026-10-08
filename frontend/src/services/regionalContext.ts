@@ -1,6 +1,8 @@
 import { caseContextPath, parseCaseContextParams } from './caseContext'
+import { safeBusinessReturn } from './businessNavigation'
+import { preciseInstant } from '../utils/preciseInstant'
 
-export const regionalKeys = ['operational_area_id', 'start_date', 'end_date', 'assetId', 'eventId', 'caseId', 'time_scope', 'valid_at', 'known_at', 'mapSnapshot', 'resultRef'] as const
+export const regionalKeys = ['operational_area_id', 'start_date', 'end_date', 'assetId', 'eventId', 'caseId', 'time_scope', 'valid_at', 'valid_from', 'valid_to', 'known_at', 'knowledge_mode', 'mapSnapshot', 'resultRef'] as const
 export type RegionalSelection = Partial<Record<typeof regionalKeys[number], string | number | null>>
 
 /** Date controls use Beijing calendar dates without changing the shared exact instants. */
@@ -30,16 +32,24 @@ export function parseRegionalContext(params: URLSearchParams) {
   const readInstant = (key: string) => {
     const value = params.get(key)
     if (value == null) return undefined
-    const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.exec(value)
+    const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/.exec(value)
     const calendar = match ? new Date(`${match[1]}T00:00:00Z`) : null
     const validCalendar = calendar != null && Number.isFinite(calendar.valueOf()) && calendar.toISOString().slice(0, 10) === match![1]
     if (params.getAll(key).length !== 1 || !match || !validCalendar || Number(match[2]) > 23 || Number(match[3]) > 59 || Number(match[4] || 0) > 59 || !Number.isFinite(Date.parse(value))) {
       error = '资料查询时刻无效，须明确时区；未回退为当前资料。'
       return undefined
     }
-    return new Date(value).toISOString()
+    return preciseInstant(value)
   }
   const validAt = readInstant('valid_at'), knownAt = readInstant('known_at')
+  const validFrom = readInstant('valid_from'), validTo = readInstant('valid_to')
+  const rawMode = params.get('knowledge_mode')
+  const knowledgeMode: 'as_known' | 'retrospective' | undefined = rawMode === 'as_known' || rawMode === 'retrospective' ? rawMode : undefined
+  if (params.has('knowledge_mode') && (!knowledgeMode || params.getAll('knowledge_mode').length !== 1)) error = '历史资料口径无效，未改用当前资料。'
+  if (params.has('valid_from') !== params.has('valid_to') || (params.has('valid_at') && params.has('valid_from'))
+    || (validFrom && validTo && Date.parse(validFrom) > Date.parse(validTo))) error = '业务时点与完整区间不能混用，区间起止需同时有效。'
+  if (knowledgeMode === 'as_known' && !knownAt) error = '查看当时已知资料需明确系统获知截止时刻。'
+  if (knowledgeMode === 'retrospective' && params.has('known_at')) error = '现在回看历史不能同时指定过去的获知截止。'
   const readReference = (key: string) => {
     const value = params.get(key)
     if (value == null) return undefined
@@ -50,7 +60,7 @@ export function parseRegionalContext(params: URLSearchParams) {
     return value
   }
   const mapSnapshot = readReference('mapSnapshot'), resultRef = readReference('resultRef')
-  return { areaId, assetId, eventId, caseId, startDate: filters.start_date, endDate: filters.end_date, validAt, knownAt, mapSnapshot, resultRef, error }
+  return { areaId, assetId, eventId, caseId, startDate: filters.start_date, endDate: filters.end_date, validAt, validFrom, validTo, knownAt, knowledgeMode, mapSnapshot, resultRef, error }
 }
 
 export function writeRegionalContext(previous: URLSearchParams, changes: RegionalSelection) {
@@ -72,12 +82,14 @@ export function regionalContextPath(target: string, source: URLSearchParams) {
   for (const key of ['assetId', 'eventId', 'time_scope', 'valid_at', 'known_at', 'mapSnapshot', 'resultRef']) if (!next.has(key)) {
     for (const item of source.getAll(key)) next.append(key, item)
   }
+  const back = safeBusinessReturn(source.get('return_to'))
+  if (back && !next.has('return_to')) next.set('return_to', back)
   return `${path}${next.size ? `?${next}` : ''}`
 }
 
-export function openFacilityDossier(assetId: number, sourceSnapshot?: string) {
+export function openFacilityDossier(assetId: number, sourceSnapshot?: string, timeContext?: RegionalSelection) {
   if (!Number.isSafeInteger(assetId) || assetId <= 0) return
-  window.dispatchEvent(new CustomEvent('aic:open-facility', { detail: { assetId, sourceSnapshot } }))
+  window.dispatchEvent(new CustomEvent('aic:open-facility', { detail: { assetId, sourceSnapshot, timeContext } }))
 }
 
 export function dossierSourcePath(target: string, params: URLSearchParams) {

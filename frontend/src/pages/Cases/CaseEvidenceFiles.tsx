@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Popconfirm } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
@@ -8,12 +8,17 @@ function EvidenceFileRow({ caseId, referenceId, writable }: { caseId: number; re
   const { user, sessionEpoch } = useAuth()
   const cache = useQueryClient()
   const [error, setError] = useState('')
+  const active = useRef(true)
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const query = useQuery({ queryKey: ['case-evidence-reference', caseId, referenceId, user?.id, sessionEpoch], queryFn: ({ signal }) => caseApi.getSourceReference(caseId, referenceId, signal), retry: false })
   const revoke = useMutation({ mutationFn: () => caseApi.revokeEvidenceFile(caseId, referenceId), onSuccess: () => {
     for (const key of ['case-evidence-reference', 'case-file-references', 'case-sources', 'case-unified-result']) void cache.invalidateQueries({ queryKey: [key, caseId] })
   } })
   const download = useMutation({ mutationFn: () => caseApi.downloadEvidenceFile(caseId, referenceId), onSuccess: blob => {
-    const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `佐证-${referenceId}`; link.click(); URL.revokeObjectURL(url)
+    if (!active.current) return
+    const extension = ({ 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg' } as Record<string, string>)[blob.type || query.data?.evidence?.media_type || '']
+    const title = (query.data?.locator?.title || `案件${caseId}-佐证${referenceId}`).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100)
+    const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = extension && !title.toLowerCase().endsWith(`.${extension}`) ? `${title}.${extension}` : title; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }, onError: () => setError('材料暂不可下载，未使用目录路径代替文件。') })
   if (query.isError) return <li role="alert">材料引用暂不可读取。</li>
   if (!query.data) return <li>正在核对材料引用…</li>
@@ -26,13 +31,20 @@ function EvidenceFileRow({ caseId, referenceId, writable }: { caseId: number; re
 
 export default function CaseEvidenceFiles({ caseId }: { caseId: number }) {
   const { user, sessionEpoch } = useAuth()
+  return <ScopedCaseEvidenceFiles key={`${caseId}:${user?.id}:${sessionEpoch}`} caseId={caseId} />
+}
+
+function ScopedCaseEvidenceFiles({ caseId }: { caseId: number }) {
+  const { user, sessionEpoch } = useAuth()
   const cache = useQueryClient()
   const input = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState('')
+  const [pages, setPages] = useState<Array<number | undefined>>([undefined])
   const writable = user?.role === 'admin' || user?.role === 'analyst'
-  const sources = useQuery({ queryKey: ['case-file-references', caseId, user?.id, sessionEpoch], queryFn: ({ signal }) => caseApi.getCaseSources(caseId, signal), retry: false })
+  const sources = useQuery({ queryKey: ['case-file-references', caseId, user?.id, sessionEpoch, pages[pages.length - 1]], queryFn: ({ signal }) => caseApi.getCaseSources(caseId, signal, { limit: 1, reference_kind: 'evidence', references_limit: 20, before_reference: pages[pages.length - 1] }), retry: false })
   const upload = useMutation({ mutationFn: (file: File) => caseApi.uploadEvidenceFile(caseId, file), onSuccess: result => {
     setNotice(result.reused ? '本案已有相同原件，已复用材料引用。' : '佐证原件已入库。')
+    setPages([undefined])
     if (input.current) input.current.value = ''
     for (const key of ['case-file-references', 'case-sources', 'case-evidence', 'case-unified-result']) void cache.invalidateQueries({ queryKey: [key, caseId] })
   }, onError: () => setNotice('上传未完成。请检查文件类型、大小和当前权限，原案件记录不受影响。') })
@@ -45,7 +57,7 @@ export default function CaseEvidenceFiles({ caseId }: { caseId: number }) {
       setNotice(''); upload.mutate(file)
     }} /></label>}
     {upload.isPending && <p role="status">正在保存原件…</p>}{notice && <p role={upload.isError ? 'alert' : 'status'}>{notice}</p>}
-    {sources.isError ? <p role="alert">材料引用列表暂不可读，不能据此判断没有材料。</p> : sources.isPending ? <p>正在读取引用…</p> : !references.length ? <p>尚无原件引用，可先登记材料目录。</p> : <ul>{references.slice(0, 20).map(item => <EvidenceFileRow key={String(item.id)} caseId={caseId} referenceId={Number(item.id)} writable={writable} />)}</ul>}
-    {references.length > 20 && <p>当前展示前 20 条材料引用，其他目录仍保留在案件记录中。</p>}
+    {sources.isError ? <p role="alert">材料引用列表暂不可读，不能据此判断没有材料。<Button onClick={() => void sources.refetch()}>重试</Button></p> : sources.isPending ? <p>正在读取引用…</p> : !references.length ? <p>本页无原件引用，可返回上一页或登记材料目录。</p> : <ul>{references.map(item => <EvidenceFileRow key={String(item.id)} caseId={caseId} referenceId={Number(item.id)} writable={writable} />)}</ul>}
+    <nav aria-label="佐证原件分页"><Button disabled={pages.length === 1 || sources.isFetching} onClick={() => setPages(previous => previous.slice(0, -1))}>上一页</Button><span>第 {pages.length} 页</span><Button disabled={sources.isError || !sources.data?.next_before_reference || sources.isFetching} onClick={() => setPages(previous => [...previous, sources.data!.next_before_reference!])}>下一页</Button></nav>
   </div>
 }

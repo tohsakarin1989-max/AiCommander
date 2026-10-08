@@ -16,6 +16,11 @@ TOOLS = {'find_cases': '案件查找', 'find_places': '地点与设施', 'count_
          'compare_coverage_scenario': '登记资源名义覆盖情景',
          'find_business_results': '统一成果目录', 'read_business_result': '统一成果阅读'}
 LABELS = {'statistics': '已遍历集合统计', 'matched': '满足全部条件', 'unmatched': '不同或相反表述',
+          'time_precision_counts': '时间精度分类数（精确、区间、未知）',
+          'current_time_precision_counts': '本期时间精度分类数（精确、区间、未知）',
+          'previous_time_precision_counts': '前期时间精度分类数（精确、区间、未知）',
+          'occurred_from': '原始区间起点', 'occurred_to': '原始区间终点',
+          'time_precision': '原始时间精度', 'time_expression': '原始时间表述', 'time_timezone': '原始时区',
           'fragment': '实际命中片段', 'source_revision_id': '原始来源版本', 'process_event_id': '过程片段编号',
           'indexed_cases': '已建立片段索引的案件数', 'missing_index_cases': '尚未就绪索引的案件数',
           'indexed_fragments': '索引片段数', 'recalled_fragments': '本轮召回片段数',

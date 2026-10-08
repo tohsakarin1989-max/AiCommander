@@ -206,9 +206,11 @@ class CaseAutomationService:
 
     @staticmethod
     def structure_case_text(raw_text: str, llm: Any = None) -> Dict[str, Any]:
+        from app.services.case_intake_evidence import finalize_intake_evidence
+
         fallback = CaseAutomationService._structure_case_text_deterministic(raw_text)
         if llm is None:
-            return fallback
+            return finalize_intake_evidence(raw_text, fallback)
 
         text = (raw_text or "").strip()
         try:
@@ -218,15 +220,17 @@ class CaseAutomationService:
             model_payload, error = parse_llm_json_response(content, {})
             if error:
                 raise ValueError(error)
-            return CaseAutomationService._merge_llm_ai_intake(text, fallback, model_payload)
+            result = CaseAutomationService._merge_llm_ai_intake(text, fallback, model_payload)
+            return finalize_intake_evidence(raw_text, result)
         except Exception as exc:
             result = dict(fallback)
             result["model_status"] = "llm_failed"
-            result["model_error"] = str(exc)[:200]
+            # Client errors can contain model URLs, credentials or prompt text.
+            result["model_error"] = "模型提取未完成，已保留本地规则结果"
             result["intake_mode"] = "rules_fallback"
             result["ai_intake_boundary"] = "大模型识别失败，已使用规则降级抽取；候选字段仍需人工确认。"
             result["boundary"] = "模型不可用或解析失败时，系统只提供规则降级结果，不自动认定案件事实。"
-            return result
+            return finalize_intake_evidence(raw_text, result)
 
     @staticmethod
     def _structure_case_text_deterministic(raw_text: str) -> Dict[str, Any]:
@@ -515,7 +519,10 @@ class CaseAutomationService:
                 except (TypeError, ValueError):
                     continue
             elif field in {"police_reported", "case_filed"}:
-                fields[field] = bool(value)
+                if type(value) is bool:
+                    fields[field] = value
+                elif isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+                    fields[field] = value.strip().lower() == "true"
             elif field == "security_officers":
                 if isinstance(value, list):
                     officers = [str(item).strip() for item in value if str(item).strip()]
@@ -681,7 +688,7 @@ class CaseAutomationService:
             return value_text
         if not text:
             return ""
-        return text[:80]
+        return ""
 
     @staticmethod
     def classify_evidence_payload(payload: Dict[str, Any]) -> Dict[str, Any]:

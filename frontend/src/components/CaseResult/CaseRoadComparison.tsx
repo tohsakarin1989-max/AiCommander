@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { readAutomaticRoadComparison, readRoadArtifact, roadVehicleLabel, type AutomaticRoadComparison } from '../../services/roadAnalysis'
+import { readAutomaticRoadComparison, readRoadArtifact, roadVehicleLabel, type AutomaticRoadComparison, type FacilityComparisonProgress } from '../../services/roadAnalysis'
+import { useAuth } from '../../auth/AuthContext'
 import CaseResultDownload from './CaseResultDownload'
 import CaseReachableRoads from './CaseReachableRoads'
 import CaseRoadPath from './CaseRoadPath'
@@ -14,14 +15,44 @@ export function LegacyCandidateReference({ currentFacility, children }: { curren
     <p>以下为原冻结空间分析，未替换成道路排序，不与上方候选合并排名。</p>{open && children}</details> : <>{children}</>
 }
 
-export default function CaseRoadComparison({ resultId, hash, legacyCandidates, frozen, awaitingComposition = false }: { resultId: string; hash: string; legacyCandidates?: ReactNode; frozen?: { id: string; content_sha256: string }; awaitingComposition?: boolean }) {
+type ComparisonProps = { resultId: string; hash: string; legacyCandidates?: ReactNode; frozen?: { id: string; content_sha256: string }; awaitingComposition?: boolean }
+
+export function RoadComparisonProgress({ progress }: { progress: FacilityComparisonProgress }) {
+  const phases = { scan: '扫描候选设施', entrances: '核验候选设施入口', roads: '分批比较道路目标' }
+  return <div role="status" aria-live="polite" aria-label="道路比较处理进度">
+    <p>当前阶段：{phases[progress.phase]}。后台会保存分批进度，继续处理不代表失败。</p>
+    <ul>
+      <li>已扫描 {progress.scanned} 个设施，{progress.scan_complete ? '当前固定范围扫描已完成' : '仍在扫描当前固定范围'}。</li>
+      <li>当前候选池 {progress.candidate_pool_size} 个，上限 {progress.candidate_pool_limit} 个。</li>
+      <li>入口核验已处理 {progress.entrance_facilities_checked} / {progress.entrance_facilities_total} 个候选设施，
+        {progress.entrance_check_complete ? '本候选池入口核验已完成' : '尚未完成入口核验'}。</li>
+      <li>道路目标已处理 {progress.road_targets_completed} 个{progress.road_targets_total === null
+        ? '，总数尚未确定' : `，当前固定目标共 ${progress.road_targets_total} 个`}。
+        {progress.road_complete ? '本批目标计算已完成，等待成果汇总。' : '尚未形成完整道路比较成果。'}</li>
+    </ul>
+    <p>授权范围或依据变化后会停止沿用本次进度。</p>
+    <p>{progress.boundary}</p>
+  </div>
+}
+
+export default function CaseRoadComparison(props: ComparisonProps) {
+  const { user, sessionEpoch } = useAuth()
+  // A new account or object never renders the former session's partial counts.
+  const identity = JSON.stringify([user?.id, sessionEpoch, user?.role, props.resultId, props.hash,
+    props.frozen?.id, props.frozen?.content_sha256, props.awaitingComposition])
+  return <ComparisonSession key={identity} {...props} />
+}
+
+function ComparisonSession({ resultId, hash, legacyCandidates, frozen, awaitingComposition = false }: ComparisonProps) {
   const [artifact, setArtifact] = useState<AutomaticRoadComparison['artifact']>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed' | 'paused' | 'processing' | 'waiting_network' | 'information_missing' | 'not_available' | 'composition_pending'>('loading')
   const [attempt, setAttempt] = useState(0)
   const [controller, setController] = useState<AbortController | null>(null)
   const [pathTarget, setPathTarget] = useState<number | null>(null)
   const [dependencies, setDependencies] = useState<string[]>([])
-  const invalidateComparison = useCallback(() => { setArtifact(null); setPathTarget(null); setStatus('failed') }, [])
+  const [progress, setProgress] = useState<FacilityComparisonProgress | null>(null)
+  const [unavailableReason, setUnavailableReason] = useState<AutomaticRoadComparison['reason']>()
+  const invalidateComparison = useCallback(() => { setArtifact(null); setPathTarget(null); setProgress(null); setStatus('failed') }, [])
   useEffect(() => {
     const request = new AbortController()
     let active = true
@@ -31,6 +62,8 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates, f
     setArtifact(null)
     setPathTarget(null)
     setDependencies([])
+    setProgress(null)
+    setUnavailableReason(undefined)
     setStatus('loading')
     const load = async () => {
       if (!active || request.signal.aborted) return
@@ -48,6 +81,8 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates, f
         const result = await readAutomaticRoadComparison(resultId, hash, request.signal)
         if (!active || request.signal.aborted) return
         setDependencies(result.information_dependencies || [])
+        setProgress(result.status === 'processing' ? result.progress || null : null)
+        setUnavailableReason(result.status === 'unavailable' ? result.reason : undefined)
         polls += 1
         if (result.status === 'completed' && result.artifact) {
           if (awaitingComposition) {
@@ -65,11 +100,20 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates, f
       } catch {
         if (!active || request.signal.aborted) return
         setArtifact(null)
+        setProgress(null)
+        setDependencies([])
+        setUnavailableReason(undefined)
         setStatus('failed')
       }
     }
+    const expire = () => {
+      active = false; request.abort(); clearTimeout(timer)
+      setArtifact(null); setProgress(null); setDependencies([]); setPathTarget(null)
+      setUnavailableReason(undefined); setStatus('failed')
+    }
+    window.addEventListener('aic:auth-expired', expire)
     void load()
-    return () => { active = false; request.abort(); clearTimeout(timer) }
+    return () => { active = false; request.abort(); clearTimeout(timer); window.removeEventListener('aic:auth-expired', expire) }
   }, [resultId, hash, attempt, frozen?.id, frozen?.content_sha256, awaitingComposition])
   const data = artifact?.content
   const usable = data?.schema_version === 'case-road-comparison-4.2.0-1' && data.result_id === resultId && data.content_sha256 === hash ? data : null
@@ -82,10 +126,15 @@ export default function CaseRoadComparison({ resultId, hash, legacyCandidates, f
     {status === 'loading' && <p role="status">正在读取后台道路成果…</p>}
     {status === 'composition_pending' && <p role="status">道路附件已形成，等待统一成果刷新后再展示；不将新附件混入旧成果。若范围或条件已变化，需等待对应新结果。</p>}
     {status === 'processing' && <><p role="status">后台正在处理，完成后自动显示；可以继续查看案件。</p>
+      {progress && <RoadComparisonProgress progress={progress} />}
       <button type="button" onClick={() => { controller?.abort(); setStatus('paused') }}>暂停刷新</button></>}
     {status === 'waiting_network' && <><p role="status">路网或通行授权尚未就绪，系统会在可用后继续。案件录入和原研判内容不受影响。</p>
       <button type="button" onClick={() => { controller?.abort(); setStatus('paused') }}>暂停刷新</button></>}
-    {status === 'failed' && <p role="status">道路比较暂不可用，可能缺少授权路网或点位连接尚待核验。没有据此判断不可达，其他成果仍可查看。</p>}
+    {status === 'failed' && <p role="status">{unavailableReason === 'frozen_inputs_changed'
+      ? '本次比较依据已变化，已隐藏旧进度；旧附件不能作为当前比较，请刷新核对。'
+      : unavailableReason === 'frozen_inputs_unavailable'
+        ? '本次冻结资料或当前授权已不可用，已隐藏旧进度，请刷新核对。'
+        : '道路比较暂不可用，可能缺少授权路网或点位连接尚待核验。没有据此判断不可达，其他成果仍可查看。'}</p>}
     {status === 'paused' && <p role="status">已暂停页面刷新，后台任务仍会继续。</p>}
     {status === 'information_missing' && <p role="status">案件点位、设施点位或车辆通行条件不足，暂未形成道路比较。未推定设施入口或不可达结论。</p>}
     {status === 'information_missing' && !!dependencies.length && <ul>{dependencies.map(item => <li key={item}>{item}</li>)}</ul>}

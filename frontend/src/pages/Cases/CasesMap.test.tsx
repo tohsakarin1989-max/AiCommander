@@ -22,6 +22,7 @@ vi.mock('../../components/Map/LeafletMap', () => ({ default: (props: Record<stri
   state.map = props
   return <div data-testid="map-boundary" />
 } }))
+vi.mock('../../components/Map/MapLocationSearch', () => ({ default: () => <div>独立生产设施与公共地名查找</div> }))
 vi.mock('@ant-design/icons', () => ({ FireOutlined: () => null, LinkOutlined: () => null, FieldTimeOutlined: () => null,
   EnvironmentOutlined: () => null, AppstoreOutlined: () => null }))
 vi.mock('antd', () => ({
@@ -103,5 +104,7 @@ describe('案件地图接续（组件契约，非 DOM）', () => {
     expect(state.queries.find(query => query.queryKey[1] === 'detail')?.enabled).toBe(false)
     expect(html).toContain('未替换为其他案件')
     expect(html).not.toContain('选中案件')
+    expect(state.map.preserveViewport).toBe(true)
+    expect(state.map.locateRequest).toBeUndefined()
   })
 })

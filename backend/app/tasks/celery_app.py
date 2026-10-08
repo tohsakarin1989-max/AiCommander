@@ -21,6 +21,8 @@ celery_app = Celery(
         "app.tasks.intelligent_query_tasks",
         "app.tasks.analysis_topic_tasks",
         "app.tasks.facility_summary_tasks",
+        "app.tasks.result_catalog_tasks",
+        "app.tasks.case_draft_tasks",
     ],
 )
 
@@ -28,6 +30,11 @@ celery_app = Celery(
 def build_beat_schedule(config):
     """Build once at process startup; restart Beat after changing feature flags."""
     schedule = {
+        "expire-case-drafts": {
+            "task": "aicommander.case_drafts.expire",
+            "schedule": 3600.0,
+            "options": {"expires": 3600},
+        },
         "expire-intelligent-queries": {
             "task": "aicommander.queries.expire",
             "schedule": 60.0,
@@ -40,6 +47,11 @@ def build_beat_schedule(config):
         },
         "reconcile-facility-catalog": {
             "task": "aicommander.facilities.reconcile",
+            "schedule": 60.0,
+            "options": {"expires": 60},
+        },
+        "reconcile-material-catalog": {
+            "task": "aicommander.materials.reconcile_catalog",
             "schedule": 60.0,
             "options": {"expires": 60},
         },
@@ -63,6 +75,11 @@ def build_beat_schedule(config):
             "task": "aicommander.case_roads.reconcile_algorithm",
             "schedule": 300.0,
             "options": {"queue": "road_analysis", "expires": 300},
+        },
+        "reconcile-facility-dependencies": {
+            "task": "aicommander.case_roads.reconcile_dependencies",
+            "schedule": 60.0,
+            "options": {"queue": "road_analysis", "expires": 60},
         },
         "process-intelligent-query": {
             "task": "aicommander.queries.process_next",

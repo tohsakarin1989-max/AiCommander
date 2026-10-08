@@ -13,6 +13,7 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.models.report import Report
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_profile_service import CaseProfileService
+from app.services.case_time_window import case_time_label
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
@@ -334,7 +335,7 @@ class CaseKnowledgeService:
         case = profile["case"]
         nodes: List[Dict[str, Any]] = [
             {"id": f"case:{case_id}", "type": "case", "label": case["case_number"], "detail": case.get("description")},
-            {"id": f"time:{case_id}", "type": "time", "label": case.get("occurred_time") or "发生时间未填"},
+            {"id": f"time:{case_id}", "type": "time", "label": case_time_label(case)},
             {"id": f"location:{case_id}", "type": "location", "label": case.get("location") or "地点未填"},
         ]
         edges = [

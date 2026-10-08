@@ -8,11 +8,12 @@ from time import monotonic
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, or_
+from sqlalchemy import func
 
 from app.models.case_insight import CaseAnalysisRun
-from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_search_service import CaseSearchService
+from app.services.facility_search_service import FacilitySearchService
+from app.services.case_time_window import case_time_fields, time_precision_counts, TIME_WINDOW_BOUNDARY
 from app.services.map_place_service import search_places
 from app.services.intelligent_query_results import result_content
 from app.services.intelligent_query_business import BUSINESS_TOOLS, execute_business_tool
@@ -121,6 +122,15 @@ class FindPlaces(ScopeArgs):
     keyword: Label
     include_public_places: bool = Field(default=False, strict=True)
     limit: int = Field(default=20, ge=1, le=50, strict=True)
+    offset: int = Field(default=0, ge=0, strict=True)
+
+    @field_validator('keyword')
+    @classmethod
+    def nonempty_keyword(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('keyword_required')
+        return value
 
 
 class SummarizeResults(CaseFilters):
@@ -159,27 +169,25 @@ def tool_declarations() -> dict:
 def _cases(db, args):
     result = CaseSearchService.page(db, **args.model_dump())
     return {**{k: result[k] for k in ('total', 'page', 'page_size')}, 'items': [
-        {'id': row.id, 'case_number': row.case_number, 'occurred_time': row.occurred_time,
+        {'id': row.id, 'case_number': row.case_number, **case_time_fields(row),
          'case_type': row.case_type, 'location': row.location,
          'evidence_ref': f'case:{row.id}'} for row in result['items']]}
 
 
 def _count(db, args):
-    return CaseSearchService.page(db, page=1, page_size=1, **args)['total']
+    precision = time_precision_counts(CaseSearchService.filtered_query(db, **args))
+    return {'count': sum(precision.values()), 'time_precision_counts': precision}
 
 
 def _places(db, args):
-    literal = args.keyword.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    query = db.query(JurisdictionAsset).filter(or_(
-        JurisdictionAsset.name.ilike(f'%{literal}%', escape='\\'),
-        JurisdictionAsset.address.ilike(f'%{literal}%', escape='\\')))
-    if args.operational_area_id is not None:
-        query = query.filter(JurisdictionAsset.operational_area_id == args.operational_area_id)
+    filters = {'keyword': args.keyword, 'operational_area_id': args.operational_area_id}
+    query = FacilitySearchService.filtered_query(db, **filters)
     total = query.count()
     data = {'total': total, 'items': [
         {'id': row.id, 'name': row.name, 'asset_type': row.asset_type,
-         'status': row.status, 'verified': row.verified, 'evidence_ref': f'map_asset:{row.id}'}
-        for row in query.order_by(JurisdictionAsset.id).limit(args.limit).all()]}
+         'status': row.status, 'verified': row.verified, 'search_match': row.search_match,
+         'evidence_ref': f'map_asset:{row.id}'}
+        for row in FacilitySearchService.items(db, **filters, skip=args.offset, limit=args.limit)]}
     gaps = []
     if args.include_public_places:
         try:
@@ -250,16 +258,21 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
         elif tool == 'find_cases':
             data, source = _cases(db, args), 'cases'
         elif tool == 'count_cases':
-            data, source = {'count': _count(db, args.model_dump())}, 'cases'
+            data, source = _count(db, args.model_dump()), 'cases'
+            gaps.append(TIME_WINDOW_BOUNDARY)
         elif tool == 'compare_periods':
             filters = args.model_dump(exclude={'start', 'end'})
             previous_start = args.start - (args.end - args.start)
             current = _count(db, {**filters, 'start_date': args.start, 'end_date': args.end})
             previous = _count(db, {**filters, 'start_date': previous_start, 'end_date': args.start})
-            data = {'current_count': current, 'previous_count': previous, 'change': current - previous,
+            data = {'current_count': current['count'], 'previous_count': previous['count'],
+                    'change': current['count'] - previous['count'],
+                    'current_time_precision_counts': current['time_precision_counts'],
+                    'previous_time_precision_counts': previous['time_precision_counts'],
                     'previous_start': previous_start, 'previous_end': args.start,
                     'current_start': args.start, 'current_end': args.end}
             source = 'cases'
+            gaps.append(TIME_WINDOW_BOUNDARY)
         elif tool == 'find_places':
             data, gaps = _places(db, args)
             source = 'jurisdiction_assets_and_optional_public_index'

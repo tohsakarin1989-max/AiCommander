@@ -2,6 +2,8 @@ from app.models.ai_model import AIModel
 from app.models.query_scope_revision import QueryScopeRevision
 from app.models.map_package_import import MapPackageImport, MapPackageImportChunk
 from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
+from app.models.case_submission import CaseSubmissionReceipt
+from app.models.case_draft import CaseDraft
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.case_facility_association import CaseFacilityAssociation
 from app.models.case_source import (CaseLocation, OilMeasurement, CaseRevision, DomainChange,
@@ -9,6 +11,7 @@ from app.models.case_source import (CaseLocation, OilMeasurement, CaseRevision, 
 from app.models.meeting import Meeting, MeetingConversation, AnalysisResult, Evaluation, Ranking
 from app.models.report import Report
 from app.models.preprocess_job import PreprocessJob
+from app.models.case_preprocess_supplement import CasePreprocessSupplement
 from app.models.system_config import SystemConfig
 from app.models.conclusion import Conclusion
 from app.models.conclusion_review import ConclusionReview
@@ -65,6 +68,8 @@ __all__ = [
     "CaseImportBatch",
     "CaseImportRow",
     "CaseImportTemplate",
+    "CaseSubmissionReceipt",
+    "CaseDraft",
     "AIModel",
     "Case",
     "CaseFacilityAssociation",
@@ -82,6 +87,7 @@ __all__ = [
     "Ranking",
     "Report",
     "PreprocessJob",
+    "CasePreprocessSupplement",
     "SystemConfig",
     "Conclusion",
     "ConclusionReview",
@@ -153,6 +159,8 @@ from .case_road_artifact import CaseRoadArtifact
 from .case_history_index import (CaseHistoryIndex, CaseHistoryIndexCursor, CaseHistoryEmbedding,
                                 CaseHistoryFragment, CaseHistoryPosting)
 from .analysis_topic import AnalysisTopic, TopicSnapshot
+from .analysis_topic import TopicChangeDismissal
 from .facility_summary import FacilityDerivedSummary
 from .result_material import FacilityMaterial, ResultJudgment, MeetingFrozenInput
+from .result_catalog import ResultCatalogProjection, ResultCatalogReference
 from app.services import topic_revision_fence  # noqa: F401; metadata trigger registration

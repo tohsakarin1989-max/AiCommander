@@ -10,6 +10,8 @@ import { TopicForm } from './TopicForm'
 import { TopicLinkedViews } from './TopicViews'
 import { TopicBusinessContext } from './TopicBusinessContext'
 import { resultPath } from '../../services/results'
+import { businessContextPath, retainTopicSelection } from '../../services/businessNavigation'
+import BusinessReturnLink from '../../components/BusinessReturnLink'
 import { categoryNames, definitionLines, filterLines, kindNames, topicError, topicState } from './topicPresentation'
 import './Topics.css'
 
@@ -63,7 +65,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
   useEffect(() => { setNotes(topic?.notes || '') }, [topic?.id, topic?.notes])
   // Once available, pin every tab and export to the same explicit revision.
   useEffect(() => {
-    if (snapshot && !revision && !detail.isFetching) setParams({ topic: id, revision: String(snapshot.revision) }, { replace: true })
+    if (snapshot && !revision && !detail.isFetching) setParams(previous => retainTopicSelection(previous, id, snapshot.revision), { replace: true })
   }, [snapshot?.revision, id, revision, detail.isFetching, setParams])
   const view = useQuery({ queryKey: ['topic-views', identity, id, snapshot?.id, page],
     queryFn: ({ signal }) => api.views(id, snapshot!.revision, page, signal),
@@ -79,7 +81,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
     options.source_context ? api.fromContext(title, { ...options, filters, source_context: options.source_context }) : api.create(title, filters, options),
     onSuccess: (result, variables) => {
       if (!live.current || selection.current !== variables.source) return
-      setShowForm(false); setParams({ topic: result.id }); void list.refetch()
+      setShowForm(false); setParams(previous => retainTopicSelection(previous, result.id)); void list.refetch()
     } })
   const revise = useMutation({ mutationFn: ({ title, filters, options }: { title: string; filters: TopicFilters; options: TopicOptions; source: string }) =>
     api.update(id, { title, question: options.question, question_kind: options.question_kind, filters, window: options.window, expected_definition_revision: topic?.definition_revision }),
@@ -88,20 +90,21 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
       setEditing(false); setNotice('关注条件已保存新版本，旧成果保持不变。'); void detail.refetch(); void list.refetch()
     } })
   const action = useMutation({
-    mutationFn: async ({ kind, source }: { kind: 'pause' | 'notes' | 'refresh' | 'question' | 'cancel'; source: string }) => {
+    mutationFn: async ({ kind, source }: { kind: 'pause' | 'notify' | 'notes' | 'refresh' | 'question' | 'cancel'; source: string }) => {
       if (source !== selection.current || !topic) throw new Error('selection_changed')
       if (kind === 'refresh') return api.refresh(id)
       if (kind === 'cancel') return api.cancel(id)
       if (kind === 'question') return api.question(id, snapshot!.revision, question.trim())
+      if (kind === 'notify') return api.update(id, { notification_policy: topic.notification_policy === 'muted' ? 'meaningful' : 'muted' })
       return api.update(id, kind === 'notes' ? { notes } : { paused: !topic.paused })
     },
     onSuccess: (result, variables) => {
       if (!live.current || selection.current !== variables.source) return
-      if (variables.kind === 'question') navigate(`/assistant?query=${result.id}`)
+      if (variables.kind === 'question') navigate(businessContextPath(`/assistant?query=${result.id}`, params, '/topics'))
       else { setNotice(variables.kind === 'refresh' ? '已请求更新，当前仍显示选定版本。完成后可切换最新成果。' : variables.kind === 'cancel' ? '已请求取消本轮，持续关注设置不变。' : '设置已保存。'); void detail.refetch(); void list.refetch() }
     },
   })
-  function run(kind: 'pause' | 'notes' | 'refresh' | 'question' | 'cancel') { setNotice(''); action.mutate({ kind, source: currentSelection }) }
+  function run(kind: 'pause' | 'notify' | 'notes' | 'refresh' | 'question' | 'cancel') { setNotice(''); action.mutate({ kind, source: currentSelection }) }
   async function download(format: 'docx' | 'pdf') {
     if (!snapshot || exporting) return
     const source = currentSelection
@@ -123,6 +126,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
   const totalPages = snapshot ? Math.max(1, Math.ceil(Math.max(Number(snapshot.aggregate.total), Number(snapshot.aggregate.pattern_total)) / 20)) : 1
   return <main className="page-scrollable topics">
     <header className="page-title"><h1>专题研判</h1><span className="sub">保存问题，持续关注变化</span></header>
+    <BusinessReturnLink />
     <p className="topic-intro">关注案件、设施或一组业务条件。后台续算并保留每版依据，只有实质变化才提示，不生成正式串并案关系。</p>
     <div className="topic-actions"><button className="btn-primary" onClick={() => setShowForm(v => !v)}>{showForm ? '收起新专题' : '新建专题'}</button>
       <Link to="/assistant">从研判助手保存条件</Link></div>
@@ -133,7 +137,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
       <h2>我的专题</h2>
       {list.isPending && <p role="status">正在读取专题…</p>}
       {list.error ? <p role="alert">{topicError(list.error)}</p> : <ul className="topic-list">{list.data?.items.map(item => <li key={item.id}>
-        <Link aria-current={item.id === id ? 'page' : undefined} to={`/topics?topic=${item.id}`}>{item.title}</Link>
+        <Link aria-current={item.id === id ? 'page' : undefined} to={`/topics?${retainTopicSelection(params, item.id)}`}>{item.title}</Link>
         <small>{topicState[item.id === topic?.id ? topic.refresh_state : item.refresh_state] || '状态待确认'}</small></li>)}</ul>}
       {!list.error && list.data?.total === 0 && <p>还没有专题。保存一次条件后，后续可直接查看新增依据。</p>}
       <div className="topic-actions"><button className="btn-ghost" disabled={listPage === 1} onClick={() => setListPage(v => v - 1)}>上一页专题</button>
@@ -157,7 +161,9 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
         </section>}
         <div className="topic-actions"><button className="btn-ghost" disabled={action.isPending || topic.paused} onClick={() => run('refresh')}>检查资料变化</button>
           <button className="btn-ghost" disabled={action.isPending} onClick={() => run('pause')}>{topic.paused ? '恢复自动更新' : '暂停自动更新'}</button>
-          <button className="btn-ghost" onClick={() => { setParams({ topic: id }); void detail.refetch(); void history.refetch() }}>查看最新成果</button></div>
+          <button className="btn-ghost" disabled={action.isPending} onClick={() => run('notify')}>{topic.notification_policy === 'muted' ? '恢复首页变化提示' : '关闭首页变化提示'}</button>
+          <button className="btn-ghost" onClick={() => { setParams(previous => retainTopicSelection(previous, id)); void detail.refetch(); void history.refetch() }}>查看最新成果</button></div>
+        <p>{topic.notification_policy === 'muted' ? '首页提示已关闭' : '首页仅提示实质变化'}；此设置不改变自动更新状态，历史成果仍可查看。</p>
         <button className="btn-ghost" onClick={() => setEditing(value => !value)}>{editing ? '收起条件修订' : '修改持续关注条件'}</button>
         {editing && topic.definition_revision && <section className="topic-section"><p>修订当前第 {topic.definition_revision} 版定义，不改写正在阅读的历史成果。</p>
           <TopicForm key={topic.definition_revision} initial={{ revision: topic.definition_revision, title: topic.title, question: topic.question || topic.title,
@@ -173,14 +179,14 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
           <p>正在查看第 {snapshot.revision} 版 · {snapshot.created_at}。自动更新不会替换当前阅读版本。</p>
           <details><summary>历史成果</summary>{history.error ? <p role="alert">{topicError(history.error)}</p> :
             <ul>{history.data?.items.map(item => <li key={item.revision}><button className="btn-ghost"
-              onClick={() => setParams({ topic: id, revision: String(item.revision) })}>第 {item.revision} 版 · {item.created_at}</button></li>)}</ul>}
+              onClick={() => setParams(previous => retainTopicSelection(previous, id, item.revision))}>第 {item.revision} 版 · {item.created_at}</button></li>)}</ul>}
             <div className="topic-actions"><button className="btn-ghost" disabled={historyPage === 1} onClick={() => setHistoryPage(v => v - 1)}>较新版本</button>
               <button className="btn-ghost" disabled={!!history.error || !history.data || historyPage * 20 >= history.data.total} onClick={() => setHistoryPage(v => v + 1)}>较早版本</button></div>
           </details>
           <nav className="topic-tabs" aria-label="专题成果视图">{Object.entries(tabs).map(([key, title]) => <button className="btn-ghost" key={key}
             aria-pressed={tab === key} onClick={() => setTab(key as keyof typeof tabs)}>{title}</button>)}</nav>
           {tab === 'overview' ? <>
-            <TopicBusinessContext snapshot={snapshot} />
+            <TopicBusinessContext snapshot={snapshot} context={params} />
             <ProfileAggregateContent data={snapshot.aggregate} />
             {Array.isArray(snapshot.changes.meaningful_items) && <ul>{rowsOf(snapshot.changes.meaningful_items).map((item, index) => <li key={index}>{String(item.message || '')}</li>)}</ul>}
             <h3>与上一成果的变化</h3><ul>{[['added_case_ids', '新增来源'], ['updated_case_ids', '资料更新'], ['entered_group', '新入案组'], ['left_group', '移出案组']].map(([key, name]) =>
@@ -188,7 +194,7 @@ function TopicWorkspace({ allowed, identity }: { allowed: boolean; identity: str
             {snapshot.changes.comparison_state === 'restricted' && <p>部分历史来源已受限，变化不能作为完整对比。</p>}
             <p>独立事件 {snapshot.events.independent_event_count} 条；已关联案件事件 {snapshot.events.case_linked_event_count} 条。事件只按辖区与时间统计，不与案件数相加。</p>
           </> : view.error ? <p role="alert">{topicError(view.error)}</p> : views ?
-            <TopicLinkedViews key={`${snapshot.id}:${page}`} views={views} tab={tab} /> : <p role="status">正在读取同版依据…</p>}
+            <TopicLinkedViews key={`${snapshot.id}:${page}`} views={views} tab={tab} context={params} /> : <p role="status">正在读取同版依据…</p>}
           <div className="topic-actions"><button className="btn-ghost" disabled={page <= 1} onClick={() => { setEvidenceId(null); setPage(v => v - 1) }}>上一页案例</button>
             <span>第 {page} / {totalPages} 页，计数不随分页变化</span><button className="btn-ghost" disabled={page >= totalPages} onClick={() => { setEvidenceId(null); setPage(v => v + 1) }}>下一页案例</button></div>
           <details><summary>核对本页案例的原文依据</summary><div className="topic-actions">{rowsOf(snapshot.aggregate.items).map(item =>

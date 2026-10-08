@@ -22,6 +22,7 @@ export interface JurisdictionAsset {
   attributes?: Record<string, unknown> | null
   created_at?: string | null
   updated_at?: string | null
+  search_match?: { kind: 'current_name' | 'external_id' | 'address' | 'historical_name' | 'source_alias'; value: string; version_id?: number; identity_id?: number; source_id?: number }
 }
 
 export interface JurisdictionAssetCreate {
@@ -345,14 +346,15 @@ export interface WellAttentionOverview {
 
 export const jurisdictionApi = {
   listAssets: async (params?: {
+    keyword?: string
     asset_type?: string
     source?: string
     status?: string
     operational_area_id?: number
     skip?: number
     limit?: number
-  }): Promise<JurisdictionAsset[]> => {
-    const response = await api.get<JurisdictionAsset[]>('/jurisdiction/assets', { params })
+  }, signal?: AbortSignal): Promise<JurisdictionAsset[]> => {
+    const response = await api.get<JurisdictionAsset[]>('/jurisdiction/assets', { params, signal })
     return response.data
   },
 

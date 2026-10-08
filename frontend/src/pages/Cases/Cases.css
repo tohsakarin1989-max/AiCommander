@@ -32,6 +32,17 @@
 }
 
 /* ── 主布局 ─────────────────────────────────────────────── */
+.case-entry-section { margin: 14px 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.case-entry-section > summary { cursor: pointer; color: var(--ink-1); font-weight: 600; margin-bottom: 10px; }
+.case-entry-section p { color: var(--ink-3); }
+.case-entry-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.case-facility-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.case-facility-choice > div { flex: 1 1 100%; }
+.case-facility-choice p { margin: 5px 0; }
+.case-conflict-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.case-conflict-columns pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; color: var(--ink-2); }
+@media (max-width: 600px) { .case-conflict-columns { grid-template-columns: 1fr; } }
+
 .cases-layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);

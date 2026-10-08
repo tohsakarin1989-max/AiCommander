@@ -48,6 +48,10 @@ export type CaseAnalysisProfileResult = {
   schema_version: string
   dictionary_version: string
   source_hash: string
+  source_revision_id?: number | null
+  freshness?: 'current' | 'updating'
+  is_current?: boolean
+  freshness_boundary?: string
   quality_score: number
   analysis_readiness: string
   payload: {

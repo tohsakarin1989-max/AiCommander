@@ -1,14 +1,27 @@
 import api from './api'
+import type { TopicChangeReference } from './analysisTopics'
 
 export interface DailyWorkbenchCase {
   id: number
   case_number: string
   occurred_time: string | null
+  occurred_from?: string | null
+  occurred_to?: string | null
+  time_precision?: string
+  time_expression?: string | null
   location: string | null
   case_status: string
   pipeline_status: string | null
   profile_ready: boolean
   information_gaps: string[]
+  target_path: string
+}
+export interface DailyTopicChange {
+  group_key?: string
+  object?: { kind: 'case' | 'facility'; id: number | string } | null
+  topic_id: string; title: string; revision: number; summary: string
+  items: Array<{ code: string; message: string; evidence_refs: string[] }>
+  sources?: Array<TopicChangeReference & { title: string; target_path: string }>
   target_path: string
 }
 
@@ -22,8 +35,7 @@ export interface DailyWorkbench {
     analysis_ready: number
   }
   cases: DailyWorkbenchCase[]
-  changes?: Array<{ topic_id: string; title: string; revision: number; summary: string
-    items: Array<{ code: string; message: string; evidence_refs: string[] }>; target_path: string }>
+  changes?: DailyTopicChange[]
   pagination: { limit: number; offset: number; returned: number; total: number }
 }
 

@@ -19,8 +19,19 @@ def compose_answer(cards):
         gaps.extend(card.get('information_gaps') or [])
         if tool == 'count_cases':
             add(f"本轮授权条件下共有 {data['count']} 起案件。")
+            precision = data.get('time_precision_counts', {})
+            if precision.get('interval') or precision.get('unknown'):
+                add(f"其中精确时间 {precision.get('exact', 0)} 起、区间时间 {precision.get('interval', 0)} 起、"
+                    f"时间未知 {precision.get('unknown', 0)} 起；按时间筛选时区间仅表示可能落入。")
         elif tool == 'compare_periods':
-            add(f"本期 {data['current_count']} 起，上一等长周期 {data['previous_count']} 起，数量变化 {data['change']:+d} 起。")
+            current = data.get('current_time_precision_counts', {})
+            previous = data.get('previous_time_precision_counts', {})
+            if current.get('interval') or previous.get('interval'):
+                add(f"本期匹配 {data['current_count']} 起（精确 {current.get('exact', 0)}、区间可能落入 {current.get('interval', 0)}），"
+                    f"上一等长周期匹配 {data['previous_count']} 起（精确 {previous.get('exact', 0)}、区间可能落入 {previous.get('interval', 0)}）；"
+                    "这不是确定发案变化，同一跨期案件可在两期出现，不能直接相加。")
+            else:
+                add(f"本期 {data['current_count']} 起，上一等长周期 {data['previous_count']} 起，数量变化 {data['change']:+d} 起。")
         elif tool in {'find_cases', 'find_places', 'find_case_profiles'}:
             add(f"符合本轮筛选的记录共 {data.get('total', 0)} 项，本批展示 {len(data.get('items', []))} 项；列表不是全部证据。")
         elif tool == 'read_case_process':
@@ -57,7 +68,8 @@ def compose_answer(cards):
         elif tool == 'read_facility_at':
             historical = data['historical']
             add(f"按有效时间 {historical['valid_at']}、已知时间 {historical['known_at']} 核对设施资料："
-                + (f"取得版本 {historical['version_id']}。" if historical['state'] == 'ready' else '未取得可用一致版本，保留未知。'))
+                + ((f"取得版本 {historical['version_id']}。" if historical.get('version_id') else '已取得适用字段组，出处见各分段引用。')
+                   if historical['state'] == 'ready' else '未取得完整一致条件；部分可用字段与未知分开保留。'))
         elif tool == 'compare_coverage_scenario':
             value = data['comparison']
             frozen = value['input_snapshot']

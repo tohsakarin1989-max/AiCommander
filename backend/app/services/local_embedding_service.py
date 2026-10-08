@@ -117,6 +117,16 @@ class LocalEmbeddingService:
             # Never expose raw library errors, model paths, tokens or input text.
             self.state, self.error_code = 'unavailable', 'embedding_bundle_unavailable'
 
+    @property
+    def encoder_fingerprint(self):
+        """Pin actual pooling/token-budget configuration as well as model files."""
+        if self.state != 'ready' or self._model is None:
+            return None
+        value = {'model_version': self.model_version, 'dimension': self.dimension,
+                 'max_seq_length': self._model.max_seq_length,
+                 'pooling': 'token-weighted-normalized-mean-1', 'input': 'literal-text-1'}
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
     def encode(self, text: str) -> list[float]:
         if self.state != 'ready':
             raise LocalEmbeddingError(self.error_code or 'embedding_not_enabled')

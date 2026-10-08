@@ -57,11 +57,17 @@ class SessionResponse(BaseModel):
     expires_at: datetime
 
 
+class AreaScopeItem(BaseModel):
+    operational_area_id: int
+    access_level: Literal["read", "write", "manage"]
+
+
 class UserCreateRequest(BaseModel):
     username: str
     password: str
     display_name: Optional[str] = None
     role: Literal["admin", "analyst", "viewer"] = "viewer"
+    area_scopes: Optional[list[AreaScopeItem]] = None
 
 
 class UserUpdateRequest(BaseModel):
@@ -71,13 +77,9 @@ class UserUpdateRequest(BaseModel):
     password: Optional[str] = None
 
 
-class AreaScopeItem(BaseModel):
-    operational_area_id: int
-    access_level: Literal["read", "write", "manage"]
-
-
 class AreaScopeReplaceRequest(BaseModel):
     scopes: list[AreaScopeItem]
+    expected_scopes: Optional[list[AreaScopeItem]] = None
 
 
 def _principal(request: Request) -> AuthPrincipal:
@@ -289,6 +291,8 @@ def create_user(
             display_name=payload.display_name,
             password=payload.password,
             role=payload.role,
+            area_scopes=[scope.model_dump() for scope in payload.area_scopes]
+            if payload.area_scopes is not None else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -363,9 +367,15 @@ def replace_user_area_scopes(
     _: AuthPrincipal = Depends(_principal),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    if payload.expected_scopes is not None:
+        current = {(row.operational_area_id, row.access_level) for row in
+                   db.query(UserAreaScope).filter(UserAreaScope.user_id == user_id).all()}
+        expected = {(row.operational_area_id, row.access_level) for row in payload.expected_scopes}
+        if current != expected:
+            raise HTTPException(status_code=409, detail="账号范围已由其他操作更新，请关闭后重新读取再修改")
     requested = {
         item.operational_area_id: item.access_level
         for item in payload.scopes

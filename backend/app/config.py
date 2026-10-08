@@ -1,11 +1,11 @@
 from typing import Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_VERSION: str = "6.5.0-stable"
+    APP_VERSION: str = "7.5.0-stable"
     ALEMBIC_TARGET: str = "head"
     # 默认使用本地 SQLite，避免对 PostgreSQL/Docker 的强依赖
     # 如需使用 PostgreSQL，可通过环境变量 DATABASE_URL 覆盖此值
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     LOCAL_EMBEDDING_MANIFEST_SHA256: str = ""
     CASE_SEMANTIC_MODEL_ID: Optional[int] = None
     ENABLE_BONUS_ACCOUNTING: bool = False
+    CASE_DRAFT_RETENTION_DAYS: int = Field(default=7, ge=1, le=90)
     AUTO_CREATE_TABLES: bool = True
     ENABLE_AGENT_LAB: bool = False
     # None preserves the old opt-in; explicit flags decouple business queries.

@@ -39,17 +39,32 @@ describe('caseEntrySubmitPayload', () => {
       initial_measurements: [{ id: 22, case_id: 7, value: 0, unit: 'liter', stage: 'seized' }, { value: 5, unit: 'kg', stage: 'transferred' }],
     }, { mode: 'edit' })
     expect(payload).toMatchObject({ occurred_time: null, occurred_from: '2026-06-01T00:00:00Z', occurred_to: '2026-06-03T00:00:00Z' })
-    expect(payload.initial_measurements).toEqual([{ value: 0, unit: 'liter', stage: 'seized', measured_at: null }, { value: 5, unit: 'kg', stage: 'transferred', measured_at: null }])
+    expect(payload.initial_measurements).toEqual([{ id: 22, value: 0, unit: 'liter', stage: 'seized', measured_at: null }, { value: 5, unit: 'kg', stage: 'transferred', measured_at: null }])
   })
 
   it('来源集合读取失败时不替换旧数据；经纬度按 GeoJSON 轴序保存', () => {
     const rows = [{ id: 2, case_id: 7, role: 'discovery', precision: 'exact', ui_latitude: 47, ui_longitude: 124 }]
     const payload = buildCaseEntrySubmitPayload({ initial_locations: rows, initial_measurements: [] }, { mode: 'edit' })
-    expect(payload.initial_locations).toEqual([{ role: 'discovery', precision: 'exact', geometry: { type: 'Point', coordinates: [124, 47] } }])
+    expect(payload.initial_locations).toEqual([{ id: 2, role: 'discovery', precision: 'exact', geometry: { type: 'Point', coordinates: [124, 47] } }])
     const failed = buildCaseEntrySubmitPayload({ initial_locations: rows, initial_measurements: [] }, { mode: 'edit', includeLocations: false, includeMeasurements: false })
     expect(failed).not.toHaveProperty('initial_locations'); expect(failed).not.toHaveProperty('initial_measurements')
     const cleared = buildCaseEntrySubmitPayload({ initial_locations: [{ geometry: { type: 'Point', coordinates: [124, 47] }, ui_latitude: null, ui_longitude: null, precision: 'unknown' }] }, { mode: 'edit' })
     expect(cleared.initial_locations?.[0].geometry).toBeNull()
+  })
+
+  it('编辑保留同值不同明细的 ID 与顺序，新建不携带旧案 ID', () => {
+    const values = {
+      initial_locations: [8, 3].map(id => ({ id, case_id: 7, role: 'discovery', precision: 'unknown' })),
+      initial_measurements: [9, 2].map(id => ({ id, case_id: 7, value: 1, unit: 'liter' })),
+    }
+    const edit = buildCaseEntrySubmitPayload(values, { mode: 'edit' })
+    expect(edit.initial_locations?.map(row => row.id)).toEqual([8, 3])
+    expect(edit.initial_measurements?.map(row => row.id)).toEqual([9, 2])
+    const create = buildCaseEntrySubmitPayload(values, { mode: 'create' })
+    for (const row of [...(create.initial_locations || []), ...(create.initial_measurements || [])]) {
+      expect(row).not.toHaveProperty('id')
+      expect(row).not.toHaveProperty('case_id')
+    }
   })
 
   it('removes UI-only bonus scope switches from the API payload', () => {

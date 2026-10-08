@@ -8,6 +8,9 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
+import { resultPath } from '../../services/results'
 import SituationChart from './SituationChart'
 
 import {
@@ -77,6 +80,12 @@ function PriorityCard({
 }
 
 const SituationWorkbench: React.FC = () => {
+  const { user, sessionEpoch } = useAuth()
+  const identity = `${user?.id}:${sessionEpoch}`
+  return <SituationWorkspace key={identity} identity={identity} />
+}
+
+function SituationWorkspace({ identity }: { identity: string }) {
   const { message } = AntdApp.useApp()
   const [draft, setDraft] = useState<SituationQuery>({
     windowDays: 30,
@@ -90,18 +99,22 @@ const SituationWorkbench: React.FC = () => {
   const [legacyOpen, setLegacyOpen] = useState(false)
 
   const overviewQuery = useQuery({
-    queryKey: ['situation-overview', applied],
+    queryKey: ['situation-overview', identity, applied],
     queryFn: () => situationApi.getOverview(applied),
     staleTime: 60_000,
     enabled: legacyOpen,
   })
   const overview = overviewQuery.data
-  const automaticBriefQuery = useQuery({
-    queryKey: ['automatic-situation-brief'],
+  const automaticBriefResult = useQuery({
+    queryKey: ['automatic-situation-brief', identity],
     queryFn: intelligenceFlowApi.getLatestSituationBrief,
     retry: false,
+    gcTime: 0,
     refetchInterval: 60_000,
   })
+  const briefUnavailable = automaticBriefResult.data?.status === 'unavailable' || automaticBriefResult.data?.status === 'restricted'
+  const automaticBriefQuery = { ...automaticBriefResult,
+    data: automaticBriefResult.isError || briefUnavailable ? undefined : automaticBriefResult.data }
   const feedbackMutation = useMutation({
     mutationFn: ({ id, decision, score }: { id: string; decision: 'adopt_reference' | 'not_adopted' | 'insufficient_information'; score?: number }) => (
       intelligenceFlowApi.submitRecommendationFeedback(id, decision, score)
@@ -159,9 +172,14 @@ const SituationWorkbench: React.FC = () => {
           errorStatus={(automaticBriefQuery.error as { response?: { status?: number }; status?: number } | null)?.response?.status
             ?? (automaticBriefQuery.error as { status?: number } | null)?.status}
           count={automaticBrief?.recommendations.length} summary={automaticBrief?.summary}
-          unavailable={automaticBrief?.status === 'unavailable'} version={automaticBrief?.algorithm_version}
+          unavailable={briefUnavailable} version={automaticBrief?.algorithm_version}
           retry={() => void automaticBriefQuery.refetch()} />
       </section>
+
+      {automaticBrief && /^[A-Za-z0-9_-]{1,80}$/.test(automaticBrief.id) && <p>
+        <Link className="btn-ghost" to={resultPath('situation', automaticBrief.id)}>查看本期固定材料与导出</Link>
+        <span> 使用当前自动简报的同一周期与内容，不重新计算。</span>
+      </p>}
 
       {!automaticBriefQuery.isError && automaticBriefQuery.data?.comparison_snapshot && <section aria-label="完整周期比较">
         <h2>完整周期比较</h2>

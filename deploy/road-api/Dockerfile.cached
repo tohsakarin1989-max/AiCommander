@@ -12,5 +12,5 @@ COPY backend/alembic.ini backend/docker-entrypoint.sh ./
 COPY backend/document-renderer/map-render.mjs backend/document-renderer/render-docx.cjs ./document-renderer/
 RUN chmod 0755 docker-entrypoint.sh && chmod -R a+rX app alembic && chmod a+r alembic.ini document-renderer/map-render.mjs
 USER 10001:10001
-RUN python -c "from valhalla import Actor; import playwright.sync_api; from alembic.config import Config; from alembic.script import ScriptDirectory; assert ScriptDirectory.from_config(Config('alembic.ini')).get_current_head() == 'b508c42fd75b'" \
+RUN python -c "from valhalla import Actor; import playwright.sync_api; from alembic.config import Config; from alembic.script import ScriptDirectory; migrations = ScriptDirectory.from_config(Config('alembic.ini')); assert len(migrations.get_heads()) == 1; assert migrations.get_revision('b508c42fd75b') is not None; assert migrations.get_revision('v65r01') is not None; print('migration head:', migrations.get_current_head())" \
     && soffice --version && node --version

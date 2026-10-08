@@ -95,24 +95,36 @@ def test_result_to_registered_worker_does_not_implicitly_elevate(artifact_input,
         db.query(RoadAccessMembership).delete()
     db.commit()
     monkeypatch.setattr(case_road_tasks, 'SessionLocal', sessionmaker(bind=db.bind, autoflush=False))
+    calls = []
     def calculate(session, **kwargs):
         assert not revoked
+        kwargs['authorize']()
+        assert session.info['principal_user_id'] == 1
         assert session.info['authorized_area_ids'] == (1,)
+        assert kwargs['payload']['user_id'] == 1
+        assert kwargs['payload']['scope'] == [1]
+        calls.append(kwargs['event_id'])
         output = deepcopy(content)
         output['result_id'] = result_id
         output['content_sha256'] = CaseResultService.read(session, result_id)['content_sha256']
         output['map_snapshot_id'] = result_data[1].map_snapshot_id
-        output['matrix']['analysis_at'] = kwargs['analysis_at'].isoformat()
+        output['matrix']['analysis_at'] = kwargs['at'].isoformat()
         return output
-    monkeypatch.setattr('app.services.case_facility_comparison.compare_case_facilities', calculate)
+    # The registered worker now delegates to durable continuation, not the old
+    # one-shot comparator. This test isolates authority handoff; real checkpoints
+    # and source-version fences are exercised in test_facility_continuation_v75.
+    monkeypatch.setattr('app.services.facility_job_checkpoint.advance_comparison', calculate)
     first = case_road_tasks.process_next_comparison.run()
     assert first['status'] == ('waiting_dependency' if revoked else 'completed')
     if revoked:
         assert db.query(OutboxEvent).filter_by(event_type=jobs.EVENT_TYPE).count() == 0
         assert case_road_tasks.process_next_comparison.run() == {'selected': 0}
+        assert calls == []
     else:
         second = case_road_tasks.process_next_comparison.run()
         assert second['outcome'] == 'calculated'
+        assert second['status'] == 'completed'
+        assert calls == [second['event_id']]
         assert db.query(CaseRoadArtifact).count() == 1
 
 

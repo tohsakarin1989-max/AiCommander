@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useId, useMemo, useState } from 'react'
 import { facilityComparisonMapModel } from './facilityComparisonMapModel'
 import { openFacilityDossier } from '../../services/regionalContext'
 import FacilityConditions from './FacilityConditions'
+import { facilityConditionTimeContext } from '../../services/facilityConditions'
 
 const Map = lazy(() => import('../Map/LeafletMap'))
 
@@ -37,7 +38,8 @@ export default function CaseFacilityComparison({ content, onSelect }: { content:
     <ol>{candidates.map(candidate => <li key={candidate.asset_id} id={`${prefix}-${candidate.asset_id}`} tabIndex={-1}
       aria-label={`候选 ${candidate.rank}：${candidate.name}`}>
       <strong>{candidate.name}</strong> · 稳定编号 {candidate.asset_id}
-      <button type="button" onClick={() => openFacilityDossier(candidate.asset_id, content.map_snapshot_id)}>查看设施档案</button>
+      <button type="button" onClick={() => openFacilityDossier(candidate.asset_id, content.map_snapshot_id,
+        facilityConditionTimeContext(content.result.condition_comparison?.rows.find(row => row.asset_id === candidate.asset_id)?.source_context, content.result_id))}>查看设施档案</button>
       {map.available && <button type="button" aria-pressed={selected === String(candidate.asset_id)}
         onClick={() => setSelected(String(candidate.asset_id))}>地图定位</button>}
       <p>可信入口参考道路距离 {(candidate.road_distance_m / 1000).toFixed(2)} 公里；规则支持度不是准确概率。</p>

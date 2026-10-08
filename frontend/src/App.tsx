@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom'
+import { lazy, Suspense, useState } from 'react'
+import { createBrowserRouter, RouterProvider, Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App as AntdApp, ConfigProvider, theme as antdTheme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
@@ -35,6 +35,7 @@ const Suggestions = lazy(() => import('./pages/Suggestions/Suggestions'))
 const EventCenter = lazy(() => import('./pages/Events/EventCenter'))
 const Jurisdiction = lazy(() => import('./pages/Jurisdiction/Jurisdiction'))
 const UserManagement = lazy(() => import('./pages/Settings/UserManagement'))
+const Setup = lazy(() => import('./pages/Settings/Setup'))
 
 const queryClient = new QueryClient()
 
@@ -120,6 +121,7 @@ export function AuthenticatedApp() {
           <Route path="/agents"          element={adminOnly(<AgentCenter />)} />
           <Route path="/settings"        element={adminOnly(<Settings />)} />
           <Route path="/settings/users"  element={adminOnly(<UserManagement />)} />
+          <Route path="/settings/setup"  element={adminOnly(<Setup />)} />
           <Route path="/intelli-inspect" element={user.role !== 'viewer' ? <RuntimeFeatureGate feature="showcase" label="自动化实验"><IntelliInspect /></RuntimeFeatureGate> : <Navigate to="/dashboard" replace />} />
           <Route path="*" element={<div className="empty-state" style={{height:'60vh'}}><div className="icon">◈</div><div>页面未找到</div></div>} />
         </Routes>
@@ -128,7 +130,16 @@ export function AuthenticatedApp() {
   )
 }
 
+let applicationRouter: ReturnType<typeof createBrowserRouter> | undefined
+function getApplicationRouter() {
+  applicationRouter ??= createBrowserRouter([
+    { path: '*', element: <AuthProvider><AuthenticatedApp /></AuthProvider> },
+  ])
+  return applicationRouter
+}
+
 function App() {
+  const [router] = useState(getApplicationRouter)
   const { mode } = useThemeMode()
   const themeConfig = getThemeTokens(mode)
 
@@ -164,11 +175,7 @@ function App() {
         }}
       >
         <AntdApp>
-          <BrowserRouter>
-            <AuthProvider>
-              <AuthenticatedApp />
-            </AuthProvider>
-          </BrowserRouter>
+          <RouterProvider router={router} />
         </AntdApp>
       </ConfigProvider>
     </QueryClientProvider>

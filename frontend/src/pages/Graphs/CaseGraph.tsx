@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { parseCaseDeepLinkId } from '../Cases/caseSearch'
-import { Alert, Input, Table, Switch, message, Select } from 'antd'
+import { Alert, Input, Table, Switch, message, Tag } from 'antd'
 import {
   ShareAltOutlined,
   TableOutlined,
@@ -9,10 +9,10 @@ import {
   DownloadOutlined,
   FilterOutlined,
 } from '@ant-design/icons'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { analysisApi, SerialGraph, GraphNode, GraphEdge } from '../../services/analysis'
 import { useAuth } from '../../auth/AuthContext'
-import { caseApi } from '../../services/cases'
+import CaseSearch from '../../components/CaseSearch'
 import ReactECharts from 'echarts-for-react'
 import './CaseGraph.css'
 import { useThemeMode } from '../../theme/ThemeContext'
@@ -71,6 +71,7 @@ const CaseGraph: React.FC = () => {
   const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [caseIdsInput, setCaseIdsInput] = useState('')
   const [selectedCaseIds, setSelectedCaseIds] = useState<number[]>([])
+  const [caseLabels, setCaseLabels] = useState<Record<number, string>>({})
   const [graph, setGraph] = useState<SerialGraph | null>(null)
   const [showTables, setShowTables] = useState(false)
   const [onlyStrong, setOnlyStrong] = useState(false)
@@ -84,18 +85,12 @@ const CaseGraph: React.FC = () => {
   useEffect(() => {
     setCaseIdsInput(linkedCaseId == null ? '' : String(linkedCaseId))
     setSelectedCaseIds([])
+    setCaseLabels({})
     setGraph(null)
     setSelectedNode(null)
     setSelectedEdge(null)
   }, [linkedCaseId, user?.id, sessionEpoch])
   const echartsRef = useRef<ReactECharts | null>(null)
-
-  // 获取最近50条案件，用于快捷选择
-  const { data: recentCases = [] } = useQuery({
-    queryKey: ['cases', 'recent50', user?.id, sessionEpoch],
-    queryFn: () => caseApi.getCases({ limit: 50 }),
-    staleTime: 60_000,
-  })
 
   const buildMutation = useMutation({
     mutationFn: async (caseIds: number[]) => {
@@ -289,40 +284,13 @@ const CaseGraph: React.FC = () => {
         </div>
         <div className="card-body pad">
           <div className="cg-build-row">
-            {/* 快捷下拉多选（最近50案） */}
-            <Select
-              className="cg-select-field"
-              classNames={{ popup: { root: 'cg-case-select-dropdown' } }}
-              mode="multiple"
-              allowClear
-              placeholder="从最近50案中选择"
-              value={selectedCaseIds}
-              onChange={setSelectedCaseIds}
-              maxTagCount={4}
-              optionFilterProp="searchText"
-              optionLabelProp="title"
-              popupMatchSelectWidth={false}
-              options={recentCases.map((c) => ({
-                value: c.id,
-                title: c.case_number,
-                searchText: [
-                  c.case_number,
-                  c.case_type,
-                  c.location,
-                  formatOccurredTime(c.occurred_time),
-                ].filter(Boolean).join(' '),
-                label: (
-                  <div className="cg-case-option">
-                    <b>{c.case_number}</b>
-                    <span>
-                      {c.case_type || '未知类型'} · {c.location || '未填写地点'} · {formatOccurredTime(c.occurred_time)}
-                    </span>
-                  </div>
-                ),
-              }))}
-            />
-
-            {/* 手动输入 ID */}
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <CaseSearch disabled={buildMutation.isPending} selectedIds={selectedCaseIds} onChoose={item => {
+                setSelectedCaseIds(ids => [...new Set([...ids, item.id])]); setCaseLabels(labels => ({ ...labels, [item.id]: item.case_number }))
+              }} />
+              {selectedCaseIds.map(id => <Tag key={id} closable onClose={() => setSelectedCaseIds(ids => ids.filter(value => value !== id))}>{caseLabels[id] || `案件 #${id}`}</Tag>)}
+            </div>
+            <details><summary>高级：已有系统编号</summary>
             <Input
               className="cg-input-field"
               placeholder="或手动输入 ID，逗号分隔：1,2,3"
@@ -330,6 +298,7 @@ const CaseGraph: React.FC = () => {
               onChange={(e) => setCaseIdsInput(e.target.value)}
               onPressEnter={handleBuild}
             />
+            </details>
 
             <button
               className="btn-primary"

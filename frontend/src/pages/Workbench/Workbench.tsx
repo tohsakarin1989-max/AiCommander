@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { useAuth } from '../../auth/AuthContext'
 import { workbenchApi, type DailyWorkbenchCase } from '../../services/workbench'
 import DailyReviewPreview from './DailyReviewPreview'
+import TopicChangeCard from './TopicChangeCard'
 import './Workbench.css'
 
 const PAGE_SIZE = 20
@@ -31,6 +32,14 @@ export function formatDailyOccurredTime(value: string | null): string {
   return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())
     ? formatted : `${formatted}（存储时刻，未注明时区）`
 }
+export function formatDailyCaseTime(item: DailyWorkbenchCase): string {
+  if (item.occurred_time) return formatDailyOccurredTime(item.occurred_time)
+  if (item.occurred_from && item.occurred_to && dayjs(item.occurred_from).isValid()
+      && dayjs(item.occurred_to).isValid() && dayjs(item.occurred_from).valueOf() <= dayjs(item.occurred_to).valueOf()) {
+    return `${formatDailyOccurredTime(item.occurred_from)} 至 ${formatDailyOccurredTime(item.occurred_to)}（时间区间）`
+  }
+  return item.time_expression ? `${item.time_expression}（具体时间未知）` : '未记录'
+}
 
 const Workbench: React.FC = () => {
   const { user, sessionEpoch } = useAuth()
@@ -40,10 +49,18 @@ const Workbench: React.FC = () => {
     queryFn: () => workbenchApi.daily({ limit: PAGE_SIZE, offset }),
     refetchInterval: 60_000,
   })
+  const quickActions = <nav className="daily-actions" aria-label="常用工作">
+    {user?.role !== 'viewer' && <Link className="btn-primary" to="/cases?create=1">录案件</Link>}
+    <Link className="btn-ghost" to="/cases">查案件</Link>
+    <Link className="btn-ghost" to="/jurisdiction#facility-lookup">查井场</Link>
+    <Link className="btn-ghost" to="/reports">取材料</Link>
+    {user?.role === 'admin' && <Link className="btn-ghost" to="/settings/setup">首次启用检查</Link>}
+  </nav>
 
   if (query.isPending) {
     return <div className="page-scrollable daily-workbench" aria-busy="true">
       <h1>日常工作</h1>
+      {quickActions}
       <div className="daily-loading" role="status">正在读取日常工作</div>
       <div className="daily-placeholder" aria-hidden="true" />
       <DailyReviewPreview />
@@ -54,6 +71,7 @@ const Workbench: React.FC = () => {
   if (!data) {
     return <div className="page-scrollable daily-workbench">
       <h1>日常工作</h1>
+      {quickActions}
       <section className="daily-message" role="alert">
         <h2>工作台暂不可用</h2>
         <p>当前无法确认案件数量和分析状态，可以直接进入案件页面。</p>
@@ -85,6 +103,7 @@ const Workbench: React.FC = () => {
         </button>
       </div>
     </header>
+    {quickActions}
 
     <section aria-label="案件与分析状态" className="daily-summary">
       <dl>
@@ -100,10 +119,10 @@ const Workbench: React.FC = () => {
 
     {data.changes && <section className="daily-cases" aria-label="持续关注的重要变化">
       <h2>持续关注的重要变化</h2>
-      {data.changes.length ? <ul>{data.changes.slice(0, 3).map(change => <li key={`${change.topic_id}:${change.revision}`}>
-        <h3><Link to={`/topics?topic=${encodeURIComponent(change.topic_id)}&revision=${change.revision}`}>{change.title}</Link></h3>
-        <p>{change.summary}</p><ul>{change.items.map((item, index) => <li key={index}>{item.message}</li>)}</ul>
-      </li>)}</ul> : <p>目前没有需要提示的实质变化。后台刷新或重试不会单独生成事项。</p>}
+      {data.changes.length ? <ul>{data.changes.slice(0, 3).map(change => <TopicChangeCard
+        key={`${user?.id}:${user?.role}:${sessionEpoch}:${change.group_key || change.topic_id}`}
+        change={change} onDismissed={() => { void query.refetch() }} />)}</ul>
+        : <p>目前没有需要提示的实质变化。后台刷新或重试不会单独生成事项。</p>}
     </section>}
 
     <section className="daily-cases" aria-labelledby="daily-cases-title">
@@ -118,7 +137,7 @@ const Workbench: React.FC = () => {
         <table>
           <thead><tr><th scope="col">案件与时间</th><th scope="col">地点</th><th scope="col">关键补充</th><th scope="col">自动画像</th><th scope="col">操作</th></tr></thead>
           <tbody>{data.cases.map(item => <tr key={item.id}>
-            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyOccurredTime(item.occurred_time)}</small></th>
+            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyCaseTime(item)}</small></th>
             <td>{item.location || '地点未记录'}</td>
             <td>{item.information_gaps.length > 0
               ? <ul>{item.information_gaps.slice(0, 3).map((gap, index) => <li key={`${index}:${gap}`}>{gap}</li>)}</ul>

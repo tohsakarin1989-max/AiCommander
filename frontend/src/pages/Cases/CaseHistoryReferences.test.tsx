@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
-import { CaseHistoryContent } from './CaseHistoryReferences'
+import { CaseHistoryContent, CaseHistoryPreview, historyReferenceUnavailable } from './CaseHistoryReferences'
 import type { CaseHistoryResult } from '../../services/caseHistory'
 
 vi.mock('react-router-dom', () => ({ Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a> }))
@@ -15,6 +15,12 @@ const result: CaseHistoryResult = {
   boundary: '不成为当前案件事实',
 }
 describe('历史参考展示', () => {
+  it('历史上下文不允许自动调用只有当前索引的参考接口', () => {
+    for (const query of ['known_at=2026-08-01T00:00:00Z', 'valid_at=2026-08-01T00:00:00Z', 'valid_from=2026-08-01T00:00:00Z', 'time_scope=frozen_result', 'knowledge_mode=as_known']) {
+      expect(historyReferenceUnavailable(new URLSearchParams(query))).toBe(true)
+    }
+    expect(historyReferenceUnavailable(new URLSearchParams('caseId=3&case_page=4&time_scope=unknown'))).toBe(false)
+  })
   it('保留否定、版本与模型未启用说明，不显示准确概率', () => {
     const html = renderToStaticMarkup(<CaseHistoryContent result={result} />)
     expect(html).toContain('转运（原文否定）')
@@ -41,5 +47,12 @@ describe('历史参考展示', () => {
     expect(html).toContain('名次融合')
     expect(html).toContain('不是准确概率')
     expect(html).toContain('未完成全部范围')
+  })
+  it('录后概览直接显示最多三项已有参考，保留否定和来源返回位置', () => {
+    const html = renderToStaticMarkup(<CaseHistoryPreview context={new URLSearchParams('caseId=9&case_page=4&case_page_size=20')}
+      result={{ ...result, items: [1, 2, 3, 4].map(id => ({ ...result.items[0], source_id: id, title: `参考${id}`, route: `/cases?caseId=${id}` })) }} />)
+    expect(html).toContain('参考3'); expect(html).not.toContain('参考4')
+    expect(html).toContain('转运（原文否定）'); expect(html).toContain('return_to=')
+    expect(html).toContain('不另建分析任务'); expect(html).not.toContain('自动确认')
   })
 })

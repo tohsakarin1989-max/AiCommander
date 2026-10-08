@@ -6,6 +6,7 @@ records and persists the returned evidence under current source authorization.
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
+import json
 import time
 
 from app.services.road_calculation_service import calculate_distance_matrix
@@ -17,7 +18,8 @@ from app.services.vehicle_router import RoadLocation, RoadCalculationError
 def compare_facility_pool(db, *, origin: RoadLocation, evidence: list[FacilityEvidence],
                           entrances: dict[int, RoadLocation | list[RoadLocation]], network_id: str, analysis_at: datetime,
                           vehicle, artifact_root: Path, source_versions: dict,
-                          recall_complete: bool, timeout_seconds: float = 90, cancel_event=None) -> dict:
+                          recall_complete: bool, timeout_seconds: float = 90, cancel_event=None,
+                          resume_state=None, on_batch_checkpoint=None, max_batches=None) -> dict:
     if "authorized_area_ids" not in db.info or type(db.info.get("principal_user_id")) is not int:
         raise PermissionError("facility_comparison_scope_required")
     if cancel_event is not None and cancel_event.is_set():
@@ -47,6 +49,7 @@ def compare_facility_pool(db, *, origin: RoadLocation, evidence: list[FacilityEv
                 "policy_revision": binding.policy_revision, "vehicle": vehicle.model_dump(),
                 "analysis_at": analysis_at.isoformat(), "user_id": actor, "scope": frozen_scope,
                 "engine_version": binding.engine_version}
+    persisted_versions = json.loads(json.dumps(versions))
     rows = list(evidence)
     indices = [index for index, item in enumerate(rows) if item.road_state == "not_calculated"
                and item.entrance_verified and item.passage_allowed and points.get(item.asset_id)]
@@ -57,12 +60,29 @@ def compare_facility_pool(db, *, origin: RoadLocation, evidence: list[FacilityEv
                for entry_index, point in enumerate(points[rows[index].asset_id])]
     outcomes = {index: [{"state": "not_calculated", "distance_m": None} for _ in points[rows[index].asset_id]]
                 for index in indices}
-    deadline, batches = time.monotonic() + timeout_seconds, []
-    for offset in range(0, len(targets), 10):
+    from app.services.facility_candidate_pool import digest
+    target_hash = digest([[rows[index].asset_id, entry, point.model_dump()] for index, entry, point in targets])
+    next_offset, batches = 0, []
+    if resume_state is not None:
+        if (resume_state.get("versions") != persisted_versions or resume_state.get("targets_sha256") != target_hash
+                or type(resume_state.get("next_offset")) is not int
+                or not 0 <= resume_state["next_offset"] <= len(targets)):
+            raise ValueError("facility_road_checkpoint_changed")
+        next_offset, batches = resume_state["next_offset"], list(resume_state["batches"])
+        outcomes = {int(key): value for key, value in resume_state["outcomes"].items()}
+    def save_batch():
+        if on_batch_checkpoint is not None:
+            on_batch_checkpoint(json.loads(json.dumps({"versions": versions, "targets_sha256": target_hash,
+                "next_offset": next_offset, "targets_total": len(targets), "outcomes": outcomes,
+                "batches": batches, "complete": next_offset == len(targets)})))
+    if resume_state is None:
+        save_batch()  # Freeze target order even if the first engine call fails.
+    deadline, processed_batches = time.monotonic() + timeout_seconds, 0
+    for offset in range(next_offset, len(targets), 10):
         if cancel_event is not None and cancel_event.is_set():
             raise RoadCalculationError("road_calculation_cancelled")
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= 0 or (max_batches is not None and processed_batches >= max_batches):
             break
         selected = targets[offset:offset + 10]
         try:
@@ -84,9 +104,14 @@ def compare_facility_pool(db, *, origin: RoadLocation, evidence: list[FacilityEv
                 outcomes[index][entry_index] = {"state": cell["status"], "distance_m": cell["distance_m"]}
             batches.append({"asset_ids": [rows[index].asset_id for index, _, _ in selected],
                             "entry_indices": [entry_index for _, entry_index, _ in selected], "matrix": matrix})
+            next_offset = offset + len(selected)
+            processed_batches += 1
+            save_batch()
         except RoadCalculationError as error:
             if str(error) == "road_calculation_cancelled":
                 raise
+            if on_batch_checkpoint is not None:
+                raise  # Keep successful durable batches; retry only the unfinished one.
             for index, entry_index, _ in selected:
                 outcomes[index][entry_index] = {"state": "calculation_failed", "distance_m": None}
             # A broken engine is not a reason to repeat every remaining batch.
@@ -127,4 +152,6 @@ def compare_facility_pool(db, *, origin: RoadLocation, evidence: list[FacilityEv
             "scoring_evidence": [asdict(item) for item in rows],
             "entrance_results": [{"asset_id": rows[index].asset_id, "entries": values} for index, values in outcomes.items()],
             "batches": batches, "budget_seconds": timeout_seconds,
-            "budget_exhausted": time.monotonic() >= deadline}
+            "road_completion": {"targets_total": len(targets), "targets_completed": next_offset,
+                                "batches_completed": len(batches), "complete": next_offset == len(targets)},
+            "budget_exhausted": next_offset < len(targets)}

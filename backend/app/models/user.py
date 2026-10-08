@@ -6,6 +6,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Index,
+    text,
     String,
     Text,
 )
@@ -50,6 +52,11 @@ class UserSession(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index('uq_derived_retry_request', 'user_id', 'request_id', unique=True,
+              sqlite_where=text("action = 'derived_task.explicit_retry'"),
+              postgresql_where=text("action = 'derived_task.explicit_retry'")),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True)

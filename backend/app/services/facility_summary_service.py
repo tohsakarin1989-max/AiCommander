@@ -127,7 +127,7 @@ def _read_dossier(db, asset_id, *, start_date=None, end_date=None, context=None)
     asset = db.query(JurisdictionAsset).populate_existing().filter_by(id=asset_id).first()
     if asset is None:
         raise ValueError('facility_not_found')
-    content = build_dossier_content(db, asset_id, start_date=start_date, end_date=end_date)
+    content = build_dossier_content(db, asset_id, start_date=start_date, end_date=end_date, temporal_context=context)
     content['summary'] = summary_metadata(db, asset)
     if content['sections'].get('production', {}).get('state') == 'restricted':
         content['summary'] = {'state': 'restricted', 'revision': None, 'updated_at': None,
@@ -144,8 +144,10 @@ def _read_dossier(db, asset_id, *, start_date=None, end_date=None, context=None)
                 'boundary': '名称不是身份；跨来源对应由管理员明确记录，可撤销，不自动合并原始设施。'}
             for value in content['identity']['items']:
                 value['name'] = value.get('record_name')
-            historical = FacilityIdentityService.get_asset_at(db, asset_id,
-                valid_at=context.valid_at, known_at=context.known_at)
+            from app.services.facility_temporal_conditions import resolve_conditions
+            historical = resolve_conditions(db, asset_id,
+                valid_at=context.valid_at, valid_from=context.valid_from, valid_to=context.valid_to,
+                known_at=context.known_at, knowledge_mode=context.knowledge_mode, frozen=True)
             version = db.query(JurisdictionAssetVersion).filter_by(id=historical['version_id']).first() if historical['version_id'] else None
             content['temporal_context'] = {**historical, 'boundary': boundary,
                 'valid_from': utc_datetime(version.valid_from) if version else None,
@@ -155,7 +157,8 @@ def _read_dossier(db, asset_id, *, start_date=None, end_date=None, context=None)
             content['identity'] = {'asset_id': asset_id, 'state': 'restricted', 'boundary': '来源受限，不返回对应关系或数量'}
             content['temporal_context'] = {'state': 'restricted', 'valid_at': context.valid_at,
                 'known_at': context.known_at, 'snapshot': None, 'version_id': None, 'boundary': boundary}
-        content['computability'] = facility_readiness(db, asset_id, context=context)
+        content['computability'] = (facility_readiness(db, asset_id, context=context) if context.valid_at else {
+            'state': 'partial', 'checks': [], 'boundary': '不确定案发区间未压成单点进行道路准备度计算；分段生产条件不证明全时段道路可通行。'})
     versions = content.setdefault('versions', {})
     versions['section_versions'] = {key: result_hash(value) for key, value in content['sections'].items()}
     versions['view_version'] = result_hash({'content': content, 'user_id': db.info.get('principal_user_id'),

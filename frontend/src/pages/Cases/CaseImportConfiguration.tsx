@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import type { CaseImportOptions } from '../../services/cases'
 import { caseImportsApi, type ImportHeaders } from '../../services/caseImports'
-import { importFieldLabels } from './importCorrection'
+import { importFieldLabels, importTimeZoneLabel } from './importCorrection'
 
 interface Props {
   file: File | null
@@ -45,10 +45,10 @@ export default function CaseImportConfiguration({ file, areaId, settings, disabl
       <Select aria-label="套用导入模板" placeholder="选择本厂区已有模板" style={{ width: '100%' }}
         disabled={busy || !templates.isSuccess} value={null}
         options={(templates.isSuccess ? templates.data : []).filter(item => item.operational_area_id === areaId)
-          .map(item => ({ value: item.id, label: `${item.name} · ${item.id.slice(0, 8)}` }))}
+          .map(item => ({ value: item.id, label: `${item.name} · ${importTimeZoneLabel(item.settings.time_zone)}` }))}
         onChange={id => {
           const template = templates.data?.find(item => item.id === id)
-          if (template) { onChange(template.settings); setNotice(`已套用“${template.name}”，请重新预览`) }
+          if (template) { onChange(template.settings); setNotice(`已套用“${template.name}”。无时区时间按${importTimeZoneLabel(template.settings.time_zone)}解释，请重新预览。`) }
         }} />
       <Button disabled={!file || busy} onClick={() => { inspect.reset(); setHeaders(null); inspect.mutate() }} style={{ margin: '12px 0' }}>
         读取文件列名

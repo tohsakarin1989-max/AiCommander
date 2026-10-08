@@ -9,7 +9,7 @@ import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -64,6 +64,9 @@ def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version,
     if include_facility_pool:
         payload['facility_versions'] = current_versions()
         payload['facility_algorithm'] = payload['facility_versions']['scorer']
+        from app.services.facility_dependency_guard import dependency_signature
+        dependencies = dependency_signature(db)
+        payload['dependency_sha256'] = dependencies['sha256']
     if history_revision is not None:
         if not include_facility_pool:
             raise ValueError('history_refresh_requires_facility_pool')
@@ -71,6 +74,8 @@ def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version,
         payload['history_refresh_event_id'] = str(UUID(history_revision))
     key = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
     payload['analysis_at'] = analysis_at.isoformat()
+    if include_facility_pool:
+        payload['dependencies'] = dependencies
     dialect = db.get_bind().dialect.name
     if dialect not in ('sqlite', 'postgresql'):
         raise ValueError('road_job_database_unsupported')
@@ -103,8 +108,17 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
             return {'event_id': event_id, 'status': event.status, 'claimed': False}
         token, attempts = event.worker_id, event.attempts
         payload = dict(event.payload)
+        from app.services.facility_dependency_guard import VERSION as DEPENDENCY_VERSION
+        dependencies = payload.get('dependencies')
+        compatible_dependencies = (isinstance(dependencies, dict)
+            and dependencies.get('schema') == DEPENDENCY_VERSION
+            and isinstance(dependencies.get('sha256'), str) and len(dependencies['sha256']) == 64
+            and dependencies['sha256'] == payload.get('dependency_sha256')
+            and dependencies.get('user_id') == payload.get('user_id')
+            and dependencies.get('scope') == payload.get('scope'))
         if (payload.get('job_version') != JOB_VERSION or
-                (payload.get('facility_algorithm') and payload.get('facility_versions') != current_versions())):
+                (payload.get('facility_algorithm') and (payload.get('facility_versions') != current_versions()
+                                                       or not compatible_dependencies))):
             OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='superseded')
             db.commit()
             return {'event_id': event_id, 'status': 'superseded'}
@@ -113,6 +127,9 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
         vehicle = VehicleAssumption.model_validate(payload['vehicle'])
         def authorize():
             _identity(db, payload['user_id'], payload['scope'])
+            scope = db.info['authorized_area_ids']
+            if payload.get('facility_algorithm') and (None if scope is None else sorted(scope)) != payload['scope']:
+                raise PermissionError('facility_job_scope_changed')
             source = CaseResultService.read(db, payload['result_id'])
             binding = resolve_network(db, payload['network_id'], analysis_at=at, vehicle=vehicle)
             if (source['content_sha256'] != payload['content_sha256']
@@ -125,18 +142,30 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
             raise RoadCalculationError('road_calculation_cancelled')
         calculate = compare_result_roads
         if payload.get('facility_algorithm'):
-            from app.services.case_facility_comparison import compare_case_facilities
             if payload['facility_algorithm'] != current_versions()['scorer']:
                 raise ValueError('facility_job_algorithm_unavailable')
-            calculate = compare_case_facilities
-        result = calculate(db, result_id=payload['result_id'], analysis_at=at,
-            vehicle=vehicle, artifact_root=artifact_root, cancel_event=cancel_event,
-            network_id=payload['network_id'])
+            from app.services.facility_job_checkpoint import advance_comparison
+            try:
+                result = advance_comparison(db, event_id=event_id, worker_id=token, payload=payload,
+                    authorize=authorize, at=at, vehicle=vehicle, artifact_root=artifact_root, cancel_event=cancel_event)
+            except ValueError as error:
+                if str(error) not in {'facility_recall_map_missing', 'facility_recall_origin_missing'}:
+                    raise
+                result = {'calculation': None}
+        else:
+            result = calculate(db, result_id=payload['result_id'], analysis_at=at,
+                vehicle=vehicle, artifact_root=artifact_root, cancel_event=cancel_event,
+                network_id=payload['network_id'])
         if payload.get('history_refresh_event_id'):
             result = {**result, 'history_refresh_event_id': payload['history_refresh_event_id']}
         authorize()
         if cancel_event is not None and cancel_event.is_set():
             raise RoadCalculationError('road_calculation_cancelled')
+        from app.services.facility_job_checkpoint import fence_lease
+        fence_lease(db, event_id, token)
+        if payload.get('facility_algorithm'):
+            from app.services.facility_dependency_guard import require_dependencies
+            require_dependencies(db, payload['dependencies'])
         has_calculation = isinstance(result.get('matrix'), dict) or isinstance(result.get('calculation'), dict)
         artifact = freeze_road_artifact(db, result) if has_calculation else None
         if cancel_event is not None and cancel_event.is_set():
@@ -150,12 +179,30 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
         db.rollback()
         if token is None:
             raise
+        from app.services.facility_job_checkpoint import ComparisonPending, fence_lease
+        from app.services.outbox_claim_service import OutboxClaimLostError
+        if isinstance(error, OutboxClaimLostError):
+            raise
         cancelled = isinstance(error, RoadCalculationError) and str(error) == 'road_calculation_cancelled'
-        status = 'cancelled' if cancelled else ('retry' if attempts < 3 else 'failed')
+        pending = isinstance(error, ComparisonPending)
+        latest = db.get(OutboxEvent, event_id, populate_existing=True)
+        saved = dict(latest.payload)
+        failures = saved.get('ordinary_failures', 0) + (0 if pending or cancelled else 1)
+        superseded = bool(saved.get('facility_algorithm')) and (isinstance(error, PermissionError) or
+            (isinstance(error, ValueError) and any(word in str(error) for word in
+                ('changed', 'outdated', 'integrity', 'checkpoint', 'unavailable'))))
+        status = ('cancelled' if cancelled else 'pending' if pending else 'superseded' if superseded
+                  else 'retry' if failures < 3 else 'failed')
         try:
+            fence_lease(db, event_id, token)
+            saved['ordinary_failures'] = failures
+            db.execute(update(OutboxEvent).where(OutboxEvent.id == event_id,
+                OutboxEvent.worker_id == token, OutboxEvent.status == 'processing').values(payload=saved)
+                .execution_options(synchronize_session=False))
             OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status=status,
-                error='road_job_cancelled' if cancelled else 'road_job_failed',
-                available_at=datetime.now(timezone.utc) + timedelta(seconds=min(60, 2 ** attempts)))
+                error=None if pending else 'road_job_cancelled' if cancelled else
+                      'road_job_inputs_superseded' if superseded else 'road_job_failed',
+                available_at=datetime.now(timezone.utc) + timedelta(seconds=1 if pending else min(60, 2 ** failures)))
             db.commit()
         except Exception:
             db.rollback()

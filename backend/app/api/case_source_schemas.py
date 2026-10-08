@@ -11,7 +11,7 @@ OilUnit = Literal["tonne", "liter", "kg", "m3", "unknown"]
 
 class CaseLocationDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | None = None
+    id: int | None = Field(default=None, strict=True, gt=0)
     role: Literal["incident", "discovery", "mentioned", "source_candidate", "custody"]
     description: str | None = Field(default=None, max_length=2000)
     geometry: dict | None = None
@@ -28,7 +28,7 @@ class CaseLocationDraft(BaseModel):
 
 class OilMeasurementDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | None = None
+    id: int | None = Field(default=None, strict=True, gt=0)
     value: float = Field(ge=0, allow_inf_nan=False)
     unit: OilUnit
     stage: Literal["involved", "seized", "transferred", "recovered", "unknown"] = "unknown"

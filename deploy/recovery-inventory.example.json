@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "purpose": "recovery",
+  "application_version": "7.5.0-stable",
+  "database_revision": "REPLACE_WITH_BACKUP_REVISION",
+  "platform": "linux/amd64",
+  "capabilities": ["core", "maps", "documents"],
+  "capture": {"writers_paused": false, "checkpoint_id": ""},
+  "configuration_encrypted": false,
+  "secret_escrow": {"separate": true, "receipt_id": "", "last_verified_at": ""},
+  "artifacts": [
+    {"role": "database_dump", "path": "approved.dump", "version": "7.5.0-stable", "bytes": 0, "sha256": ""},
+    {"role": "database_manifest", "path": "approved.dump.manifest", "version": "7.5.0-stable", "bytes": 0, "sha256": ""},
+    {"role": "configuration_archive", "path": "configuration.encrypted", "version": "REPLACE_CHECKPOINT", "bytes": 0, "sha256": ""},
+    {"role": "originals_inventory", "path": "originals.json", "version": "REPLACE_CHECKPOINT", "bytes": 0, "sha256": ""},
+    {"role": "map_files", "path": "maps.tar", "version": "REPLACE_MAP_VERSION", "bytes": 0, "sha256": ""},
+    {"role": "map_inventory", "path": "maps-manifest.json", "version": "REPLACE_MAP_VERSION", "bytes": 0, "sha256": ""}
+  ]
+}

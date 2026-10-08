@@ -171,6 +171,7 @@ def test_batch_review_only_missing_preprocess_does_not_skip_review_chain():
     seeded = _seed(db)
     seeded[0].features = {"existing": True}
     db.commit()
+    cases.CasePreprocessService.preprocess_case(db, seeded[0].id, use_llm=False)
 
     reviewed = client.post(
         "/api/cases/batch-review",
@@ -186,7 +187,8 @@ def test_batch_review_only_missing_preprocess_does_not_skip_review_chain():
     assert payload["processed"] == 2
     assert payload["preprocess"]["success"] == 1
     assert payload["preprocess"]["skipped"] == 1
-    assert db.query(PreprocessJob).count() == 1
+    assert db.query(PreprocessJob).count() == 0
+    assert seeded[0].features == {"existing": True}
 
 
 def test_batch_review_does_not_reopen_confirmed_experience_card():
@@ -293,6 +295,7 @@ def test_batch_preprocess_recovers_from_one_case_database_failure(monkeypatch):
     assert payload["processed"] == 2
     assert payload["success"] == 1
     assert payload["failed"] == 1
-    jobs = {job.case_id: job.status for job in db.query(PreprocessJob).all()}
-    assert jobs == {seeded[0].id: "success", failing_id: "failed"}
+    assert db.query(PreprocessJob).count() == 0
+    from app.models.case_pipeline import CaseAnalysisProfile
+    assert [row.case_id for row in db.query(CaseAnalysisProfile)] == [seeded[0].id]
     assert db.query(Case).count() == 2

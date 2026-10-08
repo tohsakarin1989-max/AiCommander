@@ -46,7 +46,8 @@ def validate_sources(db, manifest):
                 raise PermissionError('facility_material_sources_unavailable')
 
 
-def freeze_facility(db, asset_id, *, idempotency_key, start_date=None, end_date=None, valid_at=None, known_at=None):
+def freeze_facility(db, asset_id, *, idempotency_key, start_date=None, end_date=None, valid_at=None, known_at=None,
+                    valid_from=None, valid_to=None, knowledge_mode=None):
     user = _identity(db)
     if user.role not in {'admin', 'analyst'}:
         raise PermissionError('material_editor_required')
@@ -55,7 +56,9 @@ def freeze_facility(db, asset_id, *, idempotency_key, start_date=None, end_date=
         raise PermissionError('facility_material_unavailable')
     require_area_write_access(db, asset.operational_area_id)
     signature = result_hash(jsonable_encoder({'asset_id': asset_id, 'start_date': start_date,
-        'end_date': end_date, 'valid_at': valid_at, 'known_at': known_at}))
+        'end_date': end_date, 'valid_at': valid_at, 'known_at': known_at,
+        **({'valid_from': valid_from, 'valid_to': valid_to, 'knowledge_mode': knowledge_mode}
+           if any(value is not None for value in (valid_from, valid_to, knowledge_mode)) else {})}))
     prior = db.query(FacilityMaterial).filter_by(created_by=user.id, idempotency_key=idempotency_key).first()
     if prior is not None:
         if prior.request_sha256 != signature:
@@ -63,7 +66,8 @@ def freeze_facility(db, asset_id, *, idempotency_key, start_date=None, end_date=
         read_facility_material(db, prior.id)
         return prior, False
     context = freeze_facility_context(db, area_id=asset.operational_area_id,
-                                      valid_at=valid_at, known_at=known_at)
+                                      valid_at=valid_at, known_at=known_at, valid_from=valid_from,
+                                      valid_to=valid_to, knowledge_mode=knowledge_mode)
     body = jsonable_encoder(read_dossier(db, asset_id, start_date=start_date, end_date=end_date, context=context))
     manifest = freeze_dossier_sources(db, body)
     # Capture source state, not arbitrary client payload. Context timestamp is
@@ -104,6 +108,16 @@ def freeze_dossier_sources(db, content):
 
 def validate_dossier_sources(db, content, manifest):
     validate_sources(db, manifest)
+    def validate_context(context):
+        if not context or context.get('schema_version') != 'facility-temporal-7.3-1':
+            return
+        from app.services.facility_temporal_conditions import validate_temporal_access
+        try:
+            validate_temporal_access(db, context)
+        except LookupError:
+            raise PermissionError('facility_material_source_unavailable') from None
+
+    validate_context(content.get('temporal_context'))
     # Check referenced immutable sources and current access without recomputing
     # the dossier. Old values remain old values after a legitimate source edit.
     from app.services.case_result_service import CaseResultService
@@ -128,6 +142,10 @@ def validate_dossier_sources(db, content, manifest):
             raise PermissionError('facility_material_source_unavailable')
     for section in content['sections'].values():
         for item in section.get('items', []):
+            # Historical case conditions can depend on a different source than
+            # the top-level facility view. Recheck each frozen context, not only
+            # the currently selected point, without recomputing old values.
+            validate_context(item.get('source_context'))
             profile_id = item.get('profile_id')
             if profile_id and db.query(CaseAnalysisProfile.id).filter_by(id=profile_id).first() is None:
                 raise PermissionError('facility_material_source_unavailable')

@@ -17,7 +17,9 @@ case "${deployment_image_mode:-build}" in
     build) compose build --pull ;;
     prebuilt)
         # Refuse missing images before migrations or service changes; no pulling.
-        deployment_images="$(compose config --images)"
+        deployment_services="$(production_services)"
+        # Word splitting is limited to the fixed service names above.
+        deployment_images="$(compose config --images $deployment_services)"
         [ -n "$deployment_images" ] || { echo '部署镜像清单为空，已停止' >&2; exit 1; }
         printf '%s\n' "$deployment_images" | while IFS= read -r deployment_image; do
             docker image inspect "$deployment_image" >/dev/null 2>&1 || {
@@ -28,13 +30,13 @@ case "${deployment_image_mode:-build}" in
         ;;
     *) echo 'DEPLOY_IMAGE_MODE 只能为 build 或 prebuilt' >&2; exit 1 ;;
 esac
-compose run --rm --no-deps backend \
+compose_run --rm --no-deps backend \
     python -c "from app.config import settings; print('生产应用配置校验通过')"
-compose up -d --wait --wait-timeout 120 postgres redis
+compose_start -d --wait --wait-timeout 120 postgres redis
 COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" sh ./scripts/backup-production.sh
 ALEMBIC_TARGET="$(sed -n 's/^ALEMBIC_TARGET=//p' "$ENV_FILE" | tail -1)"
-compose run --rm backend alembic upgrade "$ALEMBIC_TARGET"
-compose up -d --remove-orphans --wait --wait-timeout 180
+compose_run --rm --no-deps backend alembic upgrade "$ALEMBIC_TARGET"
+compose_start -d --remove-orphans --wait --wait-timeout 180
 compose ps
 
 APP_PORT="$(sed -n 's/^APP_PORT=//p' "$ENV_FILE" | tail -1)"

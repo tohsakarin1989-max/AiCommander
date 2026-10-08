@@ -6,7 +6,7 @@ import type { FacilityDossier } from '../../services/facilityAnalysis'
 
 const state = vi.hoisted(() => ({ search: 'assetId=7', epoch: 1, error: false, data: undefined as FacilityDossier | undefined, keys: [] as unknown[][] }))
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 3 }, sessionEpoch: state.epoch }) }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn(), useSearchParams: () => [new URLSearchParams(state.search), vi.fn()], Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a> }))
+vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn(), useLocation: () => ({ pathname: '/jurisdiction' }), useSearchParams: () => [new URLSearchParams(state.search), vi.fn()], Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a> }))
 vi.mock('antd', () => ({ Drawer: ({ children }: { children: ReactNode }) => <div>{children}</div>, Spin: () => <p>读取中</p>, Alert: ({ message }: { message: ReactNode }) => <p>{message}</p> }))
 vi.mock('./FacilityCaseLinkForm', () => ({ default: () => <p>按材料登记明确关联</p>, FacilityCaseLinkRevoke: ({ associationId }: { associationId: number }) => <p>撤销人工关联 {associationId}</p> }))
 vi.mock('@tanstack/react-query', () => ({ useMutation: () => ({ isPending: false, mutate: vi.fn() }), useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
@@ -24,7 +24,7 @@ describe('设施档案读取与资料分类', () => {
     renderToStaticMarkup(<FacilityDossierDrawer />)
     state.search = 'assetId=8&start_date=2026-09-01'; state.epoch = 2
     const html = renderToStaticMarkup(<FacilityDossierDrawer />)
-    expect(state.keys[1]).toEqual(['facility-dossier', 3, 2, 8, '2026-09-01', undefined, undefined, undefined])
+    expect(state.keys[1]).toEqual(['facility-dossier', 3, 2, 8, { start_date: '2026-09-01', end_date: undefined, valid_at: undefined, known_at: undefined, valid_from: undefined, valid_to: undefined, knowledge_mode: undefined }])
     expect(html).not.toContain('同名井')
   })
   it('撤权/读取失败时不展示仍在缓存中的内容', () => {
@@ -36,8 +36,8 @@ describe('设施档案读取与资料分类', () => {
   it('双时间进入独立缓存，历史查看不冒充当前其他分区的历史还原', () => {
     state.search = 'assetId=7&valid_at=2026-08-01T00%3A00%3A00Z&known_at=2026-09-01T00%3A00%3A00Z&resultRef=result-1&mapSnapshot=snapshot-1'
     const html = renderToStaticMarkup(<FacilityDossierDrawer />)
-    expect(state.keys[0].slice(-2)).toEqual(['2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'])
-    expect(html).toContain('指定时点的生产资料'); expect(html).toContain('不是上述历史时点的完整还原')
+    expect(state.keys[0][4]).toMatchObject({ valid_at: '2026-08-01T00:00:00.000Z', known_at: '2026-09-01T00:00:00.000Z' })
+    expect(html).toContain('指定时间条件的生产资料'); expect(html).toContain('不是上述历史时点的完整还原')
     expect(html).toContain('按所选时点与当前权限核对计算资料')
     expect(html).toContain('当前读取 · 空间邻近案件'); expect(html).toContain('原成果引用：result-1')
     expect(html).toContain('清空，查看当下')

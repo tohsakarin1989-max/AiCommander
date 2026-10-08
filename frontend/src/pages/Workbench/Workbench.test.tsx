@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import Workbench, { dailyProfileStatus, formatDailyOccurredTime } from './Workbench'
+import Workbench, { dailyProfileStatus, formatDailyOccurredTime, formatDailyCaseTime } from './Workbench'
 import { workbenchApi } from '../../services/workbench'
 import type { DailyWorkbenchCase } from '../../services/workbench'
 
@@ -109,5 +109,12 @@ describe('v5.0 只读日常工作台', () => {
     expect(formatDailyOccurredTime('2026-09-12T08:30:00+08:00')).not.toContain('未注明时区')
     expect(formatDailyOccurredTime('2026-09-12T00:30:00Z')).not.toContain('未注明时区')
     expect(formatDailyOccurredTime(null)).toBe('未记录')
+  })
+  it('合法区间完整显示，不取中点也不显示缺少案发时间', () => {
+    const item = { occurred_time: null, occurred_from: '2026-09-01T08:00:00', occurred_to: '2026-09-03T10:00:00' } as DailyWorkbenchCase
+    expect(formatDailyCaseTime(item)).toContain('2026-09-01 08:00')
+    expect(formatDailyCaseTime(item)).toContain('2026-09-03 10:00')
+    expect(formatDailyCaseTime(item)).toContain('时间区间')
+    expect(formatDailyCaseTime({ ...item, occurred_to: null, time_expression: '日期不详' })).toBe('日期不详（具体时间未知）')
   })
 })

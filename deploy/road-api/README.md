@@ -1,8 +1,10 @@
 # 道路与报告组合API镜像
 
+> 当前运维入口：[v7.0 内网启用与恢复](../../docs/current-intranet-operations.zh-CN.md)。两个 Dockerfile 现检查唯一 Alembic head 和既有契约迁移，不再要求 head 等于旧版 `b508c42fd75b`。下面镜像 ID 与运行结果是历史证据；实际发布须重查同架构、当前源码及依赖，不能直接当本次验收。可复用已核验运行镜像，仅以 `Dockerfile.cached` 更新应用层，无需重编 Valhalla。
+
 ## 4.x当前收口候选
 
-当前工作树迁移头为`b508c42fd75b`，两种构建入口已同步校验该版本。
+当时工作树迁移头为`b508c42fd75b`；该数字不再代表当前源码迁移头。
 本机候选`aicommander-backend-roads:4.5-closeout-candidate`清单摘要：
 `9a51a5be1511f6d95d9818b9fde05137e14931e05d1099d6139d573e63548ad0`。
 已在不挂载开发源码的独立PostgreSQL/Redis环境通过录入、自动画像、原生道路计算、
@@ -49,7 +51,7 @@ docker build --network none -f deploy/road-api/Dockerfile.cached \
   -t aicommander-backend-roads:4.2-integrated-candidate .
 ```
 
-交付时将基础镜像固定到已核验摘要；若依赖变化，此入口应失败，回联网构建区重新准备基础镜像，
+交付时核对本地基底标签的 image ID 与架构，或使用确实可解析的仓库摘要引用；不要把裸 `sha256:<image ID>` 传给 FROM，BuildKit 可能将其解释为远程镜像名称。若依赖变化，此入口应失败，回联网构建区重新准备基础镜像，
 不得在内网临时下载依赖。应用和迁移只从白名单目录复制，不包含业务数据库、地图或配置密钥。
 
 本次离线增量构建镜像清单摘要：

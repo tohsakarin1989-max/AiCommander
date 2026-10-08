@@ -21,7 +21,10 @@ def test_repository_version_is_exposed_consistently():
     assert app.version == repository_version
     assert f"APP_VERSION={repository_version}" in env_example
     assert f"${{APP_VERSION:-{repository_version}}}" in compose
-    assert f"runtime?.version || '{repository_version}'" in layout
+    # The UI must show the server's actual version, not claim a local version
+    # when runtime metadata has not loaded (covered behaviorally in frontend).
+    assert "runtime?.version || '待确认'" in layout
+    assert f"runtime?.version || '{repository_version}'" not in layout
 
 
 def test_github_quality_gate_covers_release_checks():

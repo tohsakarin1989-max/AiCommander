@@ -4,11 +4,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { mapFoundationApi } from '../../services'
+import MapPackageUploadPanel from './MapPackageUploadPanel'
 
 
-export default function OfflineMapManager() {
+export default function OfflineMapManager({ initialAreaId }: { initialAreaId?: number } = {}) {
   const queryClient = useQueryClient()
-  const [areaId, setAreaId] = useState<number>()
+  const [areaId, setAreaId] = useState<number | undefined>(initialAreaId)
+  useEffect(() => { if (initialAreaId != null) setAreaId(initialAreaId) }, [initialAreaId])
   const [bundleId, setBundleId] = useState<number>()
 
   const areasQuery = useQuery({ queryKey: ['operational-areas'], queryFn: mapFoundationApi.listAreas })
@@ -84,6 +86,9 @@ export default function OfflineMapManager() {
         current={current ? 3 : ready ? 2 : bundleId ? 1 : 0}
         items={[{ title: '验包' }, { title: '选择厂区' }, { title: '构建' }, { title: '发布' }]}
       />
+      <details><summary>分片地图包：继续上传与后台验包</summary>
+        <MapPackageUploadPanel onRegistered={id => { setBundleId(id); refresh() }} />
+      </details>
       <div className="offline-map-manager__controls">
         <Upload
           accept=".zip"

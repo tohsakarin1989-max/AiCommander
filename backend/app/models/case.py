@@ -96,6 +96,7 @@ class CaseVehicle(Base):
         Index("ix_case_vehicles_case_id", "case_id"),
         Index("ix_case_vehicles_plate_number", "plate_number"),
         Index("ix_case_vehicles_handling_status", "handling_status"),
+        {"sqlite_autoincrement": True},
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -130,6 +131,7 @@ class CasePerson(Base):
         Index("ix_case_persons_case_id", "case_id"),
         Index("ix_case_persons_name", "name"),
         Index("ix_case_persons_id_number", "id_number"),
+        {"sqlite_autoincrement": True},
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -154,6 +156,7 @@ class CaseEvidence(Base):
         Index("ix_case_evidence_case_id", "case_id"),
         Index("ix_case_evidence_type", "evidence_type"),
         Index("ix_case_evidence_requirement", "requirement_key"),
+        {"sqlite_autoincrement": True},
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -181,6 +184,7 @@ class OilRecoveryRecord(Base):
     __table_args__ = (
         Index("ix_oil_recovery_case_id", "case_id"),
         Index("ix_oil_recovery_oil_nature", "oil_nature"),
+        {"sqlite_autoincrement": True},
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -205,6 +209,7 @@ class CaseTip(Base):
         Index("ix_case_tips_case_id", "case_id"),
         Index("ix_case_tips_reported_at", "reported_at"),
         Index("ix_case_tips_verification_status", "verification_status"),
+        {"sqlite_autoincrement": True},
     )
 
     id = Column(Integer, primary_key=True, index=True)

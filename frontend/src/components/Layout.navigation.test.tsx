@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Layout from './Layout'
 
-const state = vi.hoisted(() => ({ path: '/workbench', role: 'admin', lab: false }))
+const state = vi.hoisted(() => ({ path: '/workbench', role: 'admin', lab: false, version: '5.4.0-stable' as string | undefined }))
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1, role: state.role, display_name: '测试用户' }, logout: vi.fn() }) }))
 vi.mock('../theme/ThemeContext', () => ({ useThemeMode: () => ({ mode: 'dark', toggle: vi.fn() }) }))
 vi.mock('../config/useRuntimeFeatures', () => ({ useRuntimeFeatures: () => ({ availability: {
   bonus_accounting: 'disabled', legacy_operations: 'disabled', showcase: 'disabled', agent_lab: state.lab ? 'enabled' : 'disabled',
-}, query: { data: { version: '5.4.0-stable' } } }) }))
+}, query: { data: { version: state.version } } }) }))
 vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: state.path, search: '?caseId=7' }), useNavigate: () => vi.fn(),
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => <a href={to} {...props}>{children}</a>,
@@ -21,7 +21,13 @@ vi.mock('antd', () => ({
 }))
 
 describe('精简导航后的深链页面归属', () => {
-  beforeEach(() => { state.path = '/workbench'; state.role = 'admin'; state.lab = false })
+  beforeEach(() => { state.path = '/workbench'; state.role = 'admin'; state.lab = false; state.version = '5.4.0-stable' })
+  it('版本未读取时不冒充本地或历史版本', () => {
+    state.version = undefined
+    expect(renderToStaticMarkup(<Layout>{null}</Layout>)).toContain('运行版本 待确认')
+    state.version = '7.0.0-stable'
+    expect(renderToStaticMarkup(<Layout>{null}</Layout>)).toContain('运行版本 7.0.0-stable')
+  })
   it('日常只保留工作台，不挂载旧首页或工作会话壳', () => {
     const html = renderToStaticMarkup(<Layout><p>日常内容</p></Layout>)
     expect(html).toContain('工作台 / 日常工作')

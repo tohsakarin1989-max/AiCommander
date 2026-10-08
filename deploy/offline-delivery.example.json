@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "purpose": "delivery",
+  "application_version": "7.5.0-stable",
+  "platform": "linux/amd64",
+  "capabilities": ["core", "documents"],
+  "artifacts": [
+    {"role": "release_archive", "path": "source.tar", "version": "7.5.0-stable", "bytes": 0, "sha256": ""},
+    {"role": "image_archive", "path": "images.tar", "version": "7.5.0-stable", "bytes": 0, "sha256": ""},
+    {"role": "operations_guide", "path": "current-intranet-operations.zh-CN.md", "version": "7.5.0-stable", "bytes": 0, "sha256": ""}
+  ],
+  "images": [
+    {"service": "postgres", "reference": "sha256:REPLACE_WITH_APPROVED_ID", "image_id": "", "platform": "linux/amd64", "version": "16-with-postgis-and-pgvector"},
+    {"service": "redis", "reference": "REPLACE_WITH_COMPOSE_REDIS_REFERENCE", "image_id": "", "platform": "linux/amd64", "version": "7"},
+    {"service": "backend", "reference": "aicommander-backend-documents:7.5.0-stable", "image_id": "", "platform": "linux/amd64", "version": "7.5.0-stable"},
+    {"service": "celery", "reference": "aicommander-backend:7.5.0-stable", "image_id": "", "platform": "linux/amd64", "version": "7.5.0-stable"},
+    {"service": "celery-beat", "reference": "aicommander-backend:7.5.0-stable", "image_id": "", "platform": "linux/amd64", "version": "7.5.0-stable"},
+    {"service": "frontend", "reference": "aicommander-frontend:7.5.0-stable", "image_id": "", "platform": "linux/amd64", "version": "7.5.0-stable"}
+  ]
+}

@@ -13,6 +13,7 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.services.case_history_fragments import FRAGMENT_INDEX_VERSION, condition_term, fragment_reference
 from app.services.case_history_index_service import cached_features, content_hash, rule_version
 from app.services.case_search_service import CaseSearchService
+from app.services.case_time_window import case_time_fields, TIME_WINDOW_BOUNDARY
 from app.services.case_semantic_evidence import freeze_sources, snapshot_payload, text_hash
 from app.services.case_semantic_service import build_semantic_profile
 from app.services.local_embedding_service import LocalEmbeddingError, get_local_embedder, normalized_vector
@@ -64,7 +65,7 @@ def _sqlite_distance(db, vector):
     return func.history_fragment_cosine(Fragment.embedding)
 
 
-def validate_fragment_item(db, item):
+def validate_fragment_item(db, item, *, source_case_id=None):
     """保存/读取/追问/导出均复核实际原文，不依赖派生索引继续存在。"""
     from app.services.case_history_retrieval import _asset_access, source_values
     if type(item.get('case_id')) is not int or type(item.get('source_id')) is not int:
@@ -72,6 +73,12 @@ def validate_fragment_item(db, item):
     case = db.scalar(select(Case).where(Case.id == item['case_id']).execution_options(populate_existing=True))
     if case is None:
         raise ValueError('history_case_unavailable')
+    time_fields = case_time_fields(case)
+    # Older frozen results did not project time metadata. New results must not
+    # carry stale/forged dates alongside an otherwise valid text reference.
+    if any(field in item for field in time_fields) and any(
+            item.get(field) != value for field, value in time_fields.items()):
+        raise ValueError('history_time_changed')
     source_type, source_id = item['source_type'], item['source_id']
     versions = item['versions']
     fragment = item['fragment']
@@ -132,6 +139,18 @@ def validate_fragment_item(db, item):
         if (profile_id != versions.get('process_profile_id') or event is None
                 or any(event['reference'].get(key) != value for key, value in reference.items())):
             raise ValueError('history_process_changed')
+    if 'process_comparison' in item:
+        from app.services.case_history_fragments import process_comparison_input
+        from app.services.case_history_process_comparison import compare_processes
+        comparison = item['process_comparison']
+        identifier = comparison['current']['case_id']
+        if (type(identifier) is not int or identifier <= 0 or source_type != 'case'
+                or identifier != source_case_id):
+            raise ValueError('history_comparison_source_changed')
+        current = db.scalar(select(Case).where(Case.id == identifier).execution_options(populate_existing=True))
+        if current is None or comparison != compare_processes(
+                process_comparison_input(db, current), process_comparison_input(db, case)):
+            raise ValueError('history_comparison_evidence_changed')
     return case
 
 
@@ -274,6 +293,11 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
         if vector is not None and not interrupted():
             vector_clauses = [Fragment.embedding_state == 'ready', Fragment.embedding.is_not(None),
                 Fragment.model_version == embedder.model_version, Fragment.dimension == len(vector)]
+            from app.services.case_history_vector_reuse import FragmentVectorReuse
+            encoder_fingerprint = FragmentVectorReuse(db, embedder).fingerprint
+            if encoder_fingerprint is not None:
+                vector_clauses.append(
+                    CaseHistoryIndex.payload['fragments']['encoder_fingerprint'].as_string() == encoder_fingerprint)
             if db.get_bind().dialect.name == 'postgresql':
                 vector_clauses.append(func.vector_dims(Fragment.embedding) == len(vector))
             vector_total = db.scalar(select(func.count()).select_from(base.where(*vector_clauses).subquery())) or 0
@@ -350,6 +374,7 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             if fragment.source_type == 'legacy_experience_card':
                 evidence['id'] = f'case:{case.id}'
             item = {'source_type': fragment.source_type, 'source_id': int(fragment.source_id),
+                **case_time_fields(case),
                 'case_id': case.id, 'case_number': case.case_number, 'title': title, 'snippet': fragment.quote,
                 'route': f'/cases?caseId={case.id}', 'versions': versions, 'evidence_refs': [evidence, *refs],
                 'profile_state': 'indexed_fragment', 'derived_state': 'available', **comparison,
@@ -379,6 +404,19 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
             if parent_key not in seen:
                 seen.add(parent_key)
                 ranked.append(item)
+        # Only the displayed case references need a two-sided comparison. All
+        # evidence comes from validated existing profiles, not a new extraction.
+        displayed = ranked[:limit]
+        if source_query and source is not None:
+            from app.services.case_history_fragments import process_comparison_input
+            from app.services.case_history_process_comparison import compare_processes
+            current_process = process_comparison_input(db, source)
+            for item in displayed:
+                if interrupted():
+                    break
+                if item['source_type'] == 'case':
+                    item['process_comparison'] = compare_processes(
+                        current_process, process_comparison_input(db, cases[item['case_id']]))
         timed_out = interrupted()
         vector_missing = max(0, fragment_total - vector_total) if embedder.state == 'ready' else 0
         if invalidated and embedder.state == 'ready':
@@ -412,5 +450,5 @@ def search_fragments(db, *, query='', source_case_id=None, filters=None, limit=3
                 'recall_truncated': truncated, 'cancelled': bool(cancelled()), 'execution_mode': 'indexed_reference_lookup',
                 'process_indexed_cases': process_current, 'process_missing_cases': max(0, total - process_current),
                 'process_index_state': 'current' if process_current == total else 'partial' if process_current else 'not_ready'},
-            'items': ranked[:limit],
-            'boundary': '片段索引检索仅提供少量历史参考，不是全量统计；索引缺失、过期或预算未完成不能解释为没有历史资料。共同条件、不同表述和语义相近均须核对适用性，不成为当前案件事实，排序不是准确概率。'}
+            'items': displayed,
+            'boundary': '片段索引检索仅提供少量历史参考，不是全量统计；索引缺失、过期或预算未完成不能解释为没有历史资料。共同条件、不同表述和语义相近均须核对适用性，不成为当前案件事实，排序不是准确概率。' + TIME_WINDOW_BOUNDARY}

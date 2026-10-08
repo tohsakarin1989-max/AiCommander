@@ -88,8 +88,8 @@ export function buildCaseEntrySubmitPayload(
   payload.report_time = timestamp(values.report_time)
   payload.oil_volume_unit = values.oil_volume_unit || 'unknown'
   if (options.includeLocations !== false && Array.isArray(initial_locations)) {
-    payload.initial_locations = initial_locations.map(({ id: _id, case_id: _caseId, ui_latitude, ui_longitude, ...row }) => ({
-      ...row, geometry: typeof ui_latitude === 'number' && typeof ui_longitude === 'number'
+    payload.initial_locations = initial_locations.map(({ id, case_id: _caseId, ui_latitude, ui_longitude, ...row }) => ({
+      ...row, ...(options.mode === 'edit' && id != null ? { id } : {}), geometry: typeof ui_latitude === 'number' && typeof ui_longitude === 'number'
         ? { type: 'Point', coordinates: [ui_longitude, ui_latitude] }
         : ui_latitude !== undefined || ui_longitude !== undefined ? null : row.geometry ?? null, precision: row.precision || 'unknown',
     }))
@@ -104,8 +104,8 @@ export function buildCaseEntrySubmitPayload(
     }
   }
   if (options.includeMeasurements !== false && Array.isArray(initial_measurements)) {
-    payload.initial_measurements = initial_measurements.map(({ id: _id, case_id: _caseId, ...row }) => ({
-      ...row, unit: row.unit || 'unknown', measured_at: timestamp(row.measured_at),
+    payload.initial_measurements = initial_measurements.map(({ id, case_id: _caseId, ...row }) => ({
+      ...row, ...(options.mode === 'edit' && id != null ? { id } : {}), unit: row.unit || 'unknown', measured_at: timestamp(row.measured_at),
     }))
   }
   if (options.mode === 'edit') delete payload.operational_area_id

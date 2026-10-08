@@ -1,7 +1,7 @@
 """One catalog and reader, with type-specific bodies and current authorization.
 
-Existing immutable stores remain authoritative. Only a facility material needs
-new storage; listing or reading never builds an analysis or saves a projection.
+Original stores remain authoritative. Listing never builds documents, analyses
+or projections; only the independent worker maintains rebuildable metadata.
 """
 from copy import deepcopy
 from dataclasses import asdict
@@ -10,6 +10,7 @@ import heapq
 import json
 
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import String, cast
 
 from app.models.agent_run import AgentRun
 from app.models.analysis_topic import AnalysisTopic, TopicSnapshot
@@ -53,35 +54,40 @@ def _meeting(db, identifier):
     return row, body, sources
 
 
-def _read(db, kind, identifier, *, topic_document_preview=True):
-    """Return metadata, typed body and deterministic document; no decisions yet."""
+def _read_content(db, kind, identifier, *, include_body=True):
+    """Authorize the original material, without rendering a document or map.
+
+    Most integrity checks necessarily inspect frozen JSON. A metadata-only
+    topic read can skip its presentation views, but never its source checks.
+    """
     from app.services.case_result_service import CaseResultService
     sources = []
     experience_review = None
     if kind == 'case':
-        from app.services.case_result_document import build_case_result_document
         body = CaseResultService.read(db, identifier)
         content = body['content']
         digest, schema, created = body['content_sha256'], content['schema_version'], body['created_at']
         subject = {'kind': 'case', 'id': str(content['case_id'])}
         title = f"案件 #{content['case_id']} · 画像第 {content['versions']['profile_version']} 版"
-        document = build_case_result_document(body)
         sources = [_source('case', identifier, digest)]
     elif kind == 'topic':
         from app.services import analysis_topic_service as topics
-        from app.services.topic_document import build_topic_document
         row = db.query(TopicSnapshot).filter_by(id=identifier).first()
         if row is None:
             raise PermissionError('result_unavailable')
-        selected = topics.read_topic(db, row.topic_id, revision=row.revision, page_size=100)
-        body = {'snapshot': selected['snapshot']}
-        body['views'] = topics.read_topic_views(db, row.topic_id, revision=row.revision, page_size=100)
+        if include_body:
+            selected = topics.read_topic(db, row.topic_id, revision=row.revision, page_size=100)
+            body = {'snapshot': selected['snapshot']}
+            body['views'] = topics.read_topic_views(db, row.topic_id, revision=row.revision, page_size=100)
+        else:
+            topics._owned(db, row.topic_id)
+            topics.validate_snapshot_access(db, row)
+            body = None
         definition = row.payload.get('definition') or {}
         title = definition.get('title') or f'专题成果第 {row.revision} 版（历史名称未冻结）'
         subject = {'kind': 'topic', 'id': row.topic_id}
         digest, schema, created = row.content_sha256, 'topic-snapshot-6.5-1', row.created_at
         sources = [_source('case', value['id'], value['content_sha256']) for value in row.payload.get('references', {}).get('case_results', [])]
-        document = build_topic_document(db, row.topic_id, row.revision, preview=topic_document_preview)
     elif kind == 'facility':
         from app.services.facility_material_service import read_facility_material
         row, body = read_facility_material(db, identifier)
@@ -108,10 +114,10 @@ def _read(db, kind, identifier, *, topic_document_preview=True):
         title, subject = f'多视角会议 · {row.meeting_id}', {'kind': 'meeting', 'id': row.meeting_id}
     elif kind == 'query':
         from app.services.intelligent_query_tasks import read_query
-        from app.services.intelligent_query_document import build_query_document
         body = read_query(db, identifier)
-        document = build_query_document(body)
-        digest, created, schema = document.content_sha256, body['created_at'], 'query-material-6.5-1'
+        from app.services.result_catalog_query import validate_query_material
+        validate_query_material(body)
+        digest, created, schema = result_hash(body['result']), body['created_at'], 'query-material-6.5-1'
         title, subject = body['query'][:200], {'kind': 'query', 'id': identifier}
     elif kind == 'experience':
         from app.services.knowledge_asset_service import KnowledgeAssetService
@@ -161,24 +167,45 @@ def _read(db, kind, identifier, *, topic_document_preview=True):
         title, subject = f'历史结论 #{row.id}', {'kind': 'case', 'id': str(row.case_id)}
     else:
         raise ValueError('result_kind_invalid')
-    if kind in {'facility', 'situation', 'meeting', 'experience', 'conclusion'}:
-        from app.services.typed_material_document import build
-        document = build(kind, identifier, digest, title, body, sources, BOUNDARY)
     envelope = {'kind': kind, 'id': str(identifier), 'title': title, 'created_at': created,
         'content_sha256': digest, 'schema_version': schema, 'subject': subject,
         'availability': 'available', 'body': body, 'sources': sources, 'boundary': [BOUNDARY]}
+    if experience_review is not None:
+        envelope['experience_review'] = experience_review
+    return envelope
+
+
+def _read(db, kind, identifier, *, topic_document_preview=True):
+    """Keep the reader/export contract; formatting is independent of the index."""
+    envelope = _read_content(db, kind, identifier)
+    if kind == 'case':
+        from app.services.case_result_document import build_case_result_document
+        document = build_case_result_document(envelope['body'])
+    elif kind == 'topic':
+        from app.services.topic_document import build_topic_document
+        snapshot = envelope['body']['snapshot']
+        document = build_topic_document(db, envelope['subject']['id'], snapshot['revision'],
+                                        preview=topic_document_preview)
+    elif kind == 'query':
+        from app.services.intelligent_query_document import build_query_document
+        document = build_query_document(envelope['body'])
+    else:
+        from app.services.typed_material_document import build
+        document = build(kind, identifier, envelope['content_sha256'], envelope['title'],
+                         envelope['body'], envelope['sources'], BOUNDARY)
     from app.services.result_map_service import attach_map
     document = attach_map(envelope, document)
     envelope['document'] = {'schema_version': document.schema, 'blocks': [asdict(block) for block in document.blocks]}
-    if experience_review is not None:
-        envelope['experience_review'] = experience_review
     return envelope, document
 
 
-def read_result(db, kind, identifier, *, include_judgments=True):
+def read_result(db, kind, identifier, *, include_judgments=True, include_document=True):
     _identity(db)
     with db.no_autoflush:
-        result, _ = _read(db, kind, str(identifier))
+        if include_document:
+            result, _ = _read(db, kind, str(identifier))
+        else:
+            result = _read_content(db, kind, str(identifier))
         if not include_judgments:
             result.pop('experience_review', None)
         result['judgments'] = []
@@ -187,7 +214,7 @@ def read_result(db, kind, identifier, *, include_judgments=True):
                     content_sha256=result['content_sha256']).order_by(ResultJudgment.created_at, ResultJudgment.id):
                 try:
                     for source in row.additional_sources:
-                        other, _ = _read(db, source['kind'], source['id'])
+                        other = _read_content(db, source['kind'], source['id'])
                         if other['content_sha256'] != source['content_sha256']:
                             raise PermissionError('judgment_source_changed')
                 except (PermissionError, ValueError):
@@ -199,7 +226,14 @@ def read_result(db, kind, identifier, *, include_judgments=True):
 
 
 def catalog(db, *, query='', kind=None, limit=20, offset=0, subject_kind=None, subject_id=None, exclude_kinds=()):
-    user = _identity(db)
+    # Even a shared Session containing pending user edits must not autoflush on GET.
+    with db.no_autoflush:
+        user = _identity(db)
+        return _catalog(db, user, query=query, kind=kind, limit=limit, offset=offset,
+                        subject_kind=subject_kind, subject_id=subject_id, exclude_kinds=exclude_kinds)
+
+
+def _catalog(db, user, *, query, kind, limit, offset, subject_kind, subject_id, exclude_kinds):
     if kind is not None and kind not in KINDS or not 1 <= limit <= 100 or offset < 0 or offset > 10000:
         raise ValueError('result_catalog_arguments')
     models = {'case': (CaseResultSnapshot, CaseResultSnapshot.id, CaseResultSnapshot.created_at),
@@ -209,9 +243,20 @@ def catalog(db, *, query='', kind=None, limit=20, offset=0, subject_kind=None, s
         'meeting': (Report, Report.id, Report.created_at), 'query': (AgentRun, AgentRun.id, AgentRun.created_at),
         'experience': (KnowledgeAsset, KnowledgeAsset.id, KnowledgeAsset.created_at),
         'conclusion': (Conclusion, Conclusion.id, Conclusion.created_at)}
+    subjects = {'case': ('case', CaseResultSnapshot.case_id), 'topic': ('topic', TopicSnapshot.topic_id),
+        'facility': ('facility', FacilityMaterial.asset_id), 'situation': ('area', SituationBrief.operational_area_id),
+        'meeting': ('meeting', Report.meeting_id), 'query': ('query', AgentRun.id),
+        'experience': ('case', KnowledgeAsset.source_case_id), 'conclusion': ('case', Conclusion.case_id)}
     def stream(source_kind):
         model, key, created = models[source_kind]
+        object_kind, object_id = subjects[source_kind]
+        if subject_kind is not None and subject_kind != object_kind:
+            return
         rows = db.query(key, created)
+        # These are authoritative source columns, not possibly stale projected
+        # fields. Narrow candidates early; authorization still precedes all counts.
+        if subject_id is not None:
+            rows = rows.filter(cast(object_id, String) == str(subject_id))
         if source_kind == 'query':
             rows = rows.filter(AgentRun.task_type == 'intelligent_query', AgentRun.created_by == user.id,
                                AgentRun.status.in_(('completed', 'degraded')))
@@ -220,21 +265,25 @@ def catalog(db, *, query='', kind=None, limit=20, offset=0, subject_kind=None, s
         for identifier, instant in rows.order_by(created.desc(), key.asc()).yield_per(50):
             instant = instant.replace(tzinfo=timezone.utc) if instant and instant.tzinfo is None else instant
             yield (-(instant.timestamp() if instant else 0), source_kind, str(identifier))
+    from app.services.result_catalog_projection import projection_status
+    needle = query.strip().casefold()
     items, matched = [], 0
     for _, source_kind, identifier in heapq.merge(*(stream(value) for value in ([kind] if kind else KINDS)
                                                    if value not in exclude_kinds)):
         try:
-            result, _ = _read(db, source_kind, identifier)
+            result = _read_content(db, source_kind, identifier, include_body=bool(needle))
         except (PermissionError, ValueError, LookupError):
             continue
         if subject_kind is not None and result['subject']['kind'] != subject_kind:
             continue
         if subject_id is not None and str(result['subject']['id']) != str(subject_id):
             continue
-        if query.strip().casefold() not in json.dumps(jsonable_encoder(result['body']), ensure_ascii=False).casefold() and query.strip().casefold() not in result['title'].casefold():
+        if needle and needle not in json.dumps(jsonable_encoder(result['body']), ensure_ascii=False).casefold() and needle not in result['title'].casefold():
             continue
         if matched >= offset:
-            items.append({key: result[key] for key in METADATA})
+            item = {key: result[key] for key in METADATA}
+            item['catalog_projection'] = projection_status(db, source_kind, identifier, result)
+            items.append(item)
         matched += 1
         if len(items) > limit:
             break

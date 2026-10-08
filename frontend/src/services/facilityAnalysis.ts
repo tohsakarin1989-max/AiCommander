@@ -62,10 +62,18 @@ export interface FacilityIdentity {
   asset_id: number; state: string; items?: FacilityIdentityItem[]; boundary: string
 }
 export interface FacilityTemporalContext {
-  valid_at: string | null; known_at: string | null; state: 'ready' | 'unknown' | 'conflict' | 'restricted'
+  valid_at: string | null; known_at: string | null; state: 'ready' | 'unknown' | 'conflict' | 'restricted' | 'partial'
   version_id?: number | null; valid_from?: string | null; valid_to?: string | null; recorded_at?: string | null
   snapshot?: { name?: string | null; asset_type?: string | null; attributes?: Record<string, unknown> } | null
   boundary: string
+  knowledge_mode?: 'as_known' | 'retrospective'
+  query_interval?: { from: string; to: string } | null
+  coverage?: 'full' | 'partial' | 'unknown'
+  late_supplement?: boolean
+  groups?: Record<string, { state: string; coverage: 'full' | 'partial' | 'unknown'; gaps?: string[]; segments: Array<{
+    from: string; to: string; end_inclusive: boolean; state: string; values: Record<string, unknown> | null;
+    evidence_refs: string[]; known_at?: string | null; late_supplement?: boolean
+  }> }>
 }
 export interface FacilityComputabilityCheck {
   key: string; label: string
@@ -80,7 +88,10 @@ export interface MapReadiness {
   total: number; page: number; page_size: number; boundary: string
   context: { operational_area_id: number; [key: string]: unknown }
 }
-export interface FacilityDossierParams { start_date?: string; end_date?: string; valid_at?: string; known_at?: string }
+export interface FacilityDossierParams {
+  start_date?: string; end_date?: string; valid_at?: string; known_at?: string
+  valid_from?: string; valid_to?: string; knowledge_mode?: 'as_known' | 'retrospective'
+}
 export interface FacilityIdentityDecision { note: string; request_key: string; previous_decision_id: number | null }
 export interface FacilityCaseLinkCreate {
   case_id: number; source_reference_id: number; source_revision_id: number

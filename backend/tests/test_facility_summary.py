@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.api.facility_analysis import router
 from app.models.facility_summary import FacilityDerivedSummary
+from app.models.case import Case
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.map_foundation import UserAreaScope
 from app.models.user import User
@@ -106,3 +108,33 @@ def test_facility_catalog_task_independent_of_agent_lab():
     route = celery_app.amqp.router.route(options, reconcile_facilities.name, (), {})
     assert route['queue'].name == celery_app.conf.task_default_queue
     assert reconcile_facilities.time_limit == 60
+
+
+def test_region_api_accepts_unknown_and_interval_cases_without_fabricated_timeline(query_db):
+    visible = asset(query_db)
+    query_db.add_all([
+        Case(case_number="REGION-UNKNOWN", operational_area_id=1, occurred_time=None, time_precision="unknown"),
+        Case(case_number="REGION-INTERVAL", operational_area_id=1, occurred_time=None,
+             occurred_from=datetime(2026, 9, 30, 16), occurred_to=datetime(2026, 10, 1, 16),
+             time_precision="interval", latitude=46.6, longitude=125.0),
+        Case(case_number="REGION-HIDDEN", operational_area_id=2, occurred_time=None, time_precision="unknown"),
+    ])
+    query_db.commit()
+    with client(query_db) as http:
+        response = http.get("/api/facility-analysis/region?operational_area_id=1")
+        assert response.status_code == 200, response.text
+        assert response.headers["cache-control"] == "no-store"
+        data = response.json()
+        assert data["facilities"]["items"][0]["id"] == visible.id
+        assert data["cases"]["total"] == 2
+        assert data["statistics"]["unknown_time_cases"] == 1
+        assert data["statistics"]["interval_time_cases"] == 1
+        assert data["statistics"]["monthly"] == []
+        assert "REGION-HIDDEN" not in response.text
+        windowed = http.get("/api/facility-analysis/region", params={
+            "operational_area_id": 1, "start_date": "2026-10-01T00:00:00Z", "end_date": "2026-10-02T00:00:00Z"})
+        assert windowed.status_code == 200, windowed.text
+        assert windowed.json()["cases"]["total"] == 1
+        assert windowed.json()["cases"]["items"][0]["occurred_time"] is None
+        assert windowed.json()["cases"]["items"][0]["time_precision"] == "interval"
+        assert not query_db.new and not query_db.dirty

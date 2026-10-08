@@ -44,18 +44,17 @@ def latest_case_analysis_profile(
 ) -> dict[str, Any]:
     _principal(request)
     _case_exists(db, case_id)
-    profile = (
-        db.query(CaseAnalysisProfile)
-        .filter(
-            CaseAnalysisProfile.case_id == case_id,
-            CaseAnalysisProfile.is_current.is_(True),
-        )
-        .order_by(CaseAnalysisProfile.profile_version.desc())
-        .first()
-    )
-    if not profile:
+    from app.services.case_saved_profile import read_saved_profile
+    case = db.query(Case).filter(Case.id == case_id).first()
+    saved = read_saved_profile(db, case)
+    if saved["data"] is None:
         raise HTTPException(status_code=404, detail="案件标准画像尚未生成")
-    return CasePipelineService.profile_to_dict(profile)
+    profile = db.query(CaseAnalysisProfile).filter(CaseAnalysisProfile.id == saved["data"]["id"]).first()
+    current = saved["status"] == "ready"
+    return {**CasePipelineService.profile_to_dict(profile), "is_current": current,
+            "freshness": "current" if current else "updating",
+            "source_revision_id": profile.source_revision_id,
+            "freshness_boundary": "源案件或规则已变化时，此处仅为上一版本；读取不触发重算。"}
 
 
 @router.get("/cases/{case_id}/pipeline-status")

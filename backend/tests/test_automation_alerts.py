@@ -132,8 +132,11 @@ def test_automation_alert_can_convert_to_case_without_patrol_dispatch():
     assert case is not None
     assert case.source_type == "技防预警"
     assert "AI研判" in case.description
-    assert case.features["preprocess_mode"] == "deterministic_fallback"
-    assert case.features["analysis_readiness"]["similarity"] in {"ready", "partial"}
+    assert case.features is None
+    from app.models.case_pipeline import OutboxEvent
+    assert db.query(OutboxEvent).filter_by(event_type="case.analysis.requested", aggregate_id=str(case.id)).one().status == "pending"
+    from app.models.case_pipeline import CaseAnalysisProfile
+    assert db.query(CaseAnalysisProfile).filter_by(case_id=case.id).count() == 0
 
 
 def test_automation_alert_terminal_states_do_not_conflict():

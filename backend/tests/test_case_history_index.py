@@ -151,10 +151,10 @@ def test_persistent_cursor_rollback_resume_and_rotation(db):
     rebuild = CaseHistoryIndexService.rebuild_case
     def fail_second(session, case, **kwargs):
         if case.id == cases[3].id:
-            raise RuntimeError("injected interruption")
+            raise KeyboardInterrupt("injected cancellation")
         return rebuild(session, case, **kwargs)
     with patch.object(CaseHistoryIndexService, "rebuild_case", side_effect=fail_second):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(KeyboardInterrupt):
             CaseHistoryIndexService.reconcile_batch(db, limit=2)
     db.rollback()
     assert db.get(CaseHistoryIndexCursor, CURSOR_NAME).after_case_id == cases[1].id

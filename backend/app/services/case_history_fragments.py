@@ -48,10 +48,38 @@ def current_semantics(db, case_id, values, revision):
     return semantics, profile.id
 
 
-def prepare_fragments(db, parent, values, *, embedder, revision=None):
+def process_comparison_input(db, case):
+    """Read existing process only; no index generation or model call."""
+    from app.services.case_history_retrieval import source_values
+    from app.services.case_source_service import CaseSourceService
+    revision = CaseSourceService.latest_revision(db, case.id)
+    semantics, profile_id = current_semantics(db, case.id, source_values(case), revision)
+    return {'source': {'case_id': case.id, 'profile_id': profile_id,
+                      'source_revision_id': revision.id if revision else None,
+                      'source_hash': revision.source_hash if revision else None},
+            'process': semantics.get('process')}
+
+
+def _process_stamp(db, case_id):
+    from app.models.case_pipeline import CaseAnalysisProfile
+    row = db.execute(select(CaseAnalysisProfile.id, CaseAnalysisProfile.payload,
+        CaseAnalysisProfile.source_revision_id, CaseAnalysisProfile.schema_version,
+        CaseAnalysisProfile.dictionary_version).where(CaseAnalysisProfile.case_id == case_id,
+        CaseAnalysisProfile.is_current.is_(True)).order_by(CaseAnalysisProfile.profile_version.desc()).limit(1)).first()
+    return text_hash(json.dumps(dict(row._mapping), sort_keys=True, ensure_ascii=False)) if row else None
+
+
+def prepare_fragments(db, parent, values, *, embedder, revision=None, vector_reuse=None):
+    from app.models.case import Case
     from app.services.case_history_retrieval import business_conditions, lexical_terms
     from app.services.case_history_index_service import rule_version
     version = f'{FRAGMENT_INDEX_VERSION}:{rule_version()}'
+    from app.services.case_history_vector_reuse import FragmentVectorReuse
+    if db.scalar(select(Case.id).where(Case.id == parent.case_id)) is None:
+        raise PermissionError('history_source_unavailable')
+    vector_reuse = vector_reuse or FragmentVectorReuse(db, embedder)
+    vector_reuse.require_current(embedder)
+    process_stamp = _process_stamp(db, parent.case_id) if parent.source_type == 'case' else None
     revision_id = revision.id if revision is not None else None
     semantics, profile_id = current_semantics(db, parent.case_id, values, revision) if parent.source_type == 'case' else ({}, None)
     process = semantics.get('process') or {}
@@ -121,20 +149,35 @@ def prepare_fragments(db, parent, values, *, embedder, revision=None):
             'process_profile_id': profile_id, 'process_state': 'current' if profile_id else 'not_ready',
             'count': len(existing), 'omitted': omitted, 'complete': omitted == 0}}
     changed = not unchanged
+    used_vectors = set()
     for row in existing:
         if embedder.state != 'ready':
             continue
-        if row.model_version == embedder.model_version and row.embedding_state == 'ready':
-            continue
-        try:
-            vector = embedder.encode(row.quote)
-            row.embedding = normalized_vector(vector, len(vector))
-            row.dimension, row.model_version, row.embedding_state = len(vector), embedder.model_version, 'ready'
-        except LocalEmbeddingError:
-            row.embedding, row.dimension, row.model_version = None, None, None
-            row.embedding_state = 'unavailable'
+        if (row.model_version == embedder.model_version and row.embedding_state == 'ready'
+                and (vector_reuse.dimension is None or row.dimension == vector_reuse.dimension)
+                and manifest.get('encoder_fingerprint') == vector_reuse.fingerprint):
+            try:
+                normalized_vector(row.embedding, row.dimension)
+                continue
+            except LocalEmbeddingError:
+                pass
+        # The exact quote is the encoder input. Reused vectors never supply any
+        # source/revision/offset fields to this newly prepared fragment.
+        vector, digest = vector_reuse.encode(row.quote)
+        used_vectors.add(digest)
+        row.embedding = vector
+        row.dimension, row.model_version, row.embedding_state = len(vector), embedder.model_version, 'ready'
+        changed = True
+    if embedder.state == 'ready' and manifest.get('encoder_fingerprint') != vector_reuse.fingerprint:
+        parent.payload = {**parent.payload, 'fragments': {**parent.payload['fragments'],
+                          'encoder_fingerprint': vector_reuse.fingerprint}}
         changed = True
     def publish():
+        vector_reuse.require_current(embedder)
+        if f'{FRAGMENT_INDEX_VERSION}:{rule_version()}' != version:
+            raise ValueError('history_schema_changed')
+        if parent.source_type == 'case' and _process_stamp(db, parent.case_id) != process_stamp:
+            raise ValueError('history_process_changed')
         if not changed:
             return
         db.execute(delete(CaseHistoryFragment).where(CaseHistoryFragment.case_id == parent.case_id,
@@ -147,6 +190,7 @@ def prepare_fragments(db, parent, values, *, embedder, revision=None):
             postings += [('structural', condition_term(item)) for item in row.conditions]
             db.add_all(CaseHistoryPosting(fragment_id=row.id, case_id=row.case_id, branch=branch, term=term)
                        for branch, term in postings)
+        vector_reuse.publish(used_vectors)
     return int(changed), publish
 
 

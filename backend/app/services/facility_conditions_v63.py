@@ -2,6 +2,7 @@
 from copy import deepcopy
 
 VERSION = "facility-conditions-6.3-1"
+GAP_RANKING_VERSION = "facility-gap-impact-7.5-1"
 HARD_ENTRY_REASONS = frozenset({"explicitly_closed", "traversal_permission_denied", "vehicle_limit_exceeded"})
 BOUNDARY = "条件对照只解释已召回设施；硬排除仅针对本次已知通行条件，其他差异不等于排除实际来源。未知不按不符处理。"
 ROAD_REASONS = {
@@ -48,10 +49,47 @@ def _condition(key, state, reason, refs, *, value=None, dependencies=None):
             if state == "unknown" else []}
 
 
+def rank_priority_gaps(rows):
+    """Rank observed unknowns, not hypothetical gain or uncomputed facilities."""
+    groups = {}
+    for row in rows:
+        # A separate hard exclusion cannot be overturned by filling other fields.
+        if row['eligibility'] == 'excluded':
+            continue
+        for condition in row['conditions']:
+            if condition['state'] != 'unknown' or not condition['evidence_refs']:
+                continue
+            key = condition['key']
+            blocks = key == 'road' and row['eligibility'] == 'unresolved'
+            group = groups.setdefault(key, {'key': key, 'label': condition['label'], 'asset_ids': [],
+                'condition_keys': [key], 'dependencies': [], 'impacts': [],
+                'ranking_version': GAP_RANKING_VERSION})
+            group['asset_ids'].append(row['asset_id'])
+            group['dependencies'] = sorted(set(group['dependencies']) | set(condition['dependencies']))
+            group['impacts'].append({'asset_id': row['asset_id'], 'name': row['name'],
+                'eligibility': row['eligibility'], 'blocks_comparison': blocks,
+                'reason': condition['reason'], 'evidence_refs': list(condition['evidence_refs'])})
+    for group in groups.values():
+        impacts = group['impacts']
+        group['priority_basis'] = {
+            'blocked_candidates': sum(item['blocks_comparison'] for item in impacts),
+            'unresolved_candidates': sum(item['eligibility'] == 'unresolved' for item in impacts),
+            'ranked_candidates': sum(item['eligibility'] == 'retained' for item in impacts),
+            'affected_candidates': len(impacts),
+        }
+        counts = group['priority_basis']
+        group['reason'] = (f"本轮已对照的 {counts['affected_candidates']} 个设施存在此项未知，"
+                           f"其中 {counts['blocked_candidates']} 个因道路比较尚无可用结果而未进入排名。"
+                           "补充或恢复计算后只能重新核对，不保证变为支持或排名上升；不含未计算设施及已有硬排除项。")
+    return sorted(groups.values(), key=lambda item: (
+        -item['priority_basis']['blocked_candidates'], -item['priority_basis']['affected_candidates'],
+        -item['priority_basis']['unresolved_candidates'], item['key']))[:3]
+
+
 def build_condition_comparison(pool, result):
     ranks = {item["asset_id"]: item for item in result["all_candidates"]}
     evidence = {item["asset_id"]: item for item in result["scoring_evidence"]}
-    rows, gap_groups = [], {}
+    rows = []
     for asset in sorted(pool["assets"], key=lambda item: item["asset_id"]):
         identifier = asset["asset_id"]
         item, ranked = evidence[identifier], ranks.get(identifier)
@@ -60,9 +98,12 @@ def build_condition_comparison(pool, result):
         production_refs = [ref for ref in refs if not ref.startswith("case:")]
         context = asset["production_context"]
         historical = context.get("snapshot") or {}
-        source_ready = (context["state"] == "ready" and asset["source_verified"]
-                        and historical.get("verified") is True and historical.get("status") == "active")
-        source_reason = ("所引生产资料覆盖案发时点，且在本次资料截止前已登记" if source_ready else
+        details = context.get("groups", {}).get("details", {})
+        source_ready = (asset["source_verified"] and (
+            details.get("coverage") == "full" and all(row["values"].get("verified") is True and row["values"].get("status") == "active"
+                for row in details.get("segments", [])) if "groups" in context else
+            context["state"] == "ready" and asset["source_verified"] and historical.get("verified") is True and historical.get("status") == "active"))
+        source_reason = ("所引设施基础资料覆盖完整案发时间，且在本次资料截止前已登记；各字段组分别核对" if source_ready else
                          "；".join([*context.get("gaps", []), *([asset["source_gap"]] if asset.get("source_gap") else [])])
                          or "资料核验或历史适用时点不足")
         conditions = [_condition("source", "supported" if source_ready else "unknown", source_reason, production_refs,
@@ -77,7 +118,12 @@ def build_condition_comparison(pool, result):
                   else ROAD_REASONS.get(road, "道路条件未知"))
         if detail:
             reason += "；" + detail
+        road_dependencies = {"network_missing": ["适用路网资料"],
+            "calculation_failed": ["道路计算服务恢复后重新计算（非案件补录）"],
+            "not_calculated": ["完成本轮未计算的入口比较（非新增资料必填）"],
+            "no_path_found": ["核对本次已知路网及入口连接资料，不以直线代替道路"]}.get(road)
         conditions.append(_condition("road", road_state, reason, [*road_refs, *entry_refs],
+                                     dependencies=road_dependencies,
                                      value={"state": road, "distance_m": item["road_distance_m"],
                                             "entrance_reasons": sorted({e.get("reason") for e in asset["entrances"]})}))
         for key, match_field in (("oil", "oil_match"), ("facility", "facility_match"),
@@ -100,18 +146,10 @@ def build_condition_comparison(pool, result):
                "eligibility": "retained" if ranked else "excluded" if road == "restricted" else "unresolved",
                "rank": ranked["rank"] if ranked else None, "score": ranked["score"] if ranked else None,
                "conditions": conditions, "source_context": {key: context.get(key)
-                   for key in ("valid_at", "known_at", "version_id", "state")}, "boundary": BOUNDARY}
+                   for key in ("valid_at", "known_at", "version_id", "state", "query_interval", "time_precision",
+                               "knowledge_mode", "coverage", "late_supplement", "groups", "boundary")}, "boundary": BOUNDARY}
         rows.append(row)
-        for condition in conditions:
-            if condition["state"] != "unknown":
-                continue
-            key = condition["key"]
-            group = gap_groups.setdefault(key, {"key": key, "label": condition["label"], "asset_ids": [],
-                "condition_keys": [key], "dependencies": condition["dependencies"],
-                "reason": "补充后可重新核对这些具体未知；不保证变为支持条件或名次上升。"})
-            group["asset_ids"].append(identifier)
-    priority = {key: rank for rank, key in enumerate(("source", "road", "production", "oil", "facility", "history"))}
-    gaps = sorted(gap_groups.values(), key=lambda group: (priority[group["key"]], -len(group["asset_ids"])))[:3]
+    gaps = rank_priority_gaps(rows)
     return {"schema_version": VERSION, "rows": rows, "priority_gaps": gaps, "boundary": BOUNDARY}
 
 

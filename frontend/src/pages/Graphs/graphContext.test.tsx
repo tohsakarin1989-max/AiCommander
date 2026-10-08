@@ -17,6 +17,7 @@ vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 9, role
 vi.mock('../../theme/ThemeContext', () => ({ useThemeMode: () => ({ mode: 'light' }) }))
 vi.mock('react-router-dom', () => ({ useSearchParams: () => [new URLSearchParams(state.search), state.setParams] }))
 vi.mock('../../services/cases', () => ({ caseApi: { getCases: state.getCases } }))
+vi.mock('../../components/CaseSearch', () => ({ default: () => <div>查找全部授权案件</div> }))
 vi.mock('../../services/evidenceGraph', () => ({ evidenceGraphApi: { getCaseGraph: state.getCaseGraph } }))
 vi.mock('../../services/analysis', () => ({ analysisApi: { graph: { buildSerial: state.buildSerial } } }))
 vi.mock('echarts-for-react', () => ({ default: () => { state.chartCount++; return <div data-testid="chart-boundary" /> } }))
@@ -26,7 +27,7 @@ vi.mock('antd', () => ({
   App: { useApp: () => ({ message: { info: vi.fn() } }) },
   message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
   Alert: ({ message }: { message: ReactNode }) => <div>{message}</div>,
-  Select: () => null, Switch: () => null, Table: () => null,
+  Select: () => null, Switch: () => null, Table: () => null, Tag: () => null,
   Input: ({ value, placeholder }: { value: string; placeholder: string }) => <input value={value} placeholder={placeholder} readOnly />,
 }))
 
@@ -93,18 +94,17 @@ describe('图谱案件上下文（SSR 契约）', () => {
     expect(html).not.toContain('精确证据案件-')
     expect(state.setParams).not.toHaveBeenCalled()
   })
-  it('案件关系图页面只读取候选列表，URL 到达不会自动启动生成', async () => {
+  it('案件关系图页面使用完整检索，URL 到达不会读取最近50案或自动启动生成', async () => {
     const html = renderToStaticMarkup(<CaseGraph />)
     expect(html).toContain('待生成')
-    expect(state.queries[0].queryKey).toEqual(['cases', 'recent50', 9, 1])
-    await state.queries[0].queryFn()
-    expect(state.getCases).toHaveBeenCalledWith({ limit: 50 })
+    expect(html).toContain('查找全部授权案件')
+    expect(state.getCases).not.toHaveBeenCalled()
     expect(state.buildSerial).not.toHaveBeenCalled()
     expect(state.mutate).not.toHaveBeenCalled()
     state.search = '?caseId=2402'; state.epoch++; state.queries = []; state.role = 'viewer'
     const viewerHtml = renderToStaticMarkup(<CaseGraph />)
     expect(viewerHtml).toContain('只读账号不触发关系图谱生成')
-    expect(state.queries[0].queryKey).toEqual(['cases', 'recent50', 9, 2])
+    expect(viewerHtml).toContain('查找全部授权案件')
     expect(state.mutate).not.toHaveBeenCalled()
   })
 })

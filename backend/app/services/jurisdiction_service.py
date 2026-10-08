@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
@@ -314,17 +315,13 @@ class JurisdictionService:
         operational_area_id: Optional[int] = None,
         limit: int = 200,
         skip: int = 0,
+        keyword: Optional[str] = None,
     ) -> List[JurisdictionAsset]:
-        query = db.query(JurisdictionAsset)
-        if asset_type:
-            query = query.filter(JurisdictionAsset.asset_type == asset_type)
-        if source:
-            query = query.filter(JurisdictionAsset.source == source)
-        if status:
-            query = query.filter(JurisdictionAsset.status == status)
-        if operational_area_id is not None:
-            query = query.filter(JurisdictionAsset.operational_area_id == operational_area_id)
-        return query.order_by(JurisdictionAsset.id.desc()).offset(skip).limit(limit).all()
+        from app.services.facility_search_service import FacilitySearchService
+
+        return FacilitySearchService.items(db, asset_type=asset_type, source=source,
+            status=status, operational_area_id=operational_area_id, keyword=keyword,
+            skip=skip, limit=limit)
 
     @staticmethod
     def summarize_assets(
@@ -780,6 +777,12 @@ class JurisdictionService:
 
     @staticmethod
     def record_feedback(db: Session, data: Dict[str, Any]) -> JurisdictionFeedback:
+        if data.get("feedback_type") == "data_issue":
+            from app.services.map_data_issues import record_issue
+            return record_issue(db, data)
+        data = dict(data)
+        if data.pop("source_reference", None) is not None:
+            raise ValueError("data_issue_invalid_reference")
         case = None
         asset = None
         if data.get("case_id") is not None:
@@ -817,7 +820,10 @@ class JurisdictionService:
 
     @staticmethod
     def summarize_effectiveness(db: Session) -> Dict[str, Any]:
-        feedback_items = db.query(JurisdictionFeedback).all()
+        # Source-quality observations are not deployments or adoption ratings.
+        feedback_items = db.query(JurisdictionFeedback).filter(
+            JurisdictionFeedback.feedback_type != "data_issue"
+        ).all()
         scores = [
             item.effectiveness_score for item in feedback_items
             if item.effectiveness_score is not None

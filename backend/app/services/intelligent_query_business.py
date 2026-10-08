@@ -174,12 +174,13 @@ def execute_business_tool(db, name, args):
         return {"state": "partial" if partial else "ready", "asset_id": args.asset_id, "dossier": dossier,
                 "evidence_refs": [f"map_asset:{args.asset_id}"], "information_gaps": []}
     if name == "read_facility_at":
-        from app.services.facility_identity_service import FacilityIdentityService
+        from app.services.facility_temporal_conditions import resolve_conditions
         from app.services.facility_execution_context import freeze_facility_context
         asset = _asset(db, args)
         context = freeze_facility_context(db, area_id=asset.operational_area_id,
                                           valid_at=args.valid_at, known_at=args.known_at)
-        record = FacilityIdentityService.get_asset_at(db, asset.id, valid_at=context.valid_at, known_at=context.known_at)
+        record = resolve_conditions(db, asset.id, valid_at=context.valid_at, known_at=context.known_at,
+                                    knowledge_mode=context.knowledge_mode, frozen=True)
         return {"state": "ready" if record.get("state") == "ready" else "partial", "asset_id": asset.id,
                 "historical": record, "execution_context": context.public(),
                 "evidence_refs": [f"map_asset:{asset.id}"],
@@ -236,17 +237,22 @@ def validate_business_query_evidence(db, result):
         elif name == "find_business_results":
             from app.services.result_catalog import read_result
             for item in old.get("catalog", {}).get("items", []):
-                current = read_result(db, item["kind"], item["id"])
+                current = read_result(db, item["kind"], item["id"], include_document=False)
                 if current["content_sha256"] != item["content_sha256"]:
                     raise PermissionError("query_business_evidence_changed")
+        elif name == "read_business_result":
+            from app.services.result_catalog import read_result
+            if arguments.operational_area_id is not None:
+                raise ValueError("query_context_tool_cannot_preserve_filters")
+            current = read_result(db, arguments.kind, arguments.identifier,
+                                  include_judgments=False, include_document=False)
+            if current["content_sha256"] != old.get("business_result", {}).get("content_sha256"):
+                raise PermissionError("query_business_evidence_changed")
         else:
             current = execute_business_tool(db, name, arguments)
             if name == "read_facility_dossier":
                 old_hash = old.get("dossier", {}).get("versions", {}).get("view_version")
                 new_hash = current.get("dossier", {}).get("versions", {}).get("view_version")
-            elif name == "read_business_result":
-                old_hash = old.get("business_result", {}).get("content_sha256")
-                new_hash = current.get("business_result", {}).get("content_sha256")
             elif name == "read_facility_at":
                 old_hash, new_hash = result_hash(old.get("historical")), result_hash(current.get("historical"))
             else:

@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { CaseResult } from '../../types/caseResult'
 import CaseResultPanel from './CaseResultPanel'
 import { caseResultMapModel } from './caseResultMapModel'
 import { hypothesisSupportLabel } from '../Map/caseHypothesisMap'
+
+// These SSR presentation cases keep exercising the real road/material children;
+// current-principal enforcement is covered separately, not by this identity stub.
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({
+  user: { id: 1, role: 'analyst' }, sessionEpoch: 1,
+}) }))
 
 const fixture = (): CaseResult => ({
   id: 'result-1', created_at: '2026-09-11T10:00:00Z', content_sha256: 'frozen-hash', freshness: 'current',

@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, message } from 'antd'
+import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, message } from 'antd'
 import { KeyOutlined, PlusOutlined, UserSwitchOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, type AuthUser, type UserCreatePayload, type UserRole } from '../../services/auth'
 import { useAuth } from '../../auth/AuthContext'
+import { mapFoundationApi } from '../../services/mapFoundation'
+import UserAreaScopeEditor, { AreaScopeFields } from './UserAreaScopeEditor'
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: '系统管理员',
@@ -12,16 +14,19 @@ const ROLE_LABELS: Record<UserRole, string> = {
 }
 
 export default function UserManagement() {
-  const { user } = useAuth()
+  const { user, sessionEpoch } = useAuth()
   const [form] = Form.useForm<UserCreatePayload>()
   const [editing, setEditing] = useState<AuthUser | null>(null)
   const [visible, setVisible] = useState(false)
+  const [scopeAccount, setScopeAccount] = useState<AuthUser | null>(null)
+  const selectedRole = Form.useWatch('role', form)
   const queryClient = useQueryClient()
 
   const usersQuery = useQuery({
-    queryKey: ['auth-users'],
+    queryKey: ['auth-users', user?.id, sessionEpoch],
     queryFn: authApi.users.list,
   })
+  const areas = useQuery({ queryKey: ['setup-areas', user?.id, user?.role, sessionEpoch], queryFn: mapFoundationApi.listAreas })
 
   const createMutation = useMutation({
     mutationFn: authApi.users.create,
@@ -50,7 +55,7 @@ export default function UserManagement() {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ role: 'analyst' })
+    form.setFieldsValue({ role: 'analyst', area_scopes: [] })
     setVisible(true)
   }
 
@@ -75,7 +80,8 @@ export default function UserManagement() {
       }
       updateMutation.mutate({ id: editing.id, payload })
     } else {
-      createMutation.mutate(values)
+      if (areas.isError || !areas.data) { message.error('请先成功读取厂区范围'); return }
+      createMutation.mutate({ ...values, area_scopes: values.role === 'admin' ? [] : (values.area_scopes || []) })
     }
   }
 
@@ -93,10 +99,11 @@ export default function UserManagement() {
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增用户</Button>
         </div>
         <div className="card-body scroll">
+          {usersQuery.isError && <Alert type="error" message="账号读取失败" action={<Button onClick={() => void usersQuery.refetch()}>重试</Button>} />}
           <Table<AuthUser>
             rowKey="id"
             loading={usersQuery.isLoading}
-            dataSource={usersQuery.data || []}
+            dataSource={usersQuery.isError ? [] : usersQuery.data || []}
             pagination={false}
             columns={[
               { title: '用户名', dataIndex: 'username' },
@@ -128,6 +135,7 @@ export default function UserManagement() {
                 render: (_, record) => (
                   <Space>
                     <Button size="small" icon={<KeyOutlined />} onClick={() => openEdit(record)}>编辑 / 重置密码</Button>
+                    <Button size="small" onClick={() => setScopeAccount(record)}>资料范围</Button>
                     {record.id !== user?.id && record.is_active && (
                       <Popconfirm
                         title="确认停用该账号？"
@@ -145,6 +153,8 @@ export default function UserManagement() {
       </div>
 
       <Modal
+        okText="保存用户"
+        cancelText="取消"
         title={editing ? '编辑用户' : '新增用户'}
         open={visible}
         onCancel={() => setVisible(false)}
@@ -162,6 +172,11 @@ export default function UserManagement() {
           <Form.Item label="角色" name="role" rules={[{ required: true, message: '请选择角色' }]}>
             <Select options={Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }))} />
           </Form.Item>
+          {!editing && (selectedRole === 'admin' ? <Alert type="info" message="系统管理员能够管理全部厂区" /> : <>
+            <Alert type="info" message="明确选择资料范围；未分配范围的账号不能访问厂区业务资料。" />
+            {areas.isError ? <Alert type="error" message="厂区读取失败" action={<Button onClick={() => void areas.refetch()}>重试</Button>} /> :
+              <AreaScopeFields areas={areas.data || []} />}
+          </>)}
           <Form.Item
             label={editing ? '重置密码（留空则不修改）' : '初始密码'}
             name="password"
@@ -171,6 +186,7 @@ export default function UserManagement() {
           </Form.Item>
         </Form>
       </Modal>
+      {scopeAccount && <UserAreaScopeEditor key={scopeAccount.id} account={scopeAccount} close={() => setScopeAccount(null)} />}
     </div>
   )
 }

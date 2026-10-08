@@ -45,7 +45,7 @@ def validate_history_query_evidence(db, result):
             for item in data['items']:
                 if data['schema_version'] == 'case-history-6.3-1':
                     from app.services.case_history_fragment_search import validate_fragment_item
-                    validate_fragment_item(db, item)
+                    validate_fragment_item(db, item, source_case_id=source)
                     continue
                 case = _case(db, item['case_id'])
                 versions = item['versions']

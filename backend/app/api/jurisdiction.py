@@ -2,11 +2,11 @@
 import csv
 import io
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 import openpyxl
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -92,6 +92,14 @@ class WellAttentionRefreshRequest(BaseModel):
     radius_km: float = Field(1.0, ge=0.1, le=5.0)
 
 
+class FacilitySearchMatch(BaseModel):
+    kind: Literal["current_name", "external_id", "address", "historical_name", "source_alias"]
+    value: str
+    version_id: Optional[int] = None
+    identity_id: Optional[int] = None
+    source_id: Optional[int] = None
+
+
 class JurisdictionAssetResponse(BaseModel):
     id: int
     operational_area_id: Optional[int]
@@ -114,20 +122,30 @@ class JurisdictionAssetResponse(BaseModel):
     attributes: Optional[Dict[str, Any]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    search_match: Optional[FacilitySearchMatch] = None
 
     class Config:
         from_attributes = True
 
 
+class MapDataIssueReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_group: Literal["identity", "coordinates", "water_cut", "production", "other"]
+    source_claim_id: Optional[int] = Field(None, gt=0, strict=True)
+    asset_version_id: Optional[int] = Field(None, gt=0, strict=True)
+
+
 class JurisdictionFeedbackCreate(BaseModel):
     case_id: Optional[int] = None
     asset_id: Optional[int] = None
-    feedback_type: str = Field(..., description="patrol/deployment/meeting/check")
+    feedback_type: str = Field(..., description="patrol/deployment/meeting/check/data_issue")
     adopted: bool = False
     result: Optional[str] = None
     effectiveness_score: Optional[float] = Field(None, ge=0, le=100)
     notes: Optional[str] = None
     extra: Optional[Dict[str, Any]] = None
+    source_reference: Optional[MapDataIssueReference] = None
 
 
 class JurisdictionFeedbackResponse(BaseModel):
@@ -252,8 +270,9 @@ async def list_assets(
     source: Optional[str] = None,
     status: Optional[str] = "active",
     operational_area_id: Optional[int] = Query(default=None, ge=1),
-    skip: int = 0,
-    limit: int = Query(200, le=1000),
+    keyword: Optional[str] = Query(default=None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> List[JurisdictionAsset]:
     """查询辖区基础要素，支持按类型、来源和状态筛选。"""
@@ -263,6 +282,7 @@ async def list_assets(
         source=source,
         status=status,
         operational_area_id=operational_area_id,
+        keyword=keyword,
         skip=skip,
         limit=limit,
     )
@@ -349,10 +369,12 @@ async def create_feedback(
     payload: JurisdictionFeedbackCreate,
     db: Session = Depends(get_db),
 ) -> JurisdictionFeedback:
-    """记录布防/巡逻/会议任务反馈，支撑阶段 6 效果评估。"""
+    """保留历史反馈；data_issue 只记录来源明确的问题，不修改设施。"""
     try:
         return JurisdictionService.record_feedback(db, payload.dict())
     except ValueError as exc:
+        if str(exc).startswith("data_issue_"):
+            raise HTTPException(422, "问题标注需包含本设施的有效来源引用和 1–2000 字说明") from exc
         if str(exc) in {
             "case_not_found_or_out_of_scope",
             "asset_not_found_or_out_of_scope",
@@ -363,6 +385,22 @@ async def create_feedback(
         if str(exc) == "feedback_scope_required":
             raise HTTPException(status_code=422, detail="反馈必须关联当前厂区内的案件或地图要素") from exc
         raise
+    except LookupError as exc:
+        raise HTTPException(404, "设施或所引用资料不存在或当前不可访问") from exc
+
+
+@router.get("/data-issues")
+def list_map_data_issues(
+    response: Response, asset_id: int = Query(gt=0),
+    page: int = Query(1, ge=1, le=10000), page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    from app.services.map_data_issues import list_issues
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return list_issues(db, asset_id, page=page, page_size=page_size)
+    except LookupError as exc:
+        raise HTTPException(404, "设施不存在或当前不可访问") from exc
 
 
 @router.get("/effectiveness")

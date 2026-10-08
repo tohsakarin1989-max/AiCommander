@@ -54,9 +54,8 @@ class CaseSourceService:
             records = db.query(model).filter(model.case_id == case.id).order_by(model.id).all()
             payload[key] = [{column.name: field_value(row, column)
                              for column in model.__table__.columns
-                             if column.name not in {"id", "case_id", "created_at", "updated_at"}}
+                             if column.name not in {"case_id", "created_at", "updated_at"}}
                             for row in records]
-            payload[key].sort(key=encode)
         object_ids = {item["evidence_object_id"] for item in payload["evidence"] if item.get("evidence_object_id") is not None}
         payload["evidence_objects"] = [
             {key: json_value(getattr(item, key)) for key in
@@ -90,7 +89,7 @@ class CaseSourceService:
                     for row in db.query(model).populate_existing().filter(model.case_id.in_(ids)).order_by(model.id):
                         values[row.case_id][key].append({column.name: field_value(row, column)
                             for column in model.__table__.columns
-                            if column.name not in {"id", "case_id", "created_at", "updated_at"}})
+                            if column.name not in {"case_id", "created_at", "updated_at"}})
                 object_ids = {item["evidence_object_id"] for payload in values.values()
                     for item in payload["evidence"] if item.get("evidence_object_id") is not None}
                 objects = {item.id: {key: json_value(getattr(item, key)) for key in
@@ -109,8 +108,6 @@ class CaseSourceService:
                         revisions[row.case_id] = row
                 for case in batch:
                     payload = values[case.id]
-                    for key in DETAIL_MODELS:
-                        payload[key].sort(key=encode)
                     refs = {item["evidence_object_id"] for item in payload["evidence"] if item.get("evidence_object_id") is not None}
                     payload["evidence_objects"] = [objects[key] for key in sorted(refs) if key in objects]
                     latest = revisions.get(case.id)
@@ -123,7 +120,38 @@ class CaseSourceService:
 
     @staticmethod
     def source_hash(db, case):
+        """Identity-aware freshness; never use a content-only cache key here."""
         return hashlib.sha256(encode(CaseSourceService.source_payload(db, case)).encode()).hexdigest()
+
+    @staticmethod
+    def content_payload(payload):
+        """Value-only reuse input, not a source reference or revision identity.
+
+        Strip only detail row IDs, retaining evidence object references and
+        duplicate multiplicity. Old snapshots without row IDs remain readable;
+        their missing identities must never be reconstructed by value matching.
+        """
+        result = deepcopy(payload)
+        for key in DETAIL_MODELS:
+            result[key] = sorted(
+                ({name: value for name, value in row.items() if name != "id"}
+                 for row in result.get(key, [])), key=encode)
+        return result
+
+    @staticmethod
+    def content_hash(payload):
+        return hashlib.sha256(encode(CaseSourceService.content_payload(payload)).encode()).hexdigest()
+
+    @staticmethod
+    def text_content_hash(payload):
+        """Exact extraction input only; model/config versions must bind separately.
+
+        This is a future reuse contract, not a cache lookup. Do not trim text:
+        whitespace changes affect quoted offsets and therefore the digest.
+        """
+        from app.services.case_semantic_service import TEXT_FIELDS
+        values = {name: payload.get("case", {}).get(name) for name in TEXT_FIELDS}
+        return hashlib.sha256(encode(values).encode()).hexdigest()
 
     @staticmethod
     def capture_change(db, case, *, change_type="updated"):

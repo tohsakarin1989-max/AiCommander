@@ -11,6 +11,10 @@
 .material-directory small { color: var(--ink-3, #666); }
 .material-directory nav, .material-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; }
 .material-reading-pane { min-width: 0; }
+.material-format { margin-block: 18px; padding-block: 14px; border-block: 1px solid var(--line); }
+.material-format label { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 600; }
+.material-format select { min-width: 180px; }
+.material-format p { margin: 10px 0 0; max-width: 72ch; color: var(--ink-2); line-height: 1.7; }
 .material-reader h1 { font-size: 26px; line-height: 1.4; }
 .material-reader h2 { font-size: 20px; margin-top: 24px; }
 .material-reader h2 small { font-size: 14px; font-weight: normal; }
