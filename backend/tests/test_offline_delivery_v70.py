@@ -306,6 +306,7 @@ def test_real_compose_parser_selects_exact_runtime_without_daemon(tmp_path, docu
     config.write_text(f"APP_DOMAIN=synthetic.internal\nAPP_VERSION={VERSION}\nPOSTGIS_IMAGE={IMAGE_ID}\n"
                       f"ENABLE_DOCUMENT_EXPORT={str(documents).lower()}\n"
                       f"ENABLE_ROAD_ANALYSIS={str(roads).lower()}\n"
+                      "CASE_DRAFT_RETENTION_DAYS=14\n"
                       f"ENABLE_MAP_BUILD={str(map_build).lower()}\n")
     environment = {"PATH": os.environ["PATH"], "ROOT_DIR": str(ROOT),
                    "ENV_FILE": str(config), "COMPOSE_FILE": str(ROOT / "docker-compose.production.yml")}
@@ -328,6 +329,7 @@ def test_real_compose_parser_selects_exact_runtime_without_daemon(tmp_path, docu
     assert services["frontend"]["image"] == f"{prefix}-frontend:{VERSION}"
     for service in services.keys() - {"postgres", "redis", "frontend"}:
         assert services[service]["environment"]["APP_VERSION"] == VERSION
+        assert services[service]["environment"]["CASE_DRAFT_RETENTION_DAYS"] == "14"
     assert services["postgres"]["image"] == IMAGE_ID
     if documents and not roads:
         assert services["backend"]["build"]["target"] == "document-renderer"

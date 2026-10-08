@@ -225,6 +225,10 @@ export interface AiEvidenceAnchor {
   field: string
   text: string
   source: string
+  reference_status?: 'verified' | 'unverified'
+  start?: number | null
+  end?: number | null
+  source_sha256?: string | null
 }
 
 export interface AiIntakeApplyResult {

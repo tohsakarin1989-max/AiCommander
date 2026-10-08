@@ -90,6 +90,35 @@ export interface AutomaticRoadComparison {
   result_id: string; content_sha256: string
   status: 'processing' | 'waiting_network' | 'completed' | 'information_missing' | 'unavailable' | 'not_available'
   artifact: (RoadArtifact & { content: CaseRoadComparison | CaseFacilityComparison }) | null
+  progress?: FacilityComparisonProgress
+  reason?: 'frozen_inputs_unavailable' | 'frozen_inputs_changed'
+}
+
+export interface FacilityComparisonProgress {
+  phase: 'scan' | 'entrances' | 'roads'
+  scanned: number; scan_complete: boolean
+  candidate_pool_size: number; candidate_pool_limit: 100
+  entrance_facilities_checked: number; entrance_facilities_total: number; entrance_check_complete: boolean
+  road_targets_completed: number; road_targets_total: number | null; road_complete: boolean
+  dependency_policy: 'whole_authorized_scope_conservative'
+  boundary: string
+}
+
+function validFacilityProgress(value: FacilityComparisonProgress): boolean {
+  const count = (number: unknown) => typeof number === 'number' && Number.isSafeInteger(number) && number >= 0
+  return !!value && ['scan', 'entrances', 'roads'].includes(value.phase)
+    && count(value.scanned) && typeof value.scan_complete === 'boolean'
+    && count(value.candidate_pool_size) && value.candidate_pool_size <= 100 && value.candidate_pool_limit === 100
+    && count(value.entrance_facilities_checked) && count(value.entrance_facilities_total)
+    && value.entrance_facilities_checked <= value.entrance_facilities_total && value.entrance_facilities_total <= 100
+    && typeof value.entrance_check_complete === 'boolean' && count(value.road_targets_completed)
+    && (value.road_targets_total === null || count(value.road_targets_total)
+      && value.road_targets_completed <= value.road_targets_total)
+    && typeof value.road_complete === 'boolean'
+    && (!value.road_complete || value.road_targets_total !== null
+      && value.road_targets_completed === value.road_targets_total)
+    && value.dependency_policy === 'whole_authorized_scope_conservative'
+    && typeof value.boundary === 'string' && !!value.boundary.trim()
 }
 
 export type RoadBudget = { metric: 'distance'; distance_m: number } | { metric: 'time'; seconds: number }
@@ -147,6 +176,9 @@ export async function readAutomaticRoadComparison(resultId: string, hash: string
   if (data.result_id !== resultId || data.content_sha256 !== hash
       || (data.information_dependencies !== undefined && (!Array.isArray(data.information_dependencies)
         || data.information_dependencies.some(value => typeof value !== 'string')))
+      || (data.progress !== undefined && (data.status !== 'processing' || !validFacilityProgress(data.progress)))
+      || (data.reason !== undefined && (data.status !== 'unavailable'
+        || !['frozen_inputs_unavailable', 'frozen_inputs_changed'].includes(data.reason)))
       || !['processing', 'waiting_network', 'completed', 'information_missing', 'unavailable', 'not_available'].includes(data.status)) {
     throw new Error('自动道路成果版本不一致')
   }

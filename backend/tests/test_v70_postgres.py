@@ -41,7 +41,7 @@ def test_v70_postgres_upgrade_concurrent_save_fresh_install_and_restore():
     with engine.begin() as db:
         db.execute(text("INSERT INTO cases(case_number,description,operational_area_id) VALUES ('SYN-V70-BEFORE','升级前原始合成记录',1)"))
         db.execute(text("INSERT INTO users(id,username,display_name,password_hash,role) VALUES (1,'v70-synthetic','合成管理员','not-a-real-login','admin')"))
-    migrate('head')
+    migrate('v70s01')  # This historical receipt probe freezes its own upgrade target.
     barrier = Barrier(4)
 
     def save(_):
@@ -79,7 +79,7 @@ def test_v70_postgres_upgrade_concurrent_save_fresh_install_and_restore():
         assert db.scalar(text('SELECT count(*) FROM case_submission_receipts')) == 1
         assert bytes(db.scalar(text("SELECT content FROM evidence_objects WHERE storage_key='synthetic-v70-original'"))) == b'synthetic original bytes'
     fresh_url = url.set(database='aic_v70_fresh').render_as_string(hide_password=False)
-    assert initialize_empty_database(fresh_url, confirmed=True) == 'v70s01'
+    assert initialize_empty_database(fresh_url, confirmed=True) == 'v75r01'
     with pytest.raises(ValueError, match='target_not_empty'):
         initialize_empty_database(fresh_url, confirmed=True)
     restored_engine.dispose()

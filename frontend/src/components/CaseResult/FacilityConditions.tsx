@@ -10,6 +10,11 @@ export default function FacilityConditions({ comparison, changes }: { comparison
     {!!comparison.priority_gaps.length && <div><h5>哪些补充资料会影响判断</h5>
       <ul>{comparison.priority_gaps.map(gap => <li key={gap.key}><strong>{gap.label}</strong>：{gap.reason}
         <p>涉及 {gap.asset_ids.length} 个设施；需补：{gap.dependencies.join('、') || '尚无明确补充依赖'}。</p>
+        {gap.priority_basis && <p>排序依据：{gap.priority_basis.blocked_candidates} 个道路比较受阻，{gap.priority_basis.affected_candidates} 个已对照候选受影响；不是预估收益。</p>}
+        {gap.impacts && <details><summary>具体影响哪些设施与判断</summary><ul>{gap.impacts.map(impact =>
+          <li key={impact.asset_id}>{impact.name}（#{impact.asset_id}）：{impact.reason}
+            <p>{impact.blocks_comparison ? '本轮未具备道路排名依据' : '此项条件仍待核对，不声称阻断全部研判'}。</p>
+            <small>依据：{impact.evidence_refs.join('；')}</small></li>)}</ul></details>}
       </li>)}</ul><p>这是条件依赖提示，不是新增待办，也不承诺提高命中概率。</p></div>}
     <details><summary>全部召回设施的条件对照（{comparison.rows.length} 个）</summary>
       {comparison.rows.map(row => <article key={row.asset_id}>
@@ -20,7 +25,8 @@ export default function FacilityConditions({ comparison, changes }: { comparison
             {!!condition.evidence_refs.length && <details><summary>条件出处</summary><ul>{condition.evidence_refs.map(ref => <li key={ref}><code>{ref}</code></li>)}</ul></details>}
           </dd>
         </div>)}</dl>
-        <p>生产资料适用时刻：{row.source_context.valid_at || '案发时间不足'}；资料截止：{row.source_context.known_at}；来源版本：{row.source_context.version_id ?? '未取得适用版本'}。</p>
+        <p>生产资料适用{row.source_context.query_interval ? `完整区间：${row.source_context.query_interval.from} 至 ${row.source_context.query_interval.to}` : `时刻：${row.source_context.valid_at || '案发时间不足'}`}；资料截止：{row.source_context.known_at}；来源版本：{row.source_context.version_id ?? '未取得单一适用版本'}。</p>
+        {row.source_context.coverage && <p>历史条件覆盖：{{ full: '全区间有资料', partial: '部分区间有资料', unknown: '未知' }[row.source_context.coverage]}。{row.source_context.late_supplement ? '包含后来补录，不能冒充当时已经掌握。' : ''}</p>}
         <small>{row.boundary}</small>
       </article>)}
     </details>

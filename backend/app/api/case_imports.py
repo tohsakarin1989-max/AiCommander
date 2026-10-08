@@ -11,14 +11,14 @@ try:
 except ImportError:
     XMLSyntaxError = ParseError
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db, require_area_write_access
 from app.models.case_import import CaseImportTemplate
 from app.services.case_import_table import FIELDS, MAX_BYTES, parse_case_table
-from app.services.case_import_retry_service import get_batch_rows, retry_batch_rows
+from app.services.case_import_retry_service import get_batch_rows, list_import_batches, retry_batch_rows
 
 router = APIRouter()
 
@@ -26,6 +26,18 @@ router = APIRouter()
 class RetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rows: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
+
+
+@router.get("/batches")
+def get_recent_import_batches(
+    response: Response,
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    operational_area_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "no-store"
+    return list_import_batches(db, page=page, page_size=page_size, operational_area_id=operational_area_id)
 
 
 @router.get("/batches/{batch_id}")

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { App as AntdApp, Select, Switch } from 'antd'
 import { DownloadOutlined, NodeIndexOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { parseCaseDeepLinkId } from '../Cases/caseSearch'
 
-import { caseApi } from '../../services/cases'
+import CaseSearch from '../../components/CaseSearch'
 import {
   evidenceGraphApi,
   type EvidenceGraphEdge,
@@ -79,19 +79,6 @@ const EvidenceGraph: React.FC = () => {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const chartRef = useRef<ReactECharts | null>(null)
 
-  const casesQuery = useQuery({
-    queryKey: ['cases', 'evidence-graph-recent', user?.id, sessionEpoch],
-    queryFn: () => caseApi.getCases({ limit: 50 }),
-    staleTime: 60_000,
-  })
-
-  useEffect(() => {
-    if (!searchParams.has('caseId') && !casesQuery.isError && casesQuery.data?.length) {
-      const firstId = casesQuery.data[0].id
-      setSearchParams({ caseId: String(firstId) }, { replace: true })
-    }
-  }, [caseId, casesQuery.data, casesQuery.isError, setSearchParams, searchParams])
-
   const graphQuery = useQuery({
     queryKey: ['evidence-graph', caseId, wellRadiusKm, user?.id, sessionEpoch],
     queryFn: () => evidenceGraphApi.getCaseGraph(caseId!, { wellRadiusKm }),
@@ -159,19 +146,9 @@ const EvidenceGraph: React.FC = () => {
           <p>从原始记录到人工确认成果逐层追溯；断开的引用、未确认推断和空间参考不会被包装成事实。</p>
         </div>
         <div className="eg-hero-controls">
-          <Select
-            showSearch
-            value={caseId}
-            loading={casesQuery.isLoading}
-            placeholder="选择案件"
-            optionFilterProp="searchText"
-            onChange={chooseCase}
-            options={(casesQuery.data ?? []).map(item => ({
-              value: item.id,
-              label: item.case_number,
-              searchText: [item.case_number, item.case_type, item.location].filter(Boolean).join(' '),
-            }))}
-          />
+          <details open={!caseId}><summary>{graph?.case_number ? `当前案件：${graph.case_number} · 更换` : '查找并选择案件'}</summary>
+            <CaseSearch selectedIds={caseId ? [caseId] : []} onChoose={item => chooseCase(item.id)} />
+          </details>
           <Select
             value={wellRadiusKm}
             onChange={setWellRadiusKm}
@@ -190,7 +167,7 @@ const EvidenceGraph: React.FC = () => {
           <button className="btn-ghost" onClick={() => void graphQuery.refetch()}>重新读取</button>
         </div>
       ) : !graph ? (
-        <div className="empty-state eg-loading"><span className="icon">⌛</span>正在组织证据路径</div>
+        <div className="empty-state eg-loading">{caseId ? '正在组织证据路径' : '请先查找并选择案件；不会自动改选最近案件。'}</div>
       ) : (
         <>
           <section className="eg-kpis" aria-label="证据图谱摘要">

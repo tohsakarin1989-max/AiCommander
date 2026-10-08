@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.case import Case
 from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
+from app.services.case_time_window import case_time_fields
+from app.utils.datetimes import utc_datetime
 
 
 SCHEMA_VERSION = "daily-workbench-5.0-1"
@@ -20,7 +22,9 @@ _WHITESPACE = " \t\r\n\v\f\u3000\u00a0"
 def information_gaps(case: Case) -> list[str]:
     """仅提示三个关键缺口；地点文字或合法坐标任一存在即可。"""
     gaps = []
-    if not case.occurred_time:
+    interval_known = (case.occurred_from is not None and case.occurred_to is not None
+                      and utc_datetime(case.occurred_from) <= utc_datetime(case.occurred_to))
+    if not case.occurred_time and not interval_known:
         gaps.append("案发时间")
     coordinates_valid = (
         case.latitude is not None
@@ -58,8 +62,11 @@ class DailyWorkbenchService:
         has_location = or_(
             _text_present(Case.location), func.coalesce(coordinates_valid, False)
         )
+        has_time = or_(Case.occurred_time.isnot(None), and_(
+            Case.occurred_from.isnot(None), Case.occurred_to.isnot(None),
+            Case.occurred_to >= Case.occurred_from))
         needs_information = or_(
-            Case.occurred_time.is_(None),
+            ~has_time,
             ~has_location,
             ~_text_present(Case.description),
         )
@@ -121,7 +128,7 @@ class DailyWorkbenchService:
                 {
                     "id": case.id,
                     "case_number": case.case_number,
-                    "occurred_time": case.occurred_time.isoformat() if case.occurred_time else None,
+                    **case_time_fields(case),
                     "location": case.location,
                     "case_status": case.status,
                     "pipeline_status": pipeline_status or "not_started",
@@ -141,34 +148,5 @@ class DailyWorkbenchService:
 
 
 def _topic_changes(db):
-    """At most three readable material changes; GET never acknowledges or creates work."""
-    from app.models.analysis_topic import AnalysisTopic, TopicSnapshot
-    from app.services.analysis_topic_service import _owner, validate_snapshot_access
-    try:
-        owner, scope = _owner(db)
-    except PermissionError:
-        return []
-    changes = []
-    with db.no_autoflush:
-        rows = db.query(AnalysisTopic, TopicSnapshot).join(TopicSnapshot, TopicSnapshot.topic_id == AnalysisTopic.id).filter(
-            AnalysisTopic.created_by == owner.id, AnalysisTopic.scope_version == scope,
-            AnalysisTopic.paused.is_(False)).order_by(TopicSnapshot.created_at.desc(),
-                TopicSnapshot.revision.desc(), TopicSnapshot.id.desc()).limit(100)
-        seen = set()
-        for topic, snapshot in rows:
-            if topic.id in seen:
-                continue
-            seen.add(topic.id)
-            items = snapshot.changes.get('meaningful_items', [])
-            if not snapshot.changes.get('material_changed') or not items:
-                continue
-            try:
-                validate_snapshot_access(db, snapshot)
-            except (PermissionError, ValueError):
-                continue
-            changes.append({'topic_id': topic.id, 'title': topic.title, 'revision': snapshot.revision,
-                'summary': items[0]['message'], 'items': items[:3],
-                'target_path': f'/topics?topic={topic.id}&revision={snapshot.revision}'})
-            if len(changes) == 3:
-                break
-    return changes
+    from app.services.topic_notifications import daily_changes
+    return daily_changes(db)

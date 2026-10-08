@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import QueryPresets, { presetArguments } from './QueryPresets'
 import EvidenceAnswer, { answerValid } from './EvidenceAnswer'
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, sessionEpoch: 1 }) }))
+vi.mock('../../components/CaseSearch', () => ({ default: () => <p>完整案件检索</p> }))
+vi.mock('../../components/Facility/FacilitySearch', () => ({ default: () => <p>完整设施检索</p> }))
 
 describe('确定性查询与证据化回答', () => {
   it('沿用已选案件/范围，预设不是只填示例文字', () => {
@@ -19,6 +22,12 @@ describe('确定性查询与证据化回答', () => {
     expect(() => presetArguments('coverage_scenario', { area: '1', asOf: '2026-09-30T01:00:00Z', disabled: 'abc' })).toThrow('登记编号')
     const value = presetArguments('coverage_scenario', { area: '1', asOf: '2026-09-30T01:00:00Z', disabled: '2,2,3' })
     expect(value.arguments.disabled_resource_ids).toEqual([2, 3])
+  })
+  it('设施入口可以更换检索结果，不再要求用户手填稳定编号', () => {
+    const html = renderToStaticMarkup(<QueryPresets assetId="89" disabled={false} onRun={() => {}} />)
+    expect(html).toContain('完整设施检索'); expect(html).toContain('从设施入口带入 #89')
+    expect(html).not.toContain('设施稳定编号')
+    expect(() => presetArguments('case_process', {})).toThrow('查找并选择案件')
   })
   it('不显示越界答案引用，不把原文指令当HTML', () => {
     const cards = [{ tool: 'count_cases', state: 'available', data: { count: 0 } }]

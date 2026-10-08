@@ -4,6 +4,7 @@ import type { TopicViews as Views } from '../../services/analysisTopics'
 import { categoryNames, kindNames } from './topicPresentation'
 import { CaseHistoryContent } from '../Cases/CaseHistoryReferences'
 import { isCaseHistoryResult } from '../../services/caseHistory'
+import { businessContextPath } from '../../services/businessNavigation'
 const LeafletMap = lazy(() => import('../../components/Map/LeafletMap'))
 
 const labels: Record<string, string> = {
@@ -23,7 +24,7 @@ function Entries({ value }: { value: unknown }) {
     <div key={key}><dt>{labels[key] || key}</dt><dd><Entries value={item} /></dd></div>)}</dl>
 }
 
-export function TopicLinkedViews({ views, tab }: { views: Views; tab: string }) {
+export function TopicLinkedViews({ views, tab, context = new URLSearchParams() }: { views: Views; tab: string; context?: URLSearchParams }) {
   const [area, setArea] = useState<number | null>(null)
   const [groupPage, setGroupPage] = useState(0)
   const mapVersion = views.map.versions.find(item => item.operational_area_id === area) || views.map.versions[0]
@@ -44,7 +45,7 @@ export function TopicLinkedViews({ views, tab }: { views: Views; tab: string }) 
       </Suspense></> : <p role="status">该版没有可引用的地图快照，未使用当前底图代替历史版本。可继续查看时间线与原文依据。</p>}
     <p>本页无可用坐标：{views.map.unmapped_in_page} 起，仍计入总体统计。</p>
     <h3>本页时间线</h3><ol>{views.timeline.map(item => <li key={item.case_id}>
-      {item.occurred_time || '时间未提供'} · <Link to={`/cases?caseId=${item.case_id}`}>案件 #{item.case_id}</Link> · 画像版本 {item.profile_version}
+      {item.occurred_time || '时间未提供'} · <Link to={businessContextPath(`/cases?caseId=${item.case_id}`, context, '/topics')}>案件 #{item.case_id}</Link> · 画像版本 {item.profile_version}
     </li>)}</ol>
   </section>
   if (tab === 'groups') return <section aria-label="条件案组图谱">
@@ -53,7 +54,7 @@ export function TopicLinkedViews({ views, tab }: { views: Views; tab: string }) 
     {groups.map(group => <div className="topic-group" key={`${group.category}:${group.kind}:${group.value}`}>
       <strong>{categoryNames[group.category]} · {group.value}（{kindNames[group.kind]}）<br />全组 {group.case_count} 起</strong>
       <span aria-hidden="true">→</span><div className="topic-actions">{group.case_ids.map(id =>
-        <Link key={id} to={`/cases?caseId=${id}`}>案件 #{id}</Link>)}</div>
+        <Link key={id} to={businessContextPath(`/cases?caseId=${id}`, context, '/topics')}>案件 #{id}</Link>)}</div>
     </div>)}
     {views.graph.groups.length > 10 && <div className="topic-actions">
       <button className="btn-ghost" disabled={!groupPage} onClick={() => setGroupPage(v => v - 1)}>上一组条件</button>
@@ -69,7 +70,7 @@ export function TopicLinkedViews({ views, tab }: { views: Views; tab: string }) 
       {views.history.state === 'insufficient_conditions' ? <p>缺少可靠的检索条件，未自动编造历史查询。</p> : <>
         <p>历史参考使用以下代表条件（不计入本期统计）：{views.history.selection.conditions.map(item =>
           `${categoryNames[item.category] || item.category}·${item.value}（${kindNames[item.kind] || item.kind}）`).join('、') || '保存的关键词'}。</p>
-        {isCaseHistoryResult(views.history.result) ? <CaseHistoryContent result={views.history.result} />
+        {isCaseHistoryResult(views.history.result) ? <CaseHistoryContent result={views.history.result} context={context} originPath="/topics" />
           : <p role="alert">历史参考结构不完整，不能据此判断没有匹配资料。</p>}
       </>}
     </>}

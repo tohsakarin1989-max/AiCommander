@@ -54,7 +54,11 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
-def worker(backend, label, output):
+def worker(backend, label, output, *, use_creation_key=None, strict_edit=False,
+           prepare_edit=False, verify_audits=False):
+    # Defaults preserve the v7.0 protocol. Later comparisons may explicitly
+    # select the existing worker's creation and editing paths.
+    creation_key = label == "candidate" if use_creation_key is None else use_creation_key
     backend = backend.resolve()
     output = output.resolve()
     with tempfile.TemporaryDirectory(prefix="aic-v70-synthetic-db-") as directory:
@@ -129,7 +133,7 @@ def worker(backend, label, output):
             assert login.status_code == 200, login.text
             for index in range(WARMUP + SAMPLES):
                 headers = {"Origin": "http://testserver"}
-                if label == "candidate":
+                if creation_key:
                     headers["Idempotency-Key"] = f"synthetic-new-{index:04}"
                 active = {"sql_counts": Counter(), "cursor_ms": 0.0}
                 started = time.perf_counter_ns()
@@ -142,14 +146,31 @@ def worker(backend, label, output):
                 assert body["id"] not in created_ids, "create_must_not_be_a_replay"
                 created_ids.append(body["id"])
 
+                update_path, update_payload = f'/api/cases/{body["id"]}', UPDATE_PAYLOAD
+                if strict_edit:
+                    update_path += "/edit-snapshot"
+                if prepare_edit or strict_edit:
+                    # Preparation is intentionally outside save latency and SQL
+                    # attribution. The strict editor needs its source token.
+                    prepared = client.get(update_path)
+                    assert prepared.status_code == 200, prepared.text
+                    snapshot = prepared.json()
+                    if strict_edit:
+                        assert snapshot["case"]["id"] == body["id"]
+                        assert isinstance(snapshot["source_revision"], int)
+                        update_payload = {"expected_revision": snapshot["source_revision"],
+                                          "case_payload": UPDATE_PAYLOAD}
+                    else:
+                        assert snapshot["id"] == body["id"]
                 active = {"sql_counts": Counter(), "cursor_ms": 0.0}
                 started = time.perf_counter_ns()
-                response = client.put(f'/api/cases/{body["id"]}', json=UPDATE_PAYLOAD,
+                response = client.put(update_path, json=update_payload,
                                       headers={"Origin": "http://testserver"})
                 active["elapsed_ms"] = (time.perf_counter_ns() - started) / 1_000_000
                 update_record, active = active, None
                 assert response.status_code == 200, response.text
-                assert response.json()["description"] == UPDATE_PAYLOAD["description"]
+                updated = response.json()["case"] if strict_edit else response.json()
+                assert updated["description"] == UPDATE_PAYLOAD["description"]
                 if index >= WARMUP:
                     records["create"].append(create_record)
                     records["update"].append(update_record)
@@ -168,17 +189,25 @@ def worker(backend, label, output):
             if inspect(engine).has_table("case_submission_receipts"):
                 from app.models.case_submission import CaseSubmissionReceipt
                 counts["submission_receipts"] = db.query(CaseSubmissionReceipt).count()
-                assert counts["submission_receipts"] == (WARMUP + SAMPLES if label == "candidate" else 0)
+                assert counts["submission_receipts"] == (WARMUP + SAMPLES if creation_key else 0)
             else:
                 assert label == "baseline"
                 counts["submission_receipts"] = 0
+            if verify_audits:
+                from app.models.user import AuditLog
+                for method, operation in (("POST", "create"), ("PUT", "update")):
+                    counts[f"{operation}_audit_records"] = db.query(AuditLog).filter(
+                        AuditLog.action == "api.mutation", AuditLog.method == method,
+                        AuditLog.status_code == 200, AuditLog.path.startswith("/api/cases"),
+                    ).count()
+                    assert counts[f"{operation}_audit_records"] == WARMUP + SAMPLES, "save_audit_must_persist"
         samples = {op: [row["elapsed_ms"] for row in values] for op, values in records.items()}
         write_json(output, {
             "samples_ms": samples,
             "p95_ms": {op: percentile(values) for op, values in samples.items()},
             "median_ms": {op: statistics.median(values) for op, values in samples.items()},
             "measurements": records, "counts": counts, "created_ids": created_ids,
-            "new_keys": WARMUP + SAMPLES if label == "candidate" else 0,
+            "new_keys": WARMUP + SAMPLES if creation_key else 0,
             "replay_requests": 0, "automatic_number": True,
         })
         engine.dispose()

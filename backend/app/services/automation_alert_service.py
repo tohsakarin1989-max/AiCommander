@@ -11,7 +11,6 @@ from app.models.automation_alert import AutomationAlert
 from app.models.event import Event
 from app.services.case_service import CaseService
 from app.services.case_intelligence_service import CaseIntelligenceService
-from app.services.preprocess_service import CasePreprocessService
 
 
 ALERT_EVENT_TYPE_MAP = {
@@ -255,7 +254,8 @@ class AutomationAlertService:
         event.related_case_id = case.id
         event.handling_result = "已转案件"
         db.commit()
-        CasePreprocessService.preprocess_case(db, case.id)
+        # CaseService.create_case already committed the transactional outbox.
+        # Alert conversion must not synchronously wait for another model path.
         db.refresh(alert)
         return {"alert_id": alert.id, "event_id": event.id, "case_id": case.id, "message": "告警已转案件"}
 

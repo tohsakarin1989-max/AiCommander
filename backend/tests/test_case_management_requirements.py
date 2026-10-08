@@ -349,7 +349,7 @@ def test_preprocess_has_deterministic_fallback_without_llm():
     result = CasePreprocessService.preprocess_case(db, case_id)
 
     assert result is not None
-    assert result["preprocess_mode"] == "deterministic_fallback"
+    assert result["preprocess_mode"] == "versioned_profile"
     assert result["management"]["report_quality_score"] > 0
     assert result["analysis_readiness"]["spacetime"] == "ready"
     assert result["analysis_readiness"]["area_profile"] == "ready"
@@ -358,12 +358,14 @@ def test_preprocess_has_deterministic_fallback_without_llm():
     assert result["scene_conditions"]["monitoring_status"] == "技防/照明/监控情况待核实"
     assert all(item["boundary"] == "仅供人工研判和防控参考" for item in result["recommendations"])
     refreshed = client.get(f"/api/cases/{case_id}").json()
-    assert refreshed["features"]["basic"]["case_type"] == "涉油盗窃"
-    assert refreshed["features"]["oil"]["facts"]["oil_nature"] == "落地原油"
-    assert refreshed["features"]["facts"]["oil"]["oil_nature"] == "落地原油"
+    assert refreshed["features"] is None
+    saved = client.get(f"/api/cases/{case_id}/preprocess-result").json()
+    assert saved["status"] == "ready"
+    assert saved["data"]["facts"]["oil"]["oil_nature"] == "落地原油"
+    assert saved["data"]["profile_binding"]["source_revision_id"]
 
 
-def test_preprocess_overwrites_existing_features_with_new_top_level_keys():
+def test_preprocess_rejects_unversioned_injection_and_preserves_legacy_features():
     db = _session()
     occurred_time = datetime.utcnow() - timedelta(minutes=20)
     client = _client(db)
@@ -385,19 +387,17 @@ def test_preprocess_overwrites_existing_features_with_new_top_level_keys():
     db.commit()
     db.refresh(stored)
 
-    CasePreprocessService._write_features(
-        db,
-        stored,
-        {"preprocess_mode": "llm", "confidence": 0.88},
-    )
+    import pytest
+    with pytest.raises(ValueError, match="legacy_feature_write_retired"):
+        CasePreprocessService._write_features(db, stored, {"preprocess_mode": "llm", "confidence": 0.88})
+    CasePreprocessService.preprocess_case(db, case_id, use_llm=False)
 
     refreshed = client.get(f"/api/cases/{case_id}").json()
     assert refreshed["features"]["legacy"] is True
-    assert refreshed["features"]["preprocess_mode"] == "llm"
-    assert refreshed["features"]["confidence"] == 0.88
+    assert refreshed["features"] == {"legacy": True}
 
 
-def test_batch_preprocess_all_cases_writes_features_and_jobs():
+def test_batch_preprocess_uses_single_versioned_pipeline_without_legacy_writes():
     db = _session()
     client = _client(db)
 
@@ -430,11 +430,15 @@ def test_batch_preprocess_all_cases_writes_features_and_jobs():
     assert payload["success"] == 2
     assert payload["failed"] == 0
     assert payload["llm_enabled"] is False
-    assert payload["mode_counts"]["deterministic_fallback"] == 2
+    assert payload["mode_counts"]["versioned_profile"] == 2
 
     cases_response = client.get("/api/cases/", params={"limit": 10})
     assert cases_response.status_code == 200
-    assert all(case["features"]["basic"]["case_type"] == "涉油盗窃" for case in cases_response.json())
+    assert all(case["features"] is None for case in cases_response.json())
+    from app.models.case_pipeline import CaseAnalysisProfile
+    from app.models.preprocess_job import PreprocessJob
+    assert db.query(CaseAnalysisProfile).count() == 2
+    assert db.query(PreprocessJob).count() == 0
 
     status_response = client.get("/api/cases/preprocess/status")
     assert status_response.status_code == 200

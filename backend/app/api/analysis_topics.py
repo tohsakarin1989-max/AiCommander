@@ -27,6 +27,7 @@ class TopicCreate(BaseModel):
     question_kind: Literal['condition_changes', 'case_gaps', 'facility_context'] = 'condition_changes'
     window: TopicWindow = Field(default_factory=TopicWindow)
     source_context: TopicSourceContext | None = None
+    notification_policy: Literal['meaningful', 'muted'] = 'meaningful'
 
 
 class TopicUpdate(BaseModel):
@@ -39,6 +40,20 @@ class TopicUpdate(BaseModel):
     filters: ProfileFilters | None = None
     window: TopicWindow | None = None
     expected_definition_revision: int | None = Field(default=None, ge=1, strict=True)
+    notification_policy: Literal['meaningful', 'muted'] | None = None
+
+
+class ChangeReference(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    topic_id: UUID
+    snapshot_id: UUID
+    revision: int = Field(ge=1, strict=True)
+    content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class ChangeDismissal(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    sources: list[ChangeReference] = Field(min_length=1, max_length=100)
 
 
 class TopicFromQuery(BaseModel):
@@ -83,7 +98,7 @@ def _call(db, action, *args, **kwargs):
         status = 404 if str(error) in {'topic_not_found', 'topic_snapshot_not_found', 'topic_source_not_found', 'topic_aggregate_not_found'} else 422
         if str(error) == 'topic_paused':
             status = 409
-        if str(error) == 'topic_definition_conflict':
+        if str(error) in {'topic_definition_conflict', 'topic_change_reference_conflict'}:
             status = 409
         if str(error) == 'topic_query_conditions_unsupported':
             raise HTTPException(422, detail='本次查询包含相似度、道路或成果时间等专用条件，不能等价保存为案件专题；请使用画像条件统计后保存。') from error
@@ -100,7 +115,8 @@ def create(payload: TopicCreate, request: Request, response: Response, db: Sessi
         raise HTTPException(422, detail='请从已完成的查询保存，继承经核验的查询条件')
     result = _call(db, service.create_topic, payload.title, payload.filters.model_dump(mode='json'), payload.notes,
         question=payload.question, question_kind=payload.question_kind,
-        window=payload.window.model_dump(), source_context=payload.source_context.model_dump() if payload.source_context else None)
+        window=payload.window.model_dump(), source_context=payload.source_context.model_dump() if payload.source_context else None,
+        notification_policy=payload.notification_policy)
     response.headers['Location'] = f"/api/analysis-topics/{result['id']}"
     return result
 
@@ -110,6 +126,13 @@ def listing(request: Request, response: Response, page: int = Query(1, ge=1, le=
             page_size: int = Query(20, ge=1, le=50), db: Session = Depends(get_db)):
     _authorize(request, response, db)
     return _call(db, service.list_topics, page=page, page_size=page_size)
+
+
+@router.post('/change-dismissals')
+def dismiss_changes(payload: ChangeDismissal, request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services.topic_notifications import dismiss_changes as dismiss
+    _authorize(request, response, db)
+    return _call(db, dismiss, [item.model_dump(mode='json') for item in payload.sources])
 
 
 @router.post('/from-query', status_code=201)
@@ -131,7 +154,8 @@ def from_context(payload: TopicFromContext, request: Request, response: Response
     if kind == 'condition_changes':
         kind = {'case': 'case_gaps', 'facility': 'facility_context'}.get(source['kind'], kind)
     result = _call(db, service.create_topic, payload.title, payload.filters.model_dump(mode='json'), payload.notes,
-        question=payload.question, question_kind=kind, window=payload.window.model_dump(), source_context=source)
+        question=payload.question, question_kind=kind, window=payload.window.model_dump(), source_context=source,
+        notification_policy=payload.notification_policy)
     response.headers['Location'] = f"/api/analysis-topics/{result['id']}"
     return result
 

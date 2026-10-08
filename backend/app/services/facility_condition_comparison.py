@@ -187,7 +187,7 @@ def compare_facility(asset, records, coverage):
     counts = Counter()
     for case, profile, assertions in records:
         payload = profile.payload
-        standard = payload.get("standard") or {}
+        standard = {**(payload.get("standard") or {}), **case_time_fields(case)}
         similar, different, unknown, historical = [], [], [], []
         historical_production = False
         incident_validity = production_validity(attributes, at=case.occurred_time)
@@ -281,6 +281,81 @@ def compare_facility(asset, records, coverage):
             "gaps": gaps, "boundary": BOUNDARY}
 
 
+def compare_temporal_facility(db, asset, records, coverage, *, known_at=None, knowledge_mode=None):
+    """The region and case candidate use the same complete-window resolver."""
+    from app.services.facility_temporal_conditions import case_window, resolve_conditions, group_match, knowledge_context
+    from app.models.map_foundation import JurisdictionAssetVersion, MapFieldDecision
+    mode, cutoff = knowledge_context(known_at=known_at, knowledge_mode=knowledge_mode, frozen=True)
+    omitted = 0
+    if mode == "as_known":
+        retained = []
+        for case, profile, assertions in records:
+            latest = CaseSourceService.latest_revision(db, case.id)
+            received = utc_datetime(latest.created_at if latest else case.updated_at or case.created_at)
+            if received is None or received > cutoff:
+                omitted += 1
+            else:
+                retained.append((case, profile, assertions))
+        records = retained
+    has_history = (db.query(JurisdictionAssetVersion.id).filter_by(asset_id=asset.id).first() is not None
+                   or db.query(MapFieldDecision.id).filter_by(asset_id=asset.id).first() is not None)
+    if not has_history:
+        legacy = compare_facility(asset, records, coverage)
+        legacy["temporal_coverage"] = "unknown"
+        legacy["comparison_mode"] = "registered_tags_only"
+        legacy["historical_text_coverage"] = "partial" if mode == "as_known" else "current_authorized_profiles"
+        legacy["knowledge_mode"] = mode
+        if mode == "as_known":
+            legacy["gaps"].append("旧文本索引未重建；后来新增或修订案件已排除，不代表当时历史全集")
+        legacy["gaps"] = sorted(set([*legacy["gaps"], "没有已声明的历史版本；下方仅为登记标签对照，不证明案发时适用"]))
+        legacy["boundary"] += " 无历史版本：本节仅保留当前登记标签参考，不作为案发时条件支持，不进入案件历史条件评分。"
+        return legacy
+    references, counts = [], Counter()
+    for case, profile, assertions in records:
+        fields = {**(profile.payload.get("standard") or {}), **case_time_fields(case)}
+        context = resolve_conditions(db, asset.id, **{key: value for key, value in case_window(fields).items() if key != "time_precision"},
+                                     known_at=cutoff, knowledge_mode=mode, frozen=True)
+        if any(group["state"] == "restricted" for group in context["groups"].values()):
+            return {"state": "restricted", "gaps": ["当前来源不可访问"], "boundary": BOUNDARY}
+        similar, different, historical, gaps = [], [], [], list(context["gaps"])
+        for category, field, label in (("oil", "oil_type", "油品"), ("facility", "facility_type", "设施类型")):
+            opposing = any(item.get("category") == category and item.get("kind") != "stated" for item in assertions)
+            def matches(values):
+                if not values.get("verified") or values.get("status") != "active" or opposing or not fields.get(field):
+                    return None
+                expected = FACILITY_TERMS.get(values.get("asset_type"), set()) if category == "facility" else {values.get("oil_type")}
+                return None if not expected or expected == {None} else fields[field] in expected
+            state = group_match(context, "details", matches) if asset.verified else "unknown"
+            if state == "unknown":
+                gaps.append(f"{label}在完整案发区间未形成一致、明确的可比条件")
+            else:
+                (similar if state == "matched" else different).append(f"{label}在完整案发区间{'相符' if state == 'matched' else '不同'}")
+        production = production_comparison(attributes={}, verified=asset.verified, case_fields=fields,
+            case_facts=profile.payload.get("analysis_facts") or {}, temporal_context=context)
+        similar.extend(production["support"])
+        if production["state"] == "different":
+            different.extend(production["counter"])
+        gaps.extend(production["gaps"])
+        for assertion in assertions:
+            if assertion.get("kind") == "stated" and assertion.get("category") in {"method", "place_condition"}:
+                historical.append(f"历史{'手法' if assertion['category'] == 'method' else '地点'}条件参考：{assertion['value']}；不认定本设施具备此条件")
+        counts["comparable" if similar or different else "unknown"] += 1
+        counts["similar"] += bool(similar)
+        counts["different"] += bool(different)
+        refs = sorted({ref for group in context["groups"].values() for segment in group["segments"] for ref in segment["evidence_refs"]})
+        references.append({"case_id": case.id, "title": case.case_number, **case_time_fields(case), "profile_id": profile.id,
+            "similar": similar, "different": different, "historical_conditions": sorted(set(historical)), "gaps": sorted(set(gaps)),
+            "historical_conditions_boundary": "历史参考不是当前设施事实", "source_context": context,
+            "production_validity": {"incident_state": context["coverage"]},
+            "evidence_refs": [f"case:{case.id}", f"case_profile:{profile.id}", *refs], "boundary": BOUNDARY})
+    references.sort(key=lambda row: (-len(row["similar"]), row["case_id"]))
+    return {"state": "partial" if omitted or any(row["source_context"]["coverage"] != "full" for row in references) else "ready" if references else "missing",
+        "reference_cases": references[:REFERENCE_LIMIT], "reference_total": len(references), "representative_limit": REFERENCE_LIMIT,
+        "comparison_counts": dict(counts), "coverage": coverage, "gaps": ["当时已知模式未重建旧文本索引，当前已修订的历史案排除，覆盖不完整"] if mode == "as_known" else [],
+        "knowledge_mode": mode, "known_at": cutoff.isoformat(), "historical_text_coverage": "partial" if mode == "as_known" else "current_authorized_profiles",
+        "production_validity": production_validity(asset.attributes or {}), "boundary": BOUNDARY}
+
+
 def compare_visible_facility(db, asset, records, coverage):
     attributes = asset.attributes if isinstance(asset.attributes, dict) else {}
     source_id = attributes.get("source_id")
@@ -288,7 +363,7 @@ def compare_visible_facility(db, asset, records, coverage):
             MapSource.id == source_id, MapSource.operational_area_id == asset.operational_area_id,
             MapSource.status == "active").first() is None:
         return {"state": "restricted", "gaps": ["当前权限无法读取生产属性来源"], "boundary": BOUNDARY}
-    return compare_facility(asset, records, coverage)
+    return compare_temporal_facility(db, asset, records, coverage)
 
 
 def visible_events_query(db):

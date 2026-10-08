@@ -14,7 +14,7 @@ from app.models.case_road_artifact import CaseRoadArtifact
 from app.models.event import Event
 from app.models.internal_roads import InternalRoadFeatureVersion, InternalRoadImport
 from app.models.jurisdiction import JurisdictionAsset
-from app.models.map_foundation import JurisdictionAssetVersion, MapFeatureClaim, MapSource, MapSnapshot
+from app.models.map_foundation import JurisdictionAssetVersion, MapFeatureClaim, MapFieldDecision, MapSource, MapSnapshot
 from app.models.meeting import Meeting
 from app.models.report import Report
 from app.services.case_result_access import require_result_access
@@ -23,10 +23,12 @@ from app.services.case_result_composition import COMPOSITION_SCHEMA_VERSION, bra
 from app.services.case_result_snapshot import assemble_case_result
 from app.services.case_road_artifact_service import read_road_artifact
 from app.services.facility_condition_comparison import (
-    case_brief, compare_facility, event_brief, facility_brief, in_window, iso,
+    case_brief, compare_temporal_facility, event_brief, facility_brief, in_window, iso,
     production_validity, profile_catalog, require_scope, window_values,
 )
 from app.services.internal_road_service import read_import
+from app.services.facility_source_access import attributes_sources_visible
+from app.services.case_time_window import filter_case_time_window
 from app.services.jurisdiction_service import TECH_TYPES
 from app.utils.geo import haversine_km
 
@@ -40,6 +42,8 @@ PRODUCTION_FIELDS = {
     "production_output": "产量", "water_cut_min": "含水率下限", "water_cut_max": "含水率上限",
     "water_cut_unit": "含水率单位", "production_valid_from": "生产条件有效起始",
     "production_valid_to": "生产条件有效截止",
+    "water_cut_basis": "含水率测量口径", "production_output_unit": "产量单位",
+    "production_period": "产量统计周期", "production_basis": "产量口径",
 }
 
 
@@ -64,7 +68,7 @@ def _source_visible(db, source_id, asset):
 
 def _production(db, asset):
     attributes = asset.attributes if isinstance(asset.attributes, dict) else {}
-    if attributes.get("source_id") is not None and not _source_visible(db, attributes["source_id"], asset):
+    if not attributes_sources_visible(db, attributes, asset.operational_area_id):
         return section(state="restricted"), {}
     versions = db.query(JurisdictionAssetVersion).join(JurisdictionAsset,
         JurisdictionAsset.id == JurisdictionAssetVersion.asset_id).filter(
@@ -74,12 +78,18 @@ def _production(db, asset):
     if not isinstance(stored_refs, list) or any(type(ref) is not int or ref < 1 for ref in stored_refs):
         return section(state="unavailable", gaps=["设施来源引用格式不完整，未推断来源版本"]), {}
     claim_ids = set(stored_refs) | {version.source_claim_id for version in versions if version.source_claim_id is not None}
+    decisions = db.query(MapFieldDecision).filter_by(asset_id=asset.id).order_by(MapFieldDecision.id).all()
+    for decision in decisions:
+        if not _source_visible(db, decision.source_id, asset):
+            return section(state="restricted"), {}
+        claim_ids.add(decision.claim_id)
     for claim_id in claim_ids:
         claim = db.query(MapFeatureClaim).filter_by(id=claim_id, asset_id=asset.id).first()
         if claim is None or not _source_visible(db, claim.source_id, asset):
             return section(state="restricted"), {}
         claims[claim.id] = claim
     evidence = [f"asset:{asset.id}", *(f"map_claim:{identifier}" for identifier in sorted(claims))]
+    from app.services.map_ingest_originals import claim_provenance
     items = [item(key, label, detail=str(attributes[key]), value=attributes[key], evidence_refs=evidence)
              for key, label in PRODUCTION_FIELDS.items() if attributes.get(key) is not None]
     history = []
@@ -90,7 +100,7 @@ def _production(db, asset):
                 and snapshot["operational_area_id"] not in allowed):
             return section(state="restricted"), {}
         version_attributes = snapshot.get("attributes") or {}
-        if version_attributes.get("source_id") is not None and not _source_visible(db, version_attributes["source_id"], asset):
+        if not attributes_sources_visible(db, version_attributes, asset.operational_area_id):
             return section(state="restricted"), {}
         claim = claims.get(version.source_claim_id)
         history.append({"version_id": version.id, "version": version.version,
@@ -98,9 +108,22 @@ def _production(db, asset):
             "source_claim_id": version.source_claim_id, "source_revision": claim.source_revision if claim else None,
             "created_at": iso(version.created_at), "change_type": version.change_type})
     for claim in claims.values():
+        try:
+            trace = claim_provenance(db, claim)
+        except LookupError:
+            return section(state="restricted"), {}
+        field_decisions = [
+            {"decision_id": row.id, "field_group": row.group_key, "state": row.state,
+             "decision": row.outcome, "source_claim_id": row.claim_id,
+             "previous_decision_id": row.previous_decision_id, "valid_from": iso(row.valid_from),
+             "valid_to": iso(row.valid_to), "known_at": iso(row.known_at)}
+            for row in decisions if row.claim_id == claim.id
+        ]
         items.append(item(f"claim:{claim.id}", "台账来源", detail=claim.source_revision,
             source_id=claim.source_id, run_id=claim.run_id, row_number=claim.row_number,
             source_record_id=claim.source_record_id, source_revision=claim.source_revision,
+            claim_trace=trace, field_decisions=field_decisions,
+            original_filename=trace["original"]["filename"],
             evidence_refs=[f"map_claim:{claim.id}"]))
     for version in history:
         items.append(item(f"asset_version:{version['version_id']}", "历史名称与版本",
@@ -125,7 +148,8 @@ def _production(db, asset):
     return section(items, state=state, gaps=gaps,
                    boundary="只展示已记录属性和同一稳定编号的来源版本；历史名称不用于自动合并设施。"), {
         "asset_version_ids": [row["version_id"] for row in history],
-        "source_claim_ids": sorted(claims), "source_revision": attributes.get("source_revision")}
+        "source_claim_ids": sorted(claims), "source_revision": attributes.get("source_revision"),
+        "field_decision_ids": [row.id for row in decisions]}
 
 
 def _recorded_events(db, asset, start, end):
@@ -432,7 +456,7 @@ def _tech(db, asset):
                    boundary="仅展示已登记状态和邻近设备；缺资料不判定为无覆盖，不用区域设备总数推定单井覆盖。")
 
 
-def build_dossier_content(db, asset_id, *, start_date=None, end_date=None):
+def build_dossier_content(db, asset_id, *, start_date=None, end_date=None, temporal_context=None):
     require_scope(db)
     start, end = window_values(start_date, end_date)
     with db.no_autoflush:
@@ -443,16 +467,19 @@ def build_dossier_content(db, asset_id, *, start_date=None, end_date=None):
         links, events, linked_case_ids = _recorded_events(db, asset, start, end)
         links = _recorded_materials(db, asset, links, linked_case_ids, start, end)
         candidates, results = _candidates_and_results(db, asset, start, end, linked_case_ids)
-        cases = in_window(db.query(Case).populate_existing(), Case.occurred_time, start, end).order_by(Case.id).all()
+        cases = filter_case_time_window(db.query(Case).populate_existing(), start, end).order_by(Case.id).all()
         profiles, coverage = profile_catalog(db, cases)
-        comparison = compare_facility(asset, profiles, coverage) if production["state"] != "restricted" else None
+        comparison = compare_temporal_facility(db, asset, profiles, coverage,
+            known_at=temporal_context.known_at if temporal_context else None,
+            knowledge_mode=temporal_context.knowledge_mode if temporal_context else None) if production["state"] != "restricted" else None
         history = section(state="restricted") if comparison is None else section([
             item(row["case_id"], row["title"], case_id=row["case_id"],
                 evidence_refs=row["evidence_refs"], support=row["similar"], counter=row["different"],
                 gaps=row["gaps"], profile_id=row["profile_id"], occurred_time=row["occurred_time"],
+                source_context=row.get("source_context"),
                 historical_conditions=row["historical_conditions"], detail="；".join(row["historical_conditions"]) or None)
-            for row in comparison["reference_cases"]], state="partial" if comparison["state"] != "stale" and comparison["reference_total"] > len(comparison["reference_cases"]) else comparison["state"],
-            gaps=comparison["gaps"], total=comparison["reference_total"], boundary=comparison["boundary"])
+            for row in comparison.get("reference_cases", [])], state="partial" if comparison["state"] != "stale" and comparison.get("reference_total", 0) > len(comparison.get("reference_cases", [])) else comparison["state"],
+            gaps=comparison["gaps"], total=comparison.get("reference_total"), boundary=comparison["boundary"])
         snapshots = db.query(MapSnapshot).filter_by(operational_area_id=asset.operational_area_id, status="current").order_by(MapSnapshot.id).all()
         sections = {"production": production, "record_links": links, "nearby_cases": _nearby(db, asset, start, end),
             "candidate_links": candidates, "events": events, "results": results, "roads": _roads(db, asset),

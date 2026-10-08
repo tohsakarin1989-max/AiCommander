@@ -23,6 +23,8 @@ def _prepare(request, response, db, start_date, end_date, allowed_keys):
         raise HTTPException(401, detail='请先登录')
     if set(request.query_params) - set(allowed_keys):
         raise HTTPException(422, detail='存在不支持的筛选条件')
+    if any(len(request.query_params.getlist(key)) != 1 for key in request.query_params):
+        raise HTTPException(422, detail='筛选条件不能重复')
     db.info['principal_user_id'] = principal.user_id
     try:
         _identity(db)
@@ -52,9 +54,13 @@ def _call(db, action, *args, **kwargs):
 def dossier(asset_id: int, request: Request, response: Response,
             start_date: datetime | None = Query(None), end_date: datetime | None = Query(None),
             valid_at: datetime | None = Query(None), known_at: datetime | None = Query(None),
+            valid_from: datetime | None = Query(None), valid_to: datetime | None = Query(None),
+            knowledge_mode: str | None = Query(None),
             db: Session = Depends(get_db)):
-    start, end = _prepare(request, response, db, start_date, end_date, ('start_date', 'end_date', 'valid_at', 'known_at'))
-    context = _call(db, freeze_facility_context, valid_at=valid_at, known_at=known_at)
+    start, end = _prepare(request, response, db, start_date, end_date,
+                         ('start_date', 'end_date', 'valid_at', 'known_at', 'valid_from', 'valid_to', 'knowledge_mode'))
+    context = _call(db, freeze_facility_context, valid_at=valid_at, known_at=known_at,
+                    valid_from=valid_from, valid_to=valid_to, knowledge_mode=knowledge_mode)
     return _call(db, read_dossier, asset_id, start_date=start, end_date=end, context=context)
 
 

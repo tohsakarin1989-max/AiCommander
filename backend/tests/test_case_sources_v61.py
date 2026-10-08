@@ -60,7 +60,10 @@ def test_legacy_objects_are_preserved_as_source_but_only_child_rows_are_canonica
 def test_same_values_and_derived_features_do_not_create_new_revision(db):
     records = [{"value": 1, "unit": "liter", "stage": "seized"}]
     case = create(db, initial_measurements=records)
-    CaseService.update_case(db, case.id, initial_measurements=records, description=case.description)
+    # v7.2 retains explicit identities; an ID-less row denotes a new source,
+    # even when its values happen to match a deleted row.
+    saved_records = [dict(records[0], id=db.query(OilMeasurement).one().id)]
+    CaseService.update_case(db, case.id, initial_measurements=saved_records, description=case.description)
     case.features = {"derived_only": True}
     case.quality_score = 33
     CasePipelineService.enqueue_case_change(db, case, changed_fields={"features", "quality_score"})

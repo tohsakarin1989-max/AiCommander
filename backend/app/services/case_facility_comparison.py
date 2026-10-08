@@ -71,6 +71,12 @@ def compare_case_facilities(db, *, result_id, network_id, analysis_at, vehicle, 
         network_id=network_id, analysis_at=analysis_at, vehicle=vehicle, artifact_root=artifact_root,
         source_versions={**pool["versions"], "pool_sha256": pool["input_sha256"]},
         recall_complete=pool["coverage"]["complete"], cancel_event=cancel_event)
+    return complete_case_facility_comparison(db, pool, result)
+
+
+def complete_case_facility_comparison(db, pool, result):
+    """One finalizer for synchronous comparison and durable frozen-input jobs."""
+    result_id = pool["result_id"]
     validate_pool_access(db, pool)
     require_current_pool_source(db, pool)
     names = {item["asset_id"]: item["name"] for item in pool["assets"]}

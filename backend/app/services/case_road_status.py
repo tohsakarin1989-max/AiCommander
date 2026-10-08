@@ -21,20 +21,55 @@ def automatic_comparison_status(db, result_id):
     # Only the caller's job state is exposed. Other users' payloads, permission
     # scopes and error messages are never returned. Shared artifacts still pass
     # the normal case AND road permission checks below.
-    job = db.execute(select(OutboxEvent.status, OutboxEvent.error).where(
+    job = db.execute(select(OutboxEvent.status, OutboxEvent.error, OutboxEvent.payload).where(
         OutboxEvent.event_type == EVENT_TYPE, OutboxEvent.aggregate_id == result_id,
         OutboxEvent.payload['user_id'].as_integer() == actor)
         .order_by(OutboxEvent.created_at.desc(), OutboxEvent.id.desc()).limit(1)).first()
     if job is None:
-        job = db.execute(select(OutboxEvent.status, OutboxEvent.error).where(
+        job = db.execute(select(OutboxEvent.status, OutboxEvent.error, OutboxEvent.payload).where(
             OutboxEvent.event_type == REQUEST_TYPE, OutboxEvent.aggregate_id == result_id,
             OutboxEvent.payload['authority']['user_id'].as_integer() == actor)
             .order_by(OutboxEvent.created_at.desc(), OutboxEvent.id.desc()).limit(1)).first()
     if job:
+        if job.status == 'completed' and job.payload.get('dependencies'):
+            from app.services.facility_dependency_guard import require_dependencies
+            try:
+                require_dependencies(db, job.payload['dependencies'])
+            except (PermissionError, ValueError):
+                # The history drawer may still read its frozen old result, but
+                # this current-result poll must not label it up to date.
+                return {**base, 'status': 'unavailable', 'reason': 'frozen_inputs_changed'}
         if job.status == 'waiting_dependency':
             return {**base, 'status': 'waiting_network', 'poll_after_seconds': 60}
         if job.status in ('pending', 'retry', 'processing'):
-            return {**base, 'status': 'processing', 'poll_after_seconds': 10}
+            details = {}
+            if job.payload.get('facility_checkpoint'):
+                from datetime import datetime
+                from app.services.facility_job_checkpoint import check_checkpoint, progress
+                from app.services.facility_dependency_guard import require_dependencies
+                from app.services.road_access_policy import VehicleAssumption
+                from app.services.road_network_service import resolve_network
+                from app.services.case_road_jobs import _identity
+                original_info = dict(db.info)
+                try:
+                    # Counts are derived data too. Rebind current grants before
+                    # returning even a partial scan/entrance progress summary.
+                    _identity(db, actor, job.payload['scope'])
+                    scope = db.info['authorized_area_ids']
+                    if (None if scope is None else sorted(scope)) != job.payload['scope']:
+                        raise PermissionError('road_progress_scope_changed')
+                    checkpoint = check_checkpoint(job.payload['facility_checkpoint'])
+                    require_dependencies(db, checkpoint['dependencies'])
+                    resolve_network(db, job.payload['network_id'],
+                        analysis_at=datetime.fromisoformat(job.payload['analysis_at']),
+                        vehicle=VehicleAssumption.model_validate(job.payload['vehicle']))
+                    details['progress'] = progress(checkpoint)
+                except (PermissionError, ValueError, KeyError):
+                    return {**base, 'status': 'unavailable', 'reason': 'frozen_inputs_unavailable'}
+                finally:
+                    db.info.clear()
+                    db.info.update(original_info)
+            return {**base, 'status': 'processing', 'poll_after_seconds': 10, **details}
         if job.status == 'completed' and job.error in ('road_job_information_missing', 'road_job_vehicle_information_missing'):
             dependencies = (["明确对应同一辆车的车型记录", "货车高度（米）和车辆总重（吨），不能用载油量替代",
                              "核对不同车辆来源是否冲突"] if job.error == 'road_job_vehicle_information_missing' else

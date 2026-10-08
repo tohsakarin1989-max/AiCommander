@@ -15,6 +15,7 @@ from app.services.case_submission_service import (
     SubmissionConflictError, SubmissionIdentityError, SubmissionUnavailableError,
     create_case_submission, submission_status,
 )
+from app.services.case_edit_service import CaseEditConflict, CaseEditUnavailable, edit_snapshot, update_case_checked
 from app.services.case_time_window import filter_case_time_window
 from app.services.case_import_table import parse_case_table
 from app.services.case_import_batch_service import acquire_import_batch, create_import_case
@@ -33,8 +34,6 @@ from app.services.case_quality_service import CaseQualityService
 from app.services.case_pipeline_service import CasePipelineService
 from app.models.case import Case, CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
 from app.models.case_import import CaseImportRow
-from app.models.preprocess_job import PreprocessJob
-from app.tasks.preprocess_tasks import preprocess_case_task
 import csv
 import json
 import logging
@@ -60,44 +59,6 @@ BATCH_REVIEW_JOB_TTL_SECONDS = 3600
 BATCH_REVIEW_JOBS: Dict[str, Dict[str, Any]] = {}
 BATCH_REVIEW_JOB_TIMESTAMPS: Dict[str, datetime] = {}
 BATCH_REVIEW_JOB_ACCESS: Dict[str, Dict[str, Any]] = {}
-NULLABLE_CASE_UPDATE_FIELDS = {
-    "occurred_time", "occurred_from", "occurred_to", "time_expression", "discovered_at",
-    "location",
-    "case_type",
-    "description",
-    "latitude",
-    "longitude",
-    "involved_persons",
-    "involved_items",
-    "loss_amount",
-    "oil_type",
-    "oil_volume",
-    "oil_value",
-    "facility_type",
-    "facility_owner",
-    "security_level",
-    "modus_operandi",
-    "suspect_roles",
-    "vehicle_info",
-    "upstream_source",
-    "downstream_destination",
-    "report_time",
-    "report_unit",
-    "source_type",
-    "source_detail",
-    "police_reported",
-    "case_filed",
-    "police_officer",
-    "police_phone",
-    "security_officers",
-    "oil_nature",
-    "water_cut",
-    "vehicle_handling",
-    "person_handling",
-    "oil_handling",
-    "operation_role",
-    "current_stage",
-}
 AI_INTAKE_WRITABLE_FIELDS = {
     "occurred_time",
     "location",
@@ -232,6 +193,14 @@ class CaseCreate(BaseModel):
     initial_measurements: Optional[List[OilMeasurementDraft]] = None
 
 class CaseUpdate(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, ge=0, strict=True)
+
+    @field_validator("expected_revision")
+    @classmethod
+    def supplied_revision_cannot_be_null(cls, value):
+        if value is None:
+            raise ValueError("提供版本时必须是有效版本号；不能用空值跳过核验")
+        return value
     case_number: Optional[str] = None
     occurred_time: Optional[datetime] = None
     occurred_from: Optional[datetime] = None
@@ -768,8 +737,10 @@ def _append_bonus_issue(issues: List[Dict[str, Any]], case: Case, bonus: Dict[st
     )
 
 
-def _append_report_quality_issue(issues: List[Dict[str, Any]], case: Case) -> None:
-    features = case.features if isinstance(case.features, dict) else {}
+def _append_report_quality_issue(issues: List[Dict[str, Any]], case: Case, db: Session) -> None:
+    from app.services.case_preprocess_adapter import current_profile, profile_features
+    saved = current_profile(db, case)
+    features = profile_features(saved) if saved else {}
     management = features.get("management") if isinstance(features.get("management"), dict) else {}
     level = management.get("report_quality_level")
     missing = [
@@ -1088,10 +1059,11 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
         total_candidates = query.count()
         candidates = query.limit(effective_limit).all()
     review_cases = list(candidates)
+    from app.services.case_preprocess_adapter import current_profile
     preprocess_cases = [
         case
         for case in candidates
-        if not payload.only_missing or not case.features
+        if not payload.only_missing or current_profile(db, case) is None
     ]
 
     job_id = str(uuid4())
@@ -1114,7 +1086,9 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
             "success": 0,
             "failed": 0,
             "skipped": max(0, total_candidates - len(preprocess_cases)),
-            "llm_enabled": payload.use_llm,
+            "llm_enabled": False,
+            "llm_requested": payload.use_llm,
+            "source": "case_revision_outbox_profile",
             "mode_counts": {},
             "results": [],
         },
@@ -1135,25 +1109,14 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
     preprocess = job["preprocess"]
     for index, case in enumerate(review_cases, start=1):
         if case.id in preprocess_case_ids:
-            preprocess_job = PreprocessJob(case_id=case.id, status="queued")
-            db.add(preprocess_job)
-            db.commit()
-            db.refresh(preprocess_job)
             try:
-                preprocess_job.status = "processing"
-                preprocess_job.started_at = datetime.utcnow()
-                db.commit()
-                if payload.use_llm:
-                    preprocess_result = CasePreprocessService.preprocess_case(db, case.id)
-                else:
-                    data = CasePreprocessService._build_deterministic_features(db, case)
-                    preprocess_result = CasePreprocessService._write_features(db, case, data)
+                preprocess_result = CasePreprocessService.preprocess_case(db, case.id, use_llm=payload.use_llm)
                 if preprocess_result is None:
                     raise RuntimeError("preprocess returned no result")
-                mode = preprocess_result.get("preprocess_mode") or "deterministic_fallback"
-                preprocess_job.status = "success"
-                preprocess_job.finished_at = datetime.utcnow()
-                db.commit()
+                mode = preprocess_result.get("preprocess_mode") or "versioned_profile"
+                preprocess["llm_enabled"] = preprocess["llm_enabled"] or (
+                    preprocess_result.get("model_supplement", {}).get("status") == "ready"
+                    or preprocess_result.get("profile_model_status") in {"ready", "partial"})
                 preprocess["processed"] += 1
                 preprocess["success"] += 1
                 preprocess["mode_counts"][mode] = preprocess["mode_counts"].get(mode, 0) + 1
@@ -1163,15 +1126,16 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
                     "status": "success",
                     "preprocess_mode": mode,
                     "confidence": preprocess_result.get("confidence"),
+                    "profile_binding": preprocess_result.get("profile_binding"),
+                    "model_supplement_status": preprocess_result.get("model_supplement", {}).get("status"),
                 })
                 db.refresh(case)
+            except PermissionError:
+                db.rollback()
+                raise HTTPException(status_code=403, detail="当前案件或维护权限已变化")
             except Exception as exc:
                 db.rollback()
                 logger.warning("批量复核预处理失败 case_id=%s: %s", case.id, exc)
-                preprocess_job.status = "failed"
-                preprocess_job.finished_at = datetime.utcnow()
-                preprocess_job.error = "批量复核预处理失败"
-                db.commit()
                 preprocess["processed"] += 1
                 preprocess["failed"] += 1
                 job["failed"] += 1
@@ -1206,7 +1170,7 @@ def run_batch_review(payload: Optional[BatchReviewRequest] = None, db: Session =
                 bonus = CaseAutomationService.build_bonus_assessment(db, case)
                 _append_bonus_issue(job["issues"], case, bonus)
 
-            _append_report_quality_issue(job["issues"], case)
+            _append_report_quality_issue(job["issues"], case, db)
             job["processed"] += 1
         except Exception as exc:
             db.rollback()
@@ -1348,37 +1312,69 @@ def apply_ai_intake_preview(
         "boundary": "只写入人工确认字段；未确认候选不改变案件。",
     }
 
+class CaseEditRequest(BaseModel):
+    expected_revision: int = Field(ge=0, strict=True)
+    case_payload: CaseUpdate
+
+
+class CaseEditSaveResponse(BaseModel):
+    case: CaseResponse
+
+
+def _case_edit_error(db, exc):
+    db.rollback()
+    if isinstance(exc, CaseEditConflict):
+        raise HTTPException(409, detail={"code": "case_revision_conflict", "message": str(exc),
+                                        "current_revision": exc.current_revision}) from exc
+    if isinstance(exc, CaseEditUnavailable):
+        raise HTTPException(404, detail=str(exc)) from exc
+    if isinstance(exc, AreaWriteAccessError):
+        raise HTTPException(403, detail=str(exc)) from exc
+    raise HTTPException(422, detail=str(exc)) from exc
+
+
+def _edit_snapshot_response(db, case_id):
+    result = edit_snapshot(db, case_id)
+    result["case"] = CaseResponse.model_validate(result["case"], from_attributes=True)
+    # All response values are now materialized from the same locked snapshot.
+    # End only this read transaction before AuthMiddleware's separate audit
+    # connection commits; the preceding strict PUT business commit is unchanged.
+    db.rollback()
+    return result
+
+
+@router.get("/{case_id:int}/edit-snapshot")
+def get_edit_snapshot(case_id: int, response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return _edit_snapshot_response(db, case_id)
+    except (ValueError, PermissionError, LookupError) as exc:
+        _case_edit_error(db, exc)
+
+
+@router.put("/{case_id:int}/edit-snapshot", response_model=CaseEditSaveResponse)
+def put_edit_snapshot(case_id: int, payload: CaseEditRequest, response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        case = update_case_checked(db, case_id, payload.case_payload.model_dump(exclude_unset=True, exclude={"expected_revision"}),
+                                   expected_revision=payload.expected_revision)
+        return {"case": case}
+    except (ValueError, PermissionError, LookupError) as exc:
+        _case_edit_error(db, exc)
+
+
 @router.put("/{case_id:int}", response_model=CaseResponse)
 def update_case(
     case_id: int,
     case_update: CaseUpdate,
     db: Session = Depends(get_db)
 ):
-    """更新案件"""
-    existing = _get_case_or_404(db, case_id)
+    """兼容旧写客户端；提供版本时必须核验，日常 UI 使用严格编辑路径。"""
     try:
-        update_data = normalize_intake(case_update.model_dump(exclude_unset=True), existing)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    has_initial_vehicles = "initial_vehicles" in update_data and update_data["initial_vehicles"] is not None
-    has_initial_persons = "initial_persons" in update_data and update_data["initial_persons"] is not None
-    initial_vehicles = update_data.pop("initial_vehicles", None)
-    initial_persons = update_data.pop("initial_persons", None)
-    for field, value in update_data.items():
-        if value is None and field not in NULLABLE_CASE_UPDATE_FIELDS:
-            raise HTTPException(status_code=422, detail=f"{field} 不能为空")
-    case = CaseService.update_case(
-        db,
-        case_id,
-        initial_vehicles=initial_vehicles,
-        initial_persons=initial_persons,
-        replace_vehicles=has_initial_vehicles,
-        replace_persons=has_initial_persons,
-        **update_data,
-    )
-    if not case:
-        raise HTTPException(status_code=404, detail="案件不存在")
-    return case
+        return update_case_checked(db, case_id, case_update.model_dump(exclude_unset=True, exclude={"expected_revision"}),
+                                   expected_revision=case_update.expected_revision)
+    except (ValueError, PermissionError, LookupError) as exc:
+        _case_edit_error(db, exc)
 
 @router.delete("/{case_id:int}")
 def delete_case(case_id: int, db: Session = Depends(get_db)):
@@ -1603,24 +1599,23 @@ def create_oil_recovery(case_id: int, payload: OilRecoveryCreate, db: Session = 
 def preprocess_case(case_id: int, db: Session = Depends(get_db)):
     """
     手动触发指定案件的预处理任务：
-    - 使用与主持人相同的大模型对案情做摘要和结构化分析
-    - 结果写入 Case.features 字段
+    - 复用标准画像；可用的可信内网模型生成独立版本补充
+    - 兼容管理员维护入口，不写 Case.features 或额外任务队列
     """
     case = CaseService.get_case(db, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="案件不存在")
 
     try:
-        task = preprocess_case_task.delay(case_id)
-        return {"message": "预处理任务已提交", "task_id": str(task.id)}
-    except Exception:
-        # 如果 Celery 不可用，则尝试同步执行一次，避免完全失败
-        from app.services.preprocess_service import CasePreprocessService
-
         result = CasePreprocessService.preprocess_case(db, case_id)
-        if result is None:
-            raise HTTPException(status_code=500, detail="预处理失败，请检查模型配置")
-        return {"message": "预处理已同步完成", "result": result}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="当前案件或维护权限已变化")
+    except ValueError:
+        raise HTTPException(status_code=409, detail="画像正在更新，请稍后查看；原始案件未被修改")
+    if result is None:
+        raise HTTPException(status_code=404, detail="案件不存在")
+    return {"message": "已读取统一流水线结果，模型补充状态单独记录", "result": result,
+            "source": "case_revision_outbox_profile"}
 
 
 @router.post("/preprocess/batch")
@@ -1629,13 +1624,18 @@ def preprocess_cases_batch(payload: Optional[BatchReviewRequest] = None, db: Ses
     payload = payload or BatchReviewRequest()
     if payload.limit is not None and payload.limit <= 0:
         raise HTTPException(status_code=400, detail="limit 必须大于 0")
-    return CasePreprocessService.preprocess_cases(
-        db=db,
-        case_ids=payload.case_ids,
-        only_missing=payload.only_missing,
-        limit=payload.limit,
-        use_llm=payload.use_llm,
-    )
+    if payload.limit is not None and payload.limit > 200:
+        raise HTTPException(status_code=400, detail="单批最多 200 条，大规模维护请使用画像回填入口")
+    try:
+        return CasePreprocessService.preprocess_cases(
+            db=db,
+            case_ids=payload.case_ids,
+            only_missing=payload.only_missing,
+            limit=payload.limit,
+            use_llm=payload.use_llm,
+        )
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="当前案件或维护权限已变化")
 
 
 @router.get("/tips", response_model=List[CaseTipResponse])
@@ -2001,48 +2001,29 @@ def get_trajectory_replay(
 
 @router.get("/preprocess/status")
 def get_preprocess_status(db: Session = Depends(get_db)):
-    """
-    获取预处理队列状态：
-    - pending: 等待中的任务数
-    - processing: 进行中的任务数
-    - success: 最近成功任务数
-    - failed: 失败任务数
-    - avg_duration_seconds: 成功任务的平均耗时（秒）
-    """
-    pending = (
-        db.query(PreprocessJob)
-        .filter(PreprocessJob.status == "queued")
-        .count()
-    )
-    processing = (
-        db.query(PreprocessJob)
-        .filter(PreprocessJob.status == "processing")
-        .count()
-    )
-    successes = (
-        db.query(PreprocessJob)
-        .filter(PreprocessJob.status == "success", PreprocessJob.finished_at.isnot(None))
-        .order_by(PreprocessJob.finished_at.desc())
-        .limit(100)
-        .all()
-    )
-    failed = (
-        db.query(PreprocessJob)
-        .filter(PreprocessJob.status == "failed")
-        .count()
-    )
-    durations = []
-    for j in successes:
-        if j.started_at and j.finished_at:
-            delta = (j.finished_at - j.started_at).total_seconds()
-            if delta >= 0:
-                durations.append(delta)
-    avg_duration = sum(durations) / len(durations) if durations else None
+    """只读统一画像流水线状态；旧任务另列为历史，不混入当前计数。"""
+    from app.services.case_preprocess_adapter import queue_status
+    return queue_status(db)
 
-    return {
-        "pending": pending,
-        "processing": processing,
-        "success": len(successes),
-        "failed": failed,
-        "avg_duration_seconds": avg_duration,
-    }
+
+@router.get("/preprocess/profiles")
+def get_preprocess_profiles(case_ids: List[int] = Query(default=[], max_length=100),
+                            db: Session = Depends(get_db)):
+    from app.services.case_saved_profile import read_saved_profile
+    records = db.query(Case).filter(Case.id.in_(case_ids)).all()
+    return {"items": [{"case_id": case.id, "status": read_saved_profile(db, case)["status"]}
+                      for case in records], "source": "case_revision_outbox_profile"}
+
+
+@router.get("/{case_id:int}/preprocess-result")
+def get_preprocess_result(case_id: int, db: Session = Depends(get_db)):
+    from app.services.case_saved_profile import read_saved_profile
+    from app.services.case_preprocess_adapter import profile_features
+    from app.services.case_preprocess_supplement import read_supplement
+    case = _get_case_or_404(db, case_id)
+    saved = read_saved_profile(db, case)
+    data = saved["data"]
+    return {"status": saved["status"], "data": profile_features(data) if data else None,
+            "model_supplement": read_supplement(db, case, data) if data else {"status": "not_generated"},
+            "legacy_features": case.features,
+            "legacy_boundary": "旧预处理与人工标签历史，仅供追溯，不代表当前版本画像。"}

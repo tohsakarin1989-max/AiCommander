@@ -30,11 +30,15 @@ def test_optional_query_schedule_preserves_all_other_tasks(enabled, mode, schedu
         assert query['schedule'] == 5.0
         assert query['options'] == {'queue': 'isolated-agents', 'expires': 5}
     assert actual == expected
-    assert len(actual) == 15
+    assert len(actual) == 18
     assert actual['expire-agent-approvals']['task'] == agent_tasks.expire_agent_approvals_task.name
     assert actual['expire-agent-approvals']['options']['queue'] == 'isolated-agents'
     assert actual['process-analysis-topic']['task'] == 'aicommander.topics.process_next'
     assert actual['process-case-pipeline']['task'] == 'aicommander.case_pipeline.process_pending'
+    assert actual['reconcile-facility-dependencies'] == {
+        'task': 'aicommander.case_roads.reconcile_dependencies',
+        'schedule': 60.0, 'options': {'queue': 'road_analysis', 'expires': 60},
+    }
 
 
 def test_query_task_registration_and_queue_route_survive_disabled_schedule():

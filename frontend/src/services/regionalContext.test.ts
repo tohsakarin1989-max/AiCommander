@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { parseRegionalContext, regionalCalendarDate, regionalContextPath, writeRegionalContext } from './regionalContext'
 
 describe('区域选择与条件接续', () => {
+  it('UTC规范化不截断来源截止微秒', () => {
+    expect(parseRegionalContext(new URLSearchParams('known_at=2026-09-01T08:00:00.123456%2B08:00')).knownAt).toBe('2026-09-01T00:00:00.123456Z')
+  })
   it('日期控件按北京时间展示UTC共享窗口，不改动原时刻', () => {
     expect(regionalCalendarDate('2026-09-24T16:00:00Z')).toBe('2026-09-25')
     expect(regionalCalendarDate('2026-09-25T00:00:00+08:00')).toBe('2026-09-25')
@@ -40,5 +43,12 @@ describe('区域选择与条件接续', () => {
     const next = writeRegionalContext(new URLSearchParams('assetId=8&eventId=9'), { end_date: '2026-10-01T00:00:00+08:00' })
     expect(parseRegionalContext(next).assetId).toBe(8)
     expect(regionalContextPath('/events?eventId=3', next)).toContain('eventId=3')
+  })
+  it('保留完整区间和获知口径，不取中点或悄悄抹掉非法口径', () => {
+    const source = new URLSearchParams('valid_from=2026-09-01T00:00:00Z&valid_to=2026-09-03T00:00:00Z&knowledge_mode=as_known&known_at=2026-09-05T00:00:00Z')
+    const next = new URLSearchParams(regionalContextPath('/reports', source).split('?')[1])
+    expect(parseRegionalContext(next)).toMatchObject({ validFrom: '2026-09-01T00:00:00.000Z', validTo: '2026-09-03T00:00:00.000Z', knowledgeMode: 'as_known', error: undefined })
+    expect(next.has('valid_at')).toBe(false)
+    for (const query of ['valid_from=2026-09-01T00:00:00Z', 'knowledge_mode=as_known', 'knowledge_mode=guess', 'knowledge_mode=retrospective&known_at=2026-09-05T00:00:00Z', 'valid_at=2026-09-01T00:00:00Z&valid_from=2026-09-01T00:00:00Z&valid_to=2026-09-03T00:00:00Z']) expect(parseRegionalContext(new URLSearchParams(query)).error).toBeTruthy()
   })
 })

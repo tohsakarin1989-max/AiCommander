@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 import json
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.case import Case
@@ -42,14 +42,20 @@ def cached_features(row: CaseHistoryIndex | None, source_hash: str) -> tuple[set
 
 class CaseHistoryIndexService:
     @staticmethod
-    def rebuild_case(db: Session, case: Case, *, publications: list | None = None) -> int:
+    def rebuild_case(db: Session, case: Case, *, publications: list | None = None, vector_reuse=None) -> int:
         # Import lazily: retrieval reads this cache, but never calls its write methods.
         from app.services.case_history_retrieval import business_conditions, lexical_terms, source_values
         from app.services.local_embedding_service import get_local_embedder
         from app.services.case_history_fragments import prepare_fragments
         from app.services.case_source_service import CaseSourceService
+        from app.services.case_history_vector_reuse import FragmentVectorReuse
 
+        if db.scalar(select(Case.id).where(Case.id == case.id)) is None:
+            raise PermissionError('history_source_unavailable')
         embedder = get_local_embedder()
+        vector_reuse = vector_reuse or FragmentVectorReuse(db, embedder)
+        vector_reuse.require_current(embedder)
+        captured_rule = rule_version()
         revision = CaseSourceService.latest_revision(db, case.id)
         captured_area, captured_time = case.operational_area_id, case.occurred_time
 
@@ -94,7 +100,7 @@ class CaseHistoryIndexService:
                 row.updated_at = datetime.now(timezone.utc)
                 changed += 1
             fragment_changed, publish_fragments = prepare_fragments(db, row, source, embedder=embedder,
-                revision=revision if source_type == 'case' else None)
+                revision=revision if source_type == 'case' else None, vector_reuse=vector_reuse)
             prepared.append((stored, row, publish_fragments))
             if lexical_current and fragment_changed:
                 changed += 1
@@ -118,6 +124,9 @@ class CaseHistoryIndexService:
         changed += len(inactive)
 
         def publish():
+            vector_reuse.require_current(get_local_embedder())
+            if rule_version() != captured_rule:
+                raise ValueError('history_schema_changed')
             statement = select(Case).where(Case.id == case.id).execution_options(populate_existing=True)
             if db.get_bind().dialect.name == 'postgresql':
                 statement = statement.with_for_update()
@@ -157,7 +166,11 @@ class CaseHistoryIndexService:
 
     @staticmethod
     def reconcile_batch(db: Session, *, limit: int = 100) -> dict:
-        """调用方提交/回滚；锁住持久断点，失败不会跳过案件或丢失进度。"""
+        """调用方提交/回滚；单案失败留下债务，取消仍回滚本批。"""
+        from app.services import case_history_index_debt as debt_service
+        from app.services.case_history_vector_reuse import FragmentVectorReuse
+        from app.services.local_embedding_service import get_local_embedder
+
         if db.info.get("authorized_area_ids") is not None:
             raise PermissionError("history_index_background_session_required")
         if not 1 <= limit <= 500:
@@ -169,11 +182,12 @@ class CaseHistoryIndexService:
             from sqlalchemy.dialects.sqlite import insert
         else:
             raise ValueError("unsupported_history_index_database")
+        now = datetime.now(timezone.utc)
         db.execute(insert(CaseHistoryIndexCursor).values(
             name=CURSOR_NAME, after_case_id=0, completed_passes=0).on_conflict_do_nothing())
         # UPDATE acquires the SQLite write lock and PostgreSQL row lock before reading the cursor.
         db.execute(update(CaseHistoryIndexCursor).where(CaseHistoryIndexCursor.name == CURSOR_NAME)
-                   .values(updated_at=datetime.now(timezone.utc)))
+                   .values(updated_at=now))
         cursor = db.scalar(select(CaseHistoryIndexCursor).where(CaseHistoryIndexCursor.name == CURSOR_NAME)
                            .execution_options(populate_existing=True))
         # Reuse the event already committed with case save. Its profile-processing
@@ -188,27 +202,85 @@ class CaseHistoryIndexService:
             if event.aggregate_type != 'case' or not event.aggregate_id.isdigit():
                 raise ValueError('invalid_history_source_event')
             priority_ids.add(int(event.aggregate_id))
+        # Terminal failures are deliberately absent. A regular scan can activate
+        # them only when the input stamp changes; an admin can explicitly retry.
+        due = list(db.scalars(select(OutboxEvent).where(
+            OutboxEvent.event_type == debt_service.EVENT_TYPE,
+            OutboxEvent.status == 'retry', OutboxEvent.available_at <= now)
+            .order_by(OutboxEvent.available_at, OutboxEvent.id).limit(limit)
+            .execution_options(populate_existing=True)))
+        priority_ids.update(int(event.aggregate_id) for event in due
+                            if event.aggregate_type == 'case' and event.aggregate_id.isdigit())
         priority_cases = list(db.scalars(select(Case).where(Case.id.in_(priority_ids))
             .order_by(Case.id).execution_options(populate_existing=True))) if priority_ids else []
         cases = list(db.scalars(select(Case).where(Case.id > cursor.after_case_id)
                                .order_by(Case.id).limit(limit).execution_options(populate_existing=True)))
-        publications = []
-        changed = sum(CaseHistoryIndexService.rebuild_case(db, case, publications=publications)
-                      for case in priority_cases + [case for case in cases if case.id not in priority_ids])
+        candidates = priority_cases + [case for case in cases if case.id not in priority_ids]
+        ids = {case.id for case in candidates} | priority_ids
+        debts = {int(row.aggregate_id): row for row in db.scalars(select(OutboxEvent).where(
+            OutboxEvent.event_type == debt_service.EVENT_TYPE,
+            OutboxEvent.aggregate_type == 'case',
+            OutboxEvent.aggregate_id.in_([str(key) for key in ids])))} if ids else {}
+        reuse = FragmentVectorReuse(db, get_local_embedder())
+        prepared, failures, skipped = [], [], []
+        for case in candidates:
+            publications, stamp = [], None
+            try:
+                with db.begin_nested():
+                    stamp = debt_service.input_stamp(db, case, reuse)
+                    if not debt_service.may_attempt(debts.get(case.id), stamp, now):
+                        skipped.append(case.id)
+                        continue
+                    count = CaseHistoryIndexService.rebuild_case(db, case,
+                        publications=publications, vector_reuse=reuse)
+                prepared.append((case.id, stamp, count, publications))
+            except Exception as exc:
+                # A malformed source can fail before the ordinary stamp exists.
+                # Persist a bounded, source-free debt instead of poisoning the scan.
+                if stamp is None:
+                    stamp = {'source_hash': None, 'source_revision_id': None,
+                        'rule_version': rule_version(), 'model_version': reuse.identity[1],
+                        'encoder_fingerprint': reuse.fingerprint, 'dimension': reuse.dimension,
+                        'input_hash': text_hash(f'unreadable:{case.id}:{rule_version()}:{reuse.identity}')}
+                    if not debt_service.may_attempt(debts.get(case.id), stamp, now):
+                        skipped.append(case.id)
+                        continue
+                failures.append((case.id, stamp, exc, 'prepare'))
         # Finish every expensive model call before any business-row/FK publication lock.
-        for publish in publications:
-            publish()
+        changed, succeeded = 0, priority_ids - {case.id for case in priority_cases}
+        for case_id, stamp, count, publications in prepared:
+            try:
+                with db.begin_nested():
+                    for publish in publications:
+                        publish()
+                    db.flush()
+                changed += count
+                succeeded.add(case_id)
+            except Exception as exc:
+                failures.append((case_id, stamp, exc, 'publish'))
+        for case_id in succeeded:
+            debt_service.completed(debts.get(case_id), now)
+        for case_id, stamp, exc, stage in failures:
+            debts[case_id] = debt_service.failed(db, case_id, stamp, exc, stage, now, debts.get(case_id))
+        acknowledged = 0
         for event in pending:
             # The cursor lock serializes this consumer, not the profile consumer.
             # A rollback restores both vectors and this acknowledgement.
-            event.payload = {**event.payload, 'history_index_pending': False}
+            case_id = int(event.aggregate_id)
+            if case_id not in succeeded:
+                if case_id not in {item[0] for item in failures}:
+                    continue
+            else:
+                event.payload = {**event.payload, 'history_index_pending': False}
+                acknowledged += 1
             if event.domain_change_id is not None:
                 delivery = db.query(ChangeDelivery).filter_by(
                     change_id=event.domain_change_id, consumer="history_index").first()
                 if delivery is not None:
-                    delivery.state = "completed"
+                    debt = debts.get(case_id)
+                    delivery.state = "completed" if case_id in succeeded else debt.status
                     delivery.attempts += 1
-                    delivery.error = None
+                    delivery.error = None if case_id in succeeded else debt.error
         if len(cases) < limit:
             cursor.after_case_id = 0
             cursor.completed_passes += 1
@@ -217,11 +289,19 @@ class CaseHistoryIndexService:
         db.flush()
         from app.services.history_road_refresh import coalesce_changes
         history_refresh_id = coalesce_changes(db)
-        from app.services.local_embedding_service import get_local_embedder
         model_state = get_local_embedder().state
+        backlog = dict(db.execute(select(OutboxEvent.status, func.count()).where(
+            OutboxEvent.event_type == debt_service.EVENT_TYPE,
+            OutboxEvent.status.in_(['retry', 'failed'])).group_by(OutboxEvent.status)).all())
         return {"scanned_cases": len(cases), "changed_sources": changed,
-                "priority_cases": len(priority_cases), "acknowledged_events": len(pending),
+                "priority_cases": len(priority_cases), "acknowledged_events": acknowledged,
                 "after_case_id": cursor.after_case_id, "completed_passes": cursor.completed_passes,
                 "index_version": rule_version(),
                 "history_refresh_event_id": history_refresh_id,
+                "state": 'degraded' if backlog or reuse.write_failures else 'ready',
+                "failed_cases": len(failures), "deferred_cases": len(skipped),
+                "failure_codes": sorted({debt_service.error_code(item[2]) for item in failures}),
+                "retry_cases": backlog.get('retry', 0), "terminal_failed_cases": backlog.get('failed', 0),
+                "reused_vectors": reuse.hits, "encoded_vectors": reuse.encoded,
+                "vector_reuse_write_failures": reuse.write_failures,
                 "semantic_index_state": 'building' if model_state == 'ready' else model_state}

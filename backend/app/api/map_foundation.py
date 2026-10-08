@@ -6,7 +6,7 @@ import json
 import zipfile
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
@@ -321,6 +321,8 @@ class MapImportTemplateCreate(BaseModel):
     axis_order: Literal["lon_lat", "lat_lon"] = "lon_lat"
     coordinate_unit: Literal["degree", "meter"] = "degree"
     transformation: dict[str, float] | None = None
+    expected_structure: dict[str, Any] | None = None
+    field_units: dict[str, str] | None = None
 
     @field_validator("field_mapping")
     @classmethod
@@ -341,6 +343,30 @@ class ConflictResolution(BaseModel):
 
     decision: Literal["reject", "retry"]
     note: str | None = Field(default=None, max_length=1000)
+
+
+class MapRowCorrection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim_id: int = Field(gt=0)
+    values: dict[str, Any]
+
+
+class MapRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    request_id: str = Field(min_length=8, max_length=80)
+    template_id: int | None = Field(default=None, gt=0)
+    rows: list[MapRowCorrection] = Field(min_length=1, max_length=200)
+    plan_token: str | None = Field(default=None, min_length=64, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class MapFieldSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    group: Literal["geometry", "water_cut", "production", "details"]
+    request_id: str = Field(min_length=8, max_length=80)
+    note: str = Field(min_length=1, max_length=1000)
+    expected_asset_version: int = Field(ge=0)
+    expected_decision_id: int | None
 
 
 def _require_admin(request: Request):
@@ -374,7 +400,11 @@ def _service_error(exc: ValueError) -> HTTPException:
         "conflict_not_found": "异常记录不存在或已经处理",
         "unsupported_resolution": "不支持的处理决定",
     }
-    if code in {"source_key_exists", "operational_area_code_exists"}:
+    if isinstance(exc, PermissionError):
+        status = 403
+    elif code in {"source_key_exists", "operational_area_code_exists", "plan_stale", "template_drift",
+                "retry_request_conflict", "retry_row_superseded", "retry_successful_row_forbidden",
+                "retry_parent_stale", "retry_identifier_taken"}:
         status = 409
     elif code.endswith("not_found"):
         status = 404
@@ -384,7 +414,12 @@ def _service_error(exc: ValueError) -> HTTPException:
         status = 400
     else:
         status = 422
-    return HTTPException(status_code=status, detail=messages.get(code, str(exc).split("|", 1)[-1]))
+    message = messages.get(code, str(exc).split("|", 1)[-1])
+    detail = {"code": code, "message": message} if code in {
+        "plan_stale", "template_drift", "retry_request_conflict", "retry_row_superseded", "retry_successful_row_forbidden",
+        "retry_parent_stale", "retry_identifier_taken"
+    } else message
+    return HTTPException(status_code=status, detail=detail)
 
 
 async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
@@ -529,6 +564,7 @@ async def ingest_map_source(
     file: UploadFile = File(...),
     template_id: int = Query(...),
     source_revision: str | None = Query(default=None, max_length=200),
+    plan_token: str | None = Form(default=None, min_length=64, max_length=64),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     principal = _require_admin(request)
@@ -542,10 +578,11 @@ async def ingest_map_source(
             content=content,
             source_revision=source_revision,
             created_by=_principal_user_id(principal),
+            plan_token=plan_token or request.query_params.get("plan_token"),
         )
     except (UnicodeDecodeError, InvalidFileException, csv.Error, zipfile.BadZipFile) as exc:
         raise HTTPException(status_code=400, detail="文件无法解析") from exc
-    except ValueError as exc:
+    except (ValueError, PermissionError) as exc:
         raise _service_error(exc) from exc
     response.status_code = 200 if replay else 201
     return MapFoundationService.run_to_dict(run, idempotent_replay=replay)
@@ -558,10 +595,96 @@ def get_map_ingest_run(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(request)
-    run = db.query(MapIngestRun).filter(MapIngestRun.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="导入批次不存在")
+    from app.services.map_ingest_execution import get_run
+    try:
+        run = get_run(db, run_id)
+    except ValueError as exc:
+        raise _service_error(exc) from exc
     return MapFoundationService.run_to_dict(run)
+
+
+@router.get("/map-import-fields")
+def map_import_fields(request: Request):
+    _require_admin(request)
+    from app.services.map_import_contract import field_contract
+    return field_contract()
+
+
+@router.get("/map-import-example")
+def map_import_example(request: Request):
+    _require_admin(request)
+    from app.services.map_import_contract import example_csv
+    return Response(content=example_csv(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="production-ledger-example.csv"', "Cache-Control": "no-store"})
+
+
+@router.get("/map-ingest-runs")
+def list_map_ingest_runs(request: Request, source_id: int | None = None,
+                         offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100),
+                         db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.services.map_ingest_execution import list_runs
+    return list_runs(db, source_id=source_id, offset=offset, limit=limit)
+
+
+@router.get("/map-ingest-runs/{run_id}/claims")
+def list_map_ingest_claims(run_id: str, request: Request, classification: Literal[
+    "new", "updated", "unchanged", "identity_pending", "conflict", "failed"] | None = None,
+    offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.services.map_ingest_execution import list_claims
+    try:
+        return list_claims(db, run_id, classification=classification, offset=offset, limit=limit)
+    except ValueError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post("/map-ingest-runs/{run_id}/retry-preview")
+def preview_map_ingest_retry(run_id: str, payload: MapRetryRequest, request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.services.map_ingest_execution import retry_rows
+    try:
+        return retry_rows(db, run_id, payload.model_dump(), preview=True)
+    except ValueError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post("/map-ingest-runs/{run_id}/retry", status_code=201)
+def retry_map_ingest(run_id: str, payload: MapRetryRequest, request: Request, response: Response,
+                     db: Session = Depends(get_db)):
+    principal = _require_admin(request)
+    from app.services.map_ingest_execution import retry_rows
+    try:
+        run, replay = retry_rows(db, run_id, payload.model_dump(), created_by=_principal_user_id(principal))
+    except (ValueError, PermissionError) as exc:
+        raise _service_error(exc) from exc
+    response.status_code = 200 if replay else 201
+    return MapFoundationService.run_to_dict(run, idempotent_replay=replay)
+
+
+@router.get("/map-conflicts/{claim_id}/field-decision-preview")
+def preview_field_selection(claim_id: int, request: Request,
+    group: Literal["geometry", "water_cut", "production", "details"], db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.services.map_ingest_execution import field_decision_preview
+    try:
+        return field_decision_preview(db, claim_id, group)
+    except (ValueError, PermissionError) as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post("/map-conflicts/{claim_id}/field-decision", status_code=201)
+def select_field_group(claim_id: int, payload: MapFieldSelection, request: Request, response: Response,
+                       db: Session = Depends(get_db)):
+    principal = _require_admin(request)
+    from app.services.map_ingest_execution import decide_field_group
+    try:
+        run, replay = decide_field_group(db, claim_id, payload.model_dump(), actor_id=_principal_user_id(principal))
+    except (ValueError, PermissionError) as exc:
+        raise _service_error(exc) from exc
+    response.status_code = 200 if replay else 201
+    return MapFoundationService.run_to_dict(run, idempotent_replay=replay)
 
 
 @router.get("/map-conflicts")

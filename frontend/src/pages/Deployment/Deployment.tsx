@@ -6,7 +6,7 @@
  * 2. 综合摘要（synth-grid 3 列布局）
  * 3. 部署建议列表（dep-rec P0/P1/P2）
  * 4. 行动优先级（ai-row）
- * 5. AI 共识度条形图（consensus-bar）
+ * 5. 旧口径与未校准评分边界
  *
  * 同时保留全部原有 API 查询（时间模式、目标分析、巡逻路线、资源配置、预防措施）
  * 设计参考：docs/design-reference/aicommand/Analysis.html + pages.css
@@ -26,6 +26,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { analysisApi } from '../../services/analysis'
 import './Deployment.css'
 
@@ -99,8 +100,8 @@ function DeploymentRouteMap({ routes }: { routes: PatrolRoute[] }) {
     <div style={{ marginBottom: 16, border: '1px solid var(--line)', background: 'var(--bg-1)' }}>
       <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--line)', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', letterSpacing: '0.08em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ color: 'var(--accent)' }}>⊕</span>
-        巡逻路线可视化 · 地理分布
-        <span style={{ marginLeft: 'auto', color: 'var(--info)' }}>悬停查看覆盖范围</span>
+        旧版空间示意 · 地理分布
+        <span style={{ marginLeft: 'auto', color: 'var(--info)' }}>悬停查看参考半径</span>
       </div>
       <svg viewBox={`0 0 ${_DW} ${_DH}`} style={{ width: '100%', height: 'auto', display: 'block', background: 'oklch(0.175 0.012 250)' }} preserveAspectRatio="xMidYMid meet">
         <defs>
@@ -188,7 +189,7 @@ function DeploymentRouteMap({ routes }: { routes: PatrolRoute[] }) {
                   <text x={rx + 20} y={ry + 7}
                     fontSize="9.5" fontFamily="JetBrains Mono, monospace"
                     fill="var(--ink-2)">
-                    覆盖 {r.coverage_radius_km} km · {r.case_count} 起
+                    参考半径 {r.coverage_radius_km} km · {r.case_count} 起
                   </text>
                   <text x={rx + 20} y={ry + 20}
                     fontSize="9" fontFamily="JetBrains Mono, monospace"
@@ -224,9 +225,10 @@ function DeploymentRouteMap({ routes }: { routes: PatrolRoute[] }) {
           <text x="-3" y="-21">N</text>
         </g>
       </svg>
+      <p style={{ padding: '8px 14px', margin: 0, color: 'var(--ink-2)', lineHeight: 1.7 }}>圆仅表示旧版参考半径，连线仅按优先级连接中心点；底图为示意，不代表真实道路、导航路线、可达性或实际覆盖。</p>
       {validRoutes.length === 0 && (
         <div style={{ padding: '12px 16px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', textAlign: 'center' }}>
-          生成研判报告后将在此显示巡逻路线地理分布
+          生成旧版研判后将在此显示中心点与参考半径
         </div>
       )}
     </div>
@@ -386,15 +388,15 @@ const Deployment: React.FC = () => {
       <div className="card dep-report" style={{ marginTop: 'var(--gap)' }}>
         <div className="card-head">
           <span className="ico">⌖</span>
-          <span className="ti">综合研判报告</span>
+          <span className="ti">旧版综合研判参考</span>
           <span className="spacer" />
           {overallRisk && (
             <span className="chip warn">{overallRisk}</span>
           )}
           <span className="chip accent">
-            置信 0.82 · {analysisDays} 天数据
+            未校准评分 · {analysisDays} 天手动窗口
           </span>
-          <button className="btn-ghost-sm">导出报告</button>
+          <Link className="btn-ghost-sm" to="/situation">查看当前态势与材料</Link>
         </div>
 
         {/* 三列综合摘要 */}
@@ -407,10 +409,10 @@ const Deployment: React.FC = () => {
               <b style={{ color: 'var(--accent)' }}>{key_findings.length}</b> 项关键发现，
               共 <b style={{ color: 'var(--accent)' }}>{priority_actions.length}</b> 项优先行动建议。
               {modules.hotspots && (
-                <span> 热点区域 <b style={{ color: 'var(--accent)' }}>{modules.hotspots.cluster_count || ''}</b> 处。</span>
+                <span> 热点区域 <b style={{ color: 'var(--accent)' }}>{modules.hotspots.cluster_count ?? '未提供'}</b> 处。</span>
               )}
               {modules.gangs && (
-                <span> 识别团伙 <b style={{ color: 'var(--accent)' }}>{modules.gangs.gang_count || ''}</b> 个。</span>
+                <span> 候选条件组 <b style={{ color: 'var(--accent)' }}>{modules.gangs.gang_count ?? '未提供'}</b> 组，待人工核验。</span>
               )}
             </div>
             <div style={{ marginTop: 12 }}>
@@ -442,7 +444,7 @@ const Deployment: React.FC = () => {
             </ul>
           </div>
 
-          {/* 列3：优先行动 + 共识度 */}
+          {/* 列3：优先行动与旧评分边界 */}
           <div className="synth-col">
             <div className="sh">优先行动</div>
             <div className="action-list" style={{ marginBottom: 18 }}>
@@ -455,17 +457,8 @@ const Deployment: React.FC = () => {
               ))}
             </div>
 
-            <div className="sh">AI 共识度</div>
-            <div className="consensus-bar">
-              <div className="cb-seg" style={{ flex: 79, background: 'var(--ok)' }} />
-              <div className="cb-seg" style={{ flex: 15, background: 'var(--warn)' }} />
-              <div className="cb-seg" style={{ flex: 6,  background: 'var(--err)' }} />
-            </div>
-            <div className="cb-legend">
-              <span><span className="sw" style={{ background: 'var(--ok)' }} />共识 79%</span>
-              <span><span className="sw" style={{ background: 'var(--warn)' }} />部分分歧 15%</span>
-              <span><span className="sw" style={{ background: 'var(--err)' }} />关键分歧 6%</span>
-            </div>
+            <div className="sh">评分使用边界</div>
+            <p>旧版评分未校准。候选条件组、风险等级与建议优先级仅供核查参考，不表示已确认团伙或发生概率。</p>
           </div>
         </div>
       </div>
@@ -477,7 +470,7 @@ const Deployment: React.FC = () => {
 
       {/* ── 页面标题 ── */}
       <div className="page-title">
-        <h1>工作部署建议</h1>
+        <h1>工作部署建议（旧版参考）</h1>
         <div className="sub">DEPLOYMENT · 时间 · 目标 · 路线 · 资源 · 预防</div>
         <div className="dep-trigger-row">
           {/* 周期选择器 */}
@@ -510,6 +503,13 @@ const Deployment: React.FC = () => {
         </div>
       </div>
 
+      <section role="note" aria-label="旧版分析使用边界" style={{ padding: 16, border: '1px solid var(--warn)', background: 'var(--bg-1)', lineHeight: 1.8 }}>
+        <strong>旧口径 · 评分未校准</strong>
+        <p>本页保留手动窗口、时间与目标统计、空间示意、资源和预防建议。它们与完整周期自动简报口径不同，不能互相替代；圆和连线并非真实路由或实际覆盖。</p>
+        <Link className="btn-ghost" to="/situation">查看当前态势与固定材料</Link>{' '}
+        <Link className="btn-ghost" to="/reports">打开已有材料目录</Link>
+      </section>
+
       {/* ── 初始引导（未生成时） ── */}
       {!report?.summary && !reportGenerated && !isFetching && (
         <div className="dep-empty-state">
@@ -519,7 +519,7 @@ const Deployment: React.FC = () => {
           </span>
           <span className="hint">
             点击右上角「⚡ 一键生成研判报告」，系统将基于近 {analysisDays} 天数据，
-            融合热点、团伙、模式、部署四大模块，输出综合研判报告。
+            汇总热点、候选条件组、模式和部署建议，输出旧口径参考。
           </span>
           <button className="btn-primary" onClick={handleGenerate}>
             <ThunderboltOutlined style={{ marginRight: 6 }} />
@@ -535,7 +535,7 @@ const Deployment: React.FC = () => {
           <div className="dep-loading-bar">
             <div className="dep-loading-bar-fill" />
           </div>
-          <span>分析热点 · 识别团伙 · 挖掘模式 · 生成部署建议</span>
+          <span>分析热点 · 整理候选条件组 · 挖掘模式 · 生成部署建议</span>
         </div>
       )}
 
@@ -656,7 +656,7 @@ const Deployment: React.FC = () => {
               label: (
                 <span>
                   <EnvironmentOutlined style={{ marginRight: 4 }} />
-                  巡逻路线
+                  旧版空间建议
                 </span>
               ),
               children: (
@@ -664,7 +664,7 @@ const Deployment: React.FC = () => {
                   {patrolRoutes?.routes && patrolRoutes.routes.length > 0 ? (
                     <>
                       <DeploymentRouteMap routes={patrolRoutes.routes} />
-                      <DepCard title="巡逻路线建议">
+                      <DepCard title="中心点与参考半径建议">
                         {patrolRoutes.routes.map((route: any, i: number) => {
                           const pc = priorityClass(route.priority)
                           return (
@@ -682,7 +682,7 @@ const Deployment: React.FC = () => {
                                   </span>
                                 </div>
                                 <div className="dep-route-card__meta-item">
-                                  覆盖半径：<span>{route.coverage_radius_km} km</span>
+                                  旧版参考半径：<span>{route.coverage_radius_km} km</span>
                                 </div>
                                 <div className="dep-route-card__meta-item">
                                   关联案件：<span>{route.case_count} 起</span>
@@ -706,7 +706,7 @@ const Deployment: React.FC = () => {
                       </DepCard>
                     </>
                   ) : (
-                    <DepCard title="巡逻路线建议">
+                    <DepCard title="中心点与参考半径建议">
                       <DepEmpty text={patrolRoutes?.message || '暂无数据'} />
                     </DepCard>
                   )}

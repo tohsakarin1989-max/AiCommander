@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 
 import { governanceApi } from '../../services/governance'
 import FixedEvaluationPanel from './FixedEvaluationPanel'
+import DerivedOperationsPanel from './DerivedOperationsPanel'
+import { useAuth } from '../../auth/AuthContext'
 import './IntelligenceRuntimeCenter.css'
 
 
@@ -37,12 +39,14 @@ function metricValue(key: string, value: number | string | null) {
 }
 
 export default function IntelligenceRuntimeCenter() {
+  const { user, sessionEpoch } = useAuth()
   const overviewQuery = useQuery({
-    queryKey: ['intelligence-runtime-overview'],
+    queryKey: ['intelligence-runtime-overview', user?.id, sessionEpoch],
     queryFn: governanceApi.getRuntimeOverview,
+    enabled: user?.role === 'admin',
     refetchInterval: 60_000,
   })
-  const overview = overviewQuery.data
+  const overview = !overviewQuery.error && user?.role === 'admin' ? overviewQuery.data : undefined
 
   return (
     <div className="page-scrollable runtime-center">
@@ -100,6 +104,7 @@ export default function IntelligenceRuntimeCenter() {
             </Card>
           </section>
           <FixedEvaluationPanel />
+          <DerivedOperationsPanel />
           <section className="runtime-center__boundary">
             <span>正式案件自动改写：{overview.formal_case_mutations_allowed ? '允许' : '禁止'}</span>
             <span>自动创建执行任务：{overview.execution_task_creation_allowed ? '允许' : '禁止'}</span>

@@ -52,4 +52,36 @@ describe('案件一次逻辑提交与不确定结果', () => {
       expect(caseSaveFailure(error).state).toBe('unconfirmed')
     }
   })
+  it('已消费草稿必须核对冻结请求，不能仅凭草稿已提交认定本页成功', async () => {
+    const client = { ...api(), getDraft: vi.fn().mockResolvedValue({ status: 'submitted', submitted_case_id: 31 }), submitDraft: vi.fn().mockResolvedValue({ case_id: 31 }) }
+    const attempt = prepareCaseSubmission(draft(), undefined, { key: 'persisted-key', draftId: 'private-draft', draftRevision: 3 })
+    expect(await resolveCaseSubmission(attempt, client, true)).toBe(31)
+    expect(client.submitDraft).toHaveBeenCalledWith('private-draft', 3, attempt.payload, true); expect(client.createCase).not.toHaveBeenCalled()
+    expect(attempt.key).toBe('persisted-key')
+  })
+  it('另一页已提交不同内容时核对失败，不拿其case id冒充本页保存成功', async () => {
+    const client = { ...api(), getDraft: vi.fn().mockResolvedValue({ status: 'submitted', submitted_case_id: 31 }),
+      submitDraft: vi.fn().mockRejectedValue(Object.assign(new Error('草稿已提交，重试内容不一致'), { status: 409 })) }
+    const attempt = prepareCaseSubmission(draft(), undefined, { key: 'persisted-key', draftId: 'private-draft', draftRevision: 3 })
+    await expect(resolveCaseSubmission(attempt, client)).rejects.toThrow('重试内容不一致')
+    expect(attempt.payload.description).toBe('合成原文'); expect(client.createCase).not.toHaveBeenCalled()
+  })
+  it('未提交草稿安全重试保持同草稿版本与payload，撤权不绕行普通新增', async () => {
+    const client = { ...api(), getDraft: vi.fn().mockResolvedValue({ status: 'active', submitted_case_id: null }), submitDraft: vi.fn().mockResolvedValue({ case_id: 32 }) }
+    const attempt = prepareCaseSubmission(draft(), undefined, { key: 'persisted-key', draftId: 'private-draft', draftRevision: 3 })
+    expect(await resolveCaseSubmission(attempt, client)).toBeNull()
+    expect(client.submitDraft).not.toHaveBeenCalled()
+    expect(await resolveCaseSubmission(attempt, client, true)).toBe(32)
+    expect(client.submitDraft).toHaveBeenCalledWith('private-draft', 3, attempt.payload)
+    client.getDraft.mockRejectedValue(Object.assign(new Error('不可访问'), { status: 404 }))
+    await expect(resolveCaseSubmission(attempt, client, true)).rejects.toThrow('不可访问')
+    expect(client.createCase).not.toHaveBeenCalled(); expect(client.submitDraft).toHaveBeenCalledTimes(1)
+  })
+  it('版本化编辑重试仍带原revision，冲突不回退旧PUT', async () => {
+    const client = { ...api(), updateEditSnapshot: vi.fn().mockRejectedValue(Object.assign(new Error('case_revision_conflict'), { status: 409 })) }
+    const attempt = prepareCaseSubmission(draft(), 17, { sourceRevision: 4 })
+    await expect(resolveCaseSubmission(attempt, client, true)).rejects.toThrow('case_revision_conflict')
+    expect(client.updateEditSnapshot).toHaveBeenCalledWith(17, 4, attempt.payload)
+    expect(client.updateCase).not.toHaveBeenCalled(); expect(client.createCase).not.toHaveBeenCalled()
+  })
 })

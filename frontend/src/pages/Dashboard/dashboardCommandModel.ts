@@ -242,33 +242,18 @@ function countMissingRequired(caseItem: Case): number {
   return caseItem.quality_issues?.missing_required?.length ?? 0
 }
 
-function hasStructuredFeatures(caseItem: Case): boolean {
-  const features = caseItem.features
-  if (!features) return false
-  return Boolean(
-    features.summary
-      || features.basic?.summary
-      || features.tags?.length
-      || features.management?.recommended_completion_actions?.length
-      || features.modus?.modus_operandi?.length
-      || features.oil?.facts
-  )
-}
-
 function hasExperienceCardInputs(caseItem: Case): boolean {
-  const descriptionLength = (caseItem.description || caseItem.features?.summary || caseItem.features?.basic?.summary || '').trim().length
+  const descriptionLength = (caseItem.description || '').trim().length
   return descriptionLength >= 30 && Boolean(
     caseItem.location
       || isValidCoordinate(caseItem.latitude, caseItem.longitude)
       || caseItem.case_type
-      || caseItem.features?.tags?.length
   )
 }
 
 function countAiSuggestedActions(caseItem: Case): number {
   return (
-    (caseItem.features?.management?.recommended_completion_actions?.length ?? 0)
-    + (caseItem.quality_issues?.recommendations?.length ?? 0)
+    (caseItem.quality_issues?.recommendations?.length ?? 0)
   )
 }
 
@@ -482,7 +467,6 @@ function buildAiOutputs(
 ): DashboardListItem[] {
   const inferred = chainLinks.filter(link => link.status === 'inferred').length
   const confirmed = chainLinks.filter(link => link.status === 'confirmed').length
-  const structured = cases.filter(hasStructuredFeatures).length
   const experienceReady = cases.filter(hasExperienceCardInputs).length
   const completionActions = cases.reduce((sum, caseItem) => sum + countAiSuggestedActions(caseItem), 0)
   const alertTriagePacks = automationAlerts.filter(alertHasTriagePack).length
@@ -504,15 +488,13 @@ function buildAiOutputs(
   if (alertTriagePacks) {
     items.push(listItem('数智告警研判包', `${alertTriagePacks} 条告警已形成 AI 依据或核查建议。`, 'ai'))
   }
-  if (structured) {
-    items.push(listItem('案件结构化结果', `${structured} 起案件已有结构化特征，可用于报告生成。`, 'ai'))
-    items.push(listItem('结论分层初筛', `${structured} 起案件可拆分事实、推断、建议和信息缺口。`, 'ai'))
-  }
+  // The case list's legacy features have no verified source revision. Current
+  // output counts come from the dashboard summary, never from truthy old JSON.
   if (experienceReady) {
     items.push(listItem('经验卡沉淀', `${experienceReady} 起案件具备作案条件、发现方式和复用建议输入。`, 'ai'))
   }
   if (completionActions) {
-    items.push(listItem('部署建议草案', `${completionActions} 条补充或防控建议来自结构化预处理。`, 'ai'))
+    items.push(listItem('资料补充提示', `${completionActions} 条来自资料检查，不是模型产出或部署任务。`, 'normal'))
   }
   if (alertActions && !completionActions) {
     items.push(listItem('现场核查建议', `${alertActions} 条建议来自数智告警研判包。`, 'ai'))
@@ -540,14 +522,6 @@ function buildReviewItems(
   const alertReview = automationAlerts.filter(alertNeedsReview).length
   const conclusionDraftReview = conclusions.filter(conclusion => reviewStatusOf(conclusion) === 'pending_review').length
   const highPrioritySuggestions = suggestions.filter(item => item.priority === 'high')
-  const conclusionReview = cases.filter(caseItem => (
-    hasStructuredFeatures(caseItem)
-    && (
-      (typeof caseItem.quality_score === 'number' && caseItem.quality_score < 70)
-      || countMissingRequired(caseItem) > 0
-      || !isValidCoordinate(caseItem.latitude, caseItem.longitude)
-    )
-  )).length
   return ensureRows([
     ...(inferred ? [listItem('链条推断待确认', `${inferred} 条按置信度和时间差排序。`, 'hot')] : []),
     ...(alertReview ? [listItem('数智告警待核查', `${alertReview} 条告警需人工确认事实、误报或转案件边界。`, 'hot')] : []),
@@ -558,7 +532,6 @@ function buildReviewItems(
       getSuggestionRoute(highPrioritySuggestions[0]),
     )] : []),
     ...(conclusionDraftReview ? [listItem('结论草稿待复核', `${conclusionDraftReview} 份结论草稿需人工确认。`, 'warn', '/conclusions')] : []),
-    ...(conclusionReview ? [listItem('结论分层待确认', `${conclusionReview} 起结构化案件需人工确认事实、推断和建议边界。`, 'warn')] : []),
     ...(materialBlocked ? [listItem('材料复核待处理', `${materialBlocked} 起案件需先补齐关键材料。`, 'hot')] : []),
     ...(missingCoordinateCount ? [listItem('坐标补录待处理', `${missingCoordinateCount} 起案件影响空间聚类。`, 'warn')] : []),
     ...(lowQuality ? [listItem('低质量案件待复核', `${lowQuality} 起案件需补充事实或证据引用。`, 'warn')] : []),

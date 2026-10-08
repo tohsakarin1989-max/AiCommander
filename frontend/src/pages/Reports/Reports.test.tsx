@@ -25,6 +25,7 @@ vi.mock('@tanstack/react-query', () => ({
 export const materialFixture = (): ResultMaterial => ({ kind: 'meeting', id: '9', title: '合成会议材料', content_sha256: 'a'.repeat(64),
   schema_version: 'meeting-material-6.5-1', subject: { kind: 'meeting', id: 'history-meeting' }, created_at: '2026-09-30', availability: 'available',
   body: {}, sources: [], boundary: ['讨论参考不是案件事实'], judgments: [],
+  presentation: { template: 'full', label: '完整资料', schema_version: 'material-presentation-7.4-1', options: [{ id: 'full', label: '完整资料' }], boundary: '通用整理格式，不是单位正式样表' },
   document: { schema_version: 'business-result-document-6.5-1', blocks: [
     { kind: 'paragraph', text: '原文未发现车辆，未知不等于零', rows: [] }, { kind: 'table', text: '确定性统计', rows: [['已登记', '0']] },
   ] } })
@@ -94,5 +95,31 @@ describe('统一材料入口与历史边界', () => {
     const html = renderToStaticMarkup(<Reports />)
     expect(html).toContain('只对本版保留参考'); expect(html).toContain('不自动变成案件事实')
     expect(state.requested.every(item => !String(item.queryKey[0]).includes('conclusion'))).toBe(true)
+  })
+  it.each(['bogus', '__proto__', '', 'case_summary', 'full&template=case_summary'])('无效或不适用格式 %s 拒绝显示已有缓存', template => {
+    state.params = `kind=meeting&resultId=9&template=${template}`
+    const html = renderToStaticMarkup(<Reports />)
+    expect(html).toContain('材料格式无效或不适用于此类材料')
+    expect(html).not.toContain('原文未发现车辆'); expect(html).not.toContain('导出本版 Word')
+    expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.enabled).toBe(false)
+  })
+  it('格式和预期内容版本进入独立缓存，错误返回的完整正文不可显示', () => {
+    state.data = { ...materialFixture(), kind: 'case' }
+    state.params = `kind=case&resultId=9&template=case_summary&expected_content_sha256=${'a'.repeat(64)}`
+    let html = renderToStaticMarkup(<Reports />)
+    expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.queryKey).toEqual(['material-reader', '4:2', 'case', '9', 'case_summary', 'a'.repeat(64)])
+    expect(html).toContain('返回的材料格式或内容版本不匹配'); expect(html).not.toContain('原文未发现车辆')
+    state.data.presentation = { ...state.data.presentation, template: 'case_summary', label: '案件资料摘要', options: [{ id: 'full', label: '完整资料' }, { id: 'case_summary', label: '案件资料摘要' }] }
+    html = renderToStaticMarkup(<Reports />)
+    expect(html).toContain('原文未发现车辆'); expect(html).toContain('value="case_summary" selected=""')
+    expect(html).toContain('不是单位正式样表'); expect(html).toContain('按需记录判断')
+    state.data.content_sha256 = 'b'.repeat(64)
+    expect(renderToStaticMarkup(<Reports />)).not.toContain('原文未发现车辆')
+  })
+  it('预期内容摘要不合法时不读取且不使用缓存', () => {
+    state.params = 'kind=meeting&resultId=9&expected_content_sha256=wrong'
+    const html = renderToStaticMarkup(<Reports />)
+    expect(html).toContain('内容版本参数无效'); expect(html).not.toContain('原文未发现车辆')
+    expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.enabled).toBe(false)
   })
 })

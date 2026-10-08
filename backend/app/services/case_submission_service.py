@@ -75,7 +75,7 @@ def _claim_receipt(db, user_id, key, digest):
     ).returning(table.c.id))
 
 
-def create_case_submission(db, *, key, request_payload, values):
+def create_case_submission(db, *, key, request_payload, values, commit=True):
     """The unique insert arbitrates concurrent retries on PostgreSQL and SQLite."""
     user_id = _identity(db, key)
     digest = hashlib.sha256(json.dumps(request_payload, sort_keys=True, ensure_ascii=False,
@@ -100,9 +100,10 @@ def create_case_submission(db, *, key, request_payload, values):
         table = CaseSubmissionReceipt.__table__
         db.execute(table.update().where(table.c.id == receipt_id, table.c.user_id == user_id)
                    .values(case_id=case.id))
-        db.commit()
-        db.refresh(case)
-        CaseService.finish_created_case(db, case)
+        if commit:
+            db.commit()
+            db.refresh(case)
+            CaseService.finish_created_case(db, case)
         return case
     except Exception:
         db.rollback()

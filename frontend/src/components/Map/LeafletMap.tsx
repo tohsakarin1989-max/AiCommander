@@ -12,6 +12,7 @@ import { escapeHtml } from '../../utils/html'
 import { validReferencePoint, type ReferencePoint } from './referencePoint'
 import { hypothesisRegionColor, hypothesisSupportLabel, parseCircleHypothesisRegion } from './caseHypothesisMap'
 import { openFacilityDossier } from '../../services/regionalContext'
+import { createViewportPolicy, type MapLocateRequest } from './mapViewportPolicy'
 
 // 修复 Leaflet 默认图标路径问题（Vite 打包时 marker 图标会丢失）
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -28,6 +29,8 @@ interface LeafletMapProps {
   chainSearchRadiusKm?: number
   height?: number | string
   center?: [number, number]
+  preserveViewport?: boolean
+  locateRequest?: MapLocateRequest
   zoom?: number
   onMarkerClick?: (marker: CaseMarker) => void
   operationalAreaId?: number
@@ -140,6 +143,8 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   chainSearchRadiusKm = 20,
   height = 500,
   center,
+  preserveViewport = false,
+  locateRequest,
   zoom = 11,
   onMarkerClick,
   operationalAreaId,
@@ -154,6 +159,8 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   hypothesisRegions = [],
 }) => {
   const mapRef = useRef<L.Map | null>(null)
+  const viewportPolicy = useRef(createViewportPolicy())
+  const savedView = useRef<{ scope: string; center: L.LatLng; zoom: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const layersRef = useRef<L.Layer[]>([])
   const highlightLayersRef = useRef<L.Layer[]>([])
@@ -178,10 +185,13 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
   // 初始化地图（只运行一次）
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+    const scope = `${operationalAreaId}:${snapshotRef}`
+    viewportPolicy.current.enter(scope, Boolean(center))
+    const previousView = preserveViewport && savedView.current?.scope === scope ? savedView.current : null
 
     const map = L.map(containerRef.current, {
-      center: defaultCenter,
-      zoom,
+      center: previousView?.center ?? defaultCenter,
+      zoom: previousView?.zoom ?? zoom,
       zoomControl: true,
       zoomAnimation: false,
     })
@@ -198,7 +208,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
           current === '正在加载研判版本生产图层…' ? '底图来源暂不可用，生产图层未加载；冻结入口标记仍可查看。' : current)
       },
       onConfig: config => { void (async () => {
-      if (!center && markers.length === 0 && referencePoints.length === 0 && config.bounds) {
+      if (!center && markers.length === 0 && referencePoints.length === 0 && config.bounds && viewportPolicy.current.fit(preserveViewport)) {
         map.fitBounds(config.bounds, { padding: [24, 24] })
       }
       if (!productionAssetKey) return
@@ -250,6 +260,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     retryBasemapRef.current = stopBasemap.retry
 
     return () => {
+      if (preserveViewport) savedView.current = { scope, center: map.getCenter(), zoom: map.getZoom() }
       disposed = true
       controller.abort()
       stopBasemap()
@@ -424,7 +435,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
     })
 
     // 有 markers 时自动调整视野
-    if (!center && (markers.length > 0 || mappedHypotheses.length > 0)) {
+    if (!center && (markers.length > 0 || mappedHypotheses.length > 0) && viewportPolicy.current.fit(preserveViewport)) {
       const points: Array<[number, number]> = [
         ...markers.map((marker): [number, number] => [marker.lat, marker.lng]),
         ...mappedHypotheses.map(({ region }): [number, number] => [region.latitude, region.longitude]),
@@ -449,7 +460,7 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
       entries.set(point.id, marker)
     }
     referenceMarkersRef.current = entries
-    map.fitBounds(L.latLngBounds(points.map(point => [point.latitude, point.longitude] as [number, number])),
+    if (points.length && viewportPolicy.current.fit(preserveViewport)) map.fitBounds(L.latLngBounds(points.map(point => [point.latitude, point.longitude] as [number, number])),
       { padding: [45, 45], maxZoom: 14 })
     return () => {
       for (const marker of entries.values()) if (map.hasLayer(marker)) map.removeLayer(marker)
@@ -459,11 +470,17 @@ const LeafletMap: React.FC<LeafletMapProps> = ({
 
   useEffect(() => {
     const marker = focusedReferenceId ? referenceMarkersRef.current.get(focusedReferenceId) : null
-    if (marker && mapRef.current) {
+    if (marker && mapRef.current && viewportPolicy.current.focus(focusedReferenceId!, preserveViewport)) {
       mapRef.current.panTo(marker.getLatLng(), { animate: false })
       marker.openPopup()
     }
   }, [focusedReferenceId, referencePoints, operationalAreaId, snapshotRef, productionAssetKey])
+
+  useEffect(() => {
+    if (mapRef.current && viewportPolicy.current.locate(locateRequest)) {
+      mapRef.current.panTo([locateRequest!.latitude, locateRequest!.longitude], { animate: false })
+    }
+  }, [locateRequest, operationalAreaId, snapshotRef, productionAssetKey])
 
   useEffect(() => {
     const map = mapRef.current

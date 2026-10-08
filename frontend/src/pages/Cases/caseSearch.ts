@@ -17,6 +17,10 @@ export function visibleCaseDetail(query: { data?: Case; isSuccess: boolean }): C
   return query.isSuccess ? query.data ?? null : null
 }
 
+export function visibleCasePage<T>(data: T | undefined, unavailable: boolean): T | undefined {
+  return unavailable ? undefined : data
+}
+
 export interface CaseSearchDraft {
   keyword?: string
   statuses?: string[]

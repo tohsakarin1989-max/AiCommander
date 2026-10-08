@@ -19,6 +19,8 @@ import { caseContextPath, parseCaseContextParams } from '../../services/caseCont
 import { facilityAnalysisApi } from '../../services/facilityAnalysis'
 import { openFacilityDossier, parseRegionalContext, regionalContextPath, writeRegionalContext } from '../../services/regionalContext'
 import LeafletMap from '../../components/Map/LeafletMap'
+import MapLocationSearch from '../../components/Map/MapLocationSearch'
+import type { ReferencePoint } from '../../components/Map/referencePoint'
 import type { CaseMarker, ChainLinkLine, ChainPosition, SerialGroup, Hotspot, SerialCaseGroup } from '../../types'
 import { chainPositionMeta, getChainPosition } from '../../utils/chainType'
 import './CasesMap.css'
@@ -48,6 +50,7 @@ const CasesMap: React.FC = () => {
   const [visiblePositions, setVisiblePositions] = useState<ChainPosition[]>(['upstream', 'midstream', 'downstream', 'unknown'])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [activeAreaId, setActiveAreaId] = useState<number | null>(caseContext.filters.operational_area_id ?? null)
+  const [located, setLocated] = useState<{ scope: string; point: ReferencePoint; requestId: string } | null>(null)
   const selectedCaseId = parseCaseDeepLinkId(searchParams.get('caseId'))
   const focusQuery = useQuery({
     queryKey: caseDetailKey(user?.id, sessionEpoch, selectedCaseId),
@@ -93,6 +96,8 @@ const CasesMap: React.FC = () => {
     enabled: canReadArea, retry: false, gcTime: 0,
   })
   const region = canReadArea && !regionQuery.isError && regionQuery.data?.scope?.operational_area_id === activeAreaId ? regionQuery.data : undefined
+  const lookupScope = `${user?.id}:${sessionEpoch}:${activeAreaId}:${region?.versions.map_snapshot_id}`
+  const location = located?.scope === lookupScope ? located : null
 
   const mapCasesQuery = useQuery({
     queryKey: ['cases', 'map', activeAreaId, user?.id, sessionEpoch, caseContext.filters],
@@ -256,6 +261,8 @@ const CasesMap: React.FC = () => {
         <span>设施显示前 50 个；完整清单可在条件对照中翻页。独立事件保留来源标签。</span></nav>
       {mapCasesQuery.isError && <Alert type="error" message="区域案件暂不可读，不代表该区域没有案件。" />}
       {focus && !caseFocusCenter(focus) && <Alert type="info" message="指定案件缺少有效坐标，保留记录但不猜测地图位置。" />}
+      <MapLocationSearch areaId={canReadArea ? activeAreaId : null} snapshotId={region?.versions.map_snapshot_id ?? undefined}
+        onLocate={point => setLocated({ scope: lookupScope, point, requestId: crypto.randomUUID() })} />
 
       {/* ── 筛选/图层控制卡片（顶部） ── */}
       <div className="cases-map-filter">
@@ -359,6 +366,8 @@ const CasesMap: React.FC = () => {
             <LeafletMap
               key={`${activeAreaId ?? 'no-area'}:${focus?.id ?? 'overview'}:${sessionEpoch}`}
               center={focusCenter}
+              preserveViewport
+              locateRequest={canReadArea && location ? { id: location.requestId, latitude: location.point.latitude, longitude: location.point.longitude } : undefined}
               markers={markers}
               serialGroups={serialGroups}
               chainLinks={chainLinks}
@@ -367,6 +376,7 @@ const CasesMap: React.FC = () => {
               snapshotRef={region?.versions.map_snapshot_id ?? undefined}
               productionAssetIds={region?.facilities.items.map(item => item.id) ?? []}
               referencePoints={[
+                ...(canReadArea && location ? [location.point] : []),
                 ...(region?.facilities.items ?? []).filter(item => item.latitude != null && item.longitude != null).map(item => ({
                   id: `asset:${item.id}`, latitude: item.latitude!, longitude: item.longitude!, title: `设施：${item.name}`, description: '登记资料，不表示涉案；点击查看设施档案。',
                 })),

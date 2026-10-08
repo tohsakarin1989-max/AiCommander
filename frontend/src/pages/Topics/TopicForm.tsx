@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { TopicCondition, TopicDefinition, TopicFilters, TopicOptions, TopicSourceContext, TopicWindow } from '../../services/analysisTopics'
 import { categoryNames, kindNames } from './topicPresentation'
+import { contextQuestionKind, topicPresets } from './topicPresets'
 
 const localInput = (value?: string) => {
   if (!value) return ''
@@ -18,6 +20,7 @@ export function TopicForm({ pending, onCreate, initial, sourceContext }: {
   const [window, setWindow] = useState<TopicWindow>(initial?.window || { mode: 'fixed' })
   const [conditions, setConditions] = useState<TopicCondition[]>(initial?.filters.conditions || [])
   const [error, setError] = useState('')
+  const questionKind = initial?.question_kind || contextQuestionKind(sourceContext)
   const invalidRange = window.mode === 'fixed' && Boolean(start && end && start >= end)
   function change(index: number, value: Partial<TopicCondition>) {
     setConditions(items => items.map((item, i) => i === index ? { ...item, ...value } : item))
@@ -30,9 +33,16 @@ export function TopicForm({ pending, onCreate, initial, sourceContext }: {
       start_date: window.mode === 'fixed' && start ? new Date(start).toISOString() : undefined,
       end_date: window.mode === 'fixed' && end ? new Date(end).toISOString() : undefined,
       conditions: conditions.map(item => ({ ...item, value: item.value?.trim() || null })) }
-    const questionKind = initial?.question_kind || (sourceContext?.kind === 'case' ? 'case_gaps' : sourceContext?.kind === 'facility' ? 'facility_context' : 'condition_changes')
     setError(''); onCreate(title.trim(), filters, { question: title.trim(), question_kind: questionKind, window, ...(sourceContext ? { source_context: sourceContext } : {}) })
   }}>
+    {!initial && <fieldset><legend>从常用关注开始</legend><div className="topic-actions">
+      {topicPresets.map(preset => <div key={preset.kind}>
+        {preset.kind === questionKind ? <button type="button" className="btn-ghost" disabled={pending}
+          onClick={() => { setTitle(preset.title); setWindow({ ...preset.window }); setError('') }}>{preset.title}</button>
+          : <Link to={preset.entry}>{preset.title}（从{preset.kind === 'case_gaps' ? '案件' : preset.kind === 'facility_context' ? '设施' : '无对象专题'}进入）</Link>}
+        <p>{preset.description}</p>
+      </div>)}
+    </div><p>预设只填写已有的关注类型和时间窗口，下面已填写的条件会保留；保存前可调整。</p></fieldset>}
     <label>想持续关注什么<input value={title} required maxLength={120} placeholder="例如：近期管线案件的手法与资料缺口有什么变化" disabled={pending} onChange={e => setTitle(e.target.value)} /></label>
     {sourceContext && <p>已带入{sourceContext.kind === 'case' ? '案件' : sourceContext.kind === 'facility' ? '设施' : '查询'} #{sourceContext.id}，由服务器核对范围，不需重新选案。</p>}
     {!sourceContext && <p>范围为全部授权案件，以下条件只会收窄范围，不需要逐案选择。</p>}

@@ -154,7 +154,7 @@ describe('dashboardCommandModel', () => {
     expect(uniquePositions.size).toBeGreaterThan(1)
   })
 
-  it('uses structured case data as real AI outputs instead of pending placeholders', () => {
+  it('does not present unversioned legacy features as current AI outputs', () => {
     const model = buildDashboardModel({
       cases: [
         baseCase(1, {
@@ -180,11 +180,12 @@ describe('dashboardCommandModel', () => {
 
     expect(model.kpis.aiOutputs.value).not.toBe('待接入')
     expect(model.aiOutputs.map(item => item.title)).toContain('经验卡沉淀')
-    expect(model.aiOutputs.map(item => item.title)).toContain('结论分层初筛')
+    expect(model.aiOutputs.map(item => item.title)).not.toContain('结论分层初筛')
+    expect(model.aiOutputs.map(item => item.title)).not.toContain('案件结构化结果')
     expect(model.aiOutputs.some(item => item.detail.includes('待接入'))).toBe(false)
   })
 
-  it('adds structured low-quality cases to conclusion review work queue', () => {
+  it('does not turn legacy features plus missing data into mandatory conclusion review', () => {
     const model = buildDashboardModel({
       cases: [
         baseCase(1, {
@@ -208,8 +209,8 @@ describe('dashboardCommandModel', () => {
       now: new Date('2026-05-10T00:00:00.000Z'),
     })
 
-    expect(model.reviewItems.map(item => item.title)).toContain('结论分层待确认')
-    expect(model.reviewItems.find(item => item.title === '结论分层待确认')?.detail).toContain('1 起')
+    expect(model.reviewItems.map(item => item.title)).not.toContain('结论分层待确认')
+    expect(model.reviewItems.map(item => item.title)).toContain('材料复核待处理')
   })
 
   it('includes digital automation alert triage packs in AI outputs and review queue', () => {

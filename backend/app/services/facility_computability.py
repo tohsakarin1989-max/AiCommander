@@ -83,7 +83,7 @@ def _context(db, *, area_id=None, at=None, known_at=None, context=None):
                                          valid_at=context.valid_at, known_at=context.known_at)
         if current.user_id != context.user_id or current.policy_version != context.policy_version:
             raise PermissionError("facility_readiness_context_changed")
-        return current
+        return context  # Preserve the already frozen knowledge mode/cutoff.
     if at is not None:
         _instant(at, None)
     if known_at is not None:

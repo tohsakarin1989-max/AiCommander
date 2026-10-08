@@ -17,11 +17,15 @@ export interface TopicDefinitionRevision { revision: number; definition: TopicDe
 export interface TopicOptions { question?: string; window?: TopicWindow; source_context?: TopicSourceContext; question_kind?: TopicDefinition['question_kind'] }
 export interface Topic {
   id: string; title: string; notes: string; filters: TopicFilters; paused: boolean
+  notification_policy?: 'meaningful' | 'muted'
   refresh_state: string; last_error: string | null; created_at: string; next_refresh_at: string | null
   question?: string; window?: TopicWindow; source_context?: TopicSourceContext | null; definition_revision?: number
   question_kind?: TopicDefinition['question_kind']
   refresh_progress?: { job_id: string; state: string; phase: string; scanned_cases: number; total_cases: number; as_of: string; definition_revision: number } | null
   snapshot?: TopicSnapshot | null
+}
+export interface TopicChangeReference {
+  topic_id: string; snapshot_id: string; revision: number; content_sha256: string
 }
 export interface TopicSnapshot {
   id: string; revision: number; content_sha256: string; created_at: string
@@ -66,8 +70,10 @@ export const analysisTopicsApi = {
     (await api.get(path(id), { params: { revision, page }, signal })).data,
   views: async (id: string, revision: number, page: number, signal?: AbortSignal): Promise<TopicViews> =>
     (await api.get(`${path(id)}/views`, { params: { revision, page }, signal })).data,
-  update: async (id: string, values: { notes?: string; paused?: boolean; title?: string; question?: string; question_kind?: TopicDefinition['question_kind']; filters?: TopicFilters; window?: TopicWindow; expected_definition_revision?: number }): Promise<Topic> =>
+  update: async (id: string, values: { notes?: string; paused?: boolean; notification_policy?: 'meaningful' | 'muted'; title?: string; question?: string; question_kind?: TopicDefinition['question_kind']; filters?: TopicFilters; window?: TopicWindow; expected_definition_revision?: number }): Promise<Topic> =>
     (await api.patch(path(id), values)).data,
+  dismissChanges: async (sources: TopicChangeReference[]): Promise<{ sources: TopicChangeReference[]; dismissed: number }> =>
+    (await api.post('/analysis-topics/change-dismissals', { sources })).data,
   refresh: async (id: string): Promise<Topic> => (await api.post(`${path(id)}/refresh`)).data,
   cancel: async (id: string): Promise<Topic> => (await api.post(`${path(id)}/cancel`)).data,
   definitions: async (id: string, signal?: AbortSignal): Promise<{ items: TopicDefinitionRevision[] }> =>

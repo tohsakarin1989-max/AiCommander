@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import type { InitialQueryContext, QueryPreset, QueryPresetName } from '../../services/intelligentQueries'
+import CaseSearch from '../../components/CaseSearch'
+import FacilitySearch from '../../components/Facility/FacilitySearch'
+import { useAuth } from '../../auth/AuthContext'
 
 export const presetLabels: Record<QueryPresetName, string> = {
   case_count: '统计当前范围', case_process: '核对案件过程', case_result: '解释已有案件成果',
@@ -14,11 +17,11 @@ export function presetArguments(name: QueryPresetName, values: Record<string, st
   const args: Record<string, unknown> = area ? { operational_area_id: area } : {}
   if (name === 'case_process' || name === 'case_result') {
     const id = context?.source_case_id || positiveId(values.caseId || '')
-    if (!id) throw new Error('请从案件打开，或填写有效案件编号。')
+    if (!id) throw new Error('请先查找并选择案件。')
     args.case_id = id
   } else if (name !== 'coverage_scenario') {
     const id = positiveId(values.assetId || '')
-    if (!id) throw new Error('请从设施打开，或填写有效设施编号。')
+    if (!id) throw new Error('请先查找并选择设施。')
     args.asset_id = id
   }
   function instant(key: string, label: string) {
@@ -41,12 +44,18 @@ export function presetArguments(name: QueryPresetName, values: Record<string, st
   return { name, arguments: args }
 }
 
-export default function QueryPresets({ context, assetId, disabled, onRun }: {
+type Props = {
   context?: InitialQueryContext; assetId?: string; disabled: boolean; onRun: (title: string, preset: QueryPreset) => void
-}) {
+}
+export default function QueryPresets(props: Props) {
+  const { user, sessionEpoch } = useAuth()
+  return <QueryPresetsSession key={`${user?.id}:${sessionEpoch}:${props.assetId}:${JSON.stringify(props.context)}`} {...props} />
+}
+function QueryPresetsSession({ context, assetId, disabled, onRun }: Props) {
   const [name, setName] = useState<QueryPresetName>(assetId ? 'facility_dossier' : context?.source_case_id ? 'case_process' : 'case_count')
   const [values, setValues] = useState<Record<string, string>>({ assetId: assetId || '' })
   const [error, setError] = useState('')
+  const [chosenLabel, setChosenLabel] = useState({ case: '', facility: '' })
   const field = (key: string, label: string, type = 'text') => <label key={key}>{label}<input type={type} value={values[key] || ''} disabled={disabled}
     onChange={event => { setValues(old => ({ ...old, [key]: event.target.value })); setError('') }} /></label>
   return <details className="query-presets" open={Boolean(context?.source_case_id || assetId)}>
@@ -60,8 +69,18 @@ export default function QueryPresets({ context, assetId, disabled, onRun }: {
       <label>要做什么<select value={name} disabled={disabled} onChange={event => { setName(event.target.value as QueryPresetName); setError('') }}>
         {Object.entries(presetLabels).map(([key, title]) => <option key={key} value={key}>{title}</option>)}
       </select></label>
-      {['case_process', 'case_result'].includes(name) && (context?.source_case_id ? <p>使用已选择案件 #{context.source_case_id}</p> : field('caseId', '案件编号'))}
-      {['facility_dossier', 'facility_history'].includes(name) && field('assetId', '设施稳定编号')}
+      {['case_process', 'case_result'].includes(name) && (context?.source_case_id ? <p>使用已选择案件 #{context.source_case_id}</p> : <>
+        {values.caseId && <p>已选案件：{chosenLabel.case}</p>}
+        <CaseSearch areaId={context?.filters.operational_area_id} disabled={disabled} selectedIds={values.caseId ? [Number(values.caseId)] : []} onChoose={item => {
+          setValues(old => ({ ...old, caseId: String(item.id) })); setChosenLabel(old => ({ ...old, case: item.case_number })); setError('')
+        }} />
+      </>)}
+      {['facility_dossier', 'facility_history'].includes(name) && <>
+        {values.assetId && <p>已选设施：{chosenLabel.facility || `从设施入口带入 #${values.assetId}`}</p>}
+        <details><summary>{values.assetId ? '更换设施' : '查找并选择设施'}</summary><FacilitySearch areaId={context?.filters.operational_area_id} disabled={disabled} onChoose={item => {
+          setValues(old => ({ ...old, assetId: String(item.id) })); setChosenLabel(old => ({ ...old, facility: item.name })); setError('')
+        }} /></details>
+      </>}
       {name === 'facility_history' && <div className="query-actions">{field('validAt', '业务适用时间', 'datetime-local')}{field('knownAt', '资料截止时间', 'datetime-local')}</div>}
       {name === 'coverage_scenario' && <>
         {context?.filters.operational_area_id ? <p>当前辖区 #{context.filters.operational_area_id}</p> : field('area', '辖区编号')}

@@ -8,11 +8,11 @@ from time import monotonic
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, or_
+from sqlalchemy import func
 
 from app.models.case_insight import CaseAnalysisRun
-from app.models.jurisdiction import JurisdictionAsset
 from app.services.case_search_service import CaseSearchService
+from app.services.facility_search_service import FacilitySearchService
 from app.services.case_time_window import case_time_fields, time_precision_counts, TIME_WINDOW_BOUNDARY
 from app.services.map_place_service import search_places
 from app.services.intelligent_query_results import result_content
@@ -122,6 +122,15 @@ class FindPlaces(ScopeArgs):
     keyword: Label
     include_public_places: bool = Field(default=False, strict=True)
     limit: int = Field(default=20, ge=1, le=50, strict=True)
+    offset: int = Field(default=0, ge=0, strict=True)
+
+    @field_validator('keyword')
+    @classmethod
+    def nonempty_keyword(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('keyword_required')
+        return value
 
 
 class SummarizeResults(CaseFilters):
@@ -171,17 +180,14 @@ def _count(db, args):
 
 
 def _places(db, args):
-    literal = args.keyword.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    query = db.query(JurisdictionAsset).filter(or_(
-        JurisdictionAsset.name.ilike(f'%{literal}%', escape='\\'),
-        JurisdictionAsset.address.ilike(f'%{literal}%', escape='\\')))
-    if args.operational_area_id is not None:
-        query = query.filter(JurisdictionAsset.operational_area_id == args.operational_area_id)
+    filters = {'keyword': args.keyword, 'operational_area_id': args.operational_area_id}
+    query = FacilitySearchService.filtered_query(db, **filters)
     total = query.count()
     data = {'total': total, 'items': [
         {'id': row.id, 'name': row.name, 'asset_type': row.asset_type,
-         'status': row.status, 'verified': row.verified, 'evidence_ref': f'map_asset:{row.id}'}
-        for row in query.order_by(JurisdictionAsset.id).limit(args.limit).all()]}
+         'status': row.status, 'verified': row.verified, 'search_match': row.search_match,
+         'evidence_ref': f'map_asset:{row.id}'}
+        for row in FacilitySearchService.items(db, **filters, skip=args.offset, limit=args.limit)]}
     gaps = []
     if args.include_public_places:
         try:

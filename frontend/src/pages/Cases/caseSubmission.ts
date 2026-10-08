@@ -4,11 +4,15 @@ export interface CaseSubmission {
   key: string
   caseId?: number
   payload: CaseCreate | CaseUpdatePayload
+  sourceRevision?: number
+  draftId?: string
+  draftRevision?: number
 }
 
 /** One logical submission owns an immutable JSON payload until its outcome is known. */
-export function prepareCaseSubmission(payload: CaseCreate | CaseUpdatePayload, caseId?: number): CaseSubmission {
-  return { key: crypto.randomUUID(), caseId, payload: JSON.parse(JSON.stringify(payload)) }
+export function prepareCaseSubmission(payload: CaseCreate | CaseUpdatePayload, caseId?: number,
+  context: { key?: string; sourceRevision?: number; draftId?: string; draftRevision?: number } = {}): CaseSubmission {
+  return { ...context, key: context.key || crypto.randomUUID(), caseId, payload: JSON.parse(JSON.stringify(payload)) }
 }
 
 export function caseSaveFailure(error: unknown): { state: 'rejected' | 'unconfirmed' | 'conflict'; message: string } {
@@ -27,10 +31,27 @@ export async function resolveCaseSubmission(
     getCaseSubmission: (key: string) => Promise<{ status: 'completed' | 'unconfirmed'; case_id: number | null }>
     createCase: (payload: CaseCreate, key?: string) => Promise<{ id: number }>
     updateCase: (id: number, payload: CaseUpdatePayload) => Promise<{ id: number }>
+    updateEditSnapshot?: (id: number, revision: number, payload: CaseUpdatePayload) => Promise<{ case: { id: number } }>
+    getDraft?: (id: string) => Promise<{ status: string; submitted_case_id: number | null }>
+    submitDraft?: (id: string, revision: number, payload: unknown, confirmOnly?: boolean) => Promise<{ case_id: number }>
   },
   retry = false,
 ): Promise<number | null> {
+  if (submission.draftId && submission.draftRevision !== undefined) {
+    if (!api.getDraft || !api.submitDraft) throw new Error('草稿提交服务不可用')
+    const draft = await api.getDraft(submission.draftId)
+    // A second page may have consumed this draft with different content. The
+    // server compares the original revision + payload before returning a receipt.
+    if (draft.status === 'submitted' && draft.submitted_case_id !== null) {
+      return (await api.submitDraft(submission.draftId, submission.draftRevision, submission.payload, true)).case_id
+    }
+    return retry ? (await api.submitDraft(submission.draftId, submission.draftRevision, submission.payload)).case_id : null
+  }
   if (submission.caseId !== undefined) {
+    if (submission.sourceRevision !== undefined) {
+      if (!api.updateEditSnapshot) throw new Error('版本化编辑服务不可用')
+      return retry ? (await api.updateEditSnapshot(submission.caseId, submission.sourceRevision, submission.payload as CaseUpdatePayload)).case.id : null
+    }
     // PUT targets the same case; a GET cannot prove that this specific edit completed.
     return retry ? (await api.updateCase(submission.caseId, submission.payload as CaseUpdatePayload)).id : null
   }

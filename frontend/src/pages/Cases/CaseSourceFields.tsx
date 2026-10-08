@@ -36,6 +36,7 @@ export function CaseSourceCollections({ locationsEnabled, measurementsEnabled }:
     <p>不同地点不合并成一个点；不同单位、环节的数量不直接相加。没有准确位置可只填原文。登记案发地点后，主地图点以唯一且精确的案发地点为准；区域、未知或多处案发地点不显示为一个精确点。</p>
     {!locationsEnabled ? <p role="alert">地点明细读取失败，本次保存不覆盖原明细。</p> : <Form.List name="initial_locations">{(fields, { add, remove }) => <>
       <h4>地点记录</h4>{fields.map(({ key, name, ...rest }) => <fieldset key={key}><legend>地点 {name + 1}</legend>
+        <Form.Item {...rest} name={[name, 'id']} hidden><Input /></Form.Item>
         <Row gutter={12}><Col xs={24} sm={12}><Form.Item {...rest} name={[name, 'role']} label="地点角色" rules={[{ required: true }]}><Select options={Object.entries(locationRoleLabels).map(([value, label]) => ({ value, label }))} /></Form.Item></Col>
           <Col xs={24} sm={12}><Form.Item {...rest} name={[name, 'precision']} label="位置精度"><Select options={[{ value: 'unknown', label: '未明确' }, { value: 'area', label: '仅知区域' }, { value: 'exact', label: '已知精确位置' }]} /></Form.Item></Col></Row>
         <Form.Item {...rest} name={[name, 'description']} label="地点原文"><Input placeholder="如：井场东侧，不用填写假坐标" /></Form.Item>
@@ -51,6 +52,7 @@ export function CaseSourceCollections({ locationsEnabled, measurementsEnabled }:
     </>}</Form.List>}
     {!measurementsEnabled ? <p role="alert">测量明细读取失败，本次保存不覆盖原明细。</p> : <Form.List name="initial_measurements">{(fields, { add, remove }) => <>
       <h4>油品测量</h4>{fields.map(({ key, name, ...rest }) => <fieldset key={key}><legend>测量 {name + 1}</legend>
+        <Form.Item {...rest} name={[name, 'id']} hidden><Input /></Form.Item>
         <Row gutter={12}><Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'value']} label="数量" rules={[{ required: true, message: '无数量时请先移除此测量行' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
           <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'unit']} label="单位"><Select options={oilUnitOptions} /></Form.Item></Col>
           <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'stage']} label="业务环节"><Select options={Object.entries(measurementStageLabels).map(([value, label]) => ({ value, label }))} /></Form.Item></Col></Row>

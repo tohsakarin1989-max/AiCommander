@@ -33,6 +33,8 @@ export interface MapImportTemplate {
   coordinate_unit: 'degree' | 'meter'
   version: number
   is_active: boolean
+  expected_structure?: { headers: string[]; sheet_name?: string | null; header_row?: number } | null
+  field_units?: Record<string, string> | null
 }
 
 export interface MapPreview {
@@ -181,6 +183,8 @@ export interface MapTemplateCreate {
   coordinate_system: string
   axis_order: 'lon_lat' | 'lat_lon'
   coordinate_unit: 'degree' | 'meter'
+  expected_structure?: MapImportTemplate['expected_structure']
+  field_units?: Record<string, string>
 }
 
 function fileBody(file: File): FormData {
@@ -252,10 +256,13 @@ export const mapFoundationApi = {
     templateId: number,
     file: File,
     sourceRevision?: string,
+    planToken?: string,
   ): Promise<MapIngestRun> => {
+    const body = fileBody(file)
+    if (planToken) body.append('plan_token', planToken)
     const response = await api.post<MapIngestRun>(
       `/map-sources/${sourceId}/ingest`,
-      fileBody(file),
+      body,
       {
         params: { template_id: templateId, source_revision: sourceRevision || undefined },
         headers: { 'Content-Type': 'multipart/form-data' },

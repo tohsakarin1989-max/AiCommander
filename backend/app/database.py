@@ -84,7 +84,8 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.jurisdiction import JurisdictionAsset, JurisdictionFeedback
     from app.models.map_foundation import (
         MapSnapshot, MapSnapshotFeature, MapSource,
-        FacilitySourceIdentity, FacilityIdentityDecision,
+        FacilitySourceIdentity, FacilityIdentityDecision, MapFieldDecision,
+        MapIngestRun, MapFeatureClaim, MapImportTemplate,
     )
     from app.models.internal_roads import InternalRoadImport, InternalRoadReview, InternalRoadFeatureVersion
     from app.models.road_public_alias import RoadPublicAlias
@@ -127,6 +128,15 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         options.append(with_loader_criteria(
             model, lambda cls: cls.operational_area_id.in_(area_ids), include_aliases=True,
         ))
+    for model in (MapIngestRun, MapFeatureClaim, MapImportTemplate, MapFieldDecision):
+        options.append(with_loader_criteria(
+            model, lambda cls: cls.source_id.in_(select(MapSource.id).where(MapSource.operational_area_id.in_(area_ids))),
+            include_aliases=True,
+        ))
+    options.append(with_loader_criteria(
+        MapFieldDecision, lambda cls: cls.asset_id.in_(select(JurisdictionAsset.id).where(
+            JurisdictionAsset.operational_area_id.in_(area_ids))), include_aliases=True,
+    ))
     from app.models.case import CaseEvidence, CasePerson, CaseTip, CaseVehicle, OilRecoveryRecord
     from app.models.case_insight import CaseAnalysisRun, CaseHypothesis
     from app.models.case_pipeline import CaseAnalysisProfile, CasePipelineState
@@ -136,6 +146,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     from app.models.case_road_artifact import CaseRoadArtifact
     from app.models.facility_summary import FacilityDerivedSummary
     from app.models.preprocess_job import PreprocessJob
+    from app.models.case_preprocess_supplement import CasePreprocessSupplement
     from app.models.automation_alert import AutomationAlert
     from app.models.chain_link import ChainLink
     from app.models.conclusion import Conclusion
@@ -153,6 +164,7 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         CaseEvidence,
         OilRecoveryRecord,
         PreprocessJob,
+        CasePreprocessSupplement,
         CasePipelineState,
         CaseAnalysisProfile,
         CaseHistoryIndex,

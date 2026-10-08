@@ -170,15 +170,21 @@ class MapFoundationService:
 
     @staticmethod
     def create_template(db: Session, data: dict[str, Any]) -> MapImportTemplate:
+        from app.services.map_import_contract import validate_contract
+        validate_contract(data)
         source = db.query(MapSource).filter(MapSource.id == data["source_id"]).first()
         if not source or source.status != "active":
             raise ValueError("source_not_found")
         coordinate_system = str(data["coordinate_system"]).lower()
         if coordinate_system not in SUPPORTED_COORDINATE_SYSTEMS:
             raise ValueError("unsupported_coordinate_system")
+        expected_unit = "meter" if coordinate_system in {"cgcs2000_gauss_kruger", "local_control_points"} else "degree"
+        if data.get("coordinate_unit", "degree") != expected_unit:
+            raise ValueError("coordinate_unit_mismatch|坐标单位必须与已明确的坐标系一致；投影/本地坐标使用 meter，经纬度使用 degree")
         MapFoundationService._validate_transformation(coordinate_system, data.get("transformation"))
         latest = (
             db.query(MapImportTemplate)
+            .populate_existing()
             .filter(
                 MapImportTemplate.source_id == source.id,
                 MapImportTemplate.name == str(data["name"]).strip(),
@@ -196,6 +202,8 @@ class MapFoundationService:
             axis_order=data.get("axis_order", "lon_lat"),
             coordinate_unit=data.get("coordinate_unit", "degree"),
             transformation=data.get("transformation"),
+            expected_structure=data.get("expected_structure"),
+            field_units=data.get("field_units"),
             version=(latest.version + 1) if latest else 1,
             is_active=True,
         )
@@ -213,59 +221,18 @@ class MapFoundationService:
         content: bytes,
         template_id: int | None,
     ) -> dict[str, Any]:
+        from app.services.map_ingest_plan import make_plan, public_plan
         source = MapFoundationService._get_source(db, source_id)
         template = None
         if template_id is not None:
             template = MapFoundationService._get_template(db, source.id, template_id)
-        rows = MapFoundationService.parse_table(filename, content, template=template)
+        metadata = {}
+        rows = MapFoundationService.parse_table(filename, content, template=template, metadata=metadata)
+        with db.no_autoflush:
+            plan = make_plan(db, source, template, rows, metadata, file_hash=hashlib.sha256(content).hexdigest())
         if template is None:
-            errors = [
-                {
-                    "row": row_number,
-                    "code": "coordinate_system_required",
-                    "message": "必须先由地图管理员确认字段和坐标系模板",
-                }
-                for row_number, _ in rows
-            ]
-            return {
-                "source_id": source.id,
-                "template_id": None,
-                "publishable": False,
-                "total_rows": len(rows),
-                "valid_rows": 0,
-                "quarantined_rows": len(rows),
-                "errors": errors,
-                "sample": [item for _, item in rows[:10]],
-            }
-
-        area = db.query(OperationalArea).filter(
-            OperationalArea.id == source.operational_area_id
-        ).first()
-        valid = []
-        errors = []
-        for row_number, raw in rows:
-            try:
-                valid.append(
-                    MapFoundationService._normalize_row(
-                        source,
-                        template,
-                        raw,
-                        area_boundary=area.boundary if area else None,
-                    )
-                )
-            except ValueError as exc:
-                code, message = MapFoundationService._error_parts(exc)
-                errors.append({"row": row_number, "code": code, "message": message})
-        return {
-            "source_id": source.id,
-            "template_id": template.id,
-            "publishable": bool(valid),
-            "total_rows": len(rows),
-            "valid_rows": len(valid),
-            "quarantined_rows": len(errors),
-            "errors": errors,
-            "sample": valid[:10],
-        }
+            plan["sample"] = [raw for _, raw in rows[:10]]
+        return public_plan(plan)
 
     @staticmethod
     def ingest(
@@ -277,117 +244,12 @@ class MapFoundationService:
         content: bytes,
         source_revision: str | None,
         created_by: int | None,
+        plan_token: str | None = None,
     ) -> tuple[MapIngestRun, bool]:
-        source = MapFoundationService._get_source(db, source_id)
-        template = MapFoundationService._get_template(db, source.id, template_id)
-        file_hash = hashlib.sha256(content).hexdigest()
-        revision = (source_revision or "unspecified").strip()[:200] or "unspecified"
-        idempotency_key = hashlib.sha256(
-            f"{source.id}:{template.id}:{template.version}:{revision}:{file_hash}".encode()
-        ).hexdigest()
-        existing = (
-            db.query(MapIngestRun)
-            .filter(MapIngestRun.idempotency_key == idempotency_key)
-            .first()
-        )
-        if existing:
-            return existing, True
-
-        rows = MapFoundationService.parse_table(filename, content, template=template)
-        area_query = db.query(OperationalArea).filter(
-            OperationalArea.id == source.operational_area_id
-        )
-        if db.bind is not None and db.bind.dialect.name == "postgresql":
-            area_query = area_query.with_for_update()
-        area = area_query.first()
-        run = MapIngestRun(
-            id=str(uuid.uuid4()),
-            source_id=source.id,
-            template_id=template.id,
-            status="running",
-            filename=filename[:255],
-            source_revision=revision,
-            file_hash=file_hash,
-            idempotency_key=idempotency_key,
-            total_rows=len(rows),
-            created_by=created_by,
-        )
-        db.add(run)
-        db.flush()
-
-        errors: list[dict[str, Any]] = []
-        for row_number, raw in rows:
-            raw_hash = MapFoundationService._hash_json(raw)
-            source_record_id = MapFoundationService._mapped_value(
-                raw,
-                template.field_mapping,
-                "external_id",
-            )
-            claim = MapFeatureClaim(
-                run_id=run.id,
-                source_id=source.id,
-                row_number=row_number,
-                source_record_id=MapFoundationService._clean_string(source_record_id),
-                source_revision=revision,
-                raw_payload=raw,
-                raw_hash=raw_hash,
-                status="pending",
-            )
-            db.add(claim)
-            db.flush()
-            try:
-                normalized = MapFoundationService._normalize_row(
-                    source,
-                    template,
-                    raw,
-                    area_boundary=area.boundary if area else None,
-                )
-                claim.normalized_payload = normalized
-                asset, created, conflict = MapFoundationService._merge_asset(
-                    db,
-                    source=source,
-                    claim=claim,
-                    normalized=normalized,
-                )
-                claim.normalized_payload = normalized
-                claim.asset_id = asset.id
-                if conflict:
-                    claim.status = "conflict"
-                    claim.error_code = "lower_priority_conflict"
-                    claim.error_message = "低优先级来源与当前标准值冲突，已保留当前值"
-                    run.quarantined_rows += 1
-                    errors.append(
-                        {
-                            "row": row_number,
-                            "code": claim.error_code,
-                            "message": claim.error_message,
-                        }
-                    )
-                else:
-                    claim.status = "published"
-                    run.valid_rows += 1
-                    run.created_assets += int(created)
-                    run.updated_assets += int(not created)
-                    MapFoundationService._record_asset_version(
-                        db,
-                        asset=asset,
-                        claim=claim,
-                        change_type="created" if created else "updated",
-                    )
-            except ValueError as exc:
-                code, message = MapFoundationService._error_parts(exc)
-                claim.status = "quarantined"
-                claim.error_code = code
-                claim.error_message = message
-                run.quarantined_rows += 1
-                errors.append({"row": row_number, "code": code, "message": message})
-
-        run.errors = errors
-        run.status = "completed_with_errors" if run.quarantined_rows else "completed"
-        run.completed_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(run)
-        return run, False
+        from app.services.map_ingest_execution import ingest_file
+        return ingest_file(db, source_id=source_id, template_id=template_id, filename=filename,
+                           content=content, source_revision=source_revision, created_by=created_by,
+                           plan_token=plan_token)
 
     @staticmethod
     def parse_table(
@@ -395,6 +257,7 @@ class MapFoundationService:
         content: bytes,
         *,
         template: MapImportTemplate | None,
+        metadata: dict | None = None,
     ) -> list[tuple[int, dict[str, Any]]]:
         lowered = (filename or "").lower()
         if not any(lowered.endswith(ext) for ext in ALLOWED_TABLE_EXTENSIONS):
@@ -405,15 +268,27 @@ class MapFoundationService:
             raise ValueError("file_too_large|文件过大，限制为 10MB")
         if lowered.endswith(".csv"):
             text = content.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
-            if not reader.fieldnames:
+            values = csv.reader(io.StringIO(text))
+            header_row = template.header_row if template else 1
+            for _ in range(header_row - 1):
+                next(values, None)
+            headers = [str(value).strip() for value in next(values, [])]
+            if not headers or not any(headers):
                 raise ValueError("missing_header|文件缺少表头")
-            if len(reader.fieldnames) > MAX_TABLE_COLUMNS:
+            if len(headers) > MAX_TABLE_COLUMNS:
                 raise ValueError("table_too_wide|表格列数超过限制")
+            MapFoundationService._check_headers(headers)
+            if metadata is not None:
+                metadata.update(headers=headers, sheet_name=None, header_row=header_row)
             parsed = []
-            for index, row in enumerate(reader, start=2):
-                if index > MAX_TABLE_ROWS + 1:
+            for index, cells in enumerate(values, start=header_row + 1):
+                if index > MAX_TABLE_ROWS + header_row:
                     raise ValueError("table_too_long|表格行数超过限制")
+                if len(cells) > len(headers):
+                    raise ValueError("row_too_wide|数据列多于表头，不能静默丢弃")
+                if any(len(value) > MAX_CELL_TEXT_LENGTH for value in cells):
+                    raise ValueError("cell_too_long|单元格文本超过限制")
+                row = {key: cells[pos] if pos < len(cells) else None for pos, key in enumerate(headers) if key}
                 if any(value not in (None, "") for value in row.values()):
                     parsed.append((index, MapFoundationService._json_safe_dict(row)))
             return parsed
@@ -443,6 +318,9 @@ class MapFoundationService:
                     headers = [str(value).strip() if value is not None else "" for value in row]
                     if not any(headers):
                         raise ValueError("missing_header|文件缺少表头")
+                    MapFoundationService._check_headers(headers)
+                    if metadata is not None:
+                        metadata.update(headers=headers, sheet_name=sheet.title, header_row=header_row)
                     continue
                 if not headers or not any(value not in (None, "") for value in row):
                     continue
@@ -460,6 +338,14 @@ class MapFoundationService:
             return parsed
         finally:
             workbook.close()
+
+    @staticmethod
+    def _check_headers(headers):
+        names = [name for name in headers if name]
+        if len(names) != len(set(names)):
+            raise ValueError("duplicate_header|重复列名必须先处理，不能静默覆盖")
+        if any(len(name) > 200 for name in names):
+            raise ValueError("header_too_long|列名超过200字符")
 
     @staticmethod
     def validate_excel_archive(content: bytes) -> None:
@@ -520,6 +406,7 @@ class MapFoundationService:
         source: MapSource,
         claim: MapFeatureClaim,
         normalized: dict[str, Any],
+        resolved_payload: dict[str, Any] | None = None,
     ) -> tuple[JurisdictionAsset, bool, bool]:
         canonical_key = normalized["canonical_key"]
         identity, decision, asset = FacilityIdentityService.resolve_import(
@@ -575,7 +462,7 @@ class MapFoundationService:
         )
         claim.source_identity_id = identity.id
         claim.identity_decision_id = decision.id if decision else None
-        if not created:
+        if not created and resolved_payload is None:
             stored_rank = int((asset.attributes or {}).get("source_trust_rank", 0))
             stored_source_id = (asset.attributes or {}).get("source_id")
             if source.trust_rank < stored_rank:
@@ -601,6 +488,8 @@ class MapFoundationService:
                 if material_change:
                     return asset, False, True
 
+        if resolved_payload is not None:
+            normalized = resolved_payload
         claim_refs = list(asset.source_claim_refs or [])
         claim_refs.append(claim.id)
         attributes = dict(normalized.get("attributes") or {})
@@ -683,6 +572,7 @@ class MapFoundationService:
         raw: dict[str, Any],
         *,
         area_boundary: Any = None,
+        geometry_state: str = "set",
     ) -> dict[str, Any]:
         mapping = template.field_mapping or {}
         name = MapFoundationService._clean_string(
@@ -703,20 +593,20 @@ class MapFoundationService:
         latitude_raw = MapFoundationService._mapped_value(raw, mapping, "latitude")
         if template.axis_order == "lat_lon":
             longitude_raw, latitude_raw = latitude_raw, longitude_raw
-        try:
-            first = float(longitude_raw)
-            second = float(latitude_raw)
-        except (TypeError, ValueError):
-            raise ValueError("invalid_coordinate|经纬度缺失或不是有效数字") from None
-        longitude, latitude = MapFoundationService._to_wgs84(
-            first,
-            second,
-            coordinate_system=template.coordinate_system,
-            transformation=template.transformation,
-        )
-        if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
-            raise ValueError("coordinate_out_of_range|转换后的经纬度超出有效范围")
-        if area_boundary and not MapFoundationService._point_in_area_boundary(
+        longitude = latitude = None
+        if geometry_state == "set":
+            try:
+                first = float(longitude_raw)
+                second = float(latitude_raw)
+            except (TypeError, ValueError):
+                raise ValueError("invalid_coordinate|经纬度缺失或不是有效数字") from None
+            longitude, latitude = MapFoundationService._to_wgs84(
+                first, second, coordinate_system=template.coordinate_system, transformation=template.transformation)
+            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+                raise ValueError("coordinate_out_of_range|转换后的经纬度超出有效范围")
+        elif not external_id:
+            raise ValueError("asset_identity_required|未提供坐标时必须有来源稳定编号")
+        if geometry_state == "set" and area_boundary and not MapFoundationService._point_in_area_boundary(
             longitude,
             latitude,
             area_boundary,
@@ -752,6 +642,10 @@ class MapFoundationService:
             "production_status",
             "facility_category",
             "water_cut_unit",
+            "water_cut_basis",
+            "production_output_unit",
+            "production_period",
+            "production_basis",
         ):
             value = MapFoundationService._clean_string(
                 MapFoundationService._mapped_value(raw, mapping, key)
@@ -771,6 +665,8 @@ class MapFoundationService:
         if all(key in production_attributes for key in ("water_cut_min", "water_cut_max")):
             if production_attributes["water_cut_min"] > production_attributes["water_cut_max"]:
                 raise ValueError("invalid_water_cut_range|含水率下限不能大于上限")
+        if production_attributes.get("water_cut_unit") not in {None, "%", "percent", "百分比"}:
+            raise ValueError("invalid_water_cut_unit|含水率单位必须明确为百分比，不自动换算")
         for key in ("production_valid_from", "production_valid_to"):
             value = MapFoundationService._mapped_value(raw, mapping, key)
             if value not in (None, ""):
@@ -812,12 +708,16 @@ class MapFoundationService:
                 production_attributes["production_output"] = float(production_output)
             except (TypeError, ValueError):
                 raise ValueError("invalid_production_output|产量字段不是有效数字") from None
+            if isinstance(production_output, bool) or not math.isfinite(production_attributes["production_output"]) or production_attributes["production_output"] < 0:
+                raise ValueError("invalid_production_output|产量必须是非负有限数字")
         high_production = MapFoundationService._mapped_value(
             raw,
             mapping,
             "is_high_production",
         )
         if high_production not in (None, ""):
+            if str(high_production).strip().lower() not in {"1", "true", "yes", "y", "是", "高产", "0", "false", "no", "n", "否", "非高产"}:
+                raise ValueError("invalid_high_production|高产标识必须明确为是或否")
             production_attributes["is_high_production"] = str(high_production).strip().lower() in {
                 "1", "true", "yes", "y", "是", "高产",
             }
@@ -828,12 +728,12 @@ class MapFoundationService:
             "name": name,
             "asset_type": asset_type.lower(),
             "geometry_type": "point",
-            "latitude": round(latitude, 8),
-            "longitude": round(longitude, 8),
+            "latitude": round(latitude, 8) if latitude is not None else None,
+            "longitude": round(longitude, 8) if longitude is not None else None,
             "geometry": {
                 "type": "Point",
                 "coordinates": [round(longitude, 8), round(latitude, 8)],
-            },
+            } if longitude is not None and latitude is not None else None,
             "address": address,
             "source": source.source_type,
             "status": "active",
@@ -974,7 +874,7 @@ class MapFoundationService:
 
     @staticmethod
     def _get_source(db: Session, source_id: int) -> MapSource:
-        source = db.query(MapSource).filter(MapSource.id == source_id).first()
+        source = db.query(MapSource).populate_existing().filter(MapSource.id == source_id).first()
         if not source or source.status != "active":
             raise ValueError("source_not_found")
         return source
@@ -983,6 +883,7 @@ class MapFoundationService:
     def _get_template(db: Session, source_id: int, template_id: int) -> MapImportTemplate:
         template = (
             db.query(MapImportTemplate)
+            .populate_existing()
             .filter(
                 MapImportTemplate.id == template_id,
                 MapImportTemplate.source_id == source_id,
@@ -1035,10 +936,12 @@ class MapFoundationService:
             "axis_order": template.axis_order,
             "coordinate_unit": template.coordinate_unit,
             "transformation": template.transformation,
+            "expected_structure": template.expected_structure,
+            "field_units": template.field_units,
             "version": template.version,
             "is_active": template.is_active,
-            "created_at": template.created_at,
-            "updated_at": template.updated_at,
+            "created_at": MapFoundationService._json_safe(template.created_at),
+            "updated_at": MapFoundationService._json_safe(template.updated_at),
         }
 
     @staticmethod
@@ -1051,14 +954,21 @@ class MapFoundationService:
             "filename": run.filename,
             "source_revision": run.source_revision,
             "file_hash": run.file_hash,
+            "request_sha256": run.request_sha256,
             "total_rows": run.total_rows,
             "valid_rows": run.valid_rows,
             "quarantined_rows": run.quarantined_rows,
             "created_assets": run.created_assets,
             "updated_assets": run.updated_assets,
             "errors": run.errors or [],
-            "started_at": run.started_at,
-            "completed_at": run.completed_at,
+            "table_metadata": run.table_metadata,
+            "template_snapshot": run.template_snapshot,
+            "counts": run.classification_counts or {},
+            "parent_run_id": run.parent_run_id,
+            "original_evidence_object_id": run.original_evidence_object_id,
+            "started_at": MapFoundationService._json_safe(run.started_at),
+            "received_at": MapFoundationService._json_safe(run.started_at),
+            "completed_at": MapFoundationService._json_safe(run.completed_at),
             "idempotent_replay": idempotent_replay,
         }
 
@@ -1075,7 +985,14 @@ class MapFoundationService:
             "error_code": claim.error_code,
             "error_message": claim.error_message,
             "asset_id": claim.asset_id,
-            "created_at": claim.created_at,
+            "raw_payload": claim.raw_payload,
+            "normalized_payload": claim.normalized_payload,
+            "plan": claim.plan,
+            "parent_claim_id": claim.parent_claim_id,
+            "correction_note": claim.correction_note,
+            "source_identity_id": claim.source_identity_id,
+            "identity_decision_id": claim.identity_decision_id,
+            "created_at": MapFoundationService._json_safe(claim.created_at),
         }
 
     @staticmethod
@@ -1133,7 +1050,11 @@ class MapFoundationService:
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
-        if isinstance(value, (datetime, date)):
+        if isinstance(value, datetime):
+            # SQLite stores UTC instants without tzinfo; source input is still
+            # required to declare a timezone before it reaches storage.
+            return (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value).isoformat()
+        if isinstance(value, date):
             return value.isoformat()
         if value is None or isinstance(value, (str, int, float, bool)):
             return value

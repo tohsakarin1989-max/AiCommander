@@ -1,6 +1,11 @@
 import type { CasePageParams } from './cases'
 
 const filterKeys = ['keyword', 'statuses', 'case_types', 'oil_types', 'start_date', 'end_date', 'has_geo', 'operational_area_id'] as const
+// Carry context as a reading aid only. Each destination still checks current
+// access and its own source versions; these values never select a report by ID.
+export const businessContextKeys = [...filterKeys, 'caseId', 'case_view', 'case_page', 'case_page_size',
+  'assetId', 'eventId', 'time_scope', 'valid_at', 'valid_from', 'valid_to', 'known_at', 'knowledge_mode',
+  'mapSnapshot', 'resultRef', 'sourceRevision'] as const
 const positiveId = (value: string | null) => value && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null
 
 export function parseCaseContextParams(params: URLSearchParams): { caseId: number | null; filters: CasePageParams; error?: string } {
@@ -35,6 +40,7 @@ export function parseCaseContextParams(params: URLSearchParams): { caseId: numbe
 
 export function writeCaseFilterParams(previous: URLSearchParams, filters: CasePageParams): URLSearchParams {
   const next = new URLSearchParams(previous)
+  next.delete('case_page')
   for (const key of filterKeys) {
     next.delete(key)
     const value = filters[key]
@@ -48,8 +54,22 @@ export function writeCaseFilterParams(previous: URLSearchParams, filters: CasePa
 export function caseContextPath(target: string, source: URLSearchParams): string {
   const [path, query = ''] = target.split('?')
   const next = new URLSearchParams(query)
-  for (const key of [...filterKeys, 'caseId', 'case_view']) {
+  for (const key of businessContextKeys) {
     if (!next.has(key)) for (const value of source.getAll(key)) next.append(key, value)
   }
   return `${path}${next.size ? `?${next}` : ''}`
+}
+
+export function parseCaseListPosition(params: URLSearchParams) {
+  const page = params.has('case_page') ? positiveId(params.get('case_page')) : 1
+  const size = params.has('case_page_size') ? positiveId(params.get('case_page_size')) : 50
+  const valid = page != null && size != null && [20, 50, 100, 200].includes(size)
+    && params.getAll('case_page').length <= 1 && params.getAll('case_page_size').length <= 1
+  return { page: page ?? 1, pageSize: size ?? 50, error: valid ? undefined : '案件列表页码或每页数量无效，请修正后重试。' }
+}
+
+export function writeCaseListPosition(previous: URLSearchParams, page: number, pageSize: number) {
+  const next = new URLSearchParams(previous)
+  next.set('case_page', String(page)); next.set('case_page_size', String(pageSize))
+  return next
 }

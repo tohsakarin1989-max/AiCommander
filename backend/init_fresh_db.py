@@ -22,7 +22,11 @@ def initialize_empty_database(database_url: str, *, confirmed: bool = False) -> 
         raise ValueError("fresh_sqlite_requires_explicit_absolute_file")
     engine = create_engine(url)
     try:
-        with engine.begin() as connection:
+        # SQLite table-option migrations need a connection-local, transaction-
+        # external FK switch. Let Alembic own that transaction; PostgreSQL keeps
+        # the existing atomic outer transaction. The same checked target is used.
+        context = engine.connect() if url.get_backend_name() == "sqlite" else engine.begin()
+        with context as connection:
             if inspect(connection).get_table_names() or inspect(connection).get_view_names():
                 raise ValueError("target_not_empty_no_changes_performed")
             if connection.dialect.name == "postgresql" and connection.scalar(text("""
@@ -36,6 +40,8 @@ def initialize_empty_database(database_url: str, *, confirmed: bool = False) -> 
             """)):
                 raise ValueError("target_not_empty_no_changes_performed")
             # env.py accepts this prechecked connection; never fall back to settings.
+            if connection.dialect.name == "sqlite":
+                connection.commit()  # end only the empty-target inspection
             config = Config(str(Path(__file__).parent / "alembic.ini"))
             config.set_main_option("script_location", str(Path(__file__).parent / "alembic"))
             config.attributes["connection"] = connection

@@ -52,14 +52,17 @@ def _view(topic):
             'question': topic.question or topic.title, 'question_kind': topic.question_kind,
             'window': topic.window, 'source_context': topic.source_context,
             'definition_revision': topic.definition_revision,
+            'notification_policy': topic.notification_policy,
             'paused': topic.paused, 'refresh_state': topic.refresh_state, 'last_error': topic.last_error,
             'created_at': topic.created_at, 'next_refresh_at': topic.next_refresh_at}
 
 
 def create_topic(db, title, filters, notes='', *, question=None, question_kind='condition_changes',
-                 window=None, source_context=None):
+                 window=None, source_context=None, notification_policy='meaningful'):
     if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 or len(notes) > 4000:
         raise ValueError('invalid_topic')
+    if notification_policy not in {'meaningful', 'muted'}:
+        raise ValueError('topic_notification_policy_invalid')
     args = AggregateProfiles.model_validate(filters)
     user, stamp = _owner(db)
     source_context = validate_source(db, source_context)
@@ -88,7 +91,7 @@ def create_topic(db, title, filters, notes='', *, question=None, question_kind='
         filters=args.model_dump(mode='json', exclude={'page', 'page_size'}), scope_version=stamp,
         question=question.strip(), question_kind=question_kind, window=window, source_context=source_context,
         definition_revision=1, requested_generation=1, last_data_revision=current_revision(db),
-        paused=False, refresh_state='queued', next_refresh_at=datetime.now(timezone.utc))
+        paused=False, notification_policy=notification_policy, refresh_state='queued', next_refresh_at=datetime.now(timezone.utc))
     db.add(topic)
     db.flush()
     record_definition(db, topic)
@@ -248,9 +251,14 @@ def read_topic_views(db, topic_id, *, revision, page=1, page_size=20):
 
 
 def update_topic(db, topic_id, *, title=None, notes=None, paused=None, question=None,
-                 question_kind=None, filters=None, window=None, expected_definition_revision=None):
+                 question_kind=None, filters=None, window=None, expected_definition_revision=None,
+                 notification_policy=None):
     topic = _owned(db, topic_id)
     values = {}
+    if notification_policy is not None:
+        if notification_policy not in {'meaningful', 'muted'}:
+            raise ValueError('topic_notification_policy_invalid')
+        values['notification_policy'] = notification_policy
     definition_changed = any(value is not None for value in (title, question, question_kind, filters, window))
     if definition_changed:
         if expected_definition_revision != topic.definition_revision:

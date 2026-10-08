@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.models.case import Case
 from app.models.ai_model import AIModel
-from app.models.preprocess_job import PreprocessJob
 from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.services.case_quality_service import CaseQualityService
@@ -19,7 +18,8 @@ class CasePreprocessService:
     案件预处理服务：
     - 对原始案情长文本做摘要
     - 抽取事实、现场条件、可解释推断、信息缺口和防控参考
-    - 结果写入 Case.features 字段，供后续相似条件研判、复盘和报告使用
+    - 兼容旧入口，统一由源修订/Outbox/标准画像处理，不写 Case.features
+    - 模型摘要是同版本的独立候选补充，不替代规则画像或人工事实
     """
 
     @staticmethod
@@ -409,55 +409,45 @@ class CasePreprocessService:
 
     @staticmethod
     def _write_features(db: Session, case: Case, data: Dict[str, Any]) -> Dict[str, Any]:
-        features = dict(case.features or {})
-        features.update(data)
-        case.features = features
-        db.commit()
-        db.refresh(case)
-        return data
+        # Private legacy callers cannot inject arbitrary/stale feature JSON.
+        # Keep the symbol long enough to make migration failures explicit.
+        raise ValueError("legacy_feature_write_retired_use_versioned_pipeline")
 
     @staticmethod
     def _preprocess_case_record(db: Session, case: Case, llm: Any = None) -> Dict[str, Any]:
-        """
-        对已加载的案件执行预处理。批处理会复用同一个 LLM 实例，避免重复解密和建连。
-        """
-        if llm is None:
-            data = CasePreprocessService._build_deterministic_features(db, case)
-            logger.info(f"案件 {case.id} 使用确定性预处理结果写入 features")
-            return CasePreprocessService._write_features(db, case, data)
-
-        prompt = CasePreprocessService._build_prompt(db, case)
-        try:
-            resp = llm.invoke(prompt)
-            content = resp.content
-            # 兼容模型输出 ```json ... ``` 包裹的情况
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-            data = json.loads(content)  # type: ignore[name-defined]
-            data.setdefault("preprocess_mode", "llm")
-        except Exception as e:
-            logger.error(f"案件 {case.id} 预处理JSON解析失败: {e}")
-            data = CasePreprocessService._build_deterministic_features(db, case)
-
-        logger.info(f"案件 {case.id} 预处理完成并写入 features")
-        return CasePreprocessService._write_features(db, case, data)
+        """The third parameter remains a compatibility flag, not a supplied client."""
+        from app.services.case_preprocess_adapter import ensure_profile, profile_features, current_profile
+        from app.services.case_preprocess_supplement import generate_supplement
+        case_id = case.id
+        saved = ensure_profile(db, case)
+        if saved is None:
+            raise ValueError("case_profile_pending_or_superseded")
+        supplement = generate_supplement(db, case, saved) if llm else {"status": "not_requested"}
+        # Model IO may outlive an edit or revoked account/scope. Never return
+        # the previously captured current result after that boundary changed.
+        current = db.query(Case).filter(Case.id == case_id).populate_existing().first()
+        if current is None:
+            raise PermissionError("case_preprocess_access_changed")
+        latest = current_profile(db, current)
+        if latest is None or latest["id"] != saved["id"]:
+            raise ValueError("case_profile_pending_or_superseded")
+        result = profile_features(saved)
+        result["model_supplement"] = supplement
+        return result
 
     @staticmethod
-    def preprocess_case(db: Session, case_id: int) -> Optional[Dict[str, Any]]:
+    def preprocess_case(db: Session, case_id: int, *, use_llm: bool = True) -> Optional[Dict[str, Any]]:
         """
         同步预处理指定案件：
-        - 如果没有可用 LLM，则回退到案件画像的确定性预处理
-        - 成功时更新 Case.features 字段并返回结构化结果
+        - 始终先复用或生成标准画像，缺少模型不影响规则结果
+        - 成功时返回版本绑定结果，不修改 features 中的人工内容和历史
         """
         case = db.query(Case).filter(Case.id == case_id).first()
         if not case:
             logger.warning(f"预处理失败，案件 {case_id} 不存在")
             return None
 
-        llm = CasePreprocessService._build_llm(db)
-        return CasePreprocessService._preprocess_case_record(db, case, llm)
+        return CasePreprocessService._preprocess_case_record(db, case, use_llm)
 
     @staticmethod
     def preprocess_cases(
@@ -469,70 +459,61 @@ class CasePreprocessService:
     ) -> Dict[str, Any]:
         """
         同步批量预处理案件：
-        - 默认重跑当前库内全部案件，便于测试阶段一次性查看清洗效果
-        - only_missing=true 时只处理 features 为空的案件
-        - 每条案件写入 PreprocessJob，便于页面状态栏和后续排查
+        - 管理员兼容入口，最多处理 200 条；大规模回填使用现有游标回填
+        - only_missing 按当前源修订与规则版本判断，不再检查 features 真值
+        - 不另起 PreprocessJob 写入链；状态来源为统一 Outbox
         """
         query = db.query(Case).order_by(Case.occurred_time.desc(), Case.id.desc())
         if case_ids is not None:
             query = query.filter(Case.id.in_(case_ids))
-        candidates = query.all()
-        total_candidates = len(candidates)
+        total_candidates = query.count()
+        candidates = query.limit(min(limit or 200, 200)).all()
+        from app.services.case_preprocess_adapter import current_profile
 
         selected = [
             case
             for case in candidates
-            if not only_missing or not case.features
+            if not only_missing or current_profile(db, case) is None
         ]
         skipped = total_candidates - len(selected)
         if limit is not None:
             selected = selected[:limit]
             skipped = total_candidates - len(selected)
 
-        llm = CasePreprocessService._build_llm(db) if use_llm else None
         results = []
         mode_counts: Dict[str, int] = {}
         success = 0
         failed = 0
 
         for case in selected:
-            job = PreprocessJob(case_id=case.id, status="queued")
-            db.add(job)
-            db.commit()
-            db.refresh(job)
-
+            case_id, case_number = case.id, case.case_number
             try:
-                job.status = "processing"
-                job.started_at = datetime.utcnow()
-                db.commit()
-
-                result = CasePreprocessService._preprocess_case_record(db, case, llm)
-                mode = result.get("preprocess_mode") or "llm"
+                result = CasePreprocessService._preprocess_case_record(db, case, use_llm)
+                mode = result.get("preprocess_mode") or "versioned_profile"
                 mode_counts[mode] = mode_counts.get(mode, 0) + 1
 
-                job.status = "success"
-                job.finished_at = datetime.utcnow()
-                db.commit()
                 success += 1
                 results.append({
-                    "case_id": case.id,
-                    "case_number": case.case_number,
+                    "case_id": case_id,
+                    "case_number": case_number,
                     "status": "success",
                     "preprocess_mode": mode,
                     "confidence": result.get("confidence"),
+                    "profile_binding": result.get("profile_binding"),
+                    "model_supplement_status": result.get("model_supplement", {}).get("status"),
+                    "profile_model_status": result.get("profile_model_status"),
                 })
+            except PermissionError:
+                db.rollback()
+                raise
             except Exception as e:
                 db.rollback()
-                job.status = "failed"
-                job.finished_at = datetime.utcnow()
-                job.error = str(e)
-                db.commit()
                 failed += 1
                 results.append({
-                    "case_id": case.id,
-                    "case_number": case.case_number,
+                    "case_id": case_id,
+                    "case_number": case_number,
                     "status": "failed",
-                    "error": str(e),
+                    "error": "画像处理未完成，请查看统一流水线状态。",
                 })
 
         return {
@@ -542,7 +523,12 @@ class CasePreprocessService:
             "success": success,
             "failed": failed,
             "skipped": skipped,
-            "llm_enabled": use_llm,
+            "llm_enabled": any(item.get("model_supplement_status") == "ready" or
+                               item.get("profile_model_status") in {"ready", "partial"} for item in results),
+            "llm_requested": use_llm,
+            "source": "case_revision_outbox_profile",
+            "scanned": len(candidates),
+            "coverage": "bounded_batch" if total_candidates > len(candidates) else "selected_scope",
             "mode_counts": mode_counts,
             "results": results,
         }

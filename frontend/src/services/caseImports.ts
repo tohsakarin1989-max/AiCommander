@@ -35,7 +35,15 @@ export interface ImportCorrectionResult {
   rows: FailedImportRow[]
   errors: CaseImportError[]
 }
+export interface RecentImportBatch {
+  batch_id: string; created_at: string; operational_area_id: number | null
+  total: number | null; success: number | null; failed: number | null; duplicate: null
+  state: 'partial' | 'completed' | 'legacy_receipt'; retry_available: boolean
+  worksheet: string | null; time_zone: string | null
+}
 export const caseImportsApi = {
+  batches: async (page = 1, areaId?: number, signal?: AbortSignal): Promise<{ items: RecentImportBatch[]; total: number; page: number; page_size: number }> =>
+    (await api.get('/case-imports/batches', { params: { page, page_size: 20, operational_area_id: areaId }, signal })).data,
   templates: async (signal?: AbortSignal): Promise<ImportTemplate[]> =>
     (await api.get('/case-imports/templates', { signal })).data,
   saveTemplate: async (name: string, areaId: number | undefined, settings: CaseImportOptions): Promise<ImportTemplate> =>

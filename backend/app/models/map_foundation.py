@@ -99,6 +99,8 @@ class MapImportTemplate(Base):
     axis_order = Column(String(20), nullable=False, default="lon_lat")
     coordinate_unit = Column(String(20), nullable=False, default="degree")
     transformation = Column(JSON, nullable=True)
+    expected_structure = Column(JSON, nullable=True)
+    field_units = Column(JSON, nullable=True)
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -125,6 +127,7 @@ class MapIngestRun(Base):
     filename = Column(String(255), nullable=False)
     source_revision = Column(String(200), nullable=False, default="unspecified")
     file_hash = Column(String(64), nullable=False)
+    request_sha256 = Column(String(64), nullable=True)
     idempotency_key = Column(String(64), nullable=False)
     total_rows = Column(Integer, nullable=False, default=0)
     valid_rows = Column(Integer, nullable=False, default=0)
@@ -132,6 +135,11 @@ class MapIngestRun(Base):
     created_assets = Column(Integer, nullable=False, default=0)
     updated_assets = Column(Integer, nullable=False, default=0)
     errors = Column(JSON, nullable=True)
+    table_metadata = Column(JSON, nullable=True)
+    template_snapshot = Column(JSON, nullable=True)
+    classification_counts = Column(JSON, nullable=True)
+    parent_run_id = Column(String(36), ForeignKey("map_ingest_runs.id", ondelete="RESTRICT"), nullable=True)
+    original_evidence_object_id = Column(Integer, ForeignKey("evidence_objects.id", ondelete="RESTRICT"), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -162,6 +170,9 @@ class MapFeatureClaim(Base):
     asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id", ondelete="SET NULL"), nullable=True)
     source_identity_id = Column(Integer, ForeignKey("facility_source_identities.id", ondelete="RESTRICT"), nullable=True)
     identity_decision_id = Column(Integer, ForeignKey("facility_identity_decisions.id", ondelete="RESTRICT"), nullable=True)
+    parent_claim_id = Column(Integer, ForeignKey("map_feature_claims.id", ondelete="RESTRICT"), nullable=True)
+    plan = Column(JSON, nullable=True)
+    correction_note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -198,6 +209,33 @@ class JurisdictionAssetVersion(Base):
     source_identity_id = Column(Integer, ForeignKey("facility_source_identities.id", ondelete="RESTRICT"), nullable=True)
     identity_decision_id = Column(Integer, ForeignKey("facility_identity_decisions.id", ondelete="RESTRICT"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MapFieldDecision(Base):
+    """Append-only outcome for one coupled group; not a second asset registry."""
+
+    __tablename__ = "map_field_decisions"
+    __table_args__ = (
+        UniqueConstraint("claim_id", "group_key", name="uq_map_field_decision_claim_group"),
+        Index("ix_map_field_decision_asset_group", "asset_id", "group_key", "id"),
+    )
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("jurisdiction_assets.id", ondelete="RESTRICT"), nullable=False)
+    source_id = Column(Integer, ForeignKey("map_sources.id", ondelete="RESTRICT"), nullable=False)
+    claim_id = Column(Integer, ForeignKey("map_feature_claims.id", ondelete="RESTRICT"), nullable=False)
+    group_key = Column(String(40), nullable=False)
+    state = Column(String(30), nullable=False)
+    outcome = Column(String(30), nullable=False)
+    payload = Column(JSON, nullable=False)
+    previous_decision_id = Column(Integer, ForeignKey("map_field_decisions.id", ondelete="RESTRICT"), nullable=True)
+    valid_from = Column(DateTime(timezone=True), nullable=True)
+    valid_to = Column(DateTime(timezone=True), nullable=True)
+    known_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+@event.listens_for(MapFieldDecision, "before_update")
+def _immutable_field_decision(_mapper, _connection, _target):
+    raise ValueError("map_field_decision_is_immutable")
 
 
 class FacilitySourceIdentity(Base):

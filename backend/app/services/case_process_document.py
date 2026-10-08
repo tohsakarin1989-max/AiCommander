@@ -70,7 +70,12 @@ def condition_blocks(comparison, changes=None):
             if condition["dependencies"]:
                 blocks.append(DocumentBlock("paragraph", "依赖资料：" + "、".join(condition["dependencies"])))
         source = row["source_context"]
-        blocks.append(DocumentBlock("paragraph", f"生产资料适用时刻：{source.get('valid_at') or '未知'}；资料截止：{source['known_at']}；来源版本：{source.get('version_id') or '未取得'}。"))
+        interval = source.get("query_interval")
+        window = f"{interval['from']} 至 {interval['to']}（完整不确定区间）" if interval else source.get('valid_at') or '未知'
+        mode = "当时已知" if source.get("knowledge_mode") == "as_known" else "按本次资料回看"
+        blocks.append(DocumentBlock("paragraph", f"生产资料适用时间：{window}；{mode}；资料截止：{source['known_at']}；来源版本：{source.get('version_id') or '未取得单一版本'}；覆盖：{source.get('coverage', '旧版未记载')}。"))
+        if source.get("late_supplement"):
+            blocks.append(DocumentBlock("paragraph", "包含案发后补录或更正的资料，不代表案发时已经知道。"))
     for gap in comparison["priority_gaps"]:
         blocks.append(DocumentBlock("paragraph", f"补充依赖：{gap['label']} · {gap['reason']}；需补：{'、'.join(gap['dependencies'])}。不是新增待办或命中概率承诺。"))
     if changes:

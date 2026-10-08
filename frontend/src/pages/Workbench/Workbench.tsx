@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { useAuth } from '../../auth/AuthContext'
 import { workbenchApi, type DailyWorkbenchCase } from '../../services/workbench'
 import DailyReviewPreview from './DailyReviewPreview'
+import TopicChangeCard from './TopicChangeCard'
 import './Workbench.css'
 
 const PAGE_SIZE = 20
@@ -30,6 +31,14 @@ export function formatDailyOccurredTime(value: string | null): string {
   const formatted = formatTime(value)
   return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())
     ? formatted : `${formatted}（存储时刻，未注明时区）`
+}
+export function formatDailyCaseTime(item: DailyWorkbenchCase): string {
+  if (item.occurred_time) return formatDailyOccurredTime(item.occurred_time)
+  if (item.occurred_from && item.occurred_to && dayjs(item.occurred_from).isValid()
+      && dayjs(item.occurred_to).isValid() && dayjs(item.occurred_from).valueOf() <= dayjs(item.occurred_to).valueOf()) {
+    return `${formatDailyOccurredTime(item.occurred_from)} 至 ${formatDailyOccurredTime(item.occurred_to)}（时间区间）`
+  }
+  return item.time_expression ? `${item.time_expression}（具体时间未知）` : '未记录'
 }
 
 const Workbench: React.FC = () => {
@@ -110,10 +119,10 @@ const Workbench: React.FC = () => {
 
     {data.changes && <section className="daily-cases" aria-label="持续关注的重要变化">
       <h2>持续关注的重要变化</h2>
-      {data.changes.length ? <ul>{data.changes.slice(0, 3).map(change => <li key={`${change.topic_id}:${change.revision}`}>
-        <h3><Link to={`/topics?topic=${encodeURIComponent(change.topic_id)}&revision=${change.revision}`}>{change.title}</Link></h3>
-        <p>{change.summary}</p><ul>{change.items.map((item, index) => <li key={index}>{item.message}</li>)}</ul>
-      </li>)}</ul> : <p>目前没有需要提示的实质变化。后台刷新或重试不会单独生成事项。</p>}
+      {data.changes.length ? <ul>{data.changes.slice(0, 3).map(change => <TopicChangeCard
+        key={`${user?.id}:${user?.role}:${sessionEpoch}:${change.group_key || change.topic_id}`}
+        change={change} onDismissed={() => { void query.refetch() }} />)}</ul>
+        : <p>目前没有需要提示的实质变化。后台刷新或重试不会单独生成事项。</p>}
     </section>}
 
     <section className="daily-cases" aria-labelledby="daily-cases-title">
@@ -128,7 +137,7 @@ const Workbench: React.FC = () => {
         <table>
           <thead><tr><th scope="col">案件与时间</th><th scope="col">地点</th><th scope="col">关键补充</th><th scope="col">自动画像</th><th scope="col">操作</th></tr></thead>
           <tbody>{data.cases.map(item => <tr key={item.id}>
-            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyOccurredTime(item.occurred_time)}</small></th>
+            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyCaseTime(item)}</small></th>
             <td>{item.location || '地点未记录'}</td>
             <td>{item.information_gaps.length > 0
               ? <ul>{item.information_gaps.slice(0, 3).map((gap, index) => <li key={`${index}:${gap}`}>{gap}</li>)}</ul>

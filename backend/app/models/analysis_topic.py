@@ -1,5 +1,5 @@
 """Saved conditions and immutable derived snapshots, never copies of case records."""
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -10,6 +10,7 @@ class AnalysisTopic(Base):
     __table_args__ = (
         Index('ix_analysis_topics_owner', 'created_by', 'created_at', 'id'),
         Index('ix_analysis_topics_due', 'paused', 'refresh_state', 'next_refresh_at'),
+        CheckConstraint("notification_policy IN ('meaningful', 'muted')", name='ck_topic_notification_policy'),
     )
     id = Column(String(36), primary_key=True)
     created_by = Column(Integer, ForeignKey('users.id', ondelete='RESTRICT'), nullable=False)
@@ -26,6 +27,7 @@ class AnalysisTopic(Base):
     latest_job_id = Column(String(36), nullable=True)
     scope_version = Column(String(64), nullable=False)
     paused = Column(Boolean, nullable=False, default=False)
+    notification_policy = Column(String(24), nullable=False, default='meaningful', server_default='meaningful')
     refresh_state = Column(String(24), nullable=False, default='queued')
     lease_token = Column(String(36), nullable=True)
     lease_until = Column(DateTime(timezone=True), nullable=True)
@@ -57,6 +59,15 @@ class TopicDefinitionRevision(Base):
     topic_id = Column(String(36), ForeignKey('analysis_topics.id', ondelete='CASCADE'), nullable=False, index=True)
     revision = Column(Integer, nullable=False)
     payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class TopicChangeDismissal(Base):
+    """A user's explicit dismissal of one exact snapshot, not a business task."""
+    __tablename__ = 'topic_change_dismissals'
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='RESTRICT'), primary_key=True)
+    snapshot_id = Column(String(36), ForeignKey('topic_snapshots.id', ondelete='CASCADE'), primary_key=True)
+    content_sha256 = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

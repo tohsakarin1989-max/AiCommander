@@ -69,13 +69,27 @@ export function FacilityTemporalContent({ temporal }: { temporal?: FacilityTempo
   const available = temporal.state === 'ready' && temporal.snapshot
   return <>
     <p>{temporal.boundary}</p>
+    {temporal.knowledge_mode && <p>资料口径：{temporal.knowledge_mode === 'as_known' ? '当时知道什么' : '现在回看历史'}{temporal.late_supplement ? '；含后来补录资料，不代表当时已掌握。' : ''}</p>}
+    {temporal.query_interval && <p>完整业务区间：{formatStoredTime(temporal.query_interval.from)} 至 {formatStoredTime(temporal.query_interval.to)}，未使用中点代替。覆盖：{{ full: '全区间有资料', partial: '部分区间有资料', unknown: '尚不能确认' }[temporal.coverage ?? 'unknown']}；有资料不等于所有时段条件相同。</p>}
     <dl className="facility-time-grid"><div><dt>查询业务时点</dt><dd>{formatStoredTime(temporal.valid_at)}</dd></div><div><dt>系统已知截止</dt><dd>{formatStoredTime(temporal.known_at)}</dd></div></dl>
-    {!available ? <p role="status">{temporal.state === 'conflict' ? '该时点存在相互冲突的资料版本，未替用户选择一个版本。' : '该时点没有可确认的有效资料，未回退为当前生产属性。'}</p> : <>
+    {!available ? <p role="status">{temporal.query_interval ? '未形成覆盖所选条件的单一生产快照，分时段依据见下方；没有取中点或当前值代替。' : temporal.state === 'conflict' ? '该时点存在相互冲突的资料版本，未替用户选择一个版本。' : '该时点没有可确认的有效资料，未回退为当前生产属性。'}</p> : <>
       <p><strong>{temporal.snapshot!.name || '该版本名称未记录'}</strong> · 生产资料版本 {temporal.version_id ?? '未记录'}</p>
       <dl className="facility-time-grid"><div><dt>业务有效起始</dt><dd>{temporal.valid_from ? formatStoredTime(temporal.valid_from) : '未明确'}</dd></div><div><dt>业务有效截止</dt><dd>{temporal.valid_to ? formatStoredTime(temporal.valid_to) : '未记录截止'}</dd></div><div><dt>系统接收时间</dt><dd>{formatStoredTime(temporal.recorded_at)}</dd></div></dl>
       <dl className="facility-time-grid">{Object.entries(attributeLabels).filter(([key]) => temporal.snapshot!.attributes?.[key] != null).map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{String(temporal.snapshot!.attributes![key])}</dd></div>)}</dl>
       <details><summary>该版本完整生产属性</summary><pre>{JSON.stringify(temporal.snapshot!.attributes || {}, null, 2)}</pre></details>
     </>}
+    {temporal.groups && <section aria-label="分时段资料依据">{Object.entries(temporal.groups).map(([key, group]) => <details key={key}>
+      <summary>{{ geometry: '坐标与转换依据', water_cut: '含水率与口径', production: '产量与周期', details: '一般生产属性' }[key] || key} · {{ full: '全区间有资料', partial: '部分资料', unknown: '未知' }[group.coverage]}</summary>
+      {group.state === 'restricted' ? <p>此项资料受限，不展示片段和数量。</p> : <>
+        {group.segments.map((segment, i) => <article key={i}><p>{formatStoredTime(segment.from)} 至 {formatStoredTime(segment.to)}（{segment.end_inclusive ? '含结束时点' : '不含结束时点'}）</p>
+          <p>状态：{{ ready: '已有资料', set: '已登记', unknown: '未知', conflict: '资料冲突', clear: '已清空', withdraw: '已撤销', not_provided: '未提供' }[segment.state] || segment.state}</p>
+          {['ready', 'set'].includes(segment.state) && <dl>{Object.entries(segment.values ?? {}).map(([field, value]) => <div key={field}><dt>{attributeLabels[field] || field}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value ?? '未知')}</dd></div>)}</dl>}
+          {segment.late_supplement && <p>后来补录：不能视为当时已掌握。</p>}
+          <ul>{segment.evidence_refs.map(ref => <li key={ref}>{ref}</li>)}</ul>
+        </article>)}
+        {!!group.gaps?.length && <p>缺口：{group.gaps.join('；')}</p>}
+      </>}
+    </details>)}</section>}
   </>
 }
 
@@ -91,29 +105,4 @@ export function ComputabilityContent({ data }: { data?: FacilityComputability })
   </>
 }
 
-export function facilityLocalTime(value?: string) {
-  return value && Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value) + 8 * 3_600_000).toISOString().slice(0, 16) : ''
-}
-export function facilityQueryInstant(value: string): string | null {
-  if (!value) return null
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) throw new Error('请填写完整查询时刻')
-  const instant = new Date(`${value}:00+08:00`)
-  if (!Number.isFinite(instant.valueOf()) || facilityLocalTime(instant.toISOString()) !== value) throw new Error('查询时刻无效')
-  return instant.toISOString()
-}
-
-export function FacilityTimeControls({ validAt, knownAt, onApply }: { validAt?: string; knownAt?: string; onApply: (validAt: string | null, knownAt: string | null) => void }) {
-  const [valid, setValid] = useState(() => facilityLocalTime(validAt))
-  const [known, setKnown] = useState(() => facilityLocalTime(knownAt))
-  const [error, setError] = useState('')
-  return <form className="facility-time-controls" onSubmit={event => {
-    event.preventDefault()
-    try { onApply(facilityQueryInstant(valid), facilityQueryInstant(known)); setError('') } catch { setError('查询时刻无效，请检查日期与时间；没有替换为当前资料。') }
-  }}>
-    <p>按需查看历史生产资料。两项均使用北京时间，留空表示当下；不改变案件统计时间窗。</p>
-    <div><label>业务有效时点<input type="datetime-local" value={valid} onChange={event => setValid(event.target.value)} /></label>
-      <label>系统已知截止<input type="datetime-local" value={known} onChange={event => setKnown(event.target.value)} /></label></div>
-    <div><button className="btn-ghost" type="submit">查看指定时点资料</button><button className="btn-ghost" type="button" onClick={() => { setValid(''); setKnown(''); setError(''); onApply(null, null) }}>清空，查看当下</button></div>
-    {error && <p role="alert">{error}</p>}
-  </form>
-}
+export { FacilityTimeControls, facilityLocalTime, facilityQueryInstant } from './FacilityTimeControls'

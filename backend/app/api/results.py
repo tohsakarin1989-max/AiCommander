@@ -1,6 +1,7 @@
 """Unified, authenticated material reading and optional version decisions."""
 from datetime import datetime
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +59,9 @@ class FacilityFreeze(BaseModel):
     end_date: datetime | None = None
     valid_at: datetime | None = None
     known_at: datetime | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    knowledge_mode: str | None = None
     idempotency_key: str = Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9_-]+$')
 
 
@@ -101,20 +105,28 @@ def judgment(kind: str, identifier: str, payload: JudgmentInput, request: Reques
 
 
 @router.get('/{kind}/{identifier}')
-def reader(kind: str, identifier: str, request: Request, response: Response, db=Depends(get_db)):
+def reader(kind: str, identifier: str, request: Request, response: Response,
+           template: Literal['full', 'case_summary', 'facility_sheet', 'period_brief'] = 'full',
+           expected_content_sha256: str | None = Query(None, pattern=r'^[a-f0-9]{64}$'), db=Depends(get_db)):
+    from app.services.result_presentation import present_result
     _prepare(request, response, db)
-    return _call(db, result_catalog.read_result, kind, identifier)
+    result = _call(db, result_catalog.read_result, kind, identifier)
+    return _call(db, lambda _: present_result(result, template, expected_content_sha256=expected_content_sha256))
 
 
 @router.get('/{kind}/{identifier}/document.{format}')
-def document(kind: str, identifier: str, format: Literal['docx', 'pdf'], request: Request, response: Response, db=Depends(get_db)):
+def document(kind: str, identifier: str, format: Literal['docx', 'pdf'], request: Request, response: Response,
+             template: Literal['full', 'case_summary', 'facility_sheet', 'period_brief'] = 'full',
+             expected_content_sha256: str | None = Query(None, pattern=r'^[a-f0-9]{64}$'), db=Depends(get_db)):
     from app.services.result_document import export_result
     _prepare(request, response, db)
-    saved, data = _call(db, export_result, kind, identifier, format)
+    saved, data, metadata = _call(db, export_result, kind, identifier, format, template=template,
+        expected_content_sha256=expected_content_sha256, with_metadata=True)
     media = 'application/pdf' if format == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     return Response(data, media_type=media, headers={'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', 'X-Result-Content-SHA256': saved.content_sha256,
-        'Content-Disposition': f'attachment; filename="material-{saved.content_sha256[:16]}.{format}"'})
+        'X-Result-Template': metadata['template'],
+        'Content-Disposition': f'attachment; filename="material-{saved.content_sha256[:16]}.{format}"; filename*=UTF-8\'\'{quote(metadata["filename"], safe="")}'})
 
 
 @router.get('/{kind}/{identifier}/map')

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Table, Descriptions, Modal, message } from 'antd'
 import {
   FilterOutlined,
@@ -9,23 +9,42 @@ import {
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { caseApi } from '../../services/cases'
+import { casePreprocessApi, profileStatusLabel } from '../../services/casePreprocess'
+import { useAuth } from '../../auth/AuthContext'
 import type { Case } from '../../types'
 import './CaseFeatures.css'
 
 const CaseFeatures: React.FC = () => {
   const queryClient = useQueryClient()
-  const { data: cases, isLoading } = useQuery({
-    queryKey: ['cases'],
-    queryFn: () => caseApi.getCases(),
+  const { user, sessionEpoch } = useAuth()
+  const identity = `${user?.id}:${sessionEpoch}`
+  const identityRef = useRef(identity)
+  identityRef.current = identity
+  const [page, setPage] = useState(1)
+  const { data: cases, isLoading, isError: listError, refetch: retryList } = useQuery({
+    queryKey: ['cases', 'preprocess-maintenance', page, user?.id, sessionEpoch],
+    queryFn: () => caseApi.getCases({ skip: (page - 1) * 20, limit: 21 }),
+    gcTime: 0,
+  })
+  const visibleCases = (listError ? [] : cases || []).slice(0, 20)
+  const states = useQuery({
+    queryKey: ['preprocess-profiles', visibleCases.map(item => item.id), user?.id, sessionEpoch],
+    queryFn: () => casePreprocessApi.statuses(visibleCases.map(item => item.id)),
+    enabled: !!visibleCases.length, refetchInterval: 5000, gcTime: 0,
   })
 
-  const { data: preprocessStatus } = useQuery({
-    queryKey: ['preprocess-status'],
+  const { data: preprocessStatus, isError: statusError } = useQuery({
+    queryKey: ['preprocess-status', user?.id, sessionEpoch],
     queryFn: () => caseApi.getPreprocessStatus(),
     refetchInterval: 5000,
   })
 
   const [selected, setSelected] = useState<Case | null>(null)
+  const result = useQuery({
+    queryKey: ['preprocess-result', selected?.id, user?.id, sessionEpoch],
+    queryFn: ({ signal }) => casePreprocessApi.result(selected!.id, signal),
+    enabled: !!selected, gcTime: 0, refetchInterval: 5000,
+  })
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [batchSummary, setBatchSummary] = useState<{
     processed: number
@@ -34,11 +53,14 @@ const CaseFeatures: React.FC = () => {
     skipped: number
     modeText: string
   } | null>(null)
+  useEffect(() => { setSelected(null); setSelectedRowKeys([]); setBatchSummary(null) }, [user?.id, sessionEpoch])
 
   const batchMutation = useMutation({
     mutationFn: (payload?: { case_ids?: number[]; only_missing?: boolean; use_llm?: boolean }) =>
       caseApi.preprocessCasesBatch(payload),
-    onSuccess: (result) => {
+    onMutate: () => identityRef.current,
+    onSuccess: (result, _variables, submittedIdentity) => {
+      if (submittedIdentity !== identityRef.current) return
       const modeText = Object.entries(result.mode_counts || {})
         .map(([mode, count]) => `${mode} ${count}`)
         .join('，') || '暂无'
@@ -53,8 +75,11 @@ const CaseFeatures: React.FC = () => {
       setSelectedRowKeys([])
       queryClient.invalidateQueries({ queryKey: ['cases'] })
       queryClient.invalidateQueries({ queryKey: ['preprocess-status'] })
+      queryClient.invalidateQueries({ queryKey: ['preprocess-profiles'] })
+      queryClient.invalidateQueries({ queryKey: ['preprocess-result'] })
     },
-    onError: (e: any) => {
+    onError: (e: any, _variables, submittedIdentity) => {
+      if (submittedIdentity !== identityRef.current) return
       message.error(`批量清洗失败：${e.message || e}`)
     },
   })
@@ -101,14 +126,9 @@ const CaseFeatures: React.FC = () => {
       title: '状态',
       dataIndex: 'features',
       key: 'features',
-      render: (features: Record<string, unknown> | null) =>
-        features && Object.keys(features).length > 0 ? (
-          <span className="cf-badge cf-badge--done">
-            <CheckCircleOutlined style={{ marginRight: 3 }} />已预处理
-          </span>
-        ) : (
-          <span className="cf-badge cf-badge--pending">未处理</span>
-        ),
+      render: (_: unknown, record: Case) => <span className="cf-badge">
+        {states.isError ? '状态读取失败' : profileStatusLabel(states.data?.items.find(item => item.case_id === record.id)?.status)}
+      </span>,
     },
   ]
 
@@ -132,11 +152,11 @@ const CaseFeatures: React.FC = () => {
 
   const handlePreprocessAll = () => {
     Modal.confirm({
-      title: '全量清洗后台案件数据',
-      content: '将按现有案件预处理方式重跑全部案件，默认使用不消耗 token 的确定性清洗，适合测试阶段快速看整体效果。',
-      okText: '开始清洗',
+      title: '补齐本页缺少的当前画像',
+      content: '复用统一案件流水线，不覆盖原始案件、人工标签或历史结果。相同源修订不会重复生成。',
+      okText: '开始补齐',
       cancelText: '取消',
-      onOk: () => batchMutation.mutateAsync({ only_missing: false, use_llm: false }),
+      onOk: () => batchMutation.mutateAsync({ case_ids: visibleCases.map(item => item.id), only_missing: true, use_llm: false }),
     })
   }
 
@@ -149,7 +169,16 @@ const CaseFeatures: React.FC = () => {
         </div>
       )
     }
-    const features = (selected.features || {}) as Record<string, any>
+    if (result.isLoading) return <div role="status">正在读取标准画像…</div>
+    if (result.isError) return <div role="alert">画像读取失败，请重试；未使用旧特征冒充当前结果。</div>
+    if (result.data?.status !== 'ready') return <div className="card card-body pad">
+      <p>{profileStatusLabel(result.data?.status)}。日常保存已提交后台事件，此维护入口不要求一线人员反复操作。</p>
+      {result.data?.data && <details><summary>查看上一版本画像（历史）</summary><pre style={{ whiteSpace: 'pre-wrap' }}>
+        {JSON.stringify(result.data.data, null, 2)}</pre></details>}
+      {result.data?.legacy_features && <details><summary>人工内容与旧预处理历史</summary><p>{result.data.legacy_boundary}</p>
+        <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(result.data.legacy_features, null, 2)}</pre></details>}
+    </div>
+    const features = result.data?.data || {}
     const basic = features.basic || {}
     const geo = features.geo || {}
     const actors = features.actors || {}
@@ -170,10 +199,13 @@ const CaseFeatures: React.FC = () => {
 
     return (
       <>
+        <div className="cf-batch-result">{profileStatusLabel(result.data?.status)} ·
+          画像版本 {features.profile_binding?.version ?? '—'} · 源修订 {features.profile_binding?.source_revision_id ?? '—'}
+        </div>
         {/* 标准化摘要 */}
         <div className="card cf-detail-card">
           <div className="card-head">
-            <span className="ti">NORMALIZED SUMMARY · 标准化摘要</span>
+            <span className="ti">SOURCE EXCERPT · 画像来源摘录</span>
             {confidence !== null && (
               <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 12, color: confidence >= 0.7 ? 'var(--ok)' : 'var(--warn)' }}>
                 置信度 {(confidence * 100).toFixed(0)}%
@@ -200,13 +232,13 @@ const CaseFeatures: React.FC = () => {
           <div className="card-body pad">
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label="信息质量">
-                评分：{selected.quality_score ?? management.report_quality_score ?? '未计算'} ·
-                等级：{selected.quality_level || management.report_quality_level || '未知'}<br />
-                缺项：{selected.quality_issues?.missing_required?.map(i => i.label).slice(0, 5).join('，') || (management.missing_fields || []).join('，') || '无明显缺项'}
+                评分：{management.report_quality_score ?? '未计算'} ·
+                等级：{management.report_quality_level || '未知'}<br />
+                缺项：{(management.missing_fields || []).join('，') || '无明显缺项'}
               </Descriptions.Item>
               <Descriptions.Item label="研判可用性">
-                时空：{readiness.spacetime || '未评估'} · 同伙：{readiness.gang || '未评估'} ·
-                巡逻：{readiness.patrol || '未评估'} · 圆桌：{readiness.roundtable || '未评估'}
+                时空：{readiness.spacetime || '未评估'} · 历史检索：{readiness.history_retrieval || '未评估'} ·
+                道路比较：{readiness.road_comparison || '未评估'} · 资料导出：{readiness.material_export || '未评估'}
               </Descriptions.Item>
               <Descriptions.Item label="案件类型">{basic.case_type || selected.case_type || '未知'}</Descriptions.Item>
               <Descriptions.Item label="时间（标准化）">{basic.time || selected.occurred_time}</Descriptions.Item>
@@ -248,6 +280,16 @@ const CaseFeatures: React.FC = () => {
             </Descriptions>
           </div>
         </div>
+        <div className="card cf-detail-card"><div className="card-head">内网模型整理候选</div><div className="card-body pad">
+          <p>{result.data?.model_supplement.status === 'ready' ? '已生成，仍需人工判断；不作为正式事实。'
+            : result.data?.model_supplement.status === 'not_enabled' ? '可信内网摘要模型尚未启用，规则画像仍可使用。'
+              : '本版本暂无模型摘要；不是规则结果的另一种名称。'}</p>
+          {result.data?.model_supplement.payload && <pre style={{ whiteSpace: 'pre-wrap' }}>
+            {JSON.stringify(result.data.model_supplement.payload.content, null, 2)}</pre>}
+        </div></div>
+        {result.data?.legacy_features && <details className="card card-body pad"><summary>人工内容与旧预处理历史（不代表当前画像）</summary>
+          <p>{result.data.legacy_boundary}</p><pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(result.data.legacy_features, null, 2)}</pre>
+        </details>}
       </>
     )
   }
@@ -267,7 +309,7 @@ const CaseFeatures: React.FC = () => {
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
         >
           <SyncOutlined spin={batchMutation.isPending} />
-          全量清洗
+          补齐本页画像
         </button>
         <button
           className="btn-primary"
@@ -281,7 +323,8 @@ const CaseFeatures: React.FC = () => {
       </div>
 
       {/* 状态条 */}
-      {preprocessStatus && (
+      {statusError && <div role="alert">流水线状态读取失败，不能据此判断没有任务。</div>}
+      {preprocessStatus && !statusError && (
         <div className="cf-status-bar">
           <SyncOutlined spin={preprocessStatus.processing > 0} style={{ color: 'var(--info)' }} />
           <span>排队</span>
@@ -333,14 +376,16 @@ const CaseFeatures: React.FC = () => {
             </span>
           </div>
           <div className="card-body">
+            {listError && <div role="alert">案件列表读取失败，未以空列表代替结果。<button onClick={() => void retryList()}>重试</button></div>}
             <Table
               rowSelection={rowSelection}
               columns={columns}
-              dataSource={cases}
+              dataSource={visibleCases}
               loading={isLoading}
               rowKey="id"
               size="small"
-              pagination={{ pageSize: 10 }}
+              pagination={{ current: page, pageSize: 20, total: (page - 1) * 20 + (cases?.length || 0),
+                onChange: value => { setPage(value); setSelected(null); setSelectedRowKeys([]) }, showSizeChanger: false }}
               rowClassName={(record) => record.id === selected?.id ? 'cf-row--selected' : ''}
               onRow={(record) => ({
                 onClick: () => setSelected(record),

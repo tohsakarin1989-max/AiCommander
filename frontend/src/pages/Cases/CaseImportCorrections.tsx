@@ -9,6 +9,7 @@ interface Props {
   batchId: string
   onCorrected: (result: ImportCorrectionResult) => void
   onBusyChange: (busy: boolean) => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 export default function CaseImportCorrections(props: Props) {
@@ -16,7 +17,7 @@ export default function CaseImportCorrections(props: Props) {
   return <ScopedCaseImportCorrections key={`${props.batchId}:${user?.id}:${sessionEpoch}`} {...props} />
 }
 
-function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange }: Props) {
+function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange, onDirtyChange }: Props) {
   const { user, sessionEpoch } = useAuth()
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -63,6 +64,10 @@ function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange }: Pro
     onBusyChange(mutation.isPending)
     return () => onBusyChange(false)
   }, [mutation.isPending, onBusyChange])
+  useEffect(() => {
+    onDirtyChange?.(Boolean(selected && Object.keys(changedImportFields(selected.values, draft)).length))
+    return () => onDirtyChange?.(false)
+  }, [selected, draft, onDirtyChange])
 
   const data = rows.isSuccess ? rows.data : undefined
   return <details className="cases-import-corrections" open={open} onToggle={event => setOpen(event.currentTarget.open)}>

@@ -11,6 +11,7 @@ class CaseLocation(Base):
     __table_args__ = (
         CheckConstraint("role IN ('incident','discovery','mentioned','source_candidate','custody')", name="ck_case_location_role"),
         CheckConstraint("precision IN ('exact','area','unknown')", name="ck_case_location_precision"),
+        {"sqlite_autoincrement": True},
     )
     id = Column(Integer, primary_key=True)
     case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -27,6 +28,7 @@ class OilMeasurement(Base):
         CheckConstraint("value >= 0", name="ck_oil_measurement_value"),
         CheckConstraint("unit IN ('tonne','liter','kg','m3','unknown')", name="ck_oil_measurement_unit"),
         CheckConstraint("stage IN ('involved','seized','transferred','recovered','unknown')", name="ck_oil_measurement_stage"),
+        {"sqlite_autoincrement": True},
     )
     id = Column(Integer, primary_key=True)
     case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -77,7 +79,10 @@ class ChangeDelivery(Base):
 
 class EvidenceObject(Base):
     __tablename__ = "evidence_objects"
-    __table_args__ = (CheckConstraint("availability IN ('metadata_only','available','revoked')", name="ck_evidence_availability"),)
+    __table_args__ = (
+        CheckConstraint("availability IN ('metadata_only','available','revoked')", name="ck_evidence_availability"),
+        {"sqlite_autoincrement": True},
+    )
     id = Column(Integer, primary_key=True)
     storage_key = Column(String(200), nullable=False, unique=True)
     sha256 = Column(String(64))
@@ -90,6 +95,7 @@ class EvidenceObject(Base):
 
 class SourceReference(Base):
     __tablename__ = "source_references"
+    __table_args__ = {"sqlite_autoincrement": True}
     id = Column(Integer, primary_key=True)
     case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     source_revision_id = Column(Integer, ForeignKey("case_revisions.id", ondelete="CASCADE"))
@@ -103,6 +109,7 @@ class CaseSourceLink(Base):
     __table_args__ = (
         UniqueConstraint("source_type", "source_id", "case_id", name="uq_case_source_link"),
         CheckConstraint("source_type IN ('event','tip')", name="ck_case_source_link_type"),
+        {"sqlite_autoincrement": True},
     )
     id = Column(Integer, primary_key=True)
     case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)

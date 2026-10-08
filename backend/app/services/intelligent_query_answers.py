@@ -68,7 +68,8 @@ def compose_answer(cards):
         elif tool == 'read_facility_at':
             historical = data['historical']
             add(f"按有效时间 {historical['valid_at']}、已知时间 {historical['known_at']} 核对设施资料："
-                + (f"取得版本 {historical['version_id']}。" if historical['state'] == 'ready' else '未取得可用一致版本，保留未知。'))
+                + ((f"取得版本 {historical['version_id']}。" if historical.get('version_id') else '已取得适用字段组，出处见各分段引用。')
+                   if historical['state'] == 'ready' else '未取得完整一致条件；部分可用字段与未知分开保留。'))
         elif tool == 'compare_coverage_scenario':
             value = data['comparison']
             frozen = value['input_snapshot']
