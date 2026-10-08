@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { CaseResult } from '../../types/caseResult'
 import CaseSemanticProfile from '../../pages/Cases/CaseSemanticProfile'
+import CaseAnalysisApplicability from '../../pages/Cases/CaseAnalysisApplicability'
 import CaseResultDownload from './CaseResultDownload'
 import CaseRoadComparison from './CaseRoadComparison'
 import './CaseResultPanel.css'
@@ -8,6 +9,7 @@ import './CaseResultPanel.css'
 const labels: Record<string, string> = {
   occurred_time: '案发时间（存储值）', location: '地点', case_type: '案件类型', oil_type: '油品',
   oil_nature: '油品性质', facility_type: '设施类型', modus_operandi: '作案手法', report_unit: '报案单位', source_type: '案件来源',
+  discovered_at: '发现/查获时间', time_precision: '发生时间精度', time_expression: '原始时间表达',
   upstream_source: '来源线索', downstream_destination: '去向线索', water_cut: '含水率（记录值）',
   oil_volume: '涉油数量（记录值）', oil_value: '涉油价值（记录值）',
   evidence_count: '证据记录数', vehicle_count: '车辆记录数', person_count: '人员记录数',
@@ -69,7 +71,8 @@ export default function CaseResultPanel({ result, caseId, loading, error, errorS
       <h4>关键缺项</h4><ul>{content.information_gaps.profile.map((gap, index) => <li key={index}>
         {gap.label}{gap.reason ? `：${gap.reason}` : ''}</li>)}</ul>
     </div>}
-    {result.freshness === 'pending_update' ? legacyCandidates : <CaseRoadComparison
+    {content.analysis_applicability && <CaseAnalysisApplicability value={content.analysis_applicability} updating={result.freshness === 'pending_update'} />}
+    {result.freshness === 'pending_update' || result.composition_status === 'not_applicable' ? legacyCandidates : <CaseRoadComparison
       key={`${result.id}:${result.content_sha256}`} resultId={composition?.base_result_id ?? result.id}
       hash={composition?.base_content_sha256 ?? result.content_sha256} legacyCandidates={legacyCandidates}
       awaitingComposition={result.composition_status === 'road_not_ready'}

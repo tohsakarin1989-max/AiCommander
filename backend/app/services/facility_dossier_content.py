@@ -29,6 +29,7 @@ from app.services.facility_condition_comparison import (
 from app.services.internal_road_service import read_import
 from app.services.facility_source_access import attributes_sources_visible
 from app.services.case_time_window import filter_case_time_window
+from app.services.attention_grounding import facility_attention_grounding
 from app.services.jurisdiction_service import TECH_TYPES
 from app.utils.geo import haversine_km
 
@@ -486,6 +487,8 @@ def build_dossier_content(db, asset_id, *, start_date=None, end_date=None, tempo
             "tech_defense": section(state="restricted") if production["state"] == "restricted" else _tech(db, asset),
             "history_conditions": history}
         return {"schema_version": SCHEMA_VERSION, "facility": facility_brief(asset),
+            "attention_grounding": facility_attention_grounding(
+                db, asset, cases, profiles, coverage, production=production),
             "filters": {"start_date": iso(start), "end_date": iso(end)}, "sections": sections,
             "versions": {"schema_version": SCHEMA_VERSION, "asset_updated_at": iso(asset.updated_at),
                 "read_mode": "live_authorized_sources",

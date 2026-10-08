@@ -296,9 +296,11 @@ def make_plan(db, source, template, rows, structure, *, file_hash, promotions=No
     if template and not template.expected_structure:
         previous = db.query(MapIngestRun).filter_by(source_id=source.id, template_id=template.id).filter(
             MapIngestRun.table_metadata.isnot(None)).order_by(MapIngestRun.started_at.desc(), MapIngestRun.id.desc()).first()
-        if previous and previous.table_metadata != structure:
+        from app.services.map_ledger_completeness import correction_metadata
+        previous_structure = correction_metadata(previous.table_metadata) if previous else None
+        if previous and previous_structure != correction_metadata(structure):
             drift.append({"field": "headers", "code": "header_drift", "message": "与该模板上次导入结构不同，请确认新模板",
-                          "old": previous.table_metadata, "new": structure})
+                          "old": previous_structure, "new": correction_metadata(structure)})
     entries = []
     identifiers = Counter(str(raw.get((template.field_mapping or {}).get("external_id"))).strip()
                           for _, raw in rows if template and raw.get((template.field_mapping or {}).get("external_id")) not in (None, ""))
@@ -366,6 +368,7 @@ def make_plan(db, source, template, rows, structure, *, file_hash, promotions=No
 
 
 def public_plan(plan):
-    return {**plan, "rows": [{key: value for key, value in row.items() if key not in {"resolved_payload", "normalized_payload", "base_hash"}}
+    return {**plan, "structure": {key: value for key, value in plan["structure"].items() if key != "ledger_comparison"},
+            "rows": [{key: value for key, value in row.items() if key not in {"resolved_payload", "normalized_payload", "base_hash"}}
                              for row in plan["rows"][:200]],
             "rows_complete": len(plan["rows"]) <= 200}

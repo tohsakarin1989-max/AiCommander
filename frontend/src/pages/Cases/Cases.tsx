@@ -13,7 +13,6 @@ import {
   Select,
   Row,
   Col,
-  Switch,
   Pagination,
 } from 'antd'
 import {
@@ -43,13 +42,16 @@ import { intakeCapabilityLabel, intakeEvidenceLabel } from './caseEntryAssistanc
 import CaseHistoryReferences from './CaseHistoryReferences'
 import CaseSemanticProfile from './CaseSemanticProfile'
 import { CaseEntryPrecheck } from './CaseEntryPrecheck'
-import { CaseSourceCollections, CaseTimeFields, oilUnitOptions } from './CaseSourceFields'
+import { CaseSourceCollections, CaseTimeFields, locationRoleLabels, oilUnitOptions } from './CaseSourceFields'
+import CaseFeedbackFields from './CaseFeedbackFields'
+import { changedFeedbackFields, feedbackDescription, feedbackFields } from './caseFeedback'
+import CaseAnalysisApplicability, { type AnalysisApplicability } from './CaseAnalysisApplicability'
 import CaseSourceDetails from './CaseSourceDetails'
 import CaseEntityDetails from './CaseEntityDetails'
 import CaseEvidenceFiles from './CaseEvidenceFiles'
 import RecordIntake from './RecordIntake'
 import { CaseDossierNavigation, CaseDossierPanel, CaseQualityStatus, caseDossierView } from './CaseDossier'
-import { formatCaseTime, formatOilVolume, formCaseTime } from '../../utils/caseValues'
+import { formatCaseTime, formatOilVolume, formatStoredTime, formCaseTime } from '../../utils/caseValues'
 import CaseResultPanel from '../../components/CaseResult/CaseResultPanel'
 import CaseResultMap from '../../components/CaseResult/CaseResultMap'
 import { useCaseWorkspace, useCaseWorkspaceSection } from '../../services/useCaseWorkspace'
@@ -624,6 +626,9 @@ const CaseWorkspace: React.FC = () => {
           patch[field] = formCaseTime(patch[field] as string, String(patch.time_timezone || form.getFieldValue('time_timezone') || 'Asia/Shanghai'))
         }
       })
+      let changedFeedback = form.getFieldValue('feedback_changed_fields')
+      for (const field of feedbackFields) if (typeof patch[field] === 'boolean') changedFeedback = changedFeedbackFields(changedFeedback, field)
+      if (changedFeedback) patch.feedback_changed_fields = changedFeedback
       form.setFieldsValue(patch)
       setEntryDirty(true)
       setAiIntakeSourceText(sourceText)
@@ -802,6 +807,11 @@ const CaseWorkspace: React.FC = () => {
       time_precision: 'unknown',
       time_timezone: 'Asia/Shanghai',
       oil_volume_unit: 'unknown',
+      entry_location_role: 'unknown',
+      police_reported: null,
+      case_filed: null,
+      feedback_changed_fields: [],
+      feedback_initial_known_fields: [],
       initial_locations: [],
       initial_measurements: [],
       bonus_has_vehicle: false,
@@ -893,6 +903,7 @@ const CaseWorkspace: React.FC = () => {
       includeLocations: sourceCollectionsLoaded.locations,
       includeMeasurements: sourceCollectionsLoaded.measurements,
       hadIncidentLocations,
+      legacyCoordinates: editingCase ?? undefined,
     })
     saveBusy.current = true; setSavePreparing(true); setSaveFailure('')
     let confirmed = false
@@ -1573,6 +1584,7 @@ const CaseWorkspace: React.FC = () => {
 
                   <CaseDossierNavigation />
                   <BusinessReturnLink />
+                  <Link className="btn-ghost" to={`/assistant?caseId=${selectedCase.id}`}>以本条记录查历史参考（全部授权历史）</Link>
                   <CaseDossierPanel view="relations" active={dossierView}>
                   <nav className="case-context-links detail-section" aria-label="当前案件关联视图">
                     <Link to={caseContextPath(`/case-intelligence?caseId=${selectedCase.id}`, searchParams)}>历史关联与研判</Link>
@@ -1623,12 +1635,16 @@ const CaseWorkspace: React.FC = () => {
                       <div className="kv">
                         <span className="k">报案/立案</span>
                         <span className="v">
-                          {selectedCase.police_reported ? '已报案' : '未标注报案'}
-                          {selectedCase.case_filed ? ' · 已立案' : ''}
+                          {feedbackDescription(selectedCase, 'police_reported')} · {feedbackDescription(selectedCase, 'case_filed')}
                         </span>
                       </div>
                     </div>
                   </div>
+
+                  <CaseAnalysisApplicability
+                    value={workspace?.profile.data?.payload.analysis_applicability as AnalysisApplicability | undefined}
+                    loading={resultLoading} error={!!resultError || workspace?.profile.status === 'unavailable'}
+                    updating={workspace?.profile.status === 'updating'} />
 
                   <div className="detail-section">
                     <div className="ds-head">案件画像底座</div>
@@ -1661,7 +1677,7 @@ const CaseWorkspace: React.FC = () => {
                     </p>
                   </div>
 
-                  <p className="detail-section">发生记录：{formatCaseTime(selectedCase)}。油量记录：{formatOilVolume(selectedCase.oil_volume, selectedCase.oil_volume_unit)}。</p>
+                  <p className="detail-section">发现／查获：{selectedCase.discovered_at ? formatStoredTime(selectedCase.discovered_at, 'YYYY-MM-DD HH:mm', selectedCase.time_timezone || 'Asia/Shanghai') : '尚未掌握'}。实际案发：{formatCaseTime(selectedCase)}。油量记录：{formatOilVolume(selectedCase.oil_volume, selectedCase.oil_volume_unit)}。</p>
                   <CaseHistoryReferences caseId={selectedCase.id} revision={selectedCase.updated_at || workspace?.profile.data?.source_hash} compact />
                   </CaseDossierPanel>
 
@@ -1976,7 +1992,7 @@ const CaseWorkspace: React.FC = () => {
               rows={4}
               value={aiIntakeText}
               onChange={event => { setAiIntakeText(event.target.value); setEntryDirty(true) }}
-              placeholder="粘贴原始案情：时间、地点、发现方式、涉油数量、车辆/人员处置、报案立案等。点击后自动填入下方可编辑字段。"
+              placeholder="粘贴已掌握的时间、地点、简要经过和本单位处置。来源去向、公安后续不了解时不用补造；候选字段需与原文核对。"
             />
             <div className="cases-ai-assistant__actions">
               <Button
@@ -2062,8 +2078,19 @@ const CaseWorkspace: React.FC = () => {
 
           <CaseTimeFields form={form} />
 
-          <Form.Item name="location" label="地点">
-            <Input placeholder="如：××路××小区南门" />
+          <Form.Item name="location" label="本次记录的地点原文">
+            <Input placeholder="如：××道路附近；角色或精确位置不明可保留原文" />
+          </Form.Item>
+          <Form.Item name="entry_location_role" label="这处地点在本次记录中的角色" initialValue="unknown" dependencies={['latitude', 'longitude']}
+            rules={[({ getFieldValue }) => ({ validator(_, role) {
+              const latitude = getFieldValue('latitude'); const longitude = getFieldValue('longitude')
+              const hasLatitude = latitude !== undefined && latitude !== null; const hasLongitude = longitude !== undefined && longitude !== null
+              if (hasLatitude !== hasLongitude) return Promise.reject(new Error('已填写坐标时，请同时核对经纬度；未知可都留空'))
+              if (!editingCase && hasLatitude && (!role || role === 'unknown')) return Promise.reject(new Error('已填写坐标，请明确地点角色后保存，不能默认为案发地点'))
+              return Promise.resolve()
+            } })]}
+            extra={editingCase ? '原有地点明细保持原样。明确选择角色后新增对应地点记录；不会将旧地图点自动解释为案发点。' : '未明确时保留为原文提及；发现地点不会自动作为盗取地点。'}>
+            <Select options={[{ value: 'unknown', label: '尚不明确' }, ...Object.entries(locationRoleLabels).map(([value, label]) => ({ value, label }))]} />
           </Form.Item>
 
           <Form.Item noStyle shouldUpdate={(before, after) => before.operational_area_id !== after.operational_area_id}>
@@ -2072,7 +2099,7 @@ const CaseWorkspace: React.FC = () => {
               disabled={Boolean(submission) || savePreparing || draftBusy || draftSavePending || Boolean(editConflict) || Boolean(draftConflict)}
               onApply={patch => {
                 if (submissionRef.current || saveBusy.current || draftSaveRef.current || draftBusy || editConflict || draftConflict) return
-                if (patch.latitude !== undefined && (form.getFieldValue('initial_locations') || []).some((row: { role?: string }) => row.role === 'incident')) {
+                if (patch.latitude !== undefined && form.getFieldValue('entry_location_role') !== 'discovery' && (form.getFieldValue('initial_locations') || []).some((row: { role?: string }) => row.role === 'incident')) {
                   message.warning('本案已有案发地点明细，主地图点由明细决定。请在“补充地点角色”中核对修改，本次未替换地点或坐标。')
                   return
                 }
@@ -2105,7 +2132,7 @@ const CaseWorkspace: React.FC = () => {
                     onClick={() => setShowMapPicker(!showMapPicker)}
                   >
                     {showMapPicker ? <UpOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
-                    地图坐标（可选，用于地图与空间分析）
+                    核对地点坐标（可选，不代表盗取来源）
                     {latitude != null && longitude != null && (
                       <span>{Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}</span>
                     )}
@@ -2113,6 +2140,7 @@ const CaseWorkspace: React.FC = () => {
 
                   {showMapPicker && (
                     <div className="cases-map-entry">
+                      <p>请先核对上方地点角色。角色未知的新地点只保留文字，不发布为精确点；编辑旧记录不会自动重解释原坐标。</p>
                       <Form.Item label="经纬度" style={{ marginBottom: 0 }}>
                         <div style={{ display: 'flex', gap: 8 }}>
                           <Form.Item name="latitude" style={{ flex: 1, marginBottom: 8 }}>
@@ -2160,10 +2188,17 @@ const CaseWorkspace: React.FC = () => {
 
           <Form.Item
             name="description"
-            label="案情原文（未知内容可后补）"
+            label="简要经过／原始记录（只写已掌握内容）"
           >
-            <TextArea rows={4} placeholder="请尽可能详细描述案情，其余结构化分析将由系统自动完成" />
+            <TextArea rows={4} placeholder="记录当时发现了什么、本单位做了什么。未知的来源、去向和公安后续可直接注明未知。" />
           </Form.Item>
+
+          <section aria-label="本单位已知处置">
+            <h4>本单位处置与移交（按已掌握情况填写）</h4>
+            <Form.Item name="vehicle_handling" label="车辆处置"><Input placeholder="如：移交公安、扣押停放；未掌握可留空" /></Form.Item>
+            <Form.Item name="person_handling" label="人员处置"><Input placeholder="如：移交公安、教育放行；不等同于公安后续处理" /></Form.Item>
+            <Form.Item name="oil_handling" label="油品处置"><Input placeholder="如：移交公安、检斤入库、暂存；与查获量分别记录" /></Form.Item>
+          </section>
 
           <details className="case-entry-section"><summary>已掌握的人员、车辆及处置资料（按需）</summary><CaseEntryPrecheck
             form={form}
@@ -2213,18 +2248,9 @@ const CaseWorkspace: React.FC = () => {
             <TextArea rows={2} placeholder="如举报内容、技防预警来源、公安线索编号等" />
           </Form.Item>
 
+          <CaseFeedbackFields form={form} />
           <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item name="police_reported" label="是否报案" valuePropName="checked">
-                <Switch checkedChildren="是" unCheckedChildren="否" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="case_filed" label="是否立案" valuePropName="checked">
-                <Switch checkedChildren="是" unCheckedChildren="否" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12}>
               <Form.Item name="operation_role" label="联合行动角色">
                 <Select allowClear placeholder="主导/联合/配合/协助">
                   {['主导', '联合', '配合', '协助'].map(option => (
@@ -2310,17 +2336,6 @@ const CaseWorkspace: React.FC = () => {
                 <Input placeholder="如：黑加油点、工地、车队等" />
               </Form.Item>
 
-              <Form.Item name="vehicle_handling" label="涉案车辆处理方式">
-                <Input placeholder="如：扣押停放、移交公安、待处理" />
-              </Form.Item>
-
-              <Form.Item name="person_handling" label="抓获人员处理方式">
-                <Input placeholder="如：移交公安、教育放行、待核查" />
-              </Form.Item>
-
-              <Form.Item name="oil_handling" label="涉案原油处理方式">
-                <Input placeholder="如：检斤入库、移交、暂存" />
-              </Form.Item>
             </div>
           </details>
         </Form>

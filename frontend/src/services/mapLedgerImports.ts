@@ -1,5 +1,5 @@
 import api from './api'
-import type { MapImportTemplate, MapIngestRun, MapPreview } from './mapFoundation'
+import type { MapImportTemplate, MapIngestRun, MapPreview, MapLedgerDeclaration } from './mapFoundation'
 
 export type MapRowClassification = 'new' | 'updated' | 'unchanged' | 'identity_pending' | 'conflict' | 'failed'
 export interface MapImportField { key: string; label: string; type: string; description: string; group: string | null; required: boolean }
@@ -12,6 +12,8 @@ export interface MapPlanRow {
   errors: Array<{ field: string; code: string; message: string }>
 }
 export interface MapLedgerPreview extends MapPreview {
+  ledger_declaration?: MapLedgerDeclaration | null
+  ledger_comparison?: MapLedgerComparison
   plan_token: string
   counts: Record<MapRowClassification, number>
   rows: MapPlanRow[]
@@ -20,6 +22,8 @@ export interface MapLedgerPreview extends MapPreview {
   drift: Array<{ field: string; code: string; message: string; old?: unknown; new?: unknown }>
 }
 export interface MapLedgerRun extends MapIngestRun {
+  ledger_declaration?: MapLedgerDeclaration | null
+  declaration_actor_id?: number | null
   started_at?: string | null
   completed_at?: string | null
   table_metadata: MapImportStructure | null
@@ -28,11 +32,18 @@ export interface MapLedgerRun extends MapIngestRun {
   parent_run_id: string | null
   original_evidence_object_id: number | null
 }
+export interface MapLedgerComparison {
+  status: 'comparable' | 'not_comparable'; reason: string; phase: 'preview' | 'executed'; boundary: string
+  baseline_run_id?: string; baseline_source_revision?: string; baseline_declaration?: MapLedgerDeclaration
+  missing?: Array<{ source_record_id: string; claim_id: number; asset_id: number; row_number: number }>
+  missing_count?: number; previous_count?: number; current_count?: number; rows_complete?: boolean
+}
 export interface MapLedgerClaim {
   id: number; run_id: string; row_number: number; status: string; source_record_id: string | null
   raw_payload: Record<string, unknown> | null; normalized_payload: Record<string, unknown> | null
   plan: MapPlanRow | null; parent_claim_id: number | null; correction_note: string | null
   source_identity_id: number | null; identity_decision_id: number | null
+  retry_superseded?: boolean
 }
 export interface MapRetryRequest { request_id: string; template_id?: number; rows: Array<{ claim_id: number; values: Record<string, unknown> }>; plan_token?: string }
 export type MapFieldGroup = 'geometry' | 'water_cut' | 'production' | 'details'
@@ -47,8 +58,9 @@ export interface OffsetPage<T> { items: T[]; total: number; offset: number; limi
 export const mapLedgerImportsApi = {
   fields: async (signal?: AbortSignal): Promise<MapFieldContract> => (await api.get('/map-import-fields', { signal })).data,
   example: async (): Promise<Blob> => (await api.get('/map-import-example', { responseType: 'blob' })).data,
-  preview: async (sourceId: number, file: File, templateId?: number, signal?: AbortSignal): Promise<MapLedgerPreview> => {
+  preview: async (sourceId: number, file: File, templateId?: number, signal?: AbortSignal, declaration?: MapLedgerDeclaration): Promise<MapLedgerPreview> => {
     const data = new FormData(); data.append('file', file)
+    if (declaration) data.append('ledger_declaration', JSON.stringify(declaration))
     return (await api.post(`/map-sources/${sourceId}/preview`, data, { params: { template_id: templateId }, headers: { 'Content-Type': 'multipart/form-data' }, signal })).data
   },
   runs: async (sourceId: number, offset = 0, signal?: AbortSignal): Promise<OffsetPage<MapLedgerRun>> =>
@@ -59,6 +71,8 @@ export const mapLedgerImportsApi = {
     (await api.post(`/map-ingest-runs/${encodeURIComponent(runId)}/retry-preview`, payload)).data,
   retry: async (runId: string, payload: MapRetryRequest): Promise<MapLedgerRun> =>
     (await api.post(`/map-ingest-runs/${encodeURIComponent(runId)}/retry`, payload)).data,
+  comparison: async (runId: string, signal?: AbortSignal): Promise<MapLedgerComparison> =>
+    (await api.get(`/map-ingest-runs/${encodeURIComponent(runId)}/ledger-comparison`, { signal })).data,
   original: async (runId: string): Promise<Blob> =>
     (await api.get(`/map-ingest-runs/${encodeURIComponent(runId)}/original`, { responseType: 'blob' })).data,
   fieldDecisionPreview: async (claimId: number, group: MapFieldGroup, signal?: AbortSignal): Promise<MapFieldDecisionPreview> =>

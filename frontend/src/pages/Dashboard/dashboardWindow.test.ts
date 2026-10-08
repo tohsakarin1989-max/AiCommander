@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { dashboardWindow, rollingWindowParams } from './dashboardWindow'
+import { dashboardAreaParams, dashboardWindow, rollingWindowParams } from './dashboardWindow'
 import { regionalContextPath } from '../../services/regionalContext'
 
 describe('大屏滚动与固定时间窗', () => {
-  it('默认滚动7天，URL镜像日期不会被当成请求截止时间', () => {
+  it('默认发现30天，URL镜像日期不会被当成请求截止时间', () => {
     expect(dashboardWindow(new URLSearchParams()).request).toBeUndefined()
     const first = rollingWindowParams(new URLSearchParams('operational_area_id=2'), 7, { start: '2026-09-18T00:00:00Z', end: '2026-09-25T00:00:00Z' })
     const next = rollingWindowParams(first, 7, { start: '2026-09-18T00:00:30Z', end: '2026-09-25T00:00:30Z' })
@@ -22,8 +22,16 @@ describe('大屏滚动与固定时间窗', () => {
     const params = new URLSearchParams(regionalContextPath('/dashboard', new URLSearchParams('operational_area_id=2&time_scope=all_history')).split('?')[1])
     expect(dashboardWindow(params)).toMatchObject({ allHistory: true, rolling: false })
   })
-  it('普通菜单进入大屏无显式全历史选择时继续滚动7天', () => {
+  it('普通菜单进入大屏默认为发现30天，旧固定窗口不静默切换', () => {
     const params = new URLSearchParams(regionalContextPath('/dashboard', new URLSearchParams('operational_area_id=2')).split('?')[1])
-    expect(dashboardWindow(params)).toMatchObject({ allHistory: false, rolling: true, days: 7 })
+    expect(dashboardWindow(params)).toMatchObject({ allHistory: false, rolling: true, days: 30, timeBasis: 'discovery' })
+    expect(dashboardWindow(new URLSearchParams('start_date=2026-10-01'))).toMatchObject({ timeBasis: 'legacy_incident' })
+  })
+  it('明确展示改看区域全历史，不把发现时窗伪装为案发过滤', () => {
+    const params = dashboardAreaParams(new URLSearchParams('operational_area_id=2&time_basis=discovery&start_date=x&end_date=y'), 'discovery')
+    expect(params.get('operational_area_id')).toBe('2')
+    expect(params.get('time_scope')).toBe('all_history')
+    expect(params.has('start_date')).toBe(false)
+    expect(dashboardWindow(new URLSearchParams('time_basis=invalid')).error).toBeTruthy()
   })
 })

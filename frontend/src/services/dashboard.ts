@@ -1,4 +1,6 @@
 import api from './api'
+import type { SituationBriefResult } from './intelligenceFlow'
+import type { DashboardTimeBasis } from '../pages/Dashboard/dashboardWindow'
 
 export interface DashboardActivity {
   id: string
@@ -21,6 +23,9 @@ export interface DashboardSummary {
   recent_results?: DashboardActivity[]
   completion?: { completed: number; degraded: number }
   schema_version: number
+  time_basis?: DashboardTimeBasis
+  temporal_comparison?: SituationBriefResult['comparison_snapshot']
+  trend_unbucketed_cases?: number
   operational_area_id: number | null
   as_of: string
   state: 'ready' | 'empty'
@@ -42,8 +47,8 @@ export interface DashboardSummary {
   }
 }
 
-export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal, activityLimit = 20, window?: { start_date?: string; end_date?: string }): Promise<DashboardSummary> {
+export async function getDashboardSummary(areaId: number, days: number, signal?: AbortSignal, activityLimit = 20, window?: { start_date?: string; end_date?: string }, timeBasis: DashboardTimeBasis = 'legacy_incident'): Promise<DashboardSummary> {
   return (await api.get<DashboardSummary>('/cases/dashboard-summary', {
-    params: { operational_area_id: areaId, days, activity_limit: activityLimit, ...window }, signal,
+    params: { operational_area_id: areaId, days, activity_limit: activityLimit, ...window, time_basis: timeBasis }, signal,
   })).data
 }

@@ -38,6 +38,7 @@ export function conditionLines(conditions?: QueryConditions): string[] {
 export const activeQuery = (status?: string) => status === 'queued' || status === 'running'
 export const queryIdValid = (id: string) => /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id)
 export const toolNames: Record<string, string> = {
+  business_attention: '区域与设施关注依据', business_recent_changes: '业务时间与变化来源',
   find_cases: '案件查找', find_places: '地点与设施', count_cases: '案件统计',
   compare_periods: '周期比较', summarize_results: '已有研判成果',
   find_road_results: '道路研判成果',
@@ -50,6 +51,7 @@ export const toolNames: Record<string, string> = {
 export const statusNames: Record<string, string> = {
   queued: '排队中', running: '正在查询', completed: '查询完成',
   degraded: '部分完成或条件不足', failed: '查询未完成', cancelled: '已取消', expired: '运行已超时',
+  waiting_clarification: '等待一个关键条件',
 }
 export function failureText(code?: string | null): string {
   const messages: Record<string, string> = {

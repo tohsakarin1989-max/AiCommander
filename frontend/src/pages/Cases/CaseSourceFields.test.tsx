@@ -1,10 +1,17 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Form } from 'antd'
 import { describe, expect, it } from 'vitest'
-import { CaseSourceCollections } from './CaseSourceFields'
+import { CaseSourceCollections, CaseTimeFields } from './CaseSourceFields'
 import { buildCaseEntrySubmitPayload } from './caseEntrySubmitPayload'
 
 describe('来源明细表单身份注册', () => {
+  it('发现时间优先显示，案发时间另行展开，不把未知时间填成当前时刻', () => {
+    function Fields() { const [form] = Form.useForm(); return <Form form={form}><CaseTimeFields form={form} /></Form> }
+    const html = renderToStaticMarkup(<Fields />)
+    expect(html.indexOf('现场发现／查获时间')).toBeLessThan(html.indexOf('实际案发时间及时间原文'))
+    expect(html).toContain('不自动作为案发时刻')
+    expect(html).not.toContain('id="occurred_time"')
+  })
   it('真实 Form.List 为同值明细分别注册隐藏 ID，重排后仍按原 ID 提交', () => {
     const values = {
       initial_locations: [8, 3].map(id => ({ id, role: 'discovery', precision: 'unknown' })),

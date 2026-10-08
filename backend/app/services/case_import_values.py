@@ -68,11 +68,13 @@ def _boolean(value: Any) -> bool | None:
     if _empty(value):
         return None
     text = str(value).strip().lower()
+    if text in {"未知", "不详", "未获反馈", "待核实", "unknown"}:
+        return None
     if text in {"1", "true", "yes", "y", "是", "已", "已报", "已立案"}:
         return True
     if text in {"0", "false", "no", "n", "否", "未", "未报", "未立案"}:
         return False
-    raise ValueError("是否类字段仅接受明确的是/否或 true/false")
+    raise ValueError("是否类字段仅接受明确的是/否、true/false，或未知/未获反馈")
 
 
 def normalize_case_row(row: dict[str, Any], *, time_zone: str = "UTC") -> dict[str, Any]:

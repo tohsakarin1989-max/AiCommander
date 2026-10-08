@@ -14,8 +14,15 @@ from app.services import case_road_jobs as jobs
 from app.services.road_access_policy import VehicleAssumption
 from test_case_road_artifacts import artifact_input  # noqa: F401
 from test_road_network_service import ready  # noqa: F401
-from test_case_results import db_session, result_data  # noqa: F401
+from test_case_results import db_session, result_data as legacy_result_data  # noqa: F401
+from case_v80_fixtures import rebuild_applicable_profile
 from test_road_access_policy import AT
+
+
+@pytest.fixture
+def result_data(db_session, legacy_result_data):
+    rebuild_applicable_profile(db_session, legacy_result_data[0])
+    return legacy_result_data
 
 
 def enqueue(db, content):
@@ -31,6 +38,40 @@ def test_job_enqueue_is_transactional_and_idempotent(artifact_input):
     assert first['created'] and not again['created'] and first['event_id'] == again['event_id']
     db.rollback()
     assert db.scalar(select(OutboxEvent.id).where(OutboxEvent.event_type == jobs.EVENT_TYPE)) is None
+
+
+def test_worker_rejects_legacy_queued_discovery_only_case(artifact_input, monkeypatch, tmp_path):
+    """A persisted pre-v8 event bypasses enqueue but not worker suitability."""
+    from app.models.case_source import CaseLocation
+    from app.models.case_pipeline import CaseAnalysisProfile
+    from app.services.case_source_service import CaseSourceService
+    from app.services.case_pipeline_service import CasePipelineService
+    from app.services.case_result_service import CaseResultService
+    from app.services.case_analysis_applicability import allows
+    db, content = artifact_input
+    event_id = enqueue(db, content)['event_id']
+    db.commit()
+    case = db.get(Case, 1)
+    case.description = '现场查获运输车辆，盗取来源未知。'
+    for point in db.query(CaseLocation).filter_by(case_id=1).all():
+        point.role = 'discovery'
+    db.flush()
+    CaseSourceService.capture_change(db, case)
+    payload = CasePipelineService.build_profile_payload(db, case)
+    assert not allows(payload, 'road_analysis')
+    profile = db.get(CaseAnalysisProfile, 'profile-1')
+    profile.payload, profile.source_hash, profile.source_revision_id = payload, payload['source_hash'], payload['source_revision_id']
+    db.commit()
+    source, _ = CaseResultService.create_current(db, 1)
+    event = db.get(OutboxEvent, event_id)
+    event.aggregate_id = source['id']
+    event.payload = {**event.payload, 'result_id': source['id'], 'content_sha256': source['content_sha256']}
+    db.commit()
+    def forbidden(*args, **kwargs):
+        pytest.fail('a legacy queued discovery-only record must not invoke routing')
+    monkeypatch.setattr(jobs, 'compare_result_roads', forbidden)
+    assert jobs.process_comparison(db, event_id, artifact_root=tmp_path)['status'] == 'superseded'
+    assert db.query(CaseRoadArtifact).count() == 0
 
 
 def test_facility_rule_versions_change_job_identity_and_supersede_old_pending_job(artifact_input, monkeypatch, tmp_path):

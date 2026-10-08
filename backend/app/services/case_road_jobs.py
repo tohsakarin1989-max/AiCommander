@@ -55,6 +55,9 @@ def enqueue_comparison(db, *, result_id, analysis_at, vehicle, engine_version,
     ceiling = None if ceiling is None else list(ceiling)
     _identity(db, actor, ceiling)
     source = CaseResultService.read(db, result_id)
+    from app.services.case_analysis_applicability import allows
+    if not allows(source['content'], 'road_analysis'):
+        raise ValueError('road_analysis_not_applicable')
     binding = select_network(db, analysis_at=analysis_at, vehicle=vehicle, engine_version=engine_version)
     scope = db.info['authorized_area_ids']
     payload = {'job_version': JOB_VERSION, 'result_id': result_id, 'user_id': actor,
@@ -131,6 +134,9 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
             if payload.get('facility_algorithm') and (None if scope is None else sorted(scope)) != payload['scope']:
                 raise PermissionError('facility_job_scope_changed')
             source = CaseResultService.read(db, payload['result_id'])
+            from app.services.case_analysis_applicability import allows
+            if not allows(source['content'], 'road_analysis'):
+                raise ValueError('road_analysis_not_applicable')
             binding = resolve_network(db, payload['network_id'], analysis_at=at, vehicle=vehicle)
             if (source['content_sha256'] != payload['content_sha256']
                     or binding.graph_sha256 != payload['graph_sha256']
@@ -188,7 +194,7 @@ def process_comparison(db, event_id, *, artifact_root, cancel_event=None):
         latest = db.get(OutboxEvent, event_id, populate_existing=True)
         saved = dict(latest.payload)
         failures = saved.get('ordinary_failures', 0) + (0 if pending or cancelled else 1)
-        superseded = bool(saved.get('facility_algorithm')) and (isinstance(error, PermissionError) or
+        superseded = str(error) == 'road_analysis_not_applicable' or bool(saved.get('facility_algorithm')) and (isinstance(error, PermissionError) or
             (isinstance(error, ValueError) and any(word in str(error) for word in
                 ('changed', 'outdated', 'integrity', 'checkpoint', 'unavailable'))))
         status = ('cancelled' if cancelled else 'pending' if pending else 'superseded' if superseded

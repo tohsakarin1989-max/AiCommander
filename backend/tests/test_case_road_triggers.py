@@ -14,7 +14,14 @@ from app.services.case_result_service import CaseResultService
 from app.services import case_road_triggers as triggers, case_road_jobs as jobs
 from test_case_road_artifacts import artifact_input  # noqa: F401
 from test_road_network_service import ready  # noqa: F401
-from test_case_results import db_session, result_data  # noqa: F401
+from test_case_results import db_session, result_data as legacy_result_data  # noqa: F401
+from case_v80_fixtures import rebuild_applicable_profile
+
+
+@pytest.fixture
+def result_data(db_session, legacy_result_data):
+    rebuild_applicable_profile(db_session, legacy_result_data[0])
+    return legacy_result_data
 
 
 def source_event(db, profile, *, authority=True, changed=False):
@@ -33,15 +40,15 @@ def source_event(db, profile, *, authority=True, changed=False):
 @pytest.mark.parametrize('complete', [True, False])
 def test_frozen_truck_conditions_reach_job_and_manual_route_without_car_fallback(ready, result_data, complete):
     from app.api.road_analysis import _case_calculation
-    from app.services.case_semantic_service import build_semantic_profile
+    from app.models.case import Case
     from fastapi import HTTPException
     db = ready
     profile, run, _ = result_data
     record = {'type': '货车', 'height_m': 3.2}
     if complete:
         record['gross_weight_t'] = 12.5
-    profile.payload = {**profile.payload, 'semantics': build_semantic_profile(
-        {'description': '现场查获货车'}, structured={'vehicle_info': record})}
+    db.get(Case, profile.case_id).vehicle_info = record
+    rebuild_applicable_profile(db, profile)
     graph = db.get(RoadNetworkVersion, 'graph-1')
     graph.engine_version = '3.8.3'
     graph.valid_from = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -176,15 +183,13 @@ def test_legacy_explicit_job_through_actual_native_matrix_and_persistence(
     graph.engine_version, graph.graph_sha256, graph.artifact_key = '3.8.3', key, key
     graph.valid_from = datetime(2020, 1, 1, tzinfo=timezone.utc)
     profile, run, _ = result_data
-    profile.payload = {**profile.payload, 'analysis_facts': {'latitude': 46., 'longitude': 124.9995}}
+    rebuild_applicable_profile(db, profile, latitude=46., longitude=124.9995)
     if truck:
         from app.models.case import Case, CaseVehicle
-        from app.services.case_pipeline_service import CasePipelineService
         db.add(CaseVehicle(case_id=1, vehicle_type='重型挂车', road_vehicle_kind='truck',
                            height_m=3.2, gross_weight_t=12.5))
         db.flush()
-        conditions = CasePipelineService.build_profile_payload(db, db.get(Case, 1))['semantics']
-        profile.payload = {**profile.payload, 'semantics': conditions}
+        rebuild_applicable_profile(db, profile, latitude=46., longitude=124.9995)
         graph.source_manifest = {**graph.source_manifest, 'vehicle': {
             'kind': 'truck', 'height_m': 3.2, 'weight_t': 12.5, 'source': 'case_record'}}
     feature = db.scalar(select(MapSnapshotFeature).where(MapSnapshotFeature.asset_id == 1))

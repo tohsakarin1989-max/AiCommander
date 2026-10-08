@@ -12,7 +12,7 @@ from app.models.case_insight import CaseAnalysisRun, CaseHypothesis, HypothesisF
 from app.models.case_pipeline import CaseAnalysisProfile, OutboxEvent
 from app.models.jurisdiction import JurisdictionAsset
 from app.models.map_foundation import MapSnapshot, MapSnapshotFeature, PublicMapBundle
-from app.services.case_insight_service import CaseInsightService
+from app.services.case_insight_service import CASE_INSIGHT_ALGORITHM_VERSION, CaseInsightService
 from app.services.case_pipeline_service import CasePipelineService
 from app.services.case_service import CaseService
 from app.services.map_foundation_service import MapFoundationService
@@ -47,10 +47,17 @@ def _case(db: Session, number: str, lat: float | None = 46.6, lon: float | None 
         latitude=lat,
         longitude=lon,
         case_type="涉油盗窃",
-        description="夜间车辆进入井场后发现原油损失。",
+        description="夜间车辆进入井场，现场明确记录打孔盗油痕迹和原油损失。",
         oil_type="原油",
         facility_type="井口",
         modus_operandi="车辆转运",
+        initial_locations=[{
+            "role": "incident", "description": "南区井场",
+            "precision": "exact" if lat is not None and lon is not None else "unknown",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]}
+                if lat is not None and lon is not None else None,
+            "source_note": "合成案发地点，供确定性融合回归使用",
+        }],
     )
     event = db.query(OutboxEvent).filter(OutboxEvent.aggregate_id == str(case.id)).one()
     CasePipelineService.process_event(db, event.id)
@@ -165,7 +172,7 @@ def test_deterministic_case_map_fusion_returns_at_most_three_explainable_candida
     assert result["status"] == "completed"
     run = db_session.query(CaseAnalysisRun).one()
     hypotheses = db_session.query(CaseHypothesis).order_by(CaseHypothesis.rank).all()
-    assert run.algorithm_version == "dual-domain-6.0.0-1"
+    assert run.algorithm_version == CASE_INSIGHT_ALGORITHM_VERSION
     assert run.map_snapshot_id == snapshot.id
     assert 1 <= len(hypotheses) <= 3
     for hypothesis in hypotheses:
@@ -270,11 +277,13 @@ def test_missing_geo_returns_explicit_gap_and_no_fabricated_candidate(db_session
     event = CaseInsightService.enqueue_analysis(db_session, profile, snapshot)
     db_session.commit()
 
-    result = CaseInsightService.process_event(db_session, event.id)
-
-    assert result["status"] == "degraded"
-    run = db_session.query(CaseAnalysisRun).one()
-    assert run.information_gaps == ["案件缺少经纬度，无法执行案件—地图空间融合"]
+    assert event is None
+    assert db_session.query(OutboxEvent).filter_by(event_type="case.insights.requested").count() == 0
+    assert db_session.query(CaseAnalysisRun).count() == 0
+    suitability = next(item for item in profile.payload["analysis_applicability"]["entries"]
+                       if item["kind"] == "source_inference")
+    assert suitability["status"] == "insufficient_data"
+    assert "缺少明确案发点" in suitability["reason"]
     assert db_session.query(CaseHypothesis).count() == 0
 
 

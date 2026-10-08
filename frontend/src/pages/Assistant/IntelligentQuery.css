@@ -28,3 +28,5 @@
 .intelligent-query summary { cursor: pointer; padding-block: 8px; }
 .query-gaps { padding-left: 20px; }
 @media (max-width: 600px) { .query-actions button { flex: 1; } .query-records li { flex-direction: column; } }
+.query-business-questions, .query-clarification { margin-block: 18px; padding: 18px; border: 1px solid var(--line); background: var(--bg-1); line-height: 1.65; }
+.query-clarification select { display: block; min-height: 40px; margin-block: 8px; max-width: 100%; }

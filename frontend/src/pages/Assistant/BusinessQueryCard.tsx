@@ -8,9 +8,27 @@ import { FacilityDossierContent } from '../../components/Facility/FacilityDossie
 import { FacilityTemporalContent } from '../../components/Facility/FacilityIdentityPanel'
 import CaseProcessView from '../Cases/CaseProcessView'
 import { rowsOf, textValue } from './queryPresentation'
+import AttentionGrounds from '../../components/Facility/AttentionGrounds'
+import type { AttentionGrounding } from '../../types/attention'
+import TemporalChangeExplanation from '../Situation/TemporalChangeExplanation'
+import type { SituationBriefResult } from '../../services/intelligenceFlow'
 
 export default function BusinessQueryCard({ card }: { card: QueryCard }) {
   const data = card.data || {}
+  if (card.tool === 'business_attention') {
+    const value = data as unknown as AttentionGrounding
+    const window = data.time_window as { start?: string; end?: string; basis?: string } | undefined
+    return value.coverage && Array.isArray(value.items) && value.items.every(item => item.layers && Array.isArray(item.evidence_refs))
+      ? <>{window && <p>冻结关注时段：{window.start} — {window.end}（截止不含），按{{ discovery: '发现／查获', incident: '案发', entry: '录入' }[window.basis || ''] || '已声明'}时间。</p>}
+        <AttentionGrounds value={value} /></> : <p role="alert">关注依据结构不完整，不能据此判断没有问题。</p>
+  }
+  if (card.tool === 'business_recent_changes') {
+    const value = data as unknown as NonNullable<SituationBriefResult['comparison_snapshot']>
+    return value.current && value.previous && value.change_origins && value.quality
+      ? <><p>本期 {value.current.case_count} 条 · 对照期 {value.previous.case_count} 条，均为冻结时点的登记数量。</p>
+        <p>按{value.time_basis_label || value.time_basis}时间；本期 {value.current.start} — {value.current.end}，对照期 {value.previous.start} — {value.previous.end}（均截止不含）。</p>
+        <TemporalChangeExplanation comparison={value} /></> : <p role="alert">时间比较结构不完整，未用零值代替。</p>
+  }
   if (card.tool === 'read_case_process') {
     const process = data.process as CaseProcess | undefined
     return process?.coverage && Array.isArray(process.events) ? <CaseProcessView process={process} /> : <p>当前没有就绪的过程依据，未为这次读取重新处理案件。</p>

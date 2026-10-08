@@ -10,6 +10,7 @@ from app.ai.model_factory import ModelFactory
 from app.config import settings
 from app.services.case_quality_service import CaseQualityService
 from app.services.case_quality_rules import time_precision
+from app.services.case_feedback_semantics import known_feedback_value
 from app.utils.logger import logger
 
 
@@ -60,8 +61,8 @@ class CasePreprocessService:
             "source_type": case.source_type,
             "oil_nature": case.oil_nature,
             "water_cut": case.water_cut,
-            "police_reported": case.police_reported,
-            "case_filed": case.case_filed,
+            "police_reported": known_feedback_value(case, "police_reported"),
+            "case_filed": known_feedback_value(case, "case_filed"),
         }
         profile = CaseQualityService.build_case_feature_profile(db, case)
         profile_text = json.dumps(profile, ensure_ascii=False, default=str)

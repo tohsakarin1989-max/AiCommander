@@ -1,0 +1,14 @@
+.sw-semantic-changes { padding: 16px 0; font-size: 15px; line-height: 1.65; }
+.sw-semantic-changes summary { cursor: pointer; color: var(--ink-0); }
+.sw-semantic-changes p { max-width: 75ch; }
+.sw-semantic-changes table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.sw-semantic-changes caption { text-align: left; padding-bottom: 10px; }
+.sw-semantic-changes th, .sw-semantic-changes td { padding: 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.sw-semantic-changes th:first-child, .sw-semantic-changes td:nth-child(2) { text-align: left; }
+.sw-temporal-explanation { margin-block: 20px; padding: 18px; border: 1px solid var(--line); font-size: 15px; line-height: 1.65; }
+.sw-temporal-explanation .sw-coverage-table { overflow-x: auto; }
+.sw-temporal-explanation table { width: 100%; border-collapse: collapse; }
+.sw-temporal-explanation th, .sw-temporal-explanation td { padding: 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+.sw-temporal-explanation th:nth-child(2), .sw-temporal-explanation td:nth-child(2) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sw-temporal-explanation summary { cursor: pointer; }
+.sw-record-link { display: inline-block; margin: 2px 8px 2px 0; }

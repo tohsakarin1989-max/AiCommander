@@ -13,7 +13,7 @@ export type CaseResultCandidate = {
 export type CaseResult = {
   id: string; created_at: string; content_sha256: string
   freshness?: 'current' | 'pending_update'
-  composition_status?: 'ready' | 'road_not_ready'
+  composition_status?: 'ready' | 'road_not_ready' | 'not_applicable'
   composition_information_gaps?: string[]
   content: {
     schema_version: string; case_id: number
@@ -27,6 +27,12 @@ export type CaseResult = {
     candidates: CaseResultCandidate[]
     information_gaps: { profile: Array<{ label: string; reason?: string }>; analysis: string[] }
     analysis_status: string; boundary: string[]
+    analysis_applicability?: {
+      version: string; boundary: string
+      entries: Array<{ kind: string; label: string; status: 'applicable' | 'insufficient_data' | 'not_applicable'; reason: string; evidence_refs: string[] }>
+    }
+    recorded_locations?: Array<{ role: string; precision: string; description?: string }>
+    recorded_handling?: Record<string, unknown>
     candidate_source?: string
     composition?: {
       base_result_id: string; base_content_sha256: string

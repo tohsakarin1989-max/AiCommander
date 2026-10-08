@@ -30,6 +30,8 @@ import './SituationWorkbench.css'
 import SpatialCoveragePanel from './SpatialCoveragePanel'
 import RoadChanges from './RoadChanges'
 import AutomaticBriefStatus from './AutomaticBriefStatus'
+import TemporalChangeExplanation from './TemporalChangeExplanation'
+import AttentionGrounds from '../../components/Facility/AttentionGrounds'
 
 
 const WINDOW_OPTIONS = [7, 14, 30, 90].map(value => ({
@@ -183,27 +185,15 @@ function SituationWorkspace({ identity }: { identity: string }) {
 
       {!automaticBriefQuery.isError && automaticBriefQuery.data?.comparison_snapshot && <section aria-label="完整周期比较">
         <h2>完整周期比较</h2>
+        <p>时间口径：{automaticBriefQuery.data.comparison_snapshot.time_basis_label || '案发（历史口径）'}；仅代表已登记数量，不是发生率。</p>
         <p>业务时区：{automaticBriefQuery.data.comparison_snapshot.timezone}；区间左闭右开，下面时间使用 UTC 标识。</p>
         <p>本期：{automaticBriefQuery.data.comparison_snapshot.current.start} — {automaticBriefQuery.data.comparison_snapshot.current.end}，
-          案发 {automaticBriefQuery.data.comparison_snapshot.current.case_count} 起。</p>
+          {automaticBriefQuery.data.comparison_snapshot.time_basis_label || '案发'} {automaticBriefQuery.data.comparison_snapshot.current.case_count} 起。</p>
         <p>对照期：{automaticBriefQuery.data.comparison_snapshot.previous.start} — {automaticBriefQuery.data.comparison_snapshot.previous.end}，
-          案发 {automaticBriefQuery.data.comparison_snapshot.previous.case_count} 起。</p>
+          {automaticBriefQuery.data.comparison_snapshot.time_basis_label || '案发'} {automaticBriefQuery.data.comparison_snapshot.previous.case_count} 起。</p>
         <p>本期生成画像版本 {automaticBriefQuery.data.comparison_snapshot.current.profile_versions_generated} 份，仅代表处理进度。</p>
-        {automaticBriefQuery.data.comparison_snapshot.semantic_changes && <details className="sw-semantic-changes">
-          <summary>手法、地点与时段表述变化</summary>
-          <p>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.boundary}</p>
-          <p>可用画像：上期 {automaticBriefQuery.data.comparison_snapshot.semantic_changes.previous.readable_case_count}/{automaticBriefQuery.data.comparison_snapshot.semantic_changes.previous.case_count} 案，
-            本期 {automaticBriefQuery.data.comparison_snapshot.semantic_changes.current.readable_case_count}/{automaticBriefQuery.data.comparison_snapshot.semantic_changes.current.case_count} 案。</p>
-          {automaticBriefQuery.data.comparison_snapshot.semantic_changes.state === 'comparable'
-            ? <div className="sw-coverage-table"><table><caption>涉及案件数量，非词语出现次数或已确认事实</caption>
-              <thead><tr><th>表述</th><th>性质</th><th>上期</th><th>本期</th><th>变化</th></tr></thead>
-              <tbody>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.changes.map(item => <tr key={`${item.category}:${item.value}:${item.kind}`}>
-                <th>{item.value}</th><td>{{ stated: '明确表述', negated: '否定表述', uncertain: '不确定表述', inferred: '推断表述' }[item.kind] || '待核'}</td>
-                <td>{item.previous_count}</td><td>{item.current_count}</td><td>{item.case_count_change}</td>
-              </tr>)}</tbody></table></div>
-            : <p>两期画像条件不同，暂不计算语义变化。</p>}
-          <p>{automaticBriefQuery.data.comparison_snapshot.semantic_changes.information_gaps.join('；')}</p>
-        </details>}
+        <TemporalChangeExplanation comparison={automaticBriefQuery.data.comparison_snapshot} />
+        {automaticBriefQuery.data.comparison_snapshot.attention && <AttentionGrounds value={automaticBriefQuery.data.comparison_snapshot.attention} />}
         {automaticBriefQuery.data.comparison_snapshot.roads && <RoadChanges data={automaticBriefQuery.data.comparison_snapshot.roads} />}
         {automaticBriefQuery.data.comparison_snapshot.tech_defense && <details><summary>技防同期变化与缺口</summary>
           <p>{automaticBriefQuery.data.comparison_snapshot.tech_defense.boundary}</p>

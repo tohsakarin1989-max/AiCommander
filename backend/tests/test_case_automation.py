@@ -107,7 +107,7 @@ def test_structure_preview_extracts_case_fields_and_material_hints():
     assert fields["oil_volume"] == 1.2
     assert fields["water_cut"] == 8.0
     assert fields["source_type"] == "巡逻发现"
-    assert fields["police_reported"] is True
+    assert fields.get("police_reported") is None  # 移交公安不替代是否报案的明确记录
     assert fields["person_handling"] == "移交公安"
     assert payload["model_status"] == "deterministic_fallback"
     assert payload["intake_mode"] == "rules_fallback"

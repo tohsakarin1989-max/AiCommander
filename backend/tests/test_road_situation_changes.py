@@ -78,7 +78,11 @@ def test_scope_revocation_and_explicit_budget(search_db, monkeypatch):
 
 def test_brief_retains_evidence_and_hides_revoked_source(search_db):
     from app.services.deployment_advisor_service import DeploymentAdvisorService
-    source, _, _ = seed(search_db)
+    from app.services.situation_temporal_changes import closed_window as brief_window
+    source, old, new = seed(search_db)
+    window = brief_window(datetime(2026, 9, 11, tzinfo=timezone.utc), 'daily')
+    old.created_at, new.created_at = window.previous_start, window.current_start
+    search_db.commit()
     brief, reused = DeploymentAdvisorService.generate_brief(search_db, operational_area_id=1,
         period_type='daily', as_of=datetime(2026, 9, 11, tzinfo=timezone.utc))
     assert not reused

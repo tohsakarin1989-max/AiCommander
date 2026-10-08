@@ -159,19 +159,26 @@ def _current(value):
         not value.get("valid_to") or now < _time(value["valid_to"]))
 
 
-def ingest_file(db, *, source_id, template_id, filename, content, source_revision, created_by, plan_token=None):
+def ingest_file(db, *, source_id, template_id, filename, content, source_revision, created_by, plan_token=None, ledger_declaration=None):
     service = _service()
+    from app.services.map_ledger_completeness import declare_plan, parse_declaration
     source = source_for_write(db, source_id, created_by)
     template = service._get_template(db, source.id, template_id)
     digest = hashlib.sha256(content).hexdigest()
     revision = (source_revision or "unspecified").strip()[:200] or "unspecified"
     key = hashlib.sha256(f"{source.id}:{template.id}:{template.version}:{revision}:{digest}".encode()).hexdigest()
+    declaration = parse_declaration(ledger_declaration)
+    if declaration is not None:
+        key = service._hash_json({"file_key": key, "ledger_declaration": declaration})
     existing = db.query(MapIngestRun).filter_by(idempotency_key=key).first()
     if existing:
         return existing, True
     metadata = {}
     rows = service.parse_table(filename, content, template=template, metadata=metadata)
     plan = make_plan(db, source, template, rows, metadata, file_hash=digest)
+    plan = declare_plan(db, source, template, plan, declaration)
+    if declaration is not None and not plan_token:
+        raise ValueError("plan_stale|台账范围声明须先预览，再按同一声明和凭证提交")
     if plan_token and plan_token != plan["plan_token"]:
         raise ValueError("plan_stale|数据、来源或模板已变化，请重新预览")
     if plan["drift"]:
@@ -220,7 +227,8 @@ def retry_rows(db, run_id, data, *, created_by=None, preview=False):
             incoming, _ = normalize(source, template, raw, area.boundary)
             promotion_target(db, source, claim, incoming)
             promotions[claim.row_number] = claim
-    structure = deepcopy(parent.table_metadata or {"headers": list(rows[0][1]), "sheet_name": template.sheet_name, "header_row": template.header_row})
+    from app.services.map_ledger_completeness import correction_metadata
+    structure = correction_metadata(parent.table_metadata or {"headers": list(rows[0][1]), "sheet_name": template.sheet_name, "header_row": template.header_row})
     plan = make_plan(db, source, template, rows, structure, file_hash=request_digest, promotions=promotions)
     if preview:
         return public_plan(plan)
@@ -248,8 +256,12 @@ def list_claims(db, run_id, *, classification=None, offset=0, limit=50):
     query = db.query(MapFeatureClaim).filter_by(run_id=run_id)
     if classification:
         query = query.filter(MapFeatureClaim.plan["classification"].as_string() == classification)
-    return {"items": [_service().claim_to_dict(row) for row in query.order_by(
-        MapFeatureClaim.row_number, MapFeatureClaim.id).offset(offset).limit(limit)],
+    rows = query.order_by(MapFeatureClaim.row_number, MapFeatureClaim.id).offset(offset).limit(limit).all()
+    # Only disclose whether the currently readable row was consumed. Successor
+    # identifiers and data are not exposed by this receipt endpoint.
+    superseded = {parent_id for (parent_id,) in db.query(MapFeatureClaim.parent_claim_id).filter(
+        MapFeatureClaim.parent_claim_id.in_([row.id for row in rows])).distinct()} if rows else set()
+    return {"items": [{**_service().claim_to_dict(row), "retry_superseded": row.id in superseded} for row in rows],
         "total": query.count(), "offset": offset, "limit": limit}
 
 
@@ -319,7 +331,8 @@ def decide_field_group(db, claim_id, data, *, actor_id):
             "classification": "updated", "normalized_payload": deepcopy(claim.normalized_payload),
             "resolved_payload": resolved, "groups": [field_group], "errors": [],
             "changes": [{"field": group + "_decision", "group": group, "old": view["decision_id"], "new": "manual_selection"}]}
-    plan = {"structure": parent.table_metadata, "rows": [item], "counts": {
+    from app.services.map_ledger_completeness import correction_metadata
+    plan = {"structure": correction_metadata(parent.table_metadata), "rows": [item], "counts": {
         "new": 0, "updated": 1, "unchanged": 0, "identity_pending": 0, "conflict": 0, "failed": 0}}
     template = service._get_template(db, source.id, parent.template_id)
     run = _execute(db, source=source, template=template, rows=[(claim.row_number, claim.raw_payload)], plan=plan,

@@ -16,6 +16,7 @@ def expire_abandoned_queries(db):
     predicate = or_(
         and_(AgentRun.status == 'running', AgentRun.started_at <= now - timedelta(seconds=120)),
         and_(AgentRun.status == 'queued', AgentRun.created_at <= now - timedelta(hours=24)),
+        and_(AgentRun.status == 'waiting_clarification', AgentRun.created_at <= now - timedelta(hours=24)),
     )
     ids = [row.id for row in db.query(AgentRun.id).filter(
         AgentRun.task_type == TASK_TYPE, predicate).order_by(AgentRun.id).limit(100)]

@@ -162,6 +162,10 @@ class CaseResultService:
             COMPOSITION_SCHEMA_VERSION, branch_for, is_current_composition,
         )
         base = CaseResultService.latest_base(db, case_id)
+        from app.services.case_analysis_applicability import allows, reason
+        if base['content'].get('analysis_applicability') and not allows(base['content'], 'road_analysis'):
+            return {**base, 'composition_status': 'not_applicable', 'candidate_source': 'recorded_background',
+                    'composition_information_gaps': [reason(base['content'], 'road_analysis')]}
         try:
             branch = branch_for(db)
         except PermissionError:

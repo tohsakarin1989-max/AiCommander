@@ -136,9 +136,13 @@ def _execute(db, scenario):
     profile = db.query(CaseAnalysisProfile).filter_by(case_id=case.id, is_current=True).one()
     insight_event = CaseInsightService.enqueue_analysis(db, profile, snapshot)
     db.commit()
-    step('CaseInsightService', lambda: CaseInsightService.process_event(db, insight_event.id))
-    run = db.query(CaseAnalysisRun).filter_by(case_id=case.id).one()
-    analysis = CaseInsightService.run_to_dict(db, run)
+    if insight_event is not None:
+        step('CaseInsightService', lambda: CaseInsightService.process_event(db, insight_event.id))
+        run = db.query(CaseAnalysisRun).filter_by(case_id=case.id).one()
+        analysis = CaseInsightService.run_to_dict(db, run)
+    else:
+        analysis = {'status': 'not_applicable', 'hypotheses': [],
+                    'analysis_applicability': profile.payload['analysis_applicability']}
     brief, _ = step('DeploymentAdvisorService', lambda: DeploymentAdvisorService.generate_brief(
         db, operational_area_id=area.id, period_type='daily', as_of=datetime.now(timezone.utc)))
     fault = None

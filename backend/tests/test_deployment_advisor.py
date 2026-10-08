@@ -41,6 +41,7 @@ def _analysis_fixture(db: Session) -> OperationalArea:
         case_number="ADVISOR-001",
         operational_area_id=area.id,
         occurred_time=datetime.now(timezone.utc) - timedelta(days=1),
+        discovered_at=datetime.now(timezone.utc) - timedelta(days=1),
         location="南区井场",
         latitude=46.6,
         longitude=125.1,
@@ -51,6 +52,9 @@ def _analysis_fixture(db: Session) -> OperationalArea:
     for index in (2, 3):
         db.add(Case(case_number=f'ADVISOR-00{index}', operational_area_id=area.id,
                     occurred_time=case.occurred_time, case_type='涉油盗窃'))
+    for added_case in db.new:
+        if isinstance(added_case, Case):
+            added_case.discovered_at = case.discovered_at
     db.flush()
     profile = CaseAnalysisProfile(
         id="profile-advisor",

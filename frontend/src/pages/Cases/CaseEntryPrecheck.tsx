@@ -141,7 +141,7 @@ export const CaseEntryPrecheck = ({ form, onBonusVehicleScopeChange, onBonusPers
                     label="人员处理类型"
                   >
                     <Select allowClear placeholder="请选择处理类型">
-                      {['刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
+                      {['移交公安', '刑事拘留', '行政拘留', '治安拘留', '行政处罚', '教育放行', '待核查'].map(option => (
                         <Option key={option} value={option}>{option}</Option>
                       ))}
                     </Select>

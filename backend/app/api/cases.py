@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Annotated, Any, Dict, List, Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from uuid import uuid4
@@ -24,6 +24,7 @@ from app.utils.datetimes import utc_datetime
 from app.api.case_source_schemas import CaseLocationDraft, OilMeasurementDraft, OilUnit
 from app.api.case_sources import router as source_router
 from app.services.case_intake_contract import normalize_intake
+from app.services.case_feedback_semantics import feedback_fields_after_input
 from app.services.case_automation_service import CaseAutomationService
 from app.services.case_intelligence_service import CaseIntelligenceService
 from app.services.case_knowledge_service import CaseKnowledgeService
@@ -139,7 +140,16 @@ class CasePersonDraft(BaseModel):
     notes: Optional[str] = None
 
 
-class CaseCreate(BaseModel):
+class CaseFeedbackInput(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_feedback_provenance(cls, values):
+        if isinstance(values, dict) and "feedback_known_fields" in values:
+            raise ValueError("feedback_known_fields 由服务端根据明确输入维护，不接受客户端声明")
+        return values
+
+
+class CaseCreate(CaseFeedbackInput):
     operational_area_id: Optional[int] = None
     case_number: Optional[str] = None
     occurred_time: Optional[datetime] = None
@@ -192,7 +202,7 @@ class CaseCreate(BaseModel):
     initial_locations: Optional[List[CaseLocationDraft]] = None
     initial_measurements: Optional[List[OilMeasurementDraft]] = None
 
-class CaseUpdate(BaseModel):
+class CaseUpdate(CaseFeedbackInput):
     expected_revision: Optional[int] = Field(default=None, ge=0, strict=True)
 
     @field_validator("expected_revision")
@@ -291,6 +301,7 @@ class CaseResponse(BaseModel):
     source_detail: Optional[str] = None
     police_reported: Optional[bool] = None
     case_filed: Optional[bool] = None
+    feedback_known_fields: Optional[List[str]] = None
     police_officer: Optional[str] = None
     police_phone: Optional[str] = None
     security_officers: Optional[List[str]] = None
@@ -353,6 +364,7 @@ def dashboard_summary(
     operational_area_id: Optional[int] = None,
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
+    time_basis: Literal['legacy_incident', 'discovery', 'incident', 'entry'] = 'legacy_incident',
     db: Session = Depends(get_db),
 ):
     from app.services.dashboard_summary_service import DashboardSummaryService
@@ -360,9 +372,11 @@ def dashboard_summary(
     allowed = db.info.get("authorized_area_ids")
     if operational_area_id is not None and allowed is not None and operational_area_id not in allowed:
         raise HTTPException(status_code=403, detail="当前账号无权查看该辖区态势")
+    if time_basis != 'legacy_incident' and operational_area_id is None:
+        raise HTTPException(status_code=422, detail="新时间口径需明确授权辖区")
     try:
         return DashboardSummaryService.build(db, operational_area_id=operational_area_id, days=days,
-            activity_limit=activity_limit, start_date=start_date, end_date=end_date)
+            activity_limit=activity_limit, start_date=start_date, end_date=end_date, time_basis=time_basis)
     except ValueError as error:
         raise HTTPException(status_code=422, detail="大屏时间窗须大于零且不超过十年；全历史请使用区域或专题统计") from error
 
@@ -403,6 +417,7 @@ def preview_case_quality(payload: CaseCreate, db: Session = Depends(get_db)):
     measurement_drafts = draft_data.pop("initial_measurements", None) or []
     from app.models.case_source import CaseLocation, OilMeasurement
     case = Case(**draft_data)
+    case.feedback_known_fields = feedback_fields_after_input(None, draft_data)
     vehicles = [
         CaseVehicle(**{key: value for key, value in item.items() if key != "id"})
         for item in vehicle_drafts

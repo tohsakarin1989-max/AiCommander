@@ -13,6 +13,7 @@ from app.utils.datetimes import utc_datetime
 from app.services.case_number_service import occupied_numbers, is_number_collision, ensure_number_transaction
 from app.services.case_intake_contract import normalize_intake, OIL_UNITS
 from app.services.case_source_service import CaseSourceService
+from app.services.case_feedback_semantics import feedback_fields_after_input
 from app.models.case_source import CaseLocation, OilMeasurement
 
 class CaseService:
@@ -105,6 +106,8 @@ class CaseService:
         - 如果未提供案件编号，则按日期+当天排序自动生成（YYYYMMDD-001）
         """
         operational_area_id = require_area_write_access(db, operational_area_id)
+        feedback_known_fields = feedback_fields_after_input(None, {
+            "police_reported": police_reported, "case_filed": case_filed})
         intake = dict(occurred_time=occurred_time, occurred_from=occurred_from, occurred_to=occurred_to,
                       time_expression=time_expression, time_timezone=time_timezone, discovered_at=discovered_at,
                       report_time=report_time, latitude=latitude, longitude=longitude, oil_volume=oil_volume,
@@ -153,6 +156,7 @@ class CaseService:
             source_detail=source_detail,
             police_reported=police_reported,
             case_filed=case_filed,
+            feedback_known_fields=feedback_known_fields,
             police_officer=police_officer,
             police_phone=police_phone,
             security_officers=security_officers,
@@ -444,6 +448,7 @@ class CaseService:
             return None
         require_area_write_access(db, case.operational_area_id)
         try:
+            feedback_known_fields = feedback_fields_after_input(case, kwargs)
             values = normalize_intake({**kwargs, "initial_locations": initial_locations,
                                        "initial_measurements": initial_measurements}, existing=case)
             initial_locations = values.pop("initial_locations")
@@ -465,6 +470,8 @@ class CaseService:
                     legacy[key] = getattr(case, key)
                     setattr(case, key, None)
             case._source_legacy_inputs = legacy
+            if feedback_known_fields != case.feedback_known_fields:
+                kwargs["feedback_known_fields"] = feedback_known_fields
             repo.update(case, commit=False, **kwargs)
             CaseService._sync_initial_bonus_records(
                 db,
@@ -523,6 +530,8 @@ class CaseService:
             areas.append(index.payload.get('history_area_id')
                          if isinstance(index.payload, dict) else None)
         try:
+            from app.services.situation_temporal_changes import record_withdrawal
+            record_withdrawal(db, case)
             record_change(db, case_id=case.id, area_ids=areas)
             repo.delete(case)
         except Exception:

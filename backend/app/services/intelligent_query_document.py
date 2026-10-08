@@ -8,6 +8,7 @@ from app.services.intelligent_query_tasks import read_query
 
 SCHEMA = 'intelligent-query-document-4.3-1'
 TOOLS = {'find_cases': '案件查找', 'find_places': '地点与设施', 'count_cases': '条件统计',
+         'business_attention': '区域与设施关注依据', 'business_recent_changes': '业务时间与变化来源',
          'compare_periods': '时间段比较', 'summarize_results': '已有研判成果',
          'find_road_results': '历史道路成果', 'find_case_profiles': '案件语义画像',
          'find_history': '历史案件与经验参考', 'aggregate_case_profiles': '全库画像条件统计',
@@ -91,6 +92,17 @@ def build_query_document(task):
             blocks.append(DocumentBlock('paragraph', finding['text']))
             blocks.append(DocumentBlock('paragraph', '依据：' + '、'.join(finding['evidence_refs'])))
         blocks.append(DocumentBlock('table', '信息缺口', tuple(_rows(answer['information_gaps']))))
+        if answer.get('schema_version') == 'business-answer-8.4-1':
+            labels = {'answered': '已回答', 'partial': '部分回答', 'insufficient_data': '资料不足',
+                      'service_unavailable': '依赖服务不可用'}
+            blocks.extend([
+                DocumentBlock('paragraph', '回答完整度：' + labels.get(answer.get('completeness'), '未声明')),
+                DocumentBlock('paragraph', answer.get('direct_answer', '')),
+                DocumentBlock('table', '支持依据', tuple(_rows(answer.get('evidence', [])))),
+                DocumentBlock('table', '差异或反向情况', tuple(_rows(answer.get('differences', [])))),
+                DocumentBlock('table', '尚不能回答的部分', tuple(_rows(answer.get('unanswered', [])))),
+                DocumentBlock('table', '时间、范围与版本', tuple(_rows(answer.get('time_scope_versions', {})))),
+            ])
     for card in result['cards']:
         if card.get('tool') not in TOOLS:
             raise ValueError('query_document_unknown_tool')
@@ -115,6 +127,11 @@ def export_query_document(db, run_id, format):
     if format not in {'docx', 'pdf'}:
         raise ValueError('query_document_format')
     task = read_query(db, run_id)
+    if (task.get('result', {}).get('answer') or {}).get('schema_version') == 'business-answer-8.4-1':
+        # Unified reader/Word/PDF share the frozen map and answer. The catalogue
+        # calls build_query_document (not this exporter), so this is not recursion.
+        from app.services.result_document import export_result
+        return export_result(db, 'query', run_id, format)
     document = build_query_document(task)
     data = render_docx(document)
     if format == 'pdf':

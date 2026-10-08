@@ -3,9 +3,11 @@ import { Alert, Button, Input, Pagination, Select, Space, Table } from 'antd'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { mapLedgerImportsApi, type MapFieldContract, type MapFieldGroup, type MapLedgerClaim, type MapLedgerPreview, type MapLedgerRun, type MapRetryRequest, type MapRowClassification } from '../../services/mapLedgerImports'
-import { displayMapValue, downloadMapFile, groupLabels, mapImportError, mapPreviewCanCommit, mapReceivedTime, mapRowLabels, prepareMapRetry } from './mapLedgerPresentation'
+import { displayMapValue, downloadMapFile, groupLabels, mapBatchError, mapImportError, mapPreviewCanCommit, mapReceivedTime, mapRowLabels, prepareMapRetry } from './mapLedgerPresentation'
 import MapImportPlan, { MapPlanDetails } from './MapImportPlan'
 import MapFieldDecision from './MapFieldDecision'
+import MapBatchCorrection from './MapBatchCorrection'
+import MapLedgerComparisonReceipt from './MapLedgerComparison'
 
 export default function MapIngestHistory({ sourceId, contract, templateId, onChanged, onDirtyChange }: {
   sourceId: number; contract: MapFieldContract; templateId?: number; onChanged: () => void; onDirtyChange: (dirty: boolean) => void
@@ -18,19 +20,38 @@ export default function MapIngestHistory({ sourceId, contract, templateId, onCha
   const [busy, setBusy] = useState(false), [failure, setFailure] = useState(''), [notice, setNotice] = useState('')
   const [submissionSent, setSubmissionSent] = useState(false)
   const [decision, setDecision] = useState<{ claimId: number; group: MapFieldGroup } | null>(null)
+  const [batchRows, setBatchRows] = useState<MapLedgerClaim[]>([]), [batchLocked, setBatchLocked] = useState(false)
   const mounted = useRef(true), busyRef = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const runs = useQuery({ queryKey: ['map-ingest-runs', user?.id, sessionEpoch, sourceId, offset], gcTime: 0,
     queryFn: ({ signal }) => mapLedgerImportsApi.runs(sourceId, offset, signal) })
   const claims = useQuery({ queryKey: ['map-ingest-claims', user?.id, sessionEpoch, run?.id, claimOffset, classification], gcTime: 0,
     queryFn: ({ signal }) => mapLedgerImportsApi.claims(run!.id, claimOffset, classification, signal), enabled: !!run })
-  const dirty = claim !== null || decision !== null
+  const dirty = claim !== null || decision !== null || batchRows.length > 0
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false) }, [dirty, onDirtyChange])
   useEffect(() => {
     if (!dirty) return
     const guard = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard)
   }, [dirty])
+  useEffect(() => {
+    if (batchLocked || !claims.isSuccess) return
+    setBatchRows(previous => {
+      const current = new Map(claims.data.items.map(row => [row.id, row]))
+      const cause = previous.length ? mapBatchError(previous[0])?.key : undefined
+      return previous.map(row => current.get(row.id) || row).filter(row => !!cause && mapBatchError(row)?.key === cause)
+    })
+  }, [claims.data, claims.isSuccess, batchLocked])
+  const selectBatchRows = (keys: React.Key[]) => {
+    if (batchLocked || busy || claim || decision || attempt || !run) return
+    const available = new Map([...batchRows, ...(claims.isSuccess ? claims.data.items : [])].map(row => [row.id, row]))
+    const selected = keys.map(key => available.get(Number(key))).filter((row): row is MapLedgerClaim => !!row)
+    const cause = selected.length ? mapBatchError(selected[0])?.key : undefined
+    if (selected.length > 200 || selected.some(row => row.run_id !== run.id || !cause || mapBatchError(row)?.key !== cause)) {
+      setFailure('请选择同批次、同一字段和错误的未修订失败行，每次最多 200 行。'); return
+    }
+    setBatchRows(selected); setFailure(''); setNotice('')
+  }
   const allowReplace = () => !decision && (!claim || (!attempt && window.confirm('当前异常行有尚未提交的修正，切换后会丢失。仍要切换吗？')))
   const act = async (work: () => Promise<void>) => {
     if (busyRef.current) return
@@ -69,7 +90,7 @@ export default function MapIngestHistory({ sourceId, contract, templateId, onCha
     <Table size="small" rowKey="id" loading={runs.isPending} dataSource={runs.isSuccess ? runs.data.items : []} pagination={false} columns={[
       { title: '原文件 / 来源修订', render: (_, item) => <span>{item.filename}<br />{item.source_revision || '未单列修订'}<br />接收：{mapReceivedTime(item.started_at)}</span> },
       { title: '处理结果', render: (_, item) => Object.entries(mapRowLabels).map(([key, label]) => `${label} ${item.counts?.[key as MapRowClassification] ?? '未记录'}`).join(' · ') },
-      { title: '批次', render: (_, item) => <Button disabled={busy || !!attempt || !!decision} onClick={() => {
+      { title: '批次', render: (_, item) => <Button disabled={busy || !!attempt || !!decision || batchRows.length > 0} onClick={() => {
         if (!allowReplace()) return
         setRun(item); setClaim(null); setValues({}); setPreview(null); setAttempt(null); setClaimOffset(0); setFailure('')
       }}>查看逐行回执</Button> },
@@ -78,23 +99,37 @@ export default function MapIngestHistory({ sourceId, contract, templateId, onCha
     {run && <>
       <p>批次 <code>{run.id}</code> · 工作表 {run.table_metadata?.sheet_name || 'CSV / 未单列'} · 表头行 {run.table_metadata?.header_row ?? '未记录'} · 来源修订 {run.source_revision || '未记录'}</p>
       {run.parent_run_id && <p>本次修正来源批次：{run.parent_run_id}</p>}
+      {run.ledger_declaration && <p>完整度与期间声明人：{run.declaration_actor_id ? `账号 #${run.declaration_actor_id}` : '历史记录未保存'}，声明时间为本批次接收时间；业务有效期另行标明。</p>}
+      <MapLedgerComparisonReceipt key={run.id} runId={run.id} declaration={run.ledger_declaration} />
       <p>原件引用：{run.original_evidence_object_id ? `#${run.original_evidence_object_id}` : '此批次未记录受控原件引用'}。下载仍按现有原件权限，不以本页字段代替原件。</p>
       {run.original_evidence_object_id && <Button disabled={busy} onClick={() => void act(async () => {
         const blob = await mapLedgerImportsApi.original(run.id)
         if (mounted.current) downloadMapFile(blob, run.filename)
       })}>下载本批次受控原件</Button>}
-      <Select aria-label="台账回执行分类" allowClear placeholder="全部行分类" value={classification} disabled={busy || !!attempt || !!decision} style={{ minWidth: 180 }}
+      <Select aria-label="台账回执行分类" allowClear placeholder="全部行分类" value={classification} disabled={busy || !!attempt || !!decision || batchRows.length > 0} style={{ minWidth: 180 }}
         options={Object.entries(mapRowLabels).map(([value, label]) => ({ value, label }))}
         onChange={value => { setClassification(value); setClaimOffset(0) }} />
-      <Button disabled={busy} onClick={() => { void claims.refetch(); void runs.refetch() }}>刷新回执</Button>
+      <Button disabled={busy || batchLocked} onClick={() => {
+        void claims.refetch(); void runs.refetch(); void queryClient.invalidateQueries({ queryKey: ['map-ledger-comparison'] })
+      }}>刷新回执</Button>
+      <p>勾选同因失败行可一起修正，跨页保留选择，最多 200 行。成功行、已有修订行及身份或来源冲突不可批量选择。</p>
+      {batchRows.length > 0 && <Button disabled={busy || batchLocked || !claims.isSuccess} onClick={() => {
+        const cause = mapBatchError(batchRows[0])?.key
+        selectBatchRows([...new Set([...batchRows.map(row => row.id), ...(claims.isSuccess ? claims.data.items : [])
+          .filter(row => !!cause && mapBatchError(row)?.key === cause).map(row => row.id)])])
+      }}>选中本页同因异常</Button>}
       {claims.isError && <Alert type="error" message="行回执读取失败，当前页不使用旧缓存。" />}
       <Table size="small" rowKey="id" loading={claims.isPending} dataSource={claims.isSuccess ? claims.data.items : []} pagination={false}
+        rowSelection={{ selectedRowKeys: batchRows.map(row => row.id), preserveSelectedRowKeys: true, hideSelectAll: true,
+          onChange: selectBatchRows, getCheckboxProps: item => ({ disabled: busy || batchLocked || !!claim || !!attempt || !!decision
+            || !mapBatchError(item) || (batchRows.length > 0 && mapBatchError(item)?.key !== mapBatchError(batchRows[0])?.key),
+          'aria-label': `选择第 ${item.row_number} 行同因异常` }) }}
         expandable={{ expandedRowRender: item => <><p>原始列值：{displayMapValue(item.raw_payload)}</p><p>原声明 {item.parent_claim_id ?? '无'} · 身份引用 {item.source_identity_id ?? '未确定'} · 身份裁决 {item.identity_decision_id ?? '未记录'}</p>{item.plan && <MapPlanDetails row={item.plan} fields={contract.fields} />}</> }} columns={[
-          { title: '原表行', dataIndex: 'row_number' }, { title: '状态', render: (_, item) => mapRowLabels[item.plan?.classification as MapRowClassification] || item.status },
-          { title: '异常续做', render: (_, item) => <Space wrap><Button disabled={busy || !!attempt || !!decision || !['failed', 'conflict', 'identity_pending'].includes(item.plan?.classification || '') || !item.raw_payload}
+          { title: '原表行', dataIndex: 'row_number' }, { title: '状态', render: (_, item) => item.retry_superseded ? '已有后续修订，请查看最新批次' : mapRowLabels[item.plan?.classification as MapRowClassification] || item.status },
+          { title: '异常续做', render: (_, item) => <Space wrap><Button disabled={busy || !!attempt || !!decision || batchRows.length > 0 || item.retry_superseded || !['failed', 'conflict', 'identity_pending'].includes(item.plan?.classification || '') || !item.raw_payload}
             onClick={() => { if (!allowReplace()) return; setClaim(item); setValues({ ...item.raw_payload }); setPreview(null); setAttempt(null); setFailure(''); setNotice('') }}>修正这一行</Button>
             {item.plan?.groups.filter(group => group.status === 'conflict' && ['geometry', 'water_cut', 'production', 'details'].includes(group.group)).map(group => <Button key={group.group}
-              disabled={busy || !!attempt || !!decision} onClick={() => {
+              disabled={busy || !!attempt || !!decision || batchRows.length > 0 || item.retry_superseded} onClick={() => {
                 if (!allowReplace()) return
                 setClaim(null); setValues({}); setDecision({ claimId: item.id, group: group.group as MapFieldGroup }); setNotice('')
               }}>核对{groupLabels[group.group] || group.group}来源</Button>)}
@@ -104,6 +139,13 @@ export default function MapIngestHistory({ sourceId, contract, templateId, onCha
     </>}
     {notice && <Alert type="success" showIcon message={notice} />}
     {failure && <Alert type="warning" showIcon role="alert" message={failure} />}
+    {run && batchRows.length > 0 && <MapBatchCorrection key={`${sessionEpoch}:${sourceId}:${run.id}`} run={run} claims={batchRows}
+      templateId={templateId} fields={contract.fields} onLockedChange={setBatchLocked} onClose={() => { setBatchRows([]); setBatchLocked(false) }}
+      onComplete={result => {
+        setBatchRows([]); setBatchLocked(false); setRun(result); setClassification(undefined); setClaimOffset(0)
+        setNotice(`所选行修正已记录为新批次 ${result.id}，下方回执可逐行核对；原始行未覆盖。`)
+        void queryClient.invalidateQueries({ queryKey: ['map-ingest-runs'] }); void queryClient.invalidateQueries({ queryKey: ['map-ingest-claims'] }); onChanged()
+      }} />}
     {decision && <MapFieldDecision key={`${decision.claimId}:${decision.group}`} {...decision} fields={contract.fields}
       onClose={() => setDecision(null)} onComplete={id => {
         setDecision(null); setNotice(`已按明确理由采用字段组，新批次 ${id}；原始行和其他字段组未覆盖。`)

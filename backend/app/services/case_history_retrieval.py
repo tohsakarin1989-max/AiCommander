@@ -1,5 +1,6 @@
 """统一授权片段检索入口；结构、词项与语义分别召回，缺失明确降级。"""
 import re
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -90,17 +91,64 @@ def _asset_access(db: Session, asset: KnowledgeAsset) -> bool:
 
 class CaseHistoryRetrieval:
     @staticmethod
+    def case_references(db: Session, *, source_case_id: int, filters: dict | None = None) -> dict:
+        """One read-only daily view: at most two similar cases and one contrast."""
+        from app.services.case_history_fragment_search import validate_fragment_item
+
+        deadline, embedder, vectors = time.monotonic() + SCAN_SECONDS, get_local_embedder(), {}
+        observed = {'similar': {}, 'contrast': {}}
+        outputs = {}
+        for purpose in ('similar', 'contrast'):
+            outputs[purpose] = CaseHistoryRetrieval._search(db, source_case_id=source_case_id,
+                filters=filters, limit=3, purpose=purpose, deadline=deadline, embedding_model=embedder,
+                observations=observed[purpose], query_vector_cache=vectors)
+        similar, contrast = outputs['similar'], outputs['contrast']
+        binding_keys = ('source_text_hash', 'source_revision_id', 'scope_hash', 'filters', 'query_sha256')
+        if any(similar['query_context'].get(key) != contrast['query_context'].get(key) for key in binding_keys):
+            raise HistoryUnavailable('history_reference_source_changed')
+        # Reserve the independent contrast slot; a case cannot appear twice via
+        # its original record and a confirmed experience card.
+        contrasting = contrast['items'][:1]
+        seen = {row['case_id'] for row in contrasting}
+        matching = []
+        for row in similar['items']:
+            if row['case_id'] not in seen and len(matching) < 2:
+                matching.append(row)
+                seen.add(row['case_id'])
+        items = matching + contrasting
+        for item in items:
+            validate_fragment_item(db, item, source_case_id=source_case_id)
+        coverage = dict(similar['coverage'])
+        for key, observation in (('scanned_cases', 'checked_cases'), ('recalled_fragments', 'recalled_fragments'),
+                                 ('validated_fragments', 'validated_fragments'), ('matched_sources', 'matched_sources')):
+            coverage[key] = len(set().union(*(row.get(observation, set()) for row in observed.values())))
+        coverage['branch_counts'] = {branch: len(set().union(*(
+            row.get('branches', {}).get(branch, set()) for row in observed.values())))
+            for branch in ('structural', 'lexical', 'semantic')}
+        coverage['complete'] = all(row['coverage']['complete'] for row in outputs.values())
+        coverage['scan_complete'] = all(row['coverage']['scan_complete'] for row in outputs.values())
+        coverage['recall_truncated'] = any(row['coverage']['recall_truncated'] for row in outputs.values())
+        coverage['recall_purposes'] = {key: row['coverage'] for key, row in outputs.items()}
+        partial = any(row['state'] == 'partial' for row in outputs.values())
+        return {**similar, 'purpose': 'mixed', 'items': items, 'coverage': coverage,
+            'state': 'partial' if partial else 'ready', 'degraded': any(row['degraded'] for row in outputs.values()),
+            'query_context': {**similar['query_context'], 'purpose': 'mixed'},
+            'reference_mix': {'similar': len(matching), 'contrast': len(contrasting), 'limit': 3,
+                              'deduplicated_by': 'case_id', 'version': 'case-references-8.1-1'},
+            'boundary': '最多两项相似参考与一项独立差异对照，按案件去重，不够不凑；' + similar['boundary']}
+
+    @staticmethod
     def search(db: Session, *, query: str = "", source_case_id: int | None = None,
                filters: dict | None = None, limit: int = 3, reuse_only: bool = False,
                query_conditions: set[tuple[str, str, str]] | None = None,
                deadline: float | None = None, exclude_case_sources: set[int] | None = None,
-               cancelled=lambda: False) -> dict:
-        if not 1 <= limit <= 20:
+               cancelled=lambda: False, purpose: str = "similar") -> dict:
+        if not 1 <= limit <= 20 or purpose not in {"similar", "contrast"}:
             raise ValueError("invalid_history_query")
         return CaseHistoryRetrieval._search(
             db, query=query, source_case_id=source_case_id, filters=filters, limit=limit,
             reuse_only=reuse_only, query_conditions=query_conditions, deadline=deadline,
-            exclude_case_sources=exclude_case_sources, cancelled=cancelled,
+            exclude_case_sources=exclude_case_sources, cancelled=cancelled, purpose=purpose,
         )
 
     @staticmethod

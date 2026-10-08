@@ -8,13 +8,27 @@ import json
 from pathlib import Path
 
 
-def _digest(path):
+def _digest(path, cancel_event=None):
     with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        if cancel_event is None:
+            return hashlib.file_digest(stream, 'sha256').hexdigest()
+        digest = hashlib.sha256()
+        while True:
+            _checkpoint(cancel_event)
+            data = stream.read(4 * 1024 * 1024)
+            if not data:
+                return digest.hexdigest()
+            digest.update(data)
+
+
+def _checkpoint(cancel_event):
+    if cancel_event is not None and cancel_event.is_set():
+        from app.services.vehicle_router import RoadCalculationError
+        raise RoadCalculationError('road_calculation_cancelled')
 
 
 def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int], expected_source_sha256: str,
-                       condition_overlays: dict | None = None, vehicle_kind: str = 'auto'):
+                       condition_overlays: dict | None = None, vehicle_kind: str = 'auto', cancel_event=None):
     import osmium
     from app.services.road_condition_tags import compile_condition_tags, match_geometry_component
     from app.services.public_road_access import public_way_access, public_node_access, POLICY_VERSION, NODE_POLICY_VERSION
@@ -28,7 +42,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
     requested_exclusions = sorted(excluded_way_ids)
     excluded_way_ids = set(excluded_way_ids)
     source = Path(source).resolve(strict=True)
-    if _digest(source) != expected_source_sha256:
+    if _digest(source, cancel_event) != expected_source_sha256:
         raise ValueError('road_source_checksum_mismatch')
     nodes, ways, referenced_nodes, relations = set(), set(), set(), {}
     compiled_tags = {}
@@ -40,6 +54,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
 
     class Index(osmium.SimpleHandler):
         def node(self, node):
+            _checkpoint(cancel_event)
             if node.id in nodes or not node.location.valid():
                 raise ValueError('road_source_node_invalid')
             nodes.add(node.id)
@@ -48,6 +63,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
                 node_restrictions[node.id] = access
 
         def way(self, way):
+            _checkpoint(cancel_event)
             if way.id in ways:
                 raise ValueError('road_source_duplicate_way')
             ways.add(way.id)
@@ -74,6 +90,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
                     compiled_tags[way.id] = compile_condition_tags(dict(way.tags), coordinates, overlay)
 
         def relation(self, relation):
+            _checkpoint(cancel_event)
             if relation.id in relations:
                 raise ValueError('road_source_duplicate_relation')
             relations[relation.id] = (dict(relation.tags), [(m.type, m.ref, m.role) for m in relation.members])
@@ -89,6 +106,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
         raise ValueError('road_source_node_reference_missing')
     known = {'n': nodes, 'w': ways, 'r': set(relations)}
     for _, members in relations.values():
+        _checkpoint(cancel_event)
         if any(kind not in known or ref not in known[kind] for kind, ref, _ in members):
             raise ValueError('road_source_relation_reference_missing')
     dropped = set()
@@ -99,6 +117,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
     while True:
         previous = len(dropped)
         for identifier, (tags, members) in relations.items():
+            _checkpoint(cancel_event)
             if identifier in dropped or not any(
                     (kind == 'w' and ref in excluded_way_ids) or (kind == 'r' and ref in dropped)
                     for kind, ref, _ in members):
@@ -163,6 +182,7 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
     with osmium.SimpleWriter(str(destination)) as writer:
         class Copy(osmium.SimpleHandler):
             def node(self, node):
+                _checkpoint(cancel_event)
                 if node.id in node_restrictions:
                     # A compiled barrier splits the edge at the real source
                     # node. Do not delete entire roads or fabricate a connector.
@@ -180,24 +200,27 @@ def filter_road_source(source: Path, output: Path, *, excluded_way_ids: set[int]
                 counts['nodes'] += 1
 
             def way(self, way):
+                _checkpoint(cancel_event)
                 if way.id not in excluded_way_ids:
                     writer.add_way(way.replace(tags=compiled_tags[way.id]) if way.id in compiled_tags else way)
                     counts['ways'] += 1
 
             def relation(self, relation):
+                _checkpoint(cancel_event)
                 if relation.id not in dropped:
                     writer.add_relation(relation.replace(members=rewritten_members[relation.id])
                         if relation.id in rewritten_members else relation)
                     counts['relations'] += 1
         Copy().apply_file(str(source))
         for turn in generated_turns:
+            _checkpoint(cancel_event)
             writer.add_relation(osmium.osm.mutable.Relation(id=turn['relation_id'], version=1,
                 tags=turn['tags'], members=turn['members']))
             counts['relations'] += 1
-    if _digest(source) != expected_source_sha256:
+    if _digest(source, cancel_event) != expected_source_sha256:
         raise ValueError('road_source_changed_during_filter')
     report = {'schema_version': 'road-source-filter-4.2.0-1', 'source_sha256': expected_source_sha256,
-              'output_sha256': _digest(destination), 'excluded_way_ids': sorted(excluded_way_ids),
+              'output_sha256': _digest(destination, cancel_event), 'excluded_way_ids': sorted(excluded_way_ids),
               'condition_overlay_way_ids': sorted(compiled_tags),
               'requested_excluded_way_ids': requested_exclusions,
               'public_access_policy_version': POLICY_VERSION, 'vehicle_kind': vehicle_kind,

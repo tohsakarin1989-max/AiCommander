@@ -60,8 +60,9 @@ class Case(Base):
     report_unit = Column(String(100))  # 报送/责任单位、保卫班
     source_type = Column(String(50))  # 线索来源：巡逻发现/群众举报/领导指派/公安机关线索等
     source_detail = Column(Text)  # 线索补充说明
-    police_reported = Column(Boolean, default=False)  # 是否报案
-    case_filed = Column(Boolean, default=False)  # 是否立案
+    police_reported = Column(Boolean, nullable=True)  # 未知保留 NULL，不自动填否
+    case_filed = Column(Boolean, nullable=True)  # 移交不等于立案或办结
+    feedback_known_fields = Column(JSON, nullable=True)  # NULL: 历史来源未确认；仅服务端记录明确输入
     police_officer = Column(String(100))  # 公安出警人
     police_phone = Column(String(50))  # 公安出警联系电话
     security_officers = Column(JSON)  # 保卫班出警人员

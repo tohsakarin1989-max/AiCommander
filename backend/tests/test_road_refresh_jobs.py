@@ -18,12 +18,14 @@ from app.services.case_road_triggers import REQUEST_TYPE
 from test_case_results import db_session, result_data  # noqa: F401
 from test_road_network_service import ready  # noqa: F401
 from test_case_road_triggers import source_event
+from case_v80_fixtures import rebuild_applicable_profile
 
 
 @pytest.fixture
 def delegated(ready, result_data):
     db = ready
     profile, run, _ = result_data
+    rebuild_applicable_profile(db, profile)
     profile.source_hash = CasePipelineService.source_hash(db, db.get(Case, 1))
     profile.schema_version = CASE_PROFILE_SCHEMA_VERSION
     profile.dictionary_version = CASE_DICTIONARY_VERSION
@@ -64,7 +66,7 @@ def test_new_connection_requeues_without_any_old_path_or_artifact(delegated):
     assert job.payload['facility_versions'] == refresh.current_versions()
     assert refresh.process(db, event_id)['claimed'] is False
     assert db.query(OutboxEvent).filter_by(event_type=COMPARE_TYPE).count() == 1
-    assert db.get(Case, 1).description == '合成记录'
+    assert db.get(Case, 1).description == '合成记录：现场明确记录打孔盗油痕迹。'
 
 
 @pytest.mark.parametrize('change', ['revoked', 'changed_case', 'other_graph', 'cancelled'])
@@ -199,6 +201,12 @@ def test_ready_transition_and_refresh_event_are_one_commit(delegated, monkeypatc
     monkeypatch.setattr(publication, '_check', lambda *args: None)
     monkeypatch.setattr(publication, 'install_graph_artifact', lambda *args, **kwargs: 'c' * 64)
     monkeypatch.setattr(publication, 'verify_graph_artifact', lambda *args: None)
+    # This test isolates the atomic DB transition; source retention has its own
+    # PBF/immutability tests, just as graph copying does.
+    graph.source_manifest = {**graph.source_manifest, 'filter_result': {'output_sha256': 'd' * 64}}
+    db.commit()
+    monkeypatch.setattr(publication, 'install_retained_source', lambda *args, **kwargs: {'source_sha256': 'd' * 64})
+    monkeypatch.setattr(publication, 'verify_retained_source', lambda *args: None)
     original = publication.enqueue_publication
     def interrupt(*args, **kwargs):
         original(*args, **kwargs)

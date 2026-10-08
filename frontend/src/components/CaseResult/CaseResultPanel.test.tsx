@@ -30,6 +30,20 @@ const fixture = (): CaseResult => ({
 })
 
 describe('统一成果展示', () => {
+  it('查获记录显示适用范围，不展示等待道路计算或要求补齐侦查信息', () => {
+    const result = fixture()
+    result.composition_status = 'not_applicable'
+    result.content.candidates = []
+    result.content.analysis_status = 'not_applicable'
+    result.content.analysis_applicability = { version: 'case-applicability-8.0-1',
+      boundary: '不代表本单位处置进展', entries: [{ kind: 'source_inference', label: '来源分析',
+        status: 'not_applicable', reason: '只有查获地点，不据此寻找盗取来源。', evidence_refs: ['case_revision:1'] }] }
+    const html = renderToStaticMarkup(<CaseResultPanel caseId={1} result={result} />)
+    expect(html).toContain('本次不适用')
+    expect(html).toContain('不据此寻找盗取来源')
+    expect(html).not.toContain('当前道路组合未就绪')
+    expect(html).not.toContain('正在读取自动道路')
+  })
   it('显示全部支持与反向证据、引用和固定版本，不显示概率百分比', () => {
     const html = renderToStaticMarkup(<CaseResultPanel caseId={1} result={fixture()} />)
     for (const text of ['支持一', '支持二', '反向证据一', '缺少入口资料', 'map_asset:3@snapshot:map-1', 'frozen-hash', '冻结地点', '规则支持度：72.5']) expect(html).toContain(text)

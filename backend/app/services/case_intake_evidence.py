@@ -10,7 +10,7 @@ import re
 
 CLAUSES = re.compile(r"[^，,。；;！？!?\n]+[，,。；;！？!?\n]?")
 STATUS_TERMS = {
-    "police_reported": ("报案", "报警", "移交公安", "公安接收", "公安处理"),
+    "police_reported": ("报案", "报警"),
     "case_filed": ("立案",),
 }
 UNIT_TERMS = {"tonne": ("吨",), "liter": ("升",), "kg": ("千克", "公斤"), "m3": ("立方米", "方")}
@@ -101,6 +101,6 @@ def finalize_intake_evidence(text: str, result: dict) -> dict:
         anchors.append({"id": f"anchor-{index}", "field": field,
                         "source": item.get("source", ""), **ref})
     result.update(case_fields=fields, candidates=candidates, evidence_anchors=anchors,
-                  extraction_evidence_version="intake-evidence-7.1-1",
+                  extraction_evidence_version="intake-evidence-8.0-1",
                   source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
     return result

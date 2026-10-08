@@ -538,6 +538,7 @@ async def preview_map_source(
     request: Request,
     file: UploadFile = File(...),
     template_id: int | None = Query(default=None),
+    ledger_declaration: str | None = Form(default=None, max_length=3000),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _require_admin(request)
@@ -549,6 +550,7 @@ async def preview_map_source(
             filename=filename,
             content=content,
             template_id=template_id,
+            ledger_declaration=ledger_declaration,
         )
     except (UnicodeDecodeError, InvalidFileException, csv.Error, zipfile.BadZipFile) as exc:
         raise HTTPException(status_code=400, detail="文件无法解析") from exc
@@ -565,6 +567,7 @@ async def ingest_map_source(
     template_id: int = Query(...),
     source_revision: str | None = Query(default=None, max_length=200),
     plan_token: str | None = Form(default=None, min_length=64, max_length=64),
+    ledger_declaration: str | None = Form(default=None, max_length=3000),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     principal = _require_admin(request)
@@ -579,6 +582,7 @@ async def ingest_map_source(
             source_revision=source_revision,
             created_by=_principal_user_id(principal),
             plan_token=plan_token or request.query_params.get("plan_token"),
+            ledger_declaration=ledger_declaration,
         )
     except (UnicodeDecodeError, InvalidFileException, csv.Error, zipfile.BadZipFile) as exc:
         raise HTTPException(status_code=400, detail="文件无法解析") from exc
@@ -608,6 +612,16 @@ def map_import_fields(request: Request):
     _require_admin(request)
     from app.services.map_import_contract import field_contract
     return field_contract()
+
+
+@router.get("/map-ingest-runs/{run_id}/ledger-comparison")
+def get_map_ledger_comparison(run_id: str, request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.services.map_ledger_completeness import read_comparison
+    try:
+        return read_comparison(db, run_id)
+    except ValueError as exc:
+        raise _service_error(exc) from exc
 
 
 @router.get("/map-import-example")

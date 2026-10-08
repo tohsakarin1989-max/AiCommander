@@ -60,4 +60,14 @@ describe('助手初始选择与请求兼容', () => {
     await intelligentQueriesApi.cancel('query/1')
     expect(api.post).toHaveBeenCalledExactlyOnceWith('/intelligent-queries/query%2F1/cancel')
   })
+
+  it('业务问题显式提交类型和最小上下文，澄清复用同一幂等请求', async () => {
+    await intelligentQueriesApi.askBusiness('历史参考', 'case_history', { case_id: 8 }, 'parent')
+    expect(api.post).toHaveBeenLastCalledWith('/intelligent-queries', { query: '历史参考', question_type: 'case_history',
+      source_context: { case_id: 8 }, parent_query_id: 'parent' })
+    const reply = { clarification_id: 'clarification-1', request_id: 'one-stable-key', value: 9 }
+    await intelligentQueriesApi.clarify('query/1', reply)
+    await intelligentQueriesApi.clarify('query/1', reply)
+    expect(api.post).toHaveBeenLastCalledWith('/intelligent-queries/query%2F1/clarifications', reply)
+  })
 })

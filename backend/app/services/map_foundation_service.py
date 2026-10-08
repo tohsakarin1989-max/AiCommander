@@ -220,6 +220,7 @@ class MapFoundationService:
         filename: str,
         content: bytes,
         template_id: int | None,
+        ledger_declaration: dict | str | None = None,
     ) -> dict[str, Any]:
         from app.services.map_ingest_plan import make_plan, public_plan
         source = MapFoundationService._get_source(db, source_id)
@@ -230,6 +231,8 @@ class MapFoundationService:
         rows = MapFoundationService.parse_table(filename, content, template=template, metadata=metadata)
         with db.no_autoflush:
             plan = make_plan(db, source, template, rows, metadata, file_hash=hashlib.sha256(content).hexdigest())
+            from app.services.map_ledger_completeness import declare_plan
+            plan = declare_plan(db, source, template, plan, ledger_declaration)
         if template is None:
             plan["sample"] = [raw for _, raw in rows[:10]]
         return public_plan(plan)
@@ -245,11 +248,12 @@ class MapFoundationService:
         source_revision: str | None,
         created_by: int | None,
         plan_token: str | None = None,
+        ledger_declaration: dict | str | None = None,
     ) -> tuple[MapIngestRun, bool]:
         from app.services.map_ingest_execution import ingest_file
         return ingest_file(db, source_id=source_id, template_id=template_id, filename=filename,
                            content=content, source_revision=source_revision, created_by=created_by,
-                           plan_token=plan_token)
+                           plan_token=plan_token, ledger_declaration=ledger_declaration)
 
     @staticmethod
     def parse_table(
@@ -961,7 +965,9 @@ class MapFoundationService:
             "created_assets": run.created_assets,
             "updated_assets": run.updated_assets,
             "errors": run.errors or [],
-            "table_metadata": run.table_metadata,
+            "table_metadata": {key: value for key, value in (run.table_metadata or {}).items() if key != "ledger_comparison"},
+            "ledger_declaration": (run.table_metadata or {}).get("ledger_declaration"),
+            "declaration_actor_id": run.created_by if (run.table_metadata or {}).get("ledger_declaration") else None,
             "template_snapshot": run.template_snapshot,
             "counts": run.classification_counts or {},
             "parent_run_id": run.parent_run_id,

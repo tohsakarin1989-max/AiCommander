@@ -1,6 +1,7 @@
 import { Alert, Space, Table, Tag } from 'antd'
 import type { MapImportField, MapLedgerPreview, MapPlanRow } from '../../services/mapLedgerImports'
 import { displayMapValue, groupLabels, groupReasonLabels, mapRowLabels, valueStateLabels } from './mapLedgerPresentation'
+import { LedgerComparisonView } from './MapLedgerComparison'
 
 export function MapPlanDetails({ row, fields }: { row: MapPlanRow; fields: MapImportField[] }) {
   const label = (key: string) => fields.find(field => field.key === key)?.label || key
@@ -21,6 +22,7 @@ export function MapPlanDetails({ row, fields }: { row: MapPlanRow; fields: MapIm
 
 export default function MapImportPlan({ preview, fields }: { preview: MapLedgerPreview; fields: MapImportField[] }) {
   return <section aria-label="逐行导入差异预览">
+    {preview.ledger_comparison && <LedgerComparisonView comparison={preview.ledger_comparison} declaration={preview.ledger_declaration} />}
     <Space wrap>{Object.entries(mapRowLabels).map(([key, label]) => <Tag key={key}>{label} {preview.counts[key as keyof typeof mapRowLabels] ?? 0}</Tag>)}</Space>
     {preview.drift.map((item, index) => <Alert key={index} type="warning" showIcon message={item.message}
       description={`${item.field}：${displayMapValue(item.old)} → ${displayMapValue(item.new)}。请核对来源并另存模板，再重新预览。`} />)}

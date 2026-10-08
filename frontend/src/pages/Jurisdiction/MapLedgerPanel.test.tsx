@@ -6,6 +6,7 @@ import MapLedgerPanel from './MapLedgerPanel'
 const state = vi.hoisted(() => ({ cursor: 0, hooks: [] as unknown[], epoch: 1, failed: false,
   buttons: {} as Record<string, { disabled?: boolean; onClick: () => void }>, inputs: {} as Record<string, { value: unknown; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }>,
   upload: null as null | ((file: File) => unknown), select: null as null | ((value: number) => void),
+  declarationSelect: null as null | ((value: string) => void),
   queries: [] as unknown[][], preview: vi.fn(), ingest: vi.fn(), createTemplate: vi.fn(),
 }))
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
@@ -39,7 +40,11 @@ vi.mock('antd', () => ({
   Input: (props: { 'aria-label': string; value: unknown; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }) => {
     state.inputs[props['aria-label']] = props; return <input value={String(props.value)} readOnly />
   },
-  Select: ({ onChange }: { onChange: (value: number) => void }) => { state.select = onChange; return null },
+  Select: ({ onChange, 'aria-label': label }: { 'aria-label': string; onChange: (value: string | number) => void }) => {
+    if (label === '生产台账导入模板') state.select = value => onChange(value)
+    if (label === '台账完整度声明') state.declarationSelect = value => onChange(value)
+    return null
+  },
   Upload: ({ beforeUpload, children }: { beforeUpload: (file: File) => unknown; children: ReactNode }) => { state.upload = beforeUpload; return <div>{children}</div> },
 }))
 
@@ -89,5 +94,28 @@ describe('生产台账的页面提交可靠性', () => {
     render(); expect(state.queries).toContainEqual(['map-foundation-templates', 8, 1, 3])
     state.epoch = 2; state.failed = true
     expect(render()).toContain('模板读取失败，未使用旧缓存'); expect(state.queries).toContainEqual(['map-import-fields', 8, 2])
+  })
+  it('可选声明随文件和计划冻结，失联不把接收日期或新输入替换业务期间', async () => {
+    render(); state.select!(9); render(); state.declarationSelect!('full'); render()
+    const values = { 台账覆盖范围编号: 'north', 台账覆盖范围说明: '合成北区登记井',
+      台账业务有效起点: '2026-10-01T00:00:00+08:00', 台账业务有效终点: '2026-11-01T00:00:00+08:00' }
+    for (const [key, value] of Object.entries(values)) { state.inputs[key].onChange({ target: { value } }); render() }
+    const file = new File(['合成'], '完整声明.csv'); state.upload!(file); await flush(); render()
+    const scope = { mode: 'full', scope_key: 'north', scope_description: '合成北区登记井',
+      valid_from: values.台账业务有效起点, valid_to: values.台账业务有效终点 }
+    expect(state.preview.mock.calls[0]).toEqual([3, file, 9, undefined, scope])
+    state.ingest.mockRejectedValueOnce(new Error('响应丢失'))
+    state.buttons['按预览写入合格记录'].onClick(); await flush(); render()
+    expect(state.inputs['台账业务有效起点'].disabled).toBe(true)
+    state.buttons['用原文件与凭证核对并重试'].onClick(); await flush(); render()
+    expect(state.ingest.mock.calls[0]).toEqual([3, 9, file, '', 'fixed-plan', scope])
+    expect(state.ingest.mock.calls[1]).toEqual(state.ingest.mock.calls[0])
+  })
+  it('声明未完整时保留文件与输入，撤回声明后旧导入仍可预览', async () => {
+    render(); state.select!(9); render(); state.declarationSelect!('full'); render()
+    const file = new File(['合成'], '不完整声明.csv'); state.upload!(file); await flush()
+    expect(render()).toContain('不以接收日期代替'); expect(state.preview).not.toHaveBeenCalled()
+    state.declarationSelect!('unknown'); render(); state.buttons['重新预览'].onClick(); await flush()
+    expect(state.preview).toHaveBeenCalledWith(3, file, 9)
   })
 })

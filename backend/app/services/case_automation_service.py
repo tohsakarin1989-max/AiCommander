@@ -11,6 +11,7 @@ from app.ai.utils import parse_llm_json_response
 from app.models.case import Case, CaseEvidence, CasePerson, CaseVehicle, OilRecoveryRecord
 from app.services.case_quality_service import CaseQualityService, _is_blank
 from app.services.case_quality_rules import time_precision
+from app.services.case_feedback_semantics import known_feedback_value
 
 
 MATERIAL_RULES = {
@@ -280,10 +281,10 @@ class CaseAutomationService:
                 set_field("source_type", source_type, "线索来源关键词")
                 break
 
-        if _contains_any(text, ("报案", "移交公安", "公安接收", "公安处理")):
-            set_field("police_reported", True, "公安处置关键词")
-        if _contains_any(text, ("立案", "受案")):
-            set_field("case_filed", True, "立案/受案关键词")
+        if _contains_any(text, ("报案", "报警")):
+            set_field("police_reported", True, "报案关键词，肯否由原文校验")
+        if _contains_any(text, ("立案",)):
+            set_field("case_filed", True, "立案关键词，肯否由原文校验")
         set_field("police_officer", CaseAutomationService._extract_police_officer(text), "公安出警人片段")
         set_field("police_phone", CaseAutomationService._extract_police_phone(text), "公安联系电话片段")
         security_officers = CaseAutomationService._extract_security_officers(text)
@@ -1025,7 +1026,8 @@ class CaseAutomationService:
             ),
             (
                 "police_case_document",
-                bool(case.police_reported or case.case_filed),
+                bool(known_feedback_value(case, "police_reported")
+                     or known_feedback_value(case, "case_filed")),
                 "案件已标记报案或立案，需要补齐公安接收佐证",
                 bool(not _is_blank(case.police_officer) or not _is_blank(case.police_phone)),
                 "已有公安联系人信息，但缺少报案/立案/接收材料附件",

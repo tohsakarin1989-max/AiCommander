@@ -57,7 +57,15 @@ class CaseProfileService:
         related = CaseProfileService._related(db, case.id)
         saved = saved_profile if saved_profile is not None else read_saved_profile(db, case)
         payload = _as_dict((saved.get("data") or {}).get("payload")) if saved["status"] == "ready" else {}
-        quality = case.quality_issues or payload.get("quality") or {"missing_required": [], "state": "not_generated"}
+        quality = payload.get("quality") or case.quality_issues
+        if quality:
+            from app.services.case_quality_service import QUALITY_RULE_VERSION, CaseQualityService
+            if quality.get("rule_version") != QUALITY_RULE_VERSION:
+                # Read-only reinterpretation of validity, not a saved score or
+                # task. Old cached missing-investigation prompts must not recur.
+                quality = CaseQualityService.evaluate_case(db, case)
+        else:
+            quality = {"missing_required": [], "state": "not_generated"}
         features = _as_dict(case.features)
         experience_state = read_experience_state(db, case)
         experience_card = experience_state["card"] or {}

@@ -209,13 +209,14 @@ def _at(records, at):
     return "ready", selected["values"], choices
 
 
-def _segments(records, start, end):
+def _segments(records, start, end, *, end_inclusive=True):
     boundaries = sorted({start, end, *[value for row in records for value in (row["start"], row["end"])
                                      if value is not None and start < value < end]})
     if len(boundaries) > MAX_SEGMENTS:
         return _empty(gap="历史条件变更超过本次分段预算，未宣称全区间覆盖")
     pieces = [(left, right, False) for left, right in zip(boundaries, boundaries[1:])]
-    pieces.append((end, end, True))  # Closed uncertainty interval includes its endpoint.
+    if end_inclusive:
+        pieces.append((end, end, True))  # Closed case uncertainty includes its endpoint.
     segments = []
     for left, right, inclusive in pieces:
         state, values, evidence = _at(records, left)
@@ -235,10 +236,13 @@ def _segments(records, start, end):
 
 
 def resolve_conditions(db, asset_id, *, valid_at=None, valid_from=None, valid_to=None,
-                       known_at=None, knowledge_mode=None, frozen=False):
+                       known_at=None, knowledge_mode=None, frozen=False, end_inclusive=True):
     with db.no_autoflush:
         asset = _asset(db, asset_id)
         window = time_window(valid_at=valid_at, valid_from=valid_from, valid_to=valid_to)
+        if type(end_inclusive) is not bool or (not end_inclusive and (
+                window['time_precision'] != 'interval' or _utc(valid_from) >= _utc(valid_to))):
+            raise ValueError('facility_half_open_interval_required')
         mode, known = knowledge_context(known_at=known_at, knowledge_mode=knowledge_mode, frozen=frozen)
         base = {"schema_version": VERSION, "asset_id": asset_id, **window,
                 "query_interval": {"from": window["valid_from"], "to": window["valid_to"]} if window["valid_from"] else None,
@@ -246,6 +250,10 @@ def resolve_conditions(db, asset_id, *, valid_at=None, valid_from=None, valid_to
                 "knowledge_mode": mode, "version_id": None, "snapshot": None, "source_claim_id": None,
                 "source_identity_id": None, "identity_decision_id": None, "late_supplement": False,
                 "boundary": BOUNDARY}
+        if not end_inclusive:
+            # Declared ledger validity is [from, to), unlike an uncertain case
+            # interval. Keep that distinction in the frozen source evidence.
+            base['query_interval']['end_inclusive'] = False
         if window["time_precision"] == "unknown":
             return {**base, "state": "unknown", "coverage": "unknown", "groups": {key: _empty() for key in GROUP_KEYS},
                     "gaps": ["案发时间未知，未默认使用当前或中点资料"]}
@@ -256,7 +264,7 @@ def resolve_conditions(db, asset_id, *, valid_at=None, valid_from=None, valid_to
         start = _utc(valid_at if valid_at is not None else valid_from)
         end = _utc(valid_at if valid_at is not None else valid_to)
         groups = {key: _empty("restricted", "当前来源不可访问，不返回值或分段数量") if key in restricted else
-                  _segments(records, start, end) for key, records in candidates.items()}
+                  _segments(records, start, end, end_inclusive=end_inclusive) for key, records in candidates.items()}
         relevant = [groups[key] for key in GROUP_KEYS if candidates[key] or key in {"geometry", "details"}]
         full = all(row["coverage"] == "full" for row in relevant)
         any_ready = any(row["coverage"] in {"full", "partial"} for row in relevant)

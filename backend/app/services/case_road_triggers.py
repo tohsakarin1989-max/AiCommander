@@ -31,6 +31,9 @@ def capture_road_authority(db):
 
 def enqueue_completed_result(db, profile, result_id):
     """Use the source event for this exact profile, not an arbitrary last editor."""
+    from app.services.case_analysis_applicability import allows
+    if not allows(profile.payload, 'road_analysis'):
+        return None
     row = db.execute(select(OutboxEvent.payload).join(
         CasePipelineState, CasePipelineState.event_id == OutboxEvent.id).where(
         CasePipelineState.case_id == profile.case_id,
@@ -93,7 +96,13 @@ def process_request(db, event_id):
             raise ValueError('road_trigger_retry_metadata_invalid')
         authority = payload['authority']
         _identity(db, authority['user_id'], authority['scope'])
-        vehicle = frozen_road_vehicle(CaseResultService.read(db, payload['result_id'])['content'])
+        content = CaseResultService.read(db, payload['result_id'])['content']
+        from app.services.case_analysis_applicability import allows
+        if not allows(content, 'road_analysis'):
+            OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='completed')
+            db.commit()
+            return {'event_id': event_id, 'status': 'completed', 'outcome': 'analysis_not_applicable'}
+        vehicle = frozen_road_vehicle(content)
         if vehicle is None:
             OutboxClaimService.finish(db, event_id=event_id, worker_id=token, status='completed',
                                      error='road_job_vehicle_information_missing')

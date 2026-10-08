@@ -172,7 +172,7 @@ describe('caseEntrySubmitPayload', () => {
     expect(payload).not.toHaveProperty('initial_persons')
   })
 
-  it('clears oil and police fields when their edit scopes are closed', () => {
+  it('关闭材料开关不抹除已录入的处置资料或把未知反馈改为否', () => {
     const payload = buildCaseEntrySubmitPayload({
       occurred_time: timeValue('2026-06-05T01:00:00.000Z'),
       bonus_has_oil: false,
@@ -180,22 +180,46 @@ describe('caseEntrySubmitPayload', () => {
       oil_nature: undefined,
       oil_volume: undefined,
       water_cut: undefined,
-      oil_handling: undefined,
+      oil_handling: '移交公安',
       police_reported: false,
       case_filed: false,
-      police_officer: undefined,
-      police_phone: undefined,
+      police_officer: '已记录联系人',
+      police_phone: '已记录联系方式',
     }, { mode: 'edit' })
 
     expect(payload).toMatchObject({
-      oil_nature: null,
-      oil_volume: null,
-      water_cut: null,
-      oil_handling: null,
-      police_reported: false,
-      case_filed: false,
-      police_officer: null,
-      police_phone: null,
+      oil_handling: '移交公安',
+      police_officer: '已记录联系人',
+      police_phone: '已记录联系方式',
     })
+    expect(payload).not.toHaveProperty('police_reported')
+    expect(payload).not.toHaveProperty('case_filed')
+    expect(payload.oil_volume).not.toBeNull()
+  })
+
+  it('显式反馈只发更改项，清除为未知发null，不提交只读标记', () => {
+    const payload = buildCaseEntrySubmitPayload({ police_reported: false, case_filed: null,
+      feedback_known_fields: ['police_reported'], feedback_changed_fields: ['case_filed'] }, { mode: 'edit' })
+    expect(payload).toHaveProperty('case_filed', null)
+    expect(payload).not.toHaveProperty('police_reported')
+    expect(payload).not.toHaveProperty('feedback_known_fields')
+    expect(payload).not.toHaveProperty('feedback_changed_fields')
+  })
+
+  it('新建发现地点只写对应明细，不投影为案发主坐标；未知不猜角色', () => {
+    const values = { location: '某路口', latitude: 46, longitude: 123, initial_locations: [], entry_location_role: 'discovery' }
+    expect(buildCaseEntrySubmitPayload(values, { mode: 'create' })).toMatchObject({ latitude: null, longitude: null,
+      initial_locations: [{ role: 'discovery', description: '某路口', precision: 'exact', geometry: { type: 'Point', coordinates: [123, 46] } }] })
+    const unknown = buildCaseEntrySubmitPayload({ location: '某区域', initial_locations: [], entry_location_role: 'unknown' }, { mode: 'create' })
+    expect(unknown.initial_locations).toEqual([{ role: 'mentioned', description: '某区域', precision: 'unknown', geometry: null }])
+    expect(unknown).not.toHaveProperty('entry_location_role')
+  })
+
+  it('编辑时明确新增发现地点不替换旧主点，并避免重复相同明细', () => {
+    const place = { role: 'discovery', description: '某路口', precision: 'exact', geometry: { type: 'Point', coordinates: [123, 46] } }
+    const payload = buildCaseEntrySubmitPayload({ location: '某路口', latitude: 46, longitude: 123,
+      initial_locations: [place], entry_location_role: 'discovery' }, { mode: 'edit', legacyCoordinates: { latitude: 47, longitude: 124 } })
+    expect(payload).toMatchObject({ latitude: 47, longitude: 124 })
+    expect(payload.initial_locations).toHaveLength(1)
   })
 })
