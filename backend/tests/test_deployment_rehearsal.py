@@ -88,7 +88,9 @@ def test_release_quality_gate_checks_rehearsal_scripts():
     assert "npm audit --offline --omit=dev --audit-level=high" in workflow
     assert "npm audit --omit=dev --audit-level=high" in workflow
     assert "timeout-minutes: 2" in workflow
-    assert "continue-on-error: true" in workflow
+    # A known high-severity advisory must fail the release, not a green job
+    # with a hidden failed step. Missing network evidence also stays visible.
+    assert "continue-on-error:" not in workflow
     assert "sh -n scripts/verify-test-deployment.sh" in workflow
     assert "sh -n scripts/verify-backup-restore.sh" in workflow
     assert "sh -n scripts/verify-v36-postgis.sh" in workflow

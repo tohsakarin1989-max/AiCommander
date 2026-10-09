@@ -1,10 +1,12 @@
 import io
 import json
 from datetime import datetime
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.knowledge_asset import KnowledgeAsset
 from app.services.case_history_retrieval import CaseHistoryRetrieval
@@ -61,14 +63,26 @@ def test_history_schema_and_authorization_reject_uncontrolled_arguments(search_d
         execute_tool(search_db, 'find_history', args)
 
 
-def test_partial_empty_is_not_complete_no_match(search_db, monkeypatch):
+@pytest.mark.parametrize('timeout', ['negative_budget', 'elapsed_clock'])
+def test_partial_empty_is_not_complete_no_match(search_db, monkeypatch, timeout):
     history_cases(search_db)
     search_db.info['authorized_area_ids'] = (1,)
-    monkeypatch.setattr('app.services.case_history_retrieval.SCAN_SECONDS', -1)
+    if timeout == 'negative_budget':
+        monkeypatch.setattr('app.services.case_history_retrieval.SCAN_SECONDS', -1)
+    else:
+        # Simulate a delayed database read without waiting or enlarging the
+        # production five-second budget. An empty partial result has no hit
+        # whose subsequent content change could invalidate cached evidence.
+        readings = iter([100.0])
+        monkeypatch.setattr('app.services.case_history_fragment_search.time',
+            SimpleNamespace(monotonic=lambda: next(readings, 106.0)))
     card = execute_tool(search_db, 'find_history', {'query': '软管'})
     assert card['state'] == 'partial'
     assert card['data']['items'] == []
     assert not card['data']['coverage']['complete']
+    assert not card['data']['coverage']['scan_complete']
+    if timeout == 'elapsed_clock':
+        assert card['data']['coverage']['budget_seconds'] == 5.0
 
 
 @pytest.mark.asyncio
@@ -141,25 +155,41 @@ async def test_saved_history_is_withheld_after_case_edit(query_db):
 
 
 @pytest.mark.parametrize('mutation', ['archive', 'content', 'evidence', 'scope'])
-def test_cached_experience_rechecks_manual_state_content_refs_and_current_scope(search_db, mutation):
+def test_cached_experience_rechecks_manual_state_content_refs_and_current_scope(search_db, mutation, monkeypatch):
     case, _ = history_cases(search_db)
+    timestamp = datetime(2026, 10, 9, 12)
     asset = KnowledgeAsset(asset_type='experience_card', source_case_id=case.id, version=1,
         title='已确认经验', content={'summary': '特殊储存条件经验'}, evidence_refs=[{'id': f'case:{case.id}'}],
-        source_signature='a' * 64, source_data_version='b' * 64, status='confirmed')
+        source_signature='a' * 64, source_data_version='b' * 64, status='confirmed',
+        created_at=timestamp, updated_at=timestamp)
     search_db.add(asset)
     search_db.commit()
     build_history_index(search_db)
     search_db.info['authorized_area_ids'] = (1,)
-    result = {'cards': [execute_tool(search_db, 'find_history', {'query': '特殊储存'})]}
+    # This test checks current evidence, not retrieval latency. Freeze only
+    # preparation; a busy runner must not turn it into a vacuous empty check.
+    with monkeypatch.context() as preparation:
+        preparation.setattr('app.services.case_history_fragment_search.time',
+            SimpleNamespace(monotonic=lambda: 100.0))
+        result = {'cards': [execute_tool(search_db, 'find_history', {'query': '特殊储存'})]}
+    assert [(item['source_type'], item['source_id']) for item in result['cards'][0]['data']['items']] == [
+        ('experience_card', asset.id)]
     validate_history_query_evidence(search_db, result)
     if mutation == 'archive':
         asset.status = 'archived'
     elif mutation == 'content':
         asset.content = {'summary': '已更新'}
+        # Preserve even the database timestamp: invalidation must be based on
+        # current content, not clock resolution or an incidental onupdate value.
+        asset.updated_at = timestamp
+        flag_modified(asset, 'updated_at')
     elif mutation == 'evidence':
         asset.evidence_refs = [{'id': 'case:999999'}]
     else:
         search_db.info['authorized_area_ids'] = ()
     search_db.commit()
+    if mutation == 'content':
+        assert asset.updated_at == timestamp
+        assert asset.content == {'summary': '已更新'}
     with pytest.raises(PermissionError, match='history_evidence_changed'):
         validate_history_query_evidence(search_db, result)
