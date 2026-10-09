@@ -1,5 +1,6 @@
 """Unified, authenticated material reading and optional version decisions."""
 from datetime import datetime
+from time import perf_counter
 from typing import Literal
 from urllib.parse import quote
 
@@ -11,6 +12,7 @@ from app.database import get_db, AreaWriteAccessError
 from app.services import result_catalog
 from app.services.case_result_export import CaseResultExportError
 from app.services.case_map_image import CaseMapImageError
+from app.utils.logger import logger
 
 router = APIRouter()
 
@@ -107,25 +109,35 @@ def judgment(kind: str, identifier: str, payload: JudgmentInput, request: Reques
 @router.get('/{kind}/{identifier}')
 def reader(kind: str, identifier: str, request: Request, response: Response,
            template: Literal['full', 'case_summary', 'facility_sheet', 'period_brief'] = 'full',
+           sections: list[str] | None = Query(None, max_length=6),
            expected_content_sha256: str | None = Query(None, pattern=r'^[a-f0-9]{64}$'), db=Depends(get_db)):
     from app.services.result_presentation import present_result
     _prepare(request, response, db)
     result = _call(db, result_catalog.read_result, kind, identifier)
-    return _call(db, lambda _: present_result(result, template, expected_content_sha256=expected_content_sha256))
+    return _call(db, lambda _: present_result(result, template, expected_content_sha256=expected_content_sha256, sections=sections))
 
 
 @router.get('/{kind}/{identifier}/document.{format}')
 def document(kind: str, identifier: str, format: Literal['docx', 'pdf'], request: Request, response: Response,
              template: Literal['full', 'case_summary', 'facility_sheet', 'period_brief'] = 'full',
+             sections: list[str] | None = Query(None, max_length=6),
              expected_content_sha256: str | None = Query(None, pattern=r'^[a-f0-9]{64}$'), db=Depends(get_db)):
     from app.services.result_document import export_result
+    started = perf_counter()
     _prepare(request, response, db)
-    saved, data, metadata = _call(db, export_result, kind, identifier, format, template=template,
-        expected_content_sha256=expected_content_sha256, with_metadata=True)
+    try:
+        saved, data, metadata = _call(db, export_result, kind, identifier, format, template=template,
+            expected_content_sha256=expected_content_sha256, with_metadata=True, sections=sections)
+    except Exception:
+        logger.info('output_operation kind=material format=%s outcome=failed', format)
+        raise
+    logger.info('output_operation kind=material format=%s outcome=generated elapsed_ms=%d',
+                format, round((perf_counter() - started) * 1000))
     media = 'application/pdf' if format == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     return Response(data, media_type=media, headers={'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', 'X-Result-Content-SHA256': saved.content_sha256,
         'X-Result-Template': metadata['template'],
+        'X-Result-Sections': ','.join(metadata['sections']),
         'Content-Disposition': f'attachment; filename="material-{saved.content_sha256[:16]}.{format}"; filename*=UTF-8\'\'{quote(metadata["filename"], safe="")}'})
 
 

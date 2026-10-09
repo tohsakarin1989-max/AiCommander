@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({ cursor: 0, hooks: [] as unknown[], epoch: 1, f
   buttons: {} as Record<string, { disabled?: boolean; onClick: () => void }>, inputs: {} as Record<string, { value: unknown; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }>,
   upload: null as null | ((file: File) => unknown), select: null as null | ((value: number) => void),
   declarationSelect: null as null | ((value: string) => void),
-  queries: [] as unknown[][], preview: vi.fn(), ingest: vi.fn(), createTemplate: vi.fn(),
+  queries: [] as unknown[][], preview: vi.fn(), inspect: vi.fn(), enqueue: vi.fn(), ingest: vi.fn(), createTemplate: vi.fn(),
 }))
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
   useEffect: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('react', async original => ({ ...await original<typeof import('react')>(
 }))
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 8 }, sessionEpoch: state.epoch }) }))
 vi.mock('../../services/mapFoundation', () => ({ mapFoundationApi: { listTemplates: vi.fn(), createTemplate: state.createTemplate, ingest: state.ingest } }))
-vi.mock('../../services/mapLedgerImports', () => ({ mapLedgerImportsApi: { fields: vi.fn(), preview: state.preview } }))
+vi.mock('../../services/mapLedgerImports', () => ({ mapLedgerImportsApi: { fields: vi.fn(), preview: state.preview, inspect: state.inspect, enqueue: state.enqueue } }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }), useQuery: ({ queryKey }: { queryKey: unknown[] }) => {
   state.queries.push(queryKey)
   return { isSuccess: !state.failed, isError: state.failed, refetch: vi.fn(), data: queryKey[0] === 'map-import-fields'
@@ -32,6 +32,7 @@ vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQue
 vi.mock('./MapLedgerTemplateForm', () => ({ default: () => null }))
 vi.mock('./MapImportPlan', () => ({ default: () => <p>逐行预览已读</p> }))
 vi.mock('./MapIngestHistory', () => ({ default: () => null }))
+vi.mock('./MapLedgerJobs', () => ({ default: () => null }))
 vi.mock('antd', () => ({
   Alert: ({ message }: { message: string }) => <p>{message}</p>, Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Button: ({ children, disabled, onClick }: { children: ReactNode; disabled?: boolean; onClick: () => void }) => {
@@ -40,6 +41,7 @@ vi.mock('antd', () => ({
   Input: (props: { 'aria-label': string; value: unknown; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }) => {
     state.inputs[props['aria-label']] = props; return <input value={String(props.value)} readOnly />
   },
+  InputNumber: () => null,
   Select: ({ onChange, 'aria-label': label }: { 'aria-label': string; onChange: (value: string | number) => void }) => {
     if (label === '生产台账导入模板') state.select = value => onChange(value)
     if (label === '台账完整度声明') state.declarationSelect = value => onChange(value)
@@ -54,11 +56,13 @@ function render() { state.cursor = 0; state.buttons = {}; return renderToStaticM
 async function prepare() {
   render(); state.select!(9); render()
   state.inputs['台账来源修订'].onChange({ target: { value: '月度修订' } }); render()
-  const file = new File(['name\nA'], '合成台账.csv'); state.upload!(file); await flush(); render(); return file
+  const file = new File(['name\nA'], '合成台账.csv'); state.upload!(file); await flush(); render()
+  state.buttons['重新预览'].onClick(); await flush(); render(); return file
 }
 
 describe('生产台账的页面提交可靠性', () => {
   beforeEach(() => { state.cursor = 0; state.hooks = []; state.epoch = 1; state.failed = false; state.queries = []; vi.clearAllMocks()
+    state.inspect.mockResolvedValue({ structure: { headers: ['name'], sheet_name: null, header_row: 1 }, boundary: '实际表头', compatible_templates: [], recommended_template_id: null })
     state.preview.mockResolvedValue(plan); state.ingest.mockResolvedValue({ id: 'same-run', created_assets: 1, updated_assets: 0 }) })
   it('响应丢失后文件/修订/凭证冻结，同一原请求重试成功才清输入', async () => {
     const file = await prepare()
@@ -82,13 +86,13 @@ describe('生产台账的页面提交可靠性', () => {
   })
   it('预览进行中第二次选文件不会把前一份预览配给后一份文件', async () => {
     let resolve!: (value: unknown) => void
-    state.preview.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    state.inspect.mockImplementationOnce(() => new Promise(done => { resolve = done }))
     render(); state.select!(9); render()
     const first = new File(['first'], '第一份.csv')
     state.upload!(first); state.upload!(new File(['second'], '第二份.csv'))
-    resolve(plan); await flush()
+    resolve({ structure: { headers: ['name'], sheet_name: null, header_row: 1 }, boundary: '实际表头', recommended_template_id: null }); await flush()
     const html = render()
-    expect(html).toContain('第一份.csv'); expect(html).not.toContain('第二份.csv'); expect(state.preview).toHaveBeenCalledTimes(1)
+    expect(html).toContain('第一份.csv'); expect(html).not.toContain('第二份.csv'); expect(state.inspect).toHaveBeenCalledTimes(1)
   })
   it('读取按当前登录代次隔离，错误时不展示旧模板', () => {
     render(); expect(state.queries).toContainEqual(['map-foundation-templates', 8, 1, 3])
@@ -101,6 +105,7 @@ describe('生产台账的页面提交可靠性', () => {
       台账业务有效起点: '2026-10-01T00:00:00+08:00', 台账业务有效终点: '2026-11-01T00:00:00+08:00' }
     for (const [key, value] of Object.entries(values)) { state.inputs[key].onChange({ target: { value } }); render() }
     const file = new File(['合成'], '完整声明.csv'); state.upload!(file); await flush(); render()
+    state.buttons['重新预览'].onClick(); await flush(); render()
     const scope = { mode: 'full', scope_key: 'north', scope_description: '合成北区登记井',
       valid_from: values.台账业务有效起点, valid_to: values.台账业务有效终点 }
     expect(state.preview.mock.calls[0]).toEqual([3, file, 9, undefined, scope])
@@ -113,9 +118,34 @@ describe('生产台账的页面提交可靠性', () => {
   })
   it('声明未完整时保留文件与输入，撤回声明后旧导入仍可预览', async () => {
     render(); state.select!(9); render(); state.declarationSelect!('full'); render()
-    const file = new File(['合成'], '不完整声明.csv'); state.upload!(file); await flush()
+    const file = new File(['合成'], '不完整声明.csv'); state.upload!(file); await flush(); render()
+    state.buttons['重新预览'].onClick(); await flush()
     expect(render()).toContain('不以接收日期代替'); expect(state.preview).not.toHaveBeenCalled()
     state.declarationSelect!('unknown'); render(); state.buttons['重新预览'].onClick(); await flush()
     expect(state.preview).toHaveBeenCalledWith(3, file, 9)
+  })
+  it('确认模板的后台请求持久接收后才允许离页，不把排队称已采用', async () => {
+    state.enqueue.mockResolvedValue({ id: 'durable-job', status: 'queued' })
+    render(); state.select!(9); render()
+    const file = new File(['name\nA'], '后台台账.csv')
+    state.upload!(file); await flush(); render()
+    state.buttons['后台整理并按来源规则采用'].onClick(); await flush()
+    const html = render()
+    expect(state.enqueue).toHaveBeenCalledWith(3, file, 9, '', undefined)
+    expect(html).toContain('durable-job'); expect(html).toContain('整批采用前保持不变')
+    expect(html).not.toContain('当前文件：')
+    expect(state.preview).not.toHaveBeenCalled()
+  })
+  it('后台接收响应丢失后冻结请求，重试仍用同一份文件与修订', async () => {
+    state.enqueue.mockRejectedValueOnce(new Error('接收响应丢失')).mockResolvedValue({ id: 'same-job', status: 'queued' })
+    render(); state.select!(9); render()
+    const file = new File(['name\nA'], '后台重试.csv')
+    state.upload!(file); await flush(); render()
+    state.buttons['后台整理并按来源规则采用'].onClick(); await flush(); render()
+    expect(state.inputs['台账来源修订'].disabled).toBe(true)
+    state.upload!(new File(['name\nB'], '不能替换.csv')); render()
+    state.buttons['按原请求核对后台接收结果'].onClick(); await flush()
+    expect(state.enqueue.mock.calls).toEqual([[3, file, 9, '', undefined], [3, file, 9, '', undefined]])
+    expect(render()).toContain('same-job')
   })
 })

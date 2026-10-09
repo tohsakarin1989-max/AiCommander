@@ -122,4 +122,23 @@ describe('统一材料入口与历史边界', () => {
     expect(html).toContain('内容版本参数无效'); expect(html).not.toContain('原文未发现车辆')
     expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.enabled).toBe(false)
   })
+  it('非法或重复章节拒绝读取，不展示旧正文', () => {
+    state.params = 'kind=meeting&resultId=9&sections=facts&sections=facts'
+    const html = renderToStaticMarkup(<Reports />)
+    expect(html).toContain('章节配置无效'); expect(html).not.toContain('原文未发现车辆')
+    expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.enabled).toBe(false)
+  })
+  it('章节选择进入独立缓存，服务返回不同章节不能冒充本次阅读', () => {
+    state.params = 'kind=meeting&resultId=9&sections=facts&sections=boundary'
+    state.data!.presentation.sections = ['facts', 'boundary']
+    state.data!.presentation.sections_customized = true
+    state.data!.presentation.section_options = [{ id: 'facts', label: '事实与记录' }, { id: 'boundary', label: '适用边界' }]
+    let html = renderToStaticMarkup(<Reports />)
+    expect(html).toContain('按用途组合章节'); expect(html).toContain('原文未发现车辆')
+    expect(html).toContain('未经过单位官方表样确认')
+    expect(state.requested.find(item => item.queryKey[0] === 'material-reader')?.queryKey).toContain('facts,boundary')
+    state.data!.presentation.sections = ['evidence', 'boundary']
+    html = renderToStaticMarkup(<Reports />)
+    expect(html).not.toContain('原文未发现车辆')
+  })
 })

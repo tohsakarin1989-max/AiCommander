@@ -89,12 +89,8 @@ class JurisdictionService:
 
     @staticmethod
     def create_asset(db: Session, data: Dict[str, Any]) -> JurisdictionAsset:
-        data = JurisdictionService._payload_with_default_area(db, data)
-        JurisdictionService._lock_operational_area(db, data.get("operational_area_id"))
-        asset = JurisdictionAsset(**data)
-        db.add(asset)
-        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_created",
-            validity={key: data[key] for key in ("valid_from", "valid_to") if key in data} or None)
+        from app.services.map_feature_adoption import adopt
+        asset, _ = adopt(db, data, channel='manual')
         db.commit()
         db.refresh(asset)
         return asset
@@ -111,11 +107,26 @@ class JurisdictionService:
         asset = db.query(JurisdictionAsset).filter(JurisdictionAsset.id == asset_id).first()
         if not asset:
             raise ValueError("asset_not_found")
-        JurisdictionService._lock_operational_area(db, asset.operational_area_id)
-        require_area_write_access(db, asset.operational_area_id)
-        if "operational_area_id" in data:
-            require_area_write_access(db, data["operational_area_id"])
-        MapFoundationService.record_observed_baseline(db, asset)
+        from app.services.map_feature_adoption import adopt, RESERVED
+        if any(key in data and data[key] is None for key in ('latitude', 'longitude')):
+            if not all(key in data and data[key] is None for key in ('latitude', 'longitude', 'geometry')):
+                raise ValueError('geometry_group_clear_required|清空坐标须同时明确清空经度、纬度与几何')
+        if asset.geometry_type != 'point' and 'geometry' not in data and any(
+                key in data and data[key] != getattr(asset, key) for key in ('latitude', 'longitude')):
+            raise ValueError('complete_geometry_required|修改线面须提供完整几何，不能只改展示中心点')
+        if any(key in data and data[key] != getattr(asset, key) for key in
+               ('operational_area_id', 'asset_type', 'external_id')):
+            raise ValueError('facility_identity_change_requires_review')
+        payload = {key: getattr(asset, key) for key in ('operational_area_id', 'external_id', 'name',
+            'asset_type', 'geometry_type', 'latitude', 'longitude', 'geometry', 'address',
+            'description', 'source', 'status', 'risk_level', 'confidence_score', 'verified', 'tags')}
+        payload['attributes'] = {key: value for key, value in (asset.attributes or {}).items() if key not in RESERVED}
+        payload.update(data)
+        if 'attributes' in data:
+            if RESERVED & set(data.get('attributes') or {}):
+                raise ValueError('reserved_source_metadata')
+            payload['attributes'] = {**{key: value for key, value in (asset.attributes or {}).items() if key not in RESERVED},
+                                     **(data.get('attributes') or {})}
         geometry_type = str(data.get("geometry_type") or asset.geometry_type or "point").lower()
         latitude = data.get("latitude", asset.latitude)
         longitude = data.get("longitude", asset.longitude)
@@ -126,11 +137,8 @@ class JurisdictionService:
             and latitude is not None
             and longitude is not None
         ):
-            data["geometry"] = {"type": "Point", "coordinates": [longitude, latitude]}
-        for key, value in data.items():
-            setattr(asset, key, value)
-        MapFoundationService._record_asset_version(db, asset=asset, change_type="manual_updated",
-            validity={key: data[key] for key in ("valid_from", "valid_to") if key in data} or None)
+            payload["geometry"] = {"type": "Point", "coordinates": [longitude, latitude]}
+        asset, _ = adopt(db, payload, target=asset, provided=data)
         if commit:
             db.commit()
             db.refresh(asset)
@@ -145,26 +153,18 @@ class JurisdictionService:
     @staticmethod
     def bulk_create_assets(db: Session, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         created = []
+        created_count = 0
+        from app.services.map_feature_adoption import adopt
         for item in items:
-            payload = JurisdictionService._payload_with_default_area(db, {
-                "geometry_type": "point",
-                "source": "import",
-                "status": "active",
-                "risk_level": 1,
-                **item,
-            })
-            JurisdictionService._lock_operational_area(db, payload.get("operational_area_id"))
-            asset = JurisdictionAsset(**payload)
-            db.add(asset)
-            MapFoundationService._record_asset_version(db, asset=asset, change_type="bulk_created",
-                validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
+            asset, was_created = adopt(db, item, channel='manual')
+            created_count += int(was_created)
             created.append(asset)
         db.commit()
         for asset in created:
             db.refresh(asset)
         return {
             "total": len(items),
-            "created": len(created),
+            "created": created_count,
             "items": [JurisdictionService._asset_to_dict(asset) for asset in created],
         }
 
@@ -183,9 +183,15 @@ class JurisdictionService:
         source: str = "map",
         operational_area_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        from app.services.map_feature_adoption import area_for_write, adopt, record_rejection
+        area = area_for_write(db, operational_area_id)
+        if geojson.get('crs'):
+            raise ValueError('coordinate_template_required|旧 GeoJSON CRS 声明须经坐标模板转换')
         features = geojson.get("features") if geojson.get("type") == "FeatureCollection" else None
         if not isinstance(features, list):
             return {"total": 0, "created": 0, "updated": 0, "errors": ["仅支持 FeatureCollection"], "items": []}
+        if len(features) > 1000:
+            raise ValueError('too_many_features|兼容入口每批最多1000项，请使用后台台账批次处理')
 
         created = 0
         updated = 0
@@ -194,13 +200,13 @@ class JurisdictionService:
         for index, feature in enumerate(features):
             try:
                 payload = JurisdictionService._payload_from_geojson_feature(feature, source=source)
-                if operational_area_id is not None:
-                    payload["operational_area_id"] = operational_area_id
-                asset, was_created = JurisdictionService._upsert_asset(db, payload)
+                payload["operational_area_id"] = area.id
+                asset, was_created = adopt(db, payload, channel='geojson', raw_record=feature, row_number=index + 1)
                 created += 1 if was_created else 0
-                updated += 0 if was_created else 1
+                updated += int(getattr(asset, '_compat_receipt', {}).get('updated', 0))
                 items.append(asset)
             except ValueError as exc:
+                record_rejection(db, area_id=area.id, label=source, channel='geojson', raw_record=feature, error=exc, row_number=index + 1)
                 errors.append(f"feature[{index}]: {exc}")
 
         db.commit()
@@ -261,7 +267,10 @@ class JurisdictionService:
         source: str = "ledger",
         dry_run: bool = False,
         operational_area_id: Optional[int] = None,
+        filename: str | None = None,
     ) -> Dict[str, Any]:
+        from app.services.map_feature_adoption import area_for_write, adopt, preview_payload, record_rejection
+        area = area_for_write(db, operational_area_id)
         created = 0
         updated = 0
         valid = 0
@@ -271,17 +280,21 @@ class JurisdictionService:
         for index, row in enumerate(rows, start=2):
             try:
                 payload = JurisdictionService._payload_from_tabular_row(row, source=source)
-                if operational_area_id is not None:
-                    payload["operational_area_id"] = operational_area_id
-                valid += 1
+                payload["operational_area_id"] = area.id
                 if dry_run:
+                    preview_payload(db, payload)
+                    valid += 1
                     items.append(payload)
                     continue
-                asset, was_created = JurisdictionService._upsert_asset(db, payload)
+                asset, was_created = adopt(db, payload, channel='legacy', raw_record=row, row_number=index, filename=filename)
+                valid += 1
                 created += 1 if was_created else 0
-                updated += 0 if was_created else 1
+                updated += int(getattr(asset, '_compat_receipt', {}).get('updated', 0))
                 items.append(asset)
             except ValueError as exc:
+                if not dry_run:
+                    record_rejection(db, area_id=area.id, label=source, channel='legacy', raw_record=row, error=exc,
+                                     row_number=index, filename=filename)
                 errors.append({"row": index, "error": str(exc)})
 
         if dry_run:
@@ -1121,10 +1134,12 @@ out body geom qt;
 
     @staticmethod
     def _payload_from_geojson_feature(feature: Dict[str, Any], source: str) -> Dict[str, Any]:
-        if feature.get("type") != "Feature":
+        if not isinstance(feature, dict) or feature.get("type") != "Feature":
             raise ValueError("不是 GeoJSON Feature")
         properties = feature.get("properties") or {}
         geometry = feature.get("geometry") or {}
+        if not isinstance(properties, dict):
+            raise ValueError('invalid_properties|GeoJSON properties 必须是对象')
         if not geometry:
             raise ValueError("缺少 geometry")
         latitude, longitude = JurisdictionService._geometry_center(geometry)
@@ -1146,10 +1161,9 @@ out body geom qt;
             "description": properties.get("description"),
             "source": source,
             "status": properties.get("status") or "active",
-            "risk_level": int(properties.get("risk_level") or 1),
-            "confidence_score": float(properties.get("confidence_score") or 0.7),
+            "risk_level": JurisdictionService._optional_int(properties.get("risk_level")),
+            "confidence_score": JurisdictionService._optional_float(properties.get("confidence_score")),
             "verified": bool(properties.get("verified") or False),
-            "last_seen_at": datetime.utcnow(),
             "tags": properties.get("tags"),
             "attributes": {
                 key: value
@@ -1169,6 +1183,10 @@ out body geom qt;
             for key, value in row.items()
             if key is not None and str(key).strip()
         }
+        from app.services.map_import_contract import FIELDS
+        for key, label, *_ in FIELDS:
+            if key not in normalized and label in normalized:
+                normalized[key] = normalized[label]
         name = JurisdictionService._clean_text(
             normalized.get("name") or normalized.get("名称") or normalized.get("要素名称")
         )
@@ -1184,7 +1202,17 @@ out body geom qt;
         latitude = JurisdictionService._optional_float(normalized.get("latitude") or normalized.get("纬度"))
         longitude = JurisdictionService._optional_float(normalized.get("longitude") or normalized.get("经度"))
         geometry = None
-        if latitude is not None and longitude is not None:
+        declared_geometry = normalized.get('geometry') or normalized.get('几何')
+        if declared_geometry:
+            import json
+            try:
+                geometry = json.loads(declared_geometry) if isinstance(declared_geometry, str) else declared_geometry
+            except ValueError as exc:
+                raise ValueError('invalid_geometry|几何字段必须为完整 GeoJSON') from exc
+        if latitude is not None and longitude is not None and geometry is None:
+            declared_kind = str(normalized.get('geometry_type') or normalized.get('几何类型') or 'point').lower()
+            if declared_kind != 'point':
+                raise ValueError('complete_geometry_required|线面台账必须提供完整几何，不能仅用中心点')
             geometry = {"type": "Point", "coordinates": [longitude, latitude]}
 
         return {
@@ -1201,10 +1229,9 @@ out body geom qt;
             "description": JurisdictionService._clean_text(normalized.get("description") or normalized.get("说明") or normalized.get("备注")),
             "source": row_source,
             "status": JurisdictionService._clean_text(normalized.get("status") or normalized.get("状态")) or "active",
-            "risk_level": JurisdictionService._optional_int(normalized.get("risk_level") or normalized.get("风险等级"), default=1),
+            "risk_level": JurisdictionService._optional_int(normalized.get("risk_level") or normalized.get("风险等级")),
             "confidence_score": JurisdictionService._optional_float(
                 normalized.get("confidence_score") or normalized.get("置信度"),
-                default=0.8,
             ),
             "verified": JurisdictionService._optional_bool(normalized.get("verified") or normalized.get("已校验")),
             "tags": JurisdictionService._parse_tags(normalized.get("tags") or normalized.get("标签")),
@@ -1217,20 +1244,18 @@ out body geom qt;
                     "description", "说明", "备注", "source", "来源", "status", "状态",
                     "risk_level", "风险等级", "confidence_score", "置信度",
                     "verified", "已校验", "tags", "标签",
+                    "geometry", "几何",
                 }
             },
         }
 
     @staticmethod
     def _geometry_center(geometry: Dict[str, Any]) -> tuple[float, float]:
-        geometry_type = geometry.get("type")
-        coordinates = geometry.get("coordinates")
-        points = JurisdictionService._flatten_coordinates(geometry_type, coordinates)
-        if not points:
-            raise ValueError("geometry 坐标为空")
-        lon = sum(point[0] for point in points) / len(points)
-        lat = sum(point[1] for point in points) / len(points)
-        return round(lat, 6), round(lon, 6)
+        from app.services.map_feature_adoption import _geometry
+        _, lon, lat = _geometry({'geometry': geometry}, None)
+        if lon is None or lat is None:
+            raise ValueError('geometry 坐标为空')
+        return lat, lon
 
     @staticmethod
     def _flatten_coordinates(geometry_type: str, coordinates: Any) -> List[List[float]]:
@@ -1302,59 +1327,8 @@ out body geom qt;
 
     @staticmethod
     def _upsert_asset(db: Session, payload: Dict[str, Any]) -> tuple[JurisdictionAsset, bool]:
-        payload = JurisdictionService._payload_with_default_area(db, payload)
-        existing = None
-        external_id = payload.get("external_id")
-        area_id = payload.get("operational_area_id")
-        JurisdictionService._lock_operational_area(db, area_id)
-        if external_id:
-            query = db.query(JurisdictionAsset).filter(
-                JurisdictionAsset.external_id == external_id,
-                JurisdictionAsset.source == payload.get("source"),
-                JurisdictionAsset.operational_area_id == area_id,
-            )
-            matches = query.limit(2).all()
-            if len(matches) > 1:
-                raise ValueError("ambiguous_asset_identity")
-            existing = matches[0] if matches else None
-            if existing is not None and (existing.attributes or {}).get("source_id") is not None:
-                # Generic legacy source labels such as 'ledger' are not a
-                # registered MapSource namespace. Use its governed import path.
-                raise ValueError("asset_identity_namespace_required")
-        else:
-            geometry = payload.get("geometry")
-            if not geometry and (payload.get("latitude") is None or payload.get("longitude") is None):
-                raise ValueError("asset_identity_required")
-            identity = {
-                "source": payload.get("source"), "area": area_id,
-                "name": payload["name"], "asset_type": payload["asset_type"],
-                "geometry": geometry or {
-                    "type": "Point", "coordinates": [payload["longitude"], payload["latitude"]],
-                },
-            }
-            payload["canonical_key"] = "legacy-unidentified:" + MapFoundationService._hash_json(identity)
-            payload["verified"] = False
-            payload["verification_state"] = "identity_pending"
-            existing = db.query(JurisdictionAsset).filter(
-                JurisdictionAsset.canonical_key == payload["canonical_key"],
-                JurisdictionAsset.operational_area_id == area_id,
-            ).first()
-            if existing is not None and existing.verified:
-                raise ValueError("asset_identity_requires_review")
-
-        if existing is None:
-            asset = JurisdictionAsset(**payload)
-            db.add(asset)
-            MapFoundationService._record_asset_version(db, asset=asset, change_type="import_created",
-                validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
-            return asset, True
-
-        MapFoundationService.record_observed_baseline(db, existing)
-        for key, value in payload.items():
-            setattr(existing, key, value)
-        MapFoundationService._record_asset_version(db, asset=existing, change_type="import_updated",
-            validity={key: payload[key] for key in ("valid_from", "valid_to") if key in payload} or None)
-        return existing, False
+        from app.services.map_feature_adoption import adopt
+        return adopt(db, payload, channel='legacy')
 
     @staticmethod
     def _count_duplicate_candidates(assets: List[JurisdictionAsset]) -> int:

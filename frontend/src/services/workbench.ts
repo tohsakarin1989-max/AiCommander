@@ -9,6 +9,8 @@ export interface DailyWorkbenchCase {
   occurred_to?: string | null
   time_precision?: string
   time_expression?: string | null
+  discovered_at?: string | null
+  registered_at?: string | null
   location: string | null
   case_status: string
   pipeline_status: string | null
@@ -26,7 +28,7 @@ export interface DailyTopicChange {
 }
 
 export interface DailyWorkbench {
-  schema_version: 'daily-workbench-5.0-1'
+  schema_version: 'daily-workbench-5.0-1' | 'daily-workbench-9.0-1'
   generated_at: string
   summary: {
     total_cases: number
@@ -36,6 +38,8 @@ export interface DailyWorkbench {
   }
   cases: DailyWorkbenchCase[]
   changes?: DailyTopicChange[]
+  resume?: { state: 'ready' | 'not_applicable' | 'unavailable'; drafts?: { total: number; target_path: string }; imports?: { total: number; target_path: string } }
+  material_entry?: { target_path: string; label: string }
   pagination: { limit: number; offset: number; returned: number; total: number }
 }
 

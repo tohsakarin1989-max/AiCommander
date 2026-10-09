@@ -15,6 +15,11 @@
 .material-format label { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 600; }
 .material-format select { min-width: 180px; }
 .material-format p { margin: 10px 0 0; max-width: 72ch; color: var(--ink-2); line-height: 1.7; }
+.material-section-options { margin-block: 16px; }
+.material-section-options fieldset { display: flex; flex-wrap: wrap; gap: 12px; border: 1px solid var(--line); padding: 12px; }
+.material-section-options label { display: inline-flex; align-items: center; gap: 6px; }
+.output-template-picker { display: grid; gap: 12px; margin-block: 16px; }
+.output-template-picker details > label { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
 .material-reader h1 { font-size: 26px; line-height: 1.4; }
 .material-reader h2 { font-size: 20px; margin-top: 24px; }
 .material-reader h2 small { font-size: 14px; font-weight: normal; }

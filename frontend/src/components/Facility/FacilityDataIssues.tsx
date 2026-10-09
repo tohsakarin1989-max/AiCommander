@@ -9,6 +9,8 @@ export const issueGroupLabels: Record<MapIssueGroup, string> = {
   identity: '名称或编号', coordinates: '位置或坐标依据', water_cut: '含水率及测量口径',
   production: '产量及生产属性', other: '其他来源问题',
 }
+export const issueStateLabels: Record<string, string> = { reported: '待核对', needs_information: '等待来源补充',
+  checked_no_change: '已核对，现有资料不变', corrected: '已有来源修正' }
 
 export function LedgerOriginalButton({ runId, filename }: { runId: string; filename: string }) {
   const { user, sessionEpoch } = useAuth()
@@ -105,7 +107,8 @@ export function DataIssueForm({ assetId, production, userId, sessionEpoch }: {
       : <>{!listing.data.items.length ? <p>当前可访问来源中暂无问题标注。</p>
         : <ul>{listing.data.items.map(row => <li key={row.id}>
           <strong>{issueGroupLabels[row.source_reference.field_group]}</strong>：{row.notes}
-          <small> · 待核对，未修改正式资料</small>
+          <small> · {issueStateLabels[row.state] || '状态待核'}</small>
+          {row.resolution && <p>核对说明：{row.resolution.note}。回执不直接修改正式资料。</p>}
         </li>)}</ul>}
         {listing.data.total > 10 && <Pagination current={page} pageSize={10} total={listing.data.total} onChange={setPage} showSizeChanger={false} />}</>}
   </details>

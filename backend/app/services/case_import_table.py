@@ -17,6 +17,7 @@ from app.services.map_foundation_service import (
 MAX_ROWS = 1000
 MAX_BYTES = 10 * 1024 * 1024
 FIELDS = frozenset({
+    'external_record_key',
     "occurred_time", "description", "location", "latitude", "longitude",
     "case_type", "report_time", "report_unit", "security_team", "source_type",
     "source_detail", "police_reported", "case_filed", "police_officer", "police_phone",
@@ -26,6 +27,7 @@ FIELDS = frozenset({
     "oil_volume_unit", "occurred_from", "occurred_to", "time_precision", "time_expression", "discovered_at",
 })
 ALIASES = {
+    '外部记录号': 'external_record_key', '源记录键': 'external_record_key',
     "案发时间": "occurred_time", "发生时间": "occurred_time",
     "开始时间": "occurred_from", "结束时间": "occurred_to", "时间精度": "time_precision",
     "原始时间描述": "time_expression", "发现时间": "discovered_at", "油量单位": "oil_volume_unit",
@@ -116,10 +118,11 @@ def parse_case_table(
         records.append((number, values))
 
     lowered = filename.lower()
-    if lowered.endswith(".csv"):
+    if lowered.endswith((".csv", ".tsv")):
         if worksheet:
             raise ValueError("CSV 不支持工作表选择")
-        reader = csv.reader(io.StringIO(content.decode("utf-8-sig")), strict=True)
+        reader = csv.reader(io.StringIO(content.decode("utf-8-sig")), strict=True,
+                            delimiter='\t' if lowered.endswith('.tsv') else ',')
         header_found = False
         while True:
             start_line = reader.line_num + 1

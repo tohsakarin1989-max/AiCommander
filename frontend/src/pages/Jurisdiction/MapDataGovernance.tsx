@@ -8,6 +8,7 @@ import OfflineMapManager from './OfflineMapManager'
 import InternalRoadManager from './InternalRoadManager'
 import MapReadinessPanel from './MapReadinessPanel'
 import MapLedgerPanel from './MapLedgerPanel'
+import MapDataIssueWork from './MapDataIssueWork'
 
 function GovernanceWorkspace({ initialAreaId }: { initialAreaId?: number }) {
   const { user, sessionEpoch } = useAuth(), queryClient = useQueryClient()
@@ -29,7 +30,7 @@ function GovernanceWorkspace({ initialAreaId }: { initialAreaId?: number }) {
   }, [ledgerDirty])
   const dirtyChanged = useCallback((dirty: boolean) => setLedgerDirty(dirty), [])
   const sourcesQuery = useQuery({ queryKey: ['map-foundation-sources', user?.id, sessionEpoch], queryFn: mapFoundationApi.listSources, gcTime: 0 })
-  const areasQuery = useQuery({ queryKey: ['operational-areas', user?.id, sessionEpoch], queryFn: mapFoundationApi.listAreas, gcTime: 0 })
+  const areasQuery = useQuery({ queryKey: ['map-maintenance-areas', user?.id, sessionEpoch], queryFn: async () => (await mapFoundationApi.maintenanceScope()).areas, gcTime: 0 })
   const conflictsQuery = useQuery({ queryKey: ['map-foundation-conflicts', user?.id, sessionEpoch], queryFn: mapFoundationApi.listConflicts, gcTime: 0 })
   const sources = sourcesQuery.isSuccess ? sourcesQuery.data : []
   const areas = areasQuery.isSuccess ? areasQuery.data : []
@@ -55,10 +56,10 @@ function GovernanceWorkspace({ initialAreaId }: { initialAreaId?: number }) {
     onSuccess: () => { if (mounted.current) { refresh(); message.success('旧异常记录状态已更新；标记待重导不会自动写入设施') } },
     onError: () => { if (mounted.current) message.error('异常状态更新未确认，请刷新后核对') } })
   return <>
-    <MapReadinessPanel />
-    <div id="offline-map-management"><OfflineMapManager initialAreaId={initialAreaId} /></div>
-    <div id="internal-road-management"><InternalRoadManager sources={sources} /></div>
-    <Card id="map-source-management" className="jurisdiction-card map-governance-card" title="生产台账整理与更新" extra={<Tag>管理员</Tag>}>
+    {user?.role === 'admin' && <><MapReadinessPanel />
+      <div id="offline-map-management"><OfflineMapManager initialAreaId={initialAreaId} /></div>
+      <div id="internal-road-management"><InternalRoadManager sources={sources} /></div></>}
+    <Card id="map-source-management" className="jurisdiction-card map-governance-card" title="生产台账整理与更新" extra={<Tag>授权范围内资料维护</Tag>}>
       <Alert showIcon type="info" message="首次确认来源与模板，以后只核对变化和异常"
         description="原件、工作表、原列、行号和来源修订保留。公共参考不能覆盖内网核验，未知坐标系不猜测，不按名称自动合并设施。" />
       {sourcesQuery.isError && <Alert type="error" message="来源读取失败，未展示旧缓存。" action={<Button onClick={() => void sourcesQuery.refetch()}>重试</Button>} />}
@@ -100,11 +101,15 @@ function GovernanceWorkspace({ initialAreaId }: { initialAreaId?: number }) {
         </div>)}
       </details>}
       {conflictsQuery.isError && <Alert type="warning" message="旧异常隔离区读取失败，请稍后刷新；不代表没有异常。" />}
+      <MapDataIssueWork key={selectedSourceId || 'all'} sourceId={selectedSourceId} />
     </Card>
   </>
 }
 
 export default function MapDataGovernance(props: { initialAreaId?: number } = {}) {
   const { user, sessionEpoch } = useAuth()
-  return user?.role === 'admin' ? <GovernanceWorkspace key={`${user.id}:${sessionEpoch}`} {...props} /> : null
+  const permission = useQuery({ queryKey: ['map-maintenance-scope', user?.id, sessionEpoch],
+    queryFn: mapFoundationApi.maintenanceScope, enabled: user?.role === 'analyst', retry: false, gcTime: 0 })
+  return user?.role === 'admin' || (permission.isSuccess && permission.data.areas.length > 0)
+    ? <GovernanceWorkspace key={`${user?.id}:${sessionEpoch}`} {...props} /> : null
 }

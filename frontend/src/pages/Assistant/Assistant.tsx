@@ -183,6 +183,8 @@ export default function Assistant() {
       {current.status === 'running' && <p>正在执行只读查询，可取消；后台故障不会影响案件录入。</p>}
       {current.result.error_code && <p role="status">{failureText(current.result.error_code)}</p>}
       {!!current.result.cards?.length && <p className="query-history-note">以下是该次查询的历史结果，数据更新后请重新查询。</p>}
+      {current.reused && <p role="status">已复用相同问题、权限和资料版本的任务，未重复运行。</p>}
+      {current.availability && <p role="status">{current.availability.state === 'historical' ? '历史可引用内容：' : '来源状态：'}{current.availability.message}</p>}
       {current.result.answer && <EvidenceAnswer answer={current.result.answer} cards={current.result.cards || []} />}
       {current.result.cards?.map((card, index) => <div id={`query-card-${index}`} key={index}><QueryResult card={card} /></div>)}
       {current.result.usage && <details><summary>本次调用计量</summary><p>工具 {current.result.usage.tool_calls} 次；模型 {current.result.usage.model_requests} 次。</p>

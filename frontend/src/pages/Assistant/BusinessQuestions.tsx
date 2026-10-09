@@ -7,12 +7,13 @@ export const businessQuestions: Record<BusinessQuestionType, string> = {
 export function businessEntryContext(initial?: InitialQueryContext, assetId?: string): { context?: BusinessSourceContext; error?: string } {
   const filters = initial?.filters || {}
   if (assetId && (!/^[1-9]\d*$/.test(assetId) || !Number.isSafeInteger(Number(assetId)))) return { error: '设施编号无效，未退回区域查询。' }
-  if (Object.keys(filters).some(key => key !== 'operational_area_id')) return {
+  if (Object.keys(filters).some(key => !['operational_area_id', 'time_basis'].includes(key))) return {
     error: '本页还带有其他案件筛选条件。以下三个问题不能忽略这些条件，请使用原有带条件查询，或明确开始新查询。',
   }
   return { context: { ...(initial?.source_case_id ? { case_id: initial.source_case_id } : {}),
     ...(assetId ? { asset_id: Number(assetId) } : {}),
-    ...(filters.operational_area_id ? { area_id: filters.operational_area_id } : {}) } }
+    ...(filters.operational_area_id ? { area_id: filters.operational_area_id } : {}),
+    ...(filters.time_basis ? { time_basis: filters.time_basis } : {}) } }
 }
 
 export default function BusinessQuestions({ initial, assetId, disabled, onRun }: {

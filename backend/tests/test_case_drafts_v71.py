@@ -63,6 +63,18 @@ def test_incomplete_draft_roundtrip_is_retry_safe_and_not_a_business_record(clie
     assert client.get(f'/api/case-drafts/{item["id"]}').json()["form_snapshot"] == {"description": "较新输入"}
 
 
+def test_resume_observation_logs_no_person_or_case_content(client, caplog):
+    import logging
+    item = save_draft(client, form_snapshot={'description': '仅供隔离测试的敏感原文'})
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger='aicommander'):
+        response = client.get(f'/api/case-drafts/{item["id"]}', params={'purpose': 'resume'})
+    assert response.status_code == 200
+    records = [record.message for record in caplog.records if 'work_operation' in record.message]
+    assert len(records) == 1 and 'outcome=available' in records[0] and 'elapsed_ms=' in records[0]
+    assert item['id'] not in records[0] and '敏感原文' not in records[0] and 'user' not in records[0]
+
+
 def test_private_scope_expiry_and_delete_cas(client, submission_db):
     item = save_draft(client)
     path = f'/api/case-drafts/{item["id"]}'

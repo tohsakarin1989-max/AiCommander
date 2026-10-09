@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze v7.5/current sources and compare identical authenticated save workloads.
+"""Freeze a stable baseline/current sources and compare identical save workloads.
 
 No business DB, model, network or Git writes. Both arms use idempotent create
 and strict revision-aware edit; preparation GET is excluded equally.
@@ -33,15 +33,17 @@ def main():
     parser.add_argument('--worker-backend', type=Path)
     parser.add_argument('--label', choices=('baseline', 'candidate'))
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--baseline-ref', default='v7.5.0-stable')
+    parser.add_argument('--candidate-label', default='8.x working source')
     args = parser.parse_args()
     worker = load('verify-v70-save-performance')
     if args.worker_backend:
         worker.worker(args.worker_backend, args.label, args.output, use_creation_key=True,
                       strict_edit=True, prepare_edit=True, verify_audits=True)
         return
-    reference = subprocess.check_output(['git', 'rev-parse', 'v7.5.0-stable^{commit}'], cwd=ROOT, text=True).strip()
+    reference = subprocess.check_output(['git', 'rev-parse', f'{args.baseline_ref}^{{commit}}'], cwd=ROOT, text=True).strip()
     version = subprocess.check_output(['git', 'show', f'{reference}:VERSION'], cwd=ROOT, text=True).strip()
-    if version != '7.5.0-stable':
+    if version != args.baseline_ref.removeprefix('v'):
         raise ValueError('baseline_version_mismatch')
     result_root = args.output.resolve()
     result_root.mkdir(parents=True, exist_ok=True)
@@ -58,7 +60,7 @@ def main():
         scripts.mkdir()
         for name in ('verify-v8-save-performance.py', 'verify-v70-save-performance.py', 'verify-v71-save-performance.py'):
             shutil.copy2(Path(__file__).with_name(name), scripts / name)
-        metadata = {'baseline_commit': reference, 'baseline_version': version, 'candidate_label': '8.x working source',
+        metadata = {'baseline_commit': reference, 'baseline_version': version, 'candidate_label': args.candidate_label,
             'source_hashes': {label: worker.digest(frozen / label / 'backend/app') for label in ('baseline', 'candidate')},
             'platform': platform.platform(), 'python': sys.version, 'database': 'fresh-synthetic-SQLite',
             'seed_cases': worker.SEED_CASES, 'warmup': worker.WARMUP, 'samples_per_run': worker.SAMPLES,

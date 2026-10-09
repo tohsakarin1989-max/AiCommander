@@ -39,6 +39,7 @@ class ScopeArgs(BaseModel):
 
 
 class CaseFilters(ScopeArgs):
+    time_basis: Literal['discovery', 'incident', 'entry'] | None = None
     case_id: int | None = Field(default=None, gt=0, strict=True)
     keyword: Label | None = None
     statuses: list[Label] | None = Field(default=None, max_length=20)
@@ -102,6 +103,7 @@ class FindHistory(CaseFilters):
 
 
 class ComparePeriods(ScopeArgs):
+    time_basis: Literal['discovery', 'incident', 'entry'] | None = None
     start: AwareDatetime
     end: AwareDatetime
     case_types: list[Label] | None = Field(default=None, max_length=20)
@@ -171,12 +173,14 @@ def _cases(db, args):
     return {**{k: result[k] for k in ('total', 'page', 'page_size')}, 'items': [
         {'id': row.id, 'case_number': row.case_number, **case_time_fields(row),
          'case_type': row.case_type, 'location': row.location,
+         'discovered_at': row.discovered_at, 'created_at': row.created_at,
          'evidence_ref': f'case:{row.id}'} for row in result['items']]}
 
 
 def _count(db, args):
-    precision = time_precision_counts(CaseSearchService.filtered_query(db, **args))
-    return {'count': sum(precision.values()), 'time_precision_counts': precision}
+    basis = args.get('time_basis') or 'incident'
+    precision = time_precision_counts(CaseSearchService.filtered_query(db, **args), args.get('time_basis'))
+    return {'count': sum(precision.values()), 'time_precision_counts': precision, 'time_basis': basis}
 
 
 def _places(db, args):
@@ -266,6 +270,7 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
             current = _count(db, {**filters, 'start_date': args.start, 'end_date': args.end})
             previous = _count(db, {**filters, 'start_date': previous_start, 'end_date': args.start})
             data = {'current_count': current['count'], 'previous_count': previous['count'],
+                    'time_basis': args.time_basis or 'incident',
                     'change': current['count'] - previous['count'],
                     'current_time_precision_counts': current['time_precision_counts'],
                     'previous_time_precision_counts': previous['time_precision_counts'],
@@ -325,7 +330,7 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
     empty = (not data['items'] if tool in {'find_road_results', 'find_history'} else size == 0) and not public_items
     if empty:
         gaps.append('当前授权范围与筛选条件下未返回记录，不代表其他范围不存在数据。')
-    partial = road_partial or (tool == 'find_places' and gaps) or (tool == 'summarize_results' and any(
+    partial = road_partial or (tool == 'find_places' and data.get('public_places', {}).get('state') == 'unavailable') or (tool == 'summarize_results' and any(
         item['content_state'] != 'ready' for item in data['items']))
     return {'tool': tool, 'state': 'partial' if partial else ('empty' if empty else 'ready'),
             'data': data, 'information_gaps': gaps,
@@ -336,4 +341,4 @@ def execute_tool(db, tool: str, arguments: dict, *, deadline=None, cancelled=lam
                              'v6.3-history-fragments-read-1' if tool == 'find_history' else
                              'v4.3-profile-read-1' if tool == 'find_case_profiles' else
                              'v4.3-road-read-1' if tool == 'find_road_results' else 'v4.0-read-tools-2')},
-            'boundary': '内网只读查询；案件按案发时间、成果按完成时间，时间区间左闭右开；不是新增事实或执行指令。'}
+            'boundary': '内网只读查询；案件按明确时间口径（未指定的旧契约为案发）、成果按完成时间，时间区间左闭右开；未知不代用录入，不是新增事实或执行指令。'}

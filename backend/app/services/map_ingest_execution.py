@@ -23,20 +23,27 @@ def source_for_write(db, source_id, actor_id=None):
     source = service._get_source(db, source_id)
     area_query = db.query(OperationalArea).filter_by(id=source.operational_area_id)
     if db.bind.dialect.name == "postgresql":
-        area_query = area_query.with_for_update()
+        # Facility writers serialize without blocking unrelated case inserts
+        # that only need the area's FK KEY SHARE lock.
+        area_query = area_query.with_for_update(key_share=True)
     if area_query.populate_existing().first() is None:
         raise ValueError("operational_area_not_found")
     if actor_id is not None:
         from app.models.user import User
         actor = db.query(User).populate_existing().filter_by(id=actor_id).first()
-        if actor is None or not actor.is_active or actor.role != "admin":
+        if actor is None or not actor.is_active or actor.role not in {"admin", "analyst"}:
             raise PermissionError("map_admin_required|当前账户不再具有地图管理权限")
         if db.info.get("principal_user_id") not in {None, actor_id}:
             raise PermissionError("map_actor_mismatch|不能借用其他账号处理台账")
-    from app.database import require_area_write_access
+        if actor.role != 'admin':
+            from app.models.map_foundation import UserAreaScope
+            if not db.query(UserAreaScope.id).filter_by(user_id=actor.id,
+                    operational_area_id=source.operational_area_id, access_level='manage').first():
+                raise PermissionError('map_admin_required|当前账号不再具有该厂区资料维护权限')
+    from app.database import require_area_manage_access
     # Legacy trusted service tests don't bind a request principal/scope.
     if "authorized_area_ids" in db.info or db.info.get("principal_user_id") is not None:
-        require_area_write_access(db, source.operational_area_id)
+        require_area_manage_access(db, source.operational_area_id)
     return service._get_source(db, source_id)
 
 
@@ -49,9 +56,9 @@ def get_run(db, run_id):
 
 
 def _execute(db, *, source, template, rows, plan, file_hash, filename, revision, key, created_by,
-             content=None, parent=None, parents=None, note=None, request_sha256=None):
+             content=None, parent=None, parents=None, note=None, request_sha256=None, existing_run=None, commit=True):
     service = _service()
-    run = MapIngestRun(id=str(uuid.uuid4()), source_id=source.id, template_id=template.id,
+    run = existing_run or MapIngestRun(id=str(uuid.uuid4()), source_id=source.id, template_id=template.id,
         filename=filename[:255], source_revision=revision, file_hash=file_hash, idempotency_key=key,
         status="running", total_rows=len(rows), valid_rows=0, quarantined_rows=0, created_assets=0,
         updated_assets=0, created_by=created_by, table_metadata=plan["structure"],
@@ -59,6 +66,12 @@ def _execute(db, *, source, template, rows, plan, file_hash, filename, revision,
         template_snapshot={key: service._json_safe(value) for key, value in service.template_to_dict(template).items()},
         classification_counts=plan["counts"], parent_run_id=parent.id if parent else None,
         original_evidence_object_id=parent.original_evidence_object_id if parent else None)
+    if existing_run is not None:
+        run.status = "running"
+        run.total_rows = len(rows)
+        run.valid_rows = run.quarantined_rows = run.created_assets = run.updated_assets = 0
+        run.table_metadata = plan["structure"]
+        run.classification_counts = plan["counts"]
     db.add(run)
     db.flush()
     if content is not None:
@@ -66,13 +79,21 @@ def _execute(db, *, source, template, rows, plan, file_hash, filename, revision,
         capture_original(db, run, content=content, filename=filename)
     errors = []
     for (number, raw), item in zip(rows, plan["rows"]):
-        claim = MapFeatureClaim(run_id=run.id, source_id=source.id, row_number=number,
-            source_record_id=service._clean_string(service._mapped_value(raw, template.field_mapping, "external_id")),
-            source_revision=revision, raw_payload=deepcopy(raw), raw_hash=service._hash_json(raw),
-            normalized_payload=deepcopy(item.get("normalized_payload")),
-            plan={key: value for key, value in item.items() if key not in {"resolved_payload", "base_hash", "normalized_payload"}},
-            parent_claim_id=(parents or {}).get(number), correction_note=note,
-            status="quarantined" if item["classification"] == "failed" else item["classification"])
+        claim = db.query(MapFeatureClaim).filter_by(run_id=run.id, row_number=number).first() if existing_run else None
+        if claim is not None:
+            if claim.status != "staged" or claim.raw_hash != service._hash_json(raw):
+                raise ValueError("staged_row_changed|暂存源行已变化，不能继续采用")
+            claim.normalized_payload = deepcopy(item.get("normalized_payload"))
+            claim.plan = {key: value for key, value in item.items() if key not in {"resolved_payload", "base_hash", "normalized_payload"}}
+            claim.status = "quarantined" if item["classification"] == "failed" else item["classification"]
+        else:
+            claim = MapFeatureClaim(run_id=run.id, source_id=source.id, row_number=number,
+                source_record_id=service._clean_string(service._mapped_value(raw, template.field_mapping, "external_id")),
+                source_revision=revision, raw_payload=deepcopy(raw), raw_hash=service._hash_json(raw),
+                normalized_payload=deepcopy(item.get("normalized_payload")),
+                plan={key: value for key, value in item.items() if key not in {"resolved_payload", "base_hash", "normalized_payload"}},
+                parent_claim_id=(parents or {}).get(number), correction_note=note,
+                status="quarantined" if item["classification"] == "failed" else item["classification"])
         db.add(claim)
         db.flush()
         if item["classification"] == "failed":
@@ -144,8 +165,11 @@ def _execute(db, *, source, template, rows, plan, file_hash, filename, revision,
     run.errors = errors
     run.status = "completed_with_errors" if run.quarantined_rows else "completed"
     run.completed_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(run)
+    if commit:
+        db.commit()
+        db.refresh(run)
+    else:
+        db.flush()
     return run
 
 
@@ -183,6 +207,8 @@ def ingest_file(db, *, source_id, template_id, filename, content, source_revisio
         raise ValueError("plan_stale|数据、来源或模板已变化，请重新预览")
     if plan["drift"]:
         raise ValueError("template_drift|结构与已确认模板不同，请另存确认新模板后再导入")
+    if (declaration or {}).get('mode') == 'full' and any(plan['counts'][kind] for kind in ('failed', 'conflict', 'identity_pending')):
+        raise ValueError('full_ledger_incomplete|完整台账有异常或身份待核，整批暂不采用；日常仍使用上一有效资料')
     return _execute(db, source=source, template=template, rows=rows, plan=plan, file_hash=digest,
         filename=filename, revision=revision, key=key, created_by=created_by, content=content), False
 

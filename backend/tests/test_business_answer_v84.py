@@ -161,7 +161,7 @@ def test_multiple_areas_requires_one_clarification_and_rechecks_scope(query_db):
 
 
 @pytest.mark.asyncio
-async def test_source_change_during_queue_rebases_but_old_answer_is_hidden(query_db):
+async def test_source_change_during_queue_rebases_and_frozen_answer_is_historical(query_db):
     case = add_case(query_db, 'SOURCE')
     query_db.commit()
     run = create(query_db, 'case_history', {'case_id': case.id})
@@ -171,8 +171,9 @@ async def test_source_change_during_queue_rebases_but_old_answer_is_hidden(query
     assert any('来源版本已变化' in text for text in result['answer']['unanswered'])
     case.description = '再次更正'
     query_db.commit()
-    with pytest.raises(PermissionError):
-        tasks.read_query(query_db, run['id'])
+    historical = tasks.read_query(query_db, run['id'])
+    assert historical['availability']['state'] == 'historical'
+    assert historical['result'] == result
 
 
 @pytest.mark.asyncio
@@ -339,8 +340,9 @@ async def test_positive_history_and_contrast_keep_original_versions(query_db):
     assert limited['result']['answer']['time_scope_versions']['selection'] == 'explicit_area_history'
     opposite.description = '原资料已更正'
     query_db.commit()
-    with pytest.raises(PermissionError):
-        tasks.read_query(query_db, run['id'])
+    historical = tasks.read_query(query_db, run['id'])
+    assert historical['availability']['state'] == 'historical'
+    assert historical['result'] == result
 
 
 @pytest.mark.asyncio
@@ -366,8 +368,9 @@ async def test_attention_real_profiles_and_asset_context_are_usable(query_db):
     assert result['source_manifest']
     asset.name = '已更正设施名'
     query_db.commit()
-    with pytest.raises(PermissionError):
-        tasks.read_query(query_db, run['id'])
+    historical = tasks.read_query(query_db, run['id'])
+    assert historical['availability']['state'] == 'historical'
+    assert historical['result'] == result
 
 
 @pytest.mark.asyncio
@@ -384,7 +387,7 @@ async def test_explicit_time_followup_changes_are_preserved_without_scope_expans
 
 
 @pytest.mark.asyncio
-async def test_derived_quality_refresh_keeps_snapshot_but_source_details_invalidate(query_db):
+async def test_derived_refresh_keeps_current_and_source_details_mark_historical(query_db):
     from app.models.case_source import CaseLocation
     case = add_case(query_db, 'SOURCE', discovered_at=datetime(2026, 10, 1))
     query_db.commit()
@@ -397,8 +400,9 @@ async def test_derived_quality_refresh_keeps_snapshot_but_source_details_invalid
     query_db.add(CaseLocation(case_id=case.id, role='discovery', precision='exact',
                               geometry={'type': 'Point', 'coordinates': [125, 46]}))
     query_db.commit()
-    with pytest.raises(PermissionError):
-        tasks.read_query(query_db, run['id'])
+    historical = tasks.read_query(query_db, run['id'])
+    assert historical['availability']['state'] == 'historical'
+    assert historical['result'] == run['result']
 
 
 @pytest.mark.asyncio
@@ -485,8 +489,9 @@ async def test_map_freezes_only_typed_points_and_rechecks_location_access(query_
     assert tasks.read_query(query_db, run['id'])['result']['answer']['map_context'] == mapped
     location.geometry = {'type': 'Point', 'coordinates': [126, 47]}
     query_db.commit()
-    with pytest.raises(PermissionError):
-        tasks.read_query(query_db, run['id'])
+    historical = tasks.read_query(query_db, run['id'])
+    assert historical['availability']['state'] == 'historical'
+    assert historical['result']['answer']['map_context'] == mapped
 
 
 @pytest.mark.asyncio

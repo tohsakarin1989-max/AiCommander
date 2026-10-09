@@ -26,7 +26,7 @@ from app.models.map_foundation import (
 from app.services.facility_identity_service import FacilityIdentityService
 
 
-ALLOWED_TABLE_EXTENSIONS = (".csv", ".xlsx", ".xlsm", ".xltx", ".xltm")
+ALLOWED_TABLE_EXTENSIONS = (".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".xltm")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_EXCEL_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_EXCEL_MEMBERS = 500
@@ -221,6 +221,8 @@ class MapFoundationService:
         content: bytes,
         template_id: int | None,
         ledger_declaration: dict | str | None = None,
+        sheet_name: str | None = None,
+        header_row: int = 1,
     ) -> dict[str, Any]:
         from app.services.map_ingest_plan import make_plan, public_plan
         source = MapFoundationService._get_source(db, source_id)
@@ -228,7 +230,9 @@ class MapFoundationService:
         if template_id is not None:
             template = MapFoundationService._get_template(db, source.id, template_id)
         metadata = {}
-        rows = MapFoundationService.parse_table(filename, content, template=template, metadata=metadata)
+        from types import SimpleNamespace
+        selection = template or SimpleNamespace(sheet_name=sheet_name, header_row=header_row)
+        rows = MapFoundationService.parse_table(filename, content, template=selection, metadata=metadata)
         with db.no_autoflush:
             plan = make_plan(db, source, template, rows, metadata, file_hash=hashlib.sha256(content).hexdigest())
             from app.services.map_ledger_completeness import declare_plan
@@ -256,92 +260,9 @@ class MapFoundationService:
                            plan_token=plan_token, ledger_declaration=ledger_declaration)
 
     @staticmethod
-    def parse_table(
-        filename: str,
-        content: bytes,
-        *,
-        template: MapImportTemplate | None,
-        metadata: dict | None = None,
-    ) -> list[tuple[int, dict[str, Any]]]:
-        lowered = (filename or "").lower()
-        if not any(lowered.endswith(ext) for ext in ALLOWED_TABLE_EXTENSIONS):
-            raise ValueError("unsupported_file_type|仅支持 CSV 或 Excel (.xlsx) 文件")
-        if not content:
-            raise ValueError("empty_file|文件内容为空")
-        if len(content) > MAX_UPLOAD_BYTES:
-            raise ValueError("file_too_large|文件过大，限制为 10MB")
-        if lowered.endswith(".csv"):
-            text = content.decode("utf-8-sig")
-            values = csv.reader(io.StringIO(text))
-            header_row = template.header_row if template else 1
-            for _ in range(header_row - 1):
-                next(values, None)
-            headers = [str(value).strip() for value in next(values, [])]
-            if not headers or not any(headers):
-                raise ValueError("missing_header|文件缺少表头")
-            if len(headers) > MAX_TABLE_COLUMNS:
-                raise ValueError("table_too_wide|表格列数超过限制")
-            MapFoundationService._check_headers(headers)
-            if metadata is not None:
-                metadata.update(headers=headers, sheet_name=None, header_row=header_row)
-            parsed = []
-            for index, cells in enumerate(values, start=header_row + 1):
-                if index > MAX_TABLE_ROWS + header_row:
-                    raise ValueError("table_too_long|表格行数超过限制")
-                if len(cells) > len(headers):
-                    raise ValueError("row_too_wide|数据列多于表头，不能静默丢弃")
-                if any(len(value) > MAX_CELL_TEXT_LENGTH for value in cells):
-                    raise ValueError("cell_too_long|单元格文本超过限制")
-                row = {key: cells[pos] if pos < len(cells) else None for pos, key in enumerate(headers) if key}
-                if any(value not in (None, "") for value in row.values()):
-                    parsed.append((index, MapFoundationService._json_safe_dict(row)))
-            return parsed
-
-        MapFoundationService.validate_excel_archive(content)
-        workbook = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        try:
-            sheet_name = template.sheet_name if template else None
-            if sheet_name:
-                if sheet_name not in workbook.sheetnames:
-                    raise ValueError("sheet_not_found|模板指定的工作表不存在")
-                sheet = workbook[sheet_name]
-            else:
-                sheet = workbook.active
-            header_row = template.header_row if template else 1
-            values = sheet.iter_rows(values_only=True)
-            headers: list[str] | None = None
-            parsed: list[tuple[int, dict[str, Any]]] = []
-            for row_number, row in enumerate(values, start=1):
-                if row_number > MAX_TABLE_ROWS + header_row:
-                    raise ValueError("table_too_long|表格行数超过限制")
-                if len(row) > MAX_TABLE_COLUMNS:
-                    raise ValueError("table_too_wide|表格列数超过限制")
-                if row_number < header_row:
-                    continue
-                if row_number == header_row:
-                    headers = [str(value).strip() if value is not None else "" for value in row]
-                    if not any(headers):
-                        raise ValueError("missing_header|文件缺少表头")
-                    MapFoundationService._check_headers(headers)
-                    if metadata is not None:
-                        metadata.update(headers=headers, sheet_name=sheet.title, header_row=header_row)
-                    continue
-                if not headers or not any(value not in (None, "") for value in row):
-                    continue
-                record = {
-                    key: MapFoundationService._json_safe(value)
-                    for key, value in zip(headers, row)
-                    if key
-                }
-                if any(
-                    isinstance(value, str) and len(value) > MAX_CELL_TEXT_LENGTH
-                    for value in record.values()
-                ):
-                    raise ValueError("cell_too_long|单元格文本超过限制")
-                parsed.append((row_number, record))
-            return parsed
-        finally:
-            workbook.close()
+    def parse_table(filename: str, content: bytes, *, template=None, metadata=None):
+        from app.services.map_ingest_tables import iter_table
+        return list(iter_table(filename, content, template=template, metadata=metadata))
 
     @staticmethod
     def _check_headers(headers):
@@ -497,6 +418,8 @@ class MapFoundationService:
         claim_refs = list(asset.source_claim_refs or [])
         claim_refs.append(claim.id)
         attributes = dict(normalized.get("attributes") or {})
+        from app.services.facility_vocabulary import describe
+        attributes['vocabulary'] = describe({**attributes, 'asset_type': normalized.get('asset_type')})
         attributes.update(
             {
                 "source_id": source.id,
@@ -725,6 +648,8 @@ class MapFoundationService:
             production_attributes["is_high_production"] = str(high_production).strip().lower() in {
                 "1", "true", "yes", "y", "是", "高产",
             }
+        from app.services.facility_vocabulary import describe
+        production_attributes["vocabulary"] = describe({**production_attributes, "asset_type": asset_type})
         return {
             "operational_area_id": source.operational_area_id,
             "external_id": external_id,
@@ -741,8 +666,8 @@ class MapFoundationService:
             "address": address,
             "source": source.source_type,
             "status": "active",
-            "risk_level": 1,
-            "confidence_score": 0.7 if is_public_reference else 1.0,
+            "risk_level": None,
+            "confidence_score": None,
             "verified": bool(external_id) and not is_public_reference,
             "verification_state": (
                 "identity_pending" if not external_id
@@ -814,14 +739,7 @@ class MapFoundationService:
             gcj_lon, gcj_lat = MapFoundationService._bd09_to_gcj02(first, second)
             return MapFoundationService._gcj02_to_wgs84(gcj_lon, gcj_lat)
         if coordinate_system in {"cgcs2000_gauss_kruger", "local_control_points"}:
-            # 首期不引入会在不同系统上漂移的隐式坐标库；必须由模板提供经核验的仿射参数。
-            params = transformation or {}
-            required = {"a", "b", "c", "d", "e", "f"}
-            if not required.issubset(params):
-                raise ValueError("transformation_required|投影或本地坐标缺少经控制点核验的转换参数")
-            longitude = float(params["a"]) * first + float(params["b"]) * second + float(params["c"])
-            latitude = float(params["d"]) * first + float(params["e"]) * second + float(params["f"])
-            return longitude, latitude
+            raise ValueError("coordinate_conversion_unverified|投影和本地控制点转换尚未完成来源参数及误差核验，本路径暂停采用；请提供已核验的经纬度资料")
         raise ValueError("unsupported_coordinate_system|不支持的坐标系")
 
     @staticmethod
@@ -831,14 +749,7 @@ class MapFoundationService:
     ) -> None:
         if coordinate_system not in {"cgcs2000_gauss_kruger", "local_control_points"}:
             return
-        params = transformation or {}
-        if not {"a", "b", "c", "d", "e", "f"}.issubset(params):
-            raise ValueError("transformation_required")
-        try:
-            for key in ("a", "b", "c", "d", "e", "f"):
-                float(params[key])
-        except (TypeError, ValueError):
-            raise ValueError("invalid_transformation") from None
+        raise ValueError("coordinate_conversion_unverified|不能用六参数仿射冒充通用投影或已核验本地坐标转换；该输入路径暂未启用")
 
     @staticmethod
     def _gcj02_to_wgs84(longitude: float, latitude: float) -> tuple[float, float]:

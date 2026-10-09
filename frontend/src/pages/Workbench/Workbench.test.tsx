@@ -6,11 +6,11 @@ import { workbenchApi } from '../../services/workbench'
 import type { DailyWorkbenchCase } from '../../services/workbench'
 
 const state = vi.hoisted(() => ({
-  loading: false, failed: false, empty: false, previewLoading: false, previewFailed: false,
+  loading: false, failed: false, empty: false, previewLoading: false, previewFailed: false, role: 'analyst',
   queries: [] as Array<{ queryKey: unknown[]; queryFn: () => unknown }>,
 }))
 vi.mock('../../auth/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 7, role: 'analyst' }, sessionEpoch: 2 }),
+  useAuth: () => ({ user: { id: 7, role: state.role }, sessionEpoch: 2 }),
 }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...props }: { children: ReactNode; to: string }) => <a href={to} {...props}>{children}</a>,
@@ -30,6 +30,7 @@ vi.mock('@tanstack/react-query', () => ({
       data: {
         schema_version: 'daily-workbench-5.0-1', generated_at: '2026-09-12T08:00:00+00:00',
         summary: { total_cases: 301, needs_information: 78, analysis_pending: 15, analysis_ready: 286 },
+        resume: { state: 'ready', drafts: { total: 2 }, imports: { total: 1 } },
         cases: state.empty ? [] : [{ id: 42, case_number: '测试案件42', occurred_time: null,
           location: '测试地点', case_status: 'pending', pipeline_status: 'queued', profile_ready: false,
           information_gaps: ['案发时段', '设施类型'], target_path: '/cases?caseId=42' }],
@@ -40,14 +41,16 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 describe('v5.0 只读日常工作台', () => {
-  beforeEach(() => { state.loading = false; state.failed = false; state.empty = false; state.previewLoading = false; state.previewFailed = false; state.queries = []; vi.clearAllMocks() })
+  beforeEach(() => { state.loading = false; state.failed = false; state.empty = false; state.previewLoading = false; state.previewFailed = false; state.role = 'analyst'; state.queries = []; vi.clearAllMocks() })
 
   it('使用全授权统计，点击案件直接进入详情而非启动旧处理会话', async () => {
     const html = renderToStaticMarkup(<Workbench />)
     expect(html).toContain('301')
-    expect(html).toContain('78')
+    expect(html).toContain('我的私有草稿')
+    expect(html).toContain('导入续做')
     expect(html).toContain('案发时段')
-    expect(html).toContain('等待后台处理')
+    expect(html).not.toContain('等待后台处理')
+    expect(html).not.toContain('画像待形成')
     expect(html).toContain('href="/cases?caseId=42"')
     expect(html).toContain('href="/suggestions"')
     expect(html).toContain('授权范围内全部案件')
@@ -58,6 +61,18 @@ describe('v5.0 只读日常工作台', () => {
     expect(workbenchApi.daily).toHaveBeenCalledWith({ limit: 20, offset: 0 })
     expect(workbenchApi.today).not.toHaveBeenCalled()
     expect(workbenchApi.startSession).not.toHaveBeenCalled()
+  })
+
+  it('只读账号没有写入口或私有续做计数，后台状态只在管理员可见', () => {
+    state.role = 'viewer'
+    const readonly = renderToStaticMarkup(<Workbench />)
+    expect(readonly).not.toContain('href="/cases?create=1"')
+    expect(readonly).not.toContain('我的私有草稿')
+    expect(readonly).not.toContain('href="/cases?imports=1"')
+    state.role = 'admin'
+    const admin = renderToStaticMarkup(<Workbench />)
+    expect(admin).toContain('后台运维状态（管理员）')
+    expect(admin).toContain('等待后台处理')
   })
 
   it('读取失败隐藏缓存内容，不把失败当成零案件', () => {

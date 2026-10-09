@@ -1,14 +1,14 @@
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401
-from app.api import auth
-from app.database import Base, get_db
+from app.api import auth, jurisdiction
+from app.database import Base, get_db, bind_principal_scope
 from app.models.user import AuditLog, User, UserSession
 from app.models.map_foundation import OperationalArea, UserAreaScope
 from app.security import AuthMiddleware
@@ -30,9 +30,10 @@ def _build_client(
     app = FastAPI()
     app.state.environment = environment
 
-    def override_get_db():
+    def override_get_db(request: Request):
         db = session_factory()
         try:
+            bind_principal_scope(db, getattr(request.state, 'principal', None), method=request.method)
             yield db
         finally:
             db.close()
@@ -60,9 +61,9 @@ def _build_client(
     def map_assets_read():
         return {"ok": True}
 
-    @app.post("/api/jurisdiction/assets")
-    def map_assets_write():
-        return {"ok": True}
+    # Map maintenance is now scoped within its real write service. A dummy
+    # endpoint would bypass that second boundary and test the wrong contract.
+    app.include_router(jurisdiction.router, prefix="/api/jurisdiction")
 
     @app.get("/api/patrols")
     def legacy_patrols():
@@ -252,6 +253,7 @@ def test_admin_can_create_viewer_and_viewer_is_read_only():
     assert login.status_code == 200
     assert client.get("/api/protected").status_code == 200
     assert client.post("/api/protected").status_code == 403
+    assert client.post('/api/jurisdiction/assets', json={'name': '不得写入', 'asset_type': 'well'}).status_code == 403
     assert client.get("/api/auth/users").status_code == 403
 
     token = client.cookies.get("aicommander_session")
@@ -299,7 +301,7 @@ def test_analyst_can_submit_recommendation_feedback_but_not_legacy_deployment():
     assert client.post("/api/deployment-recommendations/demo/feedback").status_code == 200
     assert client.post("/api/deployment/smart-analysis").status_code == 403
     assert client.get("/api/jurisdiction/assets").status_code == 200
-    assert client.post("/api/jurisdiction/assets").status_code == 403
+    assert client.post("/api/jurisdiction/assets", json={'name': '不得写入', 'asset_type': 'well'}).status_code == 403
     assert client.get("/api/patrols").status_code == 403
     assert client.get("/api/events").status_code == 200
     assert client.get("/api/key-locations").status_code == 403

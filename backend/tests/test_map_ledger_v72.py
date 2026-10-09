@@ -88,9 +88,13 @@ def test_structure_drift_and_declarations_are_not_silently_applied(db_session):
     assert plan["rows"][0]["errors"][0]["code"] == "field_declaration_drift"
     changed_headers = {**BASE, "坐标系": "wgs84", "新列": "数据"}
     plan = preview(db_session, source, template, [changed_headers])
-    assert plan["drift"][0]["code"] == "header_drift" and not plan["publishable"]
-    with pytest.raises(ValueError, match="template_drift"):
-        ingest(db_session, source, template, [changed_headers])
+    assert not plan['drift'] and plan['publishable']
+    assert plan['structure_changes'][0]['added'] == ['新列']
+    # v9 maps by confirmed column names; an unused column does not alter meaning.
+    ingest(db_session, source, template, [changed_headers])
+    missing = {key: value for key, value in changed_headers.items() if key != '坐标系'}
+    plan = preview(db_session, source, template, [missing])
+    assert plan['drift'][0]['code'] == 'mapped_column_missing'
 
 
 def test_partial_failure_retry_is_append_only_and_success_cannot_retry(db_session):

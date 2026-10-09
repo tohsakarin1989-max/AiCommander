@@ -52,7 +52,7 @@ router = APIRouter()
 router.include_router(source_router)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_CASE_IMPORT_ROWS = 1000
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
+ALLOWED_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
 BATCH_REVIEW_DEFAULT_LIMIT = 200
 BATCH_REVIEW_MAX_LIMIT = 200
 BATCH_REVIEW_JOB_LIMIT = 50
@@ -931,6 +931,7 @@ def get_case_page(
     end_date: Optional[datetime] = None,
     has_geo: Optional[bool] = None,
     operational_area_id: Optional[int] = Query(None, ge=1),
+    time_basis: Optional[Literal['discovery', 'incident', 'entry']] = None,
     db: Session = Depends(get_db),
 ):
     """全授权库检索；日期为 [start_date, end_date)，保留旧列表契约。"""
@@ -942,6 +943,7 @@ def get_case_page(
         db, page=page, page_size=page_size, keyword=keyword, statuses=statuses,
         case_types=case_types, oil_types=oil_types, start_date=start_date,
         end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id,
+        time_basis=time_basis,
     )
 
 
@@ -957,6 +959,7 @@ def get_cases(
     case_types: Optional[List[str]] = Query(None),
     oil_types: Optional[List[str]] = Query(None),
     end_exclusive: bool = False,
+    time_basis: Optional[Literal['discovery', 'incident', 'entry']] = None,
     source_type: Optional[str] = None,
     report_unit: Optional[str] = None,
     current_stage: Optional[str] = None,
@@ -1037,7 +1040,7 @@ def get_cases(
 
     # 日期范围筛选
     try:
-        query = filter_case_time_window(query, start_date, end_date, end_exclusive=end_exclusive)
+        query = filter_case_time_window(query, start_date, end_date, end_exclusive=end_exclusive, time_basis=time_basis)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1050,7 +1053,8 @@ def get_cases(
         query = query.filter((Case.latitude.is_(None)) | (Case.longitude.is_(None)))
 
     # 排序和分页
-    query = query.order_by(Case.occurred_time.desc())
+    time_field = {'discovery': Case.discovered_at, 'entry': Case.created_at}.get(time_basis, Case.occurred_time)
+    query = query.order_by(time_field.desc(), Case.id.desc())
     return query.offset(skip).limit(limit).all()
 
 
@@ -1725,6 +1729,9 @@ def import_cases(
     header_row: int = 1,
     field_mapping: Optional[str] = None,
     time_zone: str = "UTC",
+    source_key: Annotated[Optional[str], Query(min_length=1, max_length=80)] = None,
+    source_revision: Annotated[Optional[str], Query(min_length=1, max_length=100)] = None,
+    input_method: Literal['file', 'clipboard'] = 'file',
 ):
     """
     导入历史案件（CSV/Excel）：
@@ -1764,6 +1771,17 @@ def import_cases(
         raise HTTPException(status_code=400, detail=f"解析文件失败: {e}")
     except (KeyError, OSError, ParseError, XMLSyntaxError, BadZipFile) as e:
         raise HTTPException(status_code=400, detail="Excel 文件结构损坏或不完整，请重新保存为 xlsx") from e
+    if source_key is not None:
+        from app.services.case_source_import import import_source_table
+        try:
+            return import_source_table(db, table=table, content=content, area_id=target_area_id,
+                source_key=source_key, source_revision=source_revision, time_zone=time_zone, dry_run=dry_run,
+                input_method=input_method)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(422, str(exc)) from None
+    if source_revision is not None:
+        raise HTTPException(422, '来源版本必须与明确的来源标识一起使用')
     batch = None
     created_cases = []
     if not dry_run:
@@ -1815,6 +1833,7 @@ def import_cases(
         "batch_id": batch.id if batch is not None else None,
         "replayed": False,
         "parser_version": "case-table-4.0.0-1",
+        "input_method": input_method,
         "table": {
             "worksheets": table.worksheets,
             "worksheet": table.worksheet,
@@ -1825,6 +1844,8 @@ def import_cases(
         },
     }
     if batch is not None:
+        from app.services.case_import_original import preserve_received_input
+        preserve_received_input(db, batch, content, input_method)
         batch.result = result
         try:
             db.commit()

@@ -23,6 +23,7 @@ celery_app = Celery(
         "app.tasks.facility_summary_tasks",
         "app.tasks.result_catalog_tasks",
         "app.tasks.case_draft_tasks",
+        "app.tasks.map_ingest_tasks",
     ],
 )
 
@@ -30,6 +31,11 @@ celery_app = Celery(
 def build_beat_schedule(config):
     """Build once at process startup; restart Beat after changing feature flags."""
     schedule = {
+        "process-map-ledger": {
+            "task": "aicommander.map_ledgers.process_next",
+            "schedule": 10.0,
+            "options": {"queue": "map_build", "expires": 10},
+        },
         "expire-case-drafts": {
             "task": "aicommander.case_drafts.expire",
             "schedule": 3600.0,

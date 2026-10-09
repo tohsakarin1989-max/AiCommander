@@ -44,6 +44,8 @@ class ClarificationReply(BaseModel):
 
 def _hash(row):
     ignored = {'is_current', 'updated_at'} if isinstance(row, CaseAnalysisProfile) else set()
+    if row.__table__.name == 'evidence_objects':
+        ignored.add('content')  # Never read/copy deferred evidence bytes for metadata checks.
     if isinstance(row, MapSnapshot):
         ignored = {'status', 'published_at', 'superseded_at'}  # Historical base remains readable after publication.
     values = {column.key: getattr(row, column.key) for column in row.__table__.columns if column.key not in ignored}
@@ -439,6 +441,9 @@ def run_business_answer(db, question_type, context, *, cancelled, envelope, cons
               'completeness': completeness, 'summary': direct, 'information_gaps': gaps,
               'findings': [{'text': row['text'], 'card_index': 0, 'evidence_refs': row['evidence_refs']} for row in evidence],
               'map_context': map_context, 'boundary': BOUNDARY}
+    from app.services.question_contract import make_question_spec, unify_answer
+    answer = unify_answer(answer, cards, make_question_spec(question_type=question_type, context=context))
+    completeness = answer['completeness']
     return {'status': 'completed' if completeness == 'answered' else 'degraded', 'answer': answer,
             'cards': cards, 'trace': trace, 'source_manifest': manifest, 'error_code': error,
             'execution_mode': 'deterministic_business_question', 'task_envelope': envelope,

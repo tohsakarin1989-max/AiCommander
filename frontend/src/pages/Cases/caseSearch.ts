@@ -28,10 +28,12 @@ export interface CaseSearchDraft {
   oilTypes?: string[]
   startDate?: string
   endDate?: string
+  timeBasis?: 'discovery' | 'incident' | 'entry'
 }
 
 export function buildCaseSearchParams(draft: CaseSearchDraft): CasePageParams {
   const params: CasePageParams = {}
+  if (draft.timeBasis) params.time_basis = draft.timeBasis
   if (draft.keyword?.trim()) params.keyword = draft.keyword.trim()
   if (draft.statuses?.length) params.statuses = [...draft.statuses]
   if (draft.caseTypes?.length) params.case_types = [...draft.caseTypes]

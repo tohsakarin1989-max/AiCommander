@@ -33,10 +33,14 @@ import { caseApi, type CaseEditSnapshot, type CaseImportOptions, type CaseImport
 import { caseDraftsApi, type CaseDraft, type CaseDraftSave } from '../../services/caseDrafts'
 import CaseDraftLibrary from './CaseDraftLibrary'
 import CaseEditConflict from './CaseEditConflict'
+import { intakeSessionState, mergeIntakeCandidates, restoreIntakeDescription, type IntakeConflict } from './caseIntakeSession'
+import { useCaseDraftAutosave, useCaseIntakeSession } from './useCaseIntakeSession'
 import { editSnapshotValues, entryDifferenceFields, entryFormValues, restoreEntryValues, serializeEntryValues } from './caseDraftSnapshot'
 import CaseImportCorrections from './CaseImportCorrections'
 import CaseRecentImports from './CaseRecentImports'
+import CaseExportMenu from './CaseExportMenu'
 import CaseImportConfiguration from './CaseImportConfiguration'
+import CaseClipboardImport from './CaseClipboardImport'
 import CaseFacilityPicker from './CaseFacilityPicker'
 import { intakeCapabilityLabel, intakeEvidenceLabel } from './caseEntryAssistance'
 import CaseHistoryReferences from './CaseHistoryReferences'
@@ -143,6 +147,7 @@ interface FilterState {
   oilTypes: string[]
   startDate: string
   endDate: string
+  timeBasis: 'discovery' | 'incident' | 'entry'
 }
 
 const defaultFilterState: FilterState = {
@@ -151,6 +156,7 @@ const defaultFilterState: FilterState = {
   oilTypes: [],
   startDate: '',
   endDate: '',
+  timeBasis: 'discovery',
 }
 
 
@@ -179,7 +185,7 @@ const CaseWorkspace: React.FC = () => {
   const [draftConflict, setDraftConflict] = useState<CaseDraft | null>(null)
   const [draftSubmissionConflictId, setDraftSubmissionConflictId] = useState<string | null>(null)
   const [consumedDraftCaseId, setConsumedDraftCaseId] = useState<number | null>(null)
-  const [entryDirty, setEntryDirty] = useState(false)
+  const { entryDirty, changeVersion, setEntryDirty, manualFields, onManualChange } = useCaseIntakeSession()
   const [submission, setSubmission] = useState<CaseSubmission | null>(null)
   const submissionRef = useRef<CaseSubmission | null>(null)
   const [saveFailure, setSaveFailure] = useState('')
@@ -197,6 +203,8 @@ const CaseWorkspace: React.FC = () => {
   const [importHeaderRow, setImportHeaderRow] = useState(1)
   const [importTimeZone, setImportTimeZone] = useState<'UTC' | 'Asia/Shanghai'>('Asia/Shanghai')
   const [importFieldMapping, setImportFieldMapping] = useState<Record<string, string | null>>({})
+  const [importSourceKey, setImportSourceKey] = useState('')
+  const [importSourceRevision, setImportSourceRevision] = useState('')
   const [importCorrectionBusy, setImportCorrectionBusy] = useState(false)
   const [recentImportsOpen, setRecentImportsOpen] = useState(false)
   const applyImportConfiguration = useCallback((settings: CaseImportOptions) => {
@@ -204,6 +212,8 @@ const CaseWorkspace: React.FC = () => {
     setImportHeaderRow(settings.header_row ?? 1)
     setImportTimeZone(settings.time_zone ?? 'UTC')
     setImportFieldMapping(settings.field_mapping ?? {})
+    setImportSourceKey(settings.source_key ?? '')
+    setImportSourceRevision(settings.source_revision ?? '')
     setImportPreview(null)
   }, [])
   const applyImportReceipt = useCallback((result: ImportCorrectionResult) => {
@@ -222,8 +232,9 @@ const CaseWorkspace: React.FC = () => {
   const [locationDraft, setLocationDraft] = useState<{ latitude?: number; longitude?: number }>({})
   const [showAdvancedFields, setShowAdvancedFields] = useState(false)
   const [showMapPicker, setShowMapPicker] = useState(false)
-  const [aiIntakeText, setAiIntakeText] = useState('')
   const [aiIntakeSourceText, setAiIntakeSourceText] = useState('')
+  const [intakeConflicts, setIntakeConflicts] = useState<IntakeConflict[]>([])
+  const [legacyAssistantText, setLegacyAssistantText] = useState('')
   const filters = caseContext.filters
   const { page, pageSize } = listPosition
   const setPage = useCallback((value: number) => setSearchParams(previous => writeCaseListPosition(previous, value, pageSize)), [pageSize, setSearchParams])
@@ -232,6 +243,7 @@ const CaseWorkspace: React.FC = () => {
     ...defaultFilterState, statuses: filters.statuses ?? [], caseTypes: filters.case_types ?? [], oilTypes: filters.oil_types ?? [],
     startDate: filters.start_date ? dayjs(filters.start_date).format('YYYY-MM-DD') : '',
     endDate: filters.end_date ? dayjs(filters.end_date).subtract(1, 'millisecond').format('YYYY-MM-DD') : '',
+    timeBasis: filters.time_basis ?? (filters.start_date || filters.end_date ? 'incident' : 'discovery'),
   }))
   const filterToken = writeCaseFilterParams(new URLSearchParams(), filters).toString()
   useEffect(() => {
@@ -240,7 +252,8 @@ const CaseWorkspace: React.FC = () => {
     const day = (value: string | undefined, end = false) => value && Number.isFinite(Date.parse(value))
       ? new Date(Date.parse(value) + 8 * 3600000 - (end ? 1 : 0)).toISOString().slice(0, 10) : ''
     setSidebarFilter({ ...defaultFilterState, statuses: current.statuses ?? [], caseTypes: current.case_types ?? [],
-      oilTypes: current.oil_types ?? [], startDate: day(current.start_date), endDate: day(current.end_date, true) })
+      oilTypes: current.oil_types ?? [], startDate: day(current.start_date), endDate: day(current.end_date, true),
+      timeBasis: current.time_basis ?? (current.start_date || current.end_date ? 'incident' : 'discovery') })
   }, [filterToken])
   const queryClient = useQueryClient()
   const { user, sessionEpoch } = useAuth()
@@ -292,7 +305,7 @@ const CaseWorkspace: React.FC = () => {
 
   const casesQuery = useQuery({
     queryKey: ['cases', 'page', user?.id, sessionEpoch, filters, page, pageSize],
-    queryFn: ({ signal }) => caseApi.getCasePage({ ...filters, page, page_size: pageSize }, signal),
+    queryFn: ({ signal }) => caseApi.getCasePage({ ...filters, time_basis: filters.time_basis ?? (filters.start_date || filters.end_date ? 'incident' : 'discovery'), page, page_size: pageSize }, signal),
     enabled: !contextError,
   })
   const { data: rawCasePage, isLoading, isError: caseSearchError } = casesQuery
@@ -473,9 +486,15 @@ const CaseWorkspace: React.FC = () => {
     await readEditConflict(caseId)
   }
 
-  const acceptSavedDraft = (draft: CaseDraft) => {
+  const intakeSnapshot = () => ({ values: serializeEntryValues(form.getFieldsValue(true)),
+    assistant_source_text: aiIntakeSourceText, had_incident_locations: hadIncidentLocations,
+    manual_fields: [...manualFields.current].sort(), ...(legacyAssistantText ? { assistant_text: legacyAssistantText } : {}) })
+
+  const acceptSavedDraft = (draft: CaseDraft, checkCurrent = false) => {
     setActiveDraft(draft); draftSaveRef.current = null; setDraftSavePending(false); setDraftFailure(''); setDraftConflict(null)
-    setEntryDirty(false); setDraftNotice(`私有草稿已保存。到期时间：${dayjs(draft.expires_at).format('YYYY-MM-DD HH:mm')}；到期后不可找回。`)
+    // A user can keep typing during automatic save. Its receipt acknowledges only that snapshot.
+    setEntryDirty(checkCurrent && entryDifferenceFields(intakeSnapshot(), draft.form_snapshot).length > 0)
+    setDraftNotice(`私有草稿已暂存于 ${formatStoredTime(draft.updated_at, 'YYYY-MM-DD HH:mm:ss')}。到期时间：${formatStoredTime(draft.expires_at, 'YYYY-MM-DD HH:mm')}；到期后不可找回。`)
     void queryClient.invalidateQueries({ queryKey: ['case-private-drafts'] })
   }
 
@@ -484,17 +503,18 @@ const CaseWorkspace: React.FC = () => {
     const areaId = editingCase?.operational_area_id ?? form.getFieldValue('operational_area_id')
     if (!areaId) { setDraftFailure('请选择可写厂区后保存私有草稿。'); return null }
     const requestId = editRequestRef.current
-    const attempt = draftSaveRef.current ?? { id: activeDraft?.id || crypto.randomUUID(), payload: {
-      expected_revision: activeDraft?.revision || 0, operational_area_id: areaId,
+    // Changing a new record's area starts a new private draft; never move an existing snapshot across scopes.
+    const sameAreaDraft = activeDraft?.operational_area_id === areaId ? activeDraft : null
+    const attempt = draftSaveRef.current ?? { id: sameAreaDraft?.id || crypto.randomUUID(), payload: {
+      expected_revision: sameAreaDraft?.revision || 0, operational_area_id: areaId,
       target_case_id: editingCase?.id ?? null, base_case_revision: editingCase ? editRevision : null,
-      schema_version: 1 as const, form_snapshot: { values: serializeEntryValues(form.getFieldsValue(true)),
-        assistant_text: aiIntakeText, assistant_source_text: aiIntakeSourceText, had_incident_locations: hadIncidentLocations },
+      schema_version: 1 as const, form_snapshot: intakeSnapshot(),
     } }
     draftSaveRef.current = attempt; setDraftSavePending(true); setDraftBusy(true); setDraftFailure('')
     try {
       const draft = await caseDraftsApi.save(attempt.id, attempt.payload)
       if (!entryMounted.current || editRequestRef.current !== requestId) return null
-      acceptSavedDraft(draft)
+      acceptSavedDraft(draft, true)
       return draft
     } catch (error) {
       if (!entryMounted.current || editRequestRef.current !== requestId) return null
@@ -507,6 +527,10 @@ const CaseWorkspace: React.FC = () => {
     } finally { if (entryMounted.current && editRequestRef.current === requestId) setDraftBusy(false) }
   }
 
+  const entryState = intakeSessionState({ dirty: entryDirty, savedAt: activeDraft?.updated_at,
+    savingDraft: draftBusy, submitting: savePreparing || saveMutation.isPending,
+    outcomeUnknown: Boolean(submission) || (draftSavePending && !draftBusy), conflict: Boolean(editConflict || draftConflict || saveConflict) })
+
   const checkDraftSave = async () => {
     const attempt = draftSaveRef.current
     if (!attempt || draftBusy) return
@@ -517,7 +541,7 @@ const CaseWorkspace: React.FC = () => {
       if (!entryMounted.current || editRequestRef.current !== requestId) return
       if (latest.status === 'submitted' && latest.submitted_case_id) { await compareConsumedDraft(latest.submitted_case_id); return }
       if (!entryDifferenceFields(attempt.payload.form_snapshot, latest.form_snapshot).length
-          && latest.revision > attempt.payload.expected_revision && latest.base_case_revision === attempt.payload.base_case_revision) acceptSavedDraft(latest)
+          && latest.revision > attempt.payload.expected_revision && latest.base_case_revision === attempt.payload.base_case_revision) acceptSavedDraft(latest, true)
       else { setDraftConflict(latest); setDraftFailure('服务器已有不同草稿版本，请比较后再保存；本页输入未被覆盖。') }
     } catch {
       if (entryMounted.current && editRequestRef.current === requestId) setDraftFailure('暂未读到可确认的草稿（也可能是撤权或到期）。原输入和保存请求继续保留，可用原请求重试。')
@@ -530,17 +554,19 @@ const CaseWorkspace: React.FC = () => {
     const requestId = ++editRequestRef.current
     setDraftBusy(true)
     try {
-      const draft = await caseDraftsApi.get(id)
+      const draft = await caseDraftsApi.get(id, undefined, 'resume')
       if (!entryMounted.current || editRequestRef.current !== requestId) return
       if (draft.status === 'submitted' && draft.submitted_case_id) { setDraftLibraryOpen(false); completeSave(draft.submitted_case_id); return }
       if (draft.schema_version !== 1 || !draft.form_snapshot.values || typeof draft.form_snapshot.values !== 'object') throw new Error('草稿格式不支持')
       const current = draft.target_case_id ? await caseApi.getEditSnapshot(draft.target_case_id) : null
       if (!entryMounted.current || editRequestRef.current !== requestId) return
-      form.resetFields(); form.setFieldsValue(restoreEntryValues(draft.form_snapshot.values as Record<string, unknown>))
+      form.resetFields(); form.setFieldsValue(restoreEntryValues(restoreIntakeDescription(draft.form_snapshot)))
       setEditingCase(current?.case ?? null); setEditRevision(draft.base_case_revision); setEditConflict(null)
       setBonusDraftLoadState({ vehicles: true, persons: true }); setSourceCollectionsLoaded({ locations: true, measurements: true })
       setBonusDraftTouched({ vehicles: false, persons: false }); setHadIncidentLocations(Boolean(draft.form_snapshot.had_incident_locations))
-      setAiIntakeText(String(draft.form_snapshot.assistant_text || '')); setAiIntakeSourceText(String(draft.form_snapshot.assistant_source_text || ''))
+      setLegacyAssistantText(String(draft.form_snapshot.assistant_text || '')); setAiIntakeSourceText(String(draft.form_snapshot.assistant_source_text || ''))
+      manualFields.current = new Set(Array.isArray(draft.form_snapshot.manual_fields) ? draft.form_snapshot.manual_fields as string[] : [])
+      setIntakeConflicts([])
       structureMutation.reset(); qualityPreviewMutation.reset(); setSaveFailure(''); setSaveConflict(false)
       acceptSavedDraft(draft); setShowAdvancedFields(false); setShowMapPicker(false); setDraftLibraryOpen(false); setIsModalVisible(true)
       if (current && current.source_revision !== draft.base_case_revision) { setEditConflict(current); setSaveFailure('草稿基于较早的案件版本，请比较后再保存正式记录。') }
@@ -616,16 +642,22 @@ const CaseWorkspace: React.FC = () => {
     mutationFn: ({ text }: { text: string; requestId: number }) => caseApi.structureCaseText(text),
     onSuccess: (data, { text: sourceText, requestId }) => {
       if (!entryMounted.current || requestId !== editRequestRef.current || submissionRef.current || draftSaveRef.current || saveBusy.current) return
+      if (form.getFieldValue('description') !== sourceText) {
+        message.info('原始记录在提取期间已修改，本次候选未写入。请根据最新原文重新提取。')
+        return
+      }
       const application = buildCaseAiIntakeApplication(data, sourceText)
-      const patch = {
+      const candidates = {
         ...application.patch,
         ...buildCaseAiIntakeEntryFlags(data, application.patch),
       } as Record<string, unknown>
       ;(['occurred_time', 'occurred_from', 'occurred_to', 'discovered_at', 'report_time'] as const).forEach(field => {
-        if (typeof patch[field] === 'string') {
-          patch[field] = formCaseTime(patch[field] as string, String(patch.time_timezone || form.getFieldValue('time_timezone') || 'Asia/Shanghai'))
+        if (typeof candidates[field] === 'string') {
+          candidates[field] = formCaseTime(candidates[field] as string, String(candidates.time_timezone || form.getFieldValue('time_timezone') || 'Asia/Shanghai'))
         }
       })
+      const { patch, conflicts } = mergeIntakeCandidates(form.getFieldsValue(true), candidates, manualFields.current)
+      setIntakeConflicts(conflicts)
       let changedFeedback = form.getFieldValue('feedback_changed_fields')
       for (const field of feedbackFields) if (typeof patch[field] === 'boolean') changedFeedback = changedFeedbackFields(changedFeedback, field)
       if (changedFeedback) patch.feedback_changed_fields = changedFeedback
@@ -638,7 +670,7 @@ const CaseWorkspace: React.FC = () => {
       if (patch.latitude != null || patch.longitude != null) {
         setShowMapPicker(true)
       }
-      message.success(`文字辅助已写入 ${Object.keys(application.patch).length} 个可编辑候选字段，请核对原文`)
+      message.success(`已补齐 ${Object.keys(patch).filter(field => !field.startsWith('feedback_')).length} 个空白字段；保留人工内容，${conflicts.length} 项差异供核对`)
     },
     onError: (error: unknown) => {
       const err = error as { response?: { data?: { detail?: string } }; message?: string }
@@ -648,10 +680,14 @@ const CaseWorkspace: React.FC = () => {
 
   const aiIntakeApplication = useMemo(
     () => structureMutation.data
-      ? buildCaseAiIntakeApplication(structureMutation.data, aiIntakeSourceText || aiIntakeText)
+      ? buildCaseAiIntakeApplication(structureMutation.data, aiIntakeSourceText)
       : null,
-    [aiIntakeSourceText, aiIntakeText, structureMutation.data],
+    [aiIntakeSourceText, structureMutation.data],
   )
+
+  useCaseDraftAutosave({ enabled: isModalVisible && entryDirty && Boolean(editingCase?.operational_area_id ?? form.getFieldValue('operational_area_id')),
+    blocked: Boolean(submission) || draftBusy || draftSavePending || savePreparing || structureMutation.isPending || Boolean(draftConflict) || Boolean(editConflict) || Boolean(draftFailure),
+    changeVersion, save: persistDraft })
 
   const createEvidenceMutation = useMutation({
     mutationFn: (data: { title?: string; file_path?: string; notes?: string }) =>
@@ -724,7 +760,7 @@ const CaseWorkspace: React.FC = () => {
 
   const previewImportMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.previewImportCases(file, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping })
+      caseApi.previewImportCases(file, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
     ),
     onSuccess: (data) => {
       setImportPreview(data)
@@ -743,7 +779,7 @@ const CaseWorkspace: React.FC = () => {
 
   const importMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.importCases(file, false, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping })
+      caseApi.importCases(file, false, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
     ),
     onSuccess: async (data) => {
       if (data.replayed) {
@@ -827,7 +863,7 @@ const CaseWorkspace: React.FC = () => {
     setBonusDraftTouched({ vehicles: false, persons: false })
     setShowAdvancedFields(false)
     setShowMapPicker(false)
-    setAiIntakeText('')
+    manualFields.current.clear(); setIntakeConflicts([]); setLegacyAssistantText('')
     setAiIntakeSourceText('')
     structureMutation.reset()
     setIsModalVisible(true)
@@ -838,6 +874,15 @@ const CaseWorkspace: React.FC = () => {
     setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('create'); return next }, { replace: true })
     if (user?.role === 'admin' || user?.role === 'analyst') handleCreate()
   }, [searchParams, areaScopesQuery.isPending])
+
+  useEffect(() => {
+    if (searchParams.get('drafts') !== '1' && searchParams.get('imports') !== '1') return
+    if (user?.role === 'admin' || user?.role === 'analyst') {
+      if (searchParams.get('drafts') === '1') setDraftLibraryOpen(true)
+      if (searchParams.get('imports') === '1') { setImportModalVisible(true); setRecentImportsOpen(true) }
+    }
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete('drafts'); next.delete('imports'); return next }, { replace: true })
+  }, [searchParams, user?.role, setSearchParams])
 
   const handleEdit = async (caseItem: Case) => {
     if (submissionRef.current || draftSaveRef.current) { setIsModalVisible(true); message.warning('请先核对上一笔提交或草稿保存，不能覆盖未确认的输入。'); return }
@@ -853,7 +898,7 @@ const CaseWorkspace: React.FC = () => {
       form.resetFields(); form.setFieldsValue(editSnapshotValues(snapshot))
       setBonusDraftLoadState({ vehicles: true, persons: true }); setSourceCollectionsLoaded({ locations: true, measurements: true })
       setHadIncidentLocations(snapshot.initial_locations.some(item => item.role === 'incident')); setBonusDraftTouched({ vehicles: false, persons: false })
-      setAiIntakeText(snapshot.case.description || ''); setAiIntakeSourceText(''); structureMutation.reset()
+      manualFields.current.clear(); setIntakeConflicts([]); setLegacyAssistantText(''); setAiIntakeSourceText(''); structureMutation.reset()
       setShowAdvancedFields(false); setShowMapPicker(snapshot.case.latitude != null && snapshot.case.longitude != null)
       setIsModalVisible(true)
     } catch {
@@ -862,6 +907,7 @@ const CaseWorkspace: React.FC = () => {
   }
 
   const handleBonusVehicleScopeChange = (checked: boolean) => {
+    manualFields.current.add('bonus_has_vehicle'); manualFields.current.add('initial_vehicles')
     setEntryDirty(true)
     setBonusDraftTouched(prev => ({ ...prev, vehicles: true }))
     const rows = form.getFieldValue('initial_vehicles')
@@ -872,6 +918,7 @@ const CaseWorkspace: React.FC = () => {
   }
 
   const handleBonusPersonScopeChange = (checked: boolean) => {
+    manualFields.current.add('bonus_has_person'); manualFields.current.add('initial_persons')
     setEntryDirty(true)
     setBonusDraftTouched(prev => ({ ...prev, persons: true }))
     const rows = form.getFieldValue('initial_persons')
@@ -926,8 +973,9 @@ const CaseWorkspace: React.FC = () => {
         })
       }
       if (!confirmed || !entryMounted.current) return
-      const savedDraft = activeDraft ? await persistDraft() : null
-      if (activeDraft && !savedDraft || !entryMounted.current) return
+      // Persist every submission's identity before sending it, including one-click manual entries.
+      const savedDraft = await persistDraft()
+      if (!savedDraft || !entryMounted.current) return
       const attempt = prepareCaseSubmission(payload, editingCase?.id, { sourceRevision: editingCase ? editRevision! : undefined,
         ...(savedDraft ? { key: savedDraft.submission_key, draftId: savedDraft.id, draftRevision: savedDraft.revision } : {}) })
       submissionRef.current = attempt; setSubmission(attempt)
@@ -960,10 +1008,10 @@ const CaseWorkspace: React.FC = () => {
     if (saveBusy.current || draftBusy) return
     if (draftSaveRef.current) { setDraftFailure('草稿保存结果尚未确认，输入继续保留。请先核对草稿或使用原请求重试。'); return }
     if (submissionRef.current) {
-      if (await modal.confirm({ title: '保存结果尚未确认', content: '关闭窗口不会撤销服务器上的提交。本页会继续保留输入和原凭证，点击录入可继续核对；不要刷新页面或另建案件。', okText: '暂时收起，保留本页输入', cancelText: '继续核对' })) setIsModalVisible(false)
+      if (await modal.confirm({ title: '保存结果尚未确认', content: '关闭窗口不会撤销服务器上的提交。原输入已暂存；可从“我的草稿”读取当前服务器结果继续核对，不要另建案件。', okText: '暂时收起', cancelText: '继续核对' })) setIsModalVisible(false)
       return
     }
-    if (entryDirty && !await modal.confirm({ title: '放弃本次未保存输入？', content: '这些敏感输入尚未保存到草稿，取消后会清除。若需稍后继续，请返回填写并点击“保存私有草稿”。已保存的旧草稿不包含本次未保存修改。', okText: '放弃未保存输入', cancelText: '返回填写' })) return
+    if (entryDirty && !await modal.confirm({ title: '放弃尚未暂存的修改？', content: '服务器只保留最后确认暂存的版本，当前未保存修改关闭后会清除。可返回等待自动暂存或立即暂存后再离开。', okText: '放弃未保存修改', cancelText: '返回填写' })) return
     editRequestRef.current += 1; setIsModalVisible(false); setEditingCase(null); setEntryDirty(false); setSaveFailure('')
     setEditRevision(null); setEditConflict(null); setDraftConflict(null); setActiveDraft(null); setDraftNotice(''); setDraftFailure(''); form.resetFields()
   }
@@ -1023,7 +1071,7 @@ const CaseWorkspace: React.FC = () => {
 
 
   const handleRunAiIntake = () => {
-    const text = aiIntakeText || form.getFieldValue('description')
+    const text = form.getFieldValue('description')
     if (!text || !String(text).trim()) {
       message.warning('请先粘贴案情文本')
       return
@@ -1341,6 +1389,9 @@ const CaseWorkspace: React.FC = () => {
           {/* 日期范围 */}
           <div className="filter-group">
             <div className="gh">日期范围</div>
+            <Select aria-label="案件列表时间口径" value={sidebarFilter.timeBasis} style={{ width: '100%', marginBottom: 8 }}
+              options={[{ value: 'discovery', label: '发现／查获时间' }, { value: 'incident', label: '实际案发时间' }, { value: 'entry', label: '录入时间' }]}
+              onChange={value => setSidebarFilter(previous => ({ ...previous, timeBasis: value }))} />
             <div className="date-range">
               <input
                 type="date"
@@ -1361,6 +1412,7 @@ const CaseWorkspace: React.FC = () => {
           </button>
           <button className="btn-ghost" onClick={resetFilters}>重置</button>
           <small>分类计数为授权范围内符合关键词和日期的全部案件，不受分页影响。</small>
+          <small>时间未知的记录不以录入时间替代。旧链接未声明口径时，有日期筛选继续采用原案发口径。</small>
         </aside>
 
         {/* ── 右侧主内容区 ── */}
@@ -1378,6 +1430,7 @@ const CaseWorkspace: React.FC = () => {
               <span className="kbd">⌘K</span>
             </div>
             <div className="tools-bar-right">
+              {!contextError && <CaseExportMenu params={{ ...filters, time_basis: filters.time_basis ?? (filters.start_date || filters.end_date ? 'incident' : 'discovery') }} />}
               {user?.role === 'admin' && caseStewardStatus?.can_start && (
                 <button
                   className="btn-ghost"
@@ -1431,8 +1484,8 @@ const CaseWorkspace: React.FC = () => {
                   <thead>
                     <tr>
                       <th style={{ width: 140 }}>案件编号</th>
-                      <th style={{ width: 130 }}>案发时间</th>
-                      <th>案发地点</th>
+                      <th style={{ width: 150 }}>发现／案发时间</th>
+                      <th>地点原文（角色见详情）</th>
                       <th style={{ width: 110 }}>类型</th>
                       <th style={{ width: 90 }}>油品</th>
                       <th style={{ width: 120 }}>信息质量</th>
@@ -1462,7 +1515,8 @@ const CaseWorkspace: React.FC = () => {
                             <span className="cno">{caseItem.case_number || `#${caseItem.id}`}</span>
                           </td>
                           <td className="time">
-                            {formatCaseTime(caseItem, 'MM-DD HH:mm')}
+                            <div>发现：{caseItem.discovered_at ? formatStoredTime(caseItem.discovered_at, 'MM-DD HH:mm', caseItem.time_timezone || 'Asia/Shanghai') : '未知'}</div>
+                            <small>案发：{formatCaseTime(caseItem, 'MM-DD HH:mm')}</small>
                           </td>
                           <td>
                             <span style={{ fontSize: 12, color: 'var(--ink-1)' }}>
@@ -1779,7 +1833,7 @@ const CaseWorkspace: React.FC = () => {
                     </div>
                     {selectedCase.location && (
                       <div className="kv">
-                        <span className="k">案发地点</span>
+                        <span className="k">地点原文</span>
                         <span className="v">{selectedCase.location}</span>
                       </div>
                     )}
@@ -1879,12 +1933,10 @@ const CaseWorkspace: React.FC = () => {
 
                   {/* 底部操作 */}
                   <div className="detail-actions">
-                    <button className="btn-primary" onClick={handleStartRoundtable}>
-                      发起圆桌研判
-                    </button>
-                    <button className="btn-ghost" onClick={() => handleEdit(selectedCase)}>
+                    <button className="btn-primary" onClick={() => handleEdit(selectedCase)}>
                       编辑案件
                     </button>
+                    <details><summary>高级研判</summary><button className="btn-ghost" onClick={handleStartRoundtable}>发起圆桌研判</button></details>
                     <Popconfirm
                       title="确认删除此案件？"
                       onConfirm={() => deleteMutation.mutate(selectedCase.id)}
@@ -1934,13 +1986,14 @@ const CaseWorkspace: React.FC = () => {
         okText="保存案件"
         cancelText="取消"
         footer={origin => <><Button loading={draftBusy} disabled={Boolean(submission) || draftSavePending || savePreparing || Boolean(editConflict) || Boolean(draftConflict)}
-          onClick={() => void persistDraft()}>保存私有草稿</Button>{origin}</>}
+          onClick={() => void persistDraft()}>立即暂存</Button>{origin}</>}
         styles={{
           content: { background: 'var(--bg-2)', border: '1px solid var(--line)' },
           header:  { background: 'var(--bg-2)', borderBottom: '1px solid var(--line)' },
           footer:  { borderTop: '1px solid var(--line)' },
         }}
       >
+        <p role="status" data-intake-state={entryState}>{({ editing: entryDirty ? '有新修改，正在等待自动暂存；未显示确认前请勿关闭页面。' : '填写后自动暂存到本人私有草稿。', saving_draft: '正在暂存，可继续填写…', submitting: '正在核对并保存正式记录…', outcome_unknown: '保存结果未确认，请核对原请求。', saved: '当前输入已暂存，尚未修改正式案件。', conflict: '存在版本差异，当前输入保留，请核对。' })[entryState]}</p>
         {saveFailure && <Alert type={submission ? 'warning' : 'error'} showIcon role="alert" message={saveFailure} />}
         {draftNotice && <Alert type="info" showIcon message={draftNotice} description={entryDirty ? '本次新修改尚未保存到草稿。' : '已保存内容可从“我的草稿”找回；尚未创建或修改正式案件。'} />}
         {draftFailure && <Alert type="warning" showIcon message={draftFailure} />}
@@ -1962,10 +2015,11 @@ const CaseWorkspace: React.FC = () => {
         {saveConflict && !editConflict && submission?.caseId !== undefined && <Button onClick={() => void readEditConflict(submission.caseId!)}>读取最新案件进行比较</Button>}
         {draftSubmissionConflictId && !draftConflict && <Button onClick={() => void readSubmissionDraftConflict(draftSubmissionConflictId)}>读取最新草稿进行比较</Button>}
         {draftConflict && <CaseEditConflict key={`draft:${draftConflict.id}:${draftConflict.revision}`} kind="draft"
-          mine={draftSaveRef.current?.payload.form_snapshot ?? { values: serializeEntryValues(form.getFieldsValue(true)), assistant_text: aiIntakeText, assistant_source_text: aiIntakeSourceText, had_incident_locations: hadIncidentLocations }} latest={draftConflict.form_snapshot} revision={draftConflict.revision}
+          mine={draftSaveRef.current?.payload.form_snapshot ?? intakeSnapshot()} latest={draftConflict.form_snapshot} revision={draftConflict.revision}
           onResolve={resolved => {
-            form.resetFields(); form.setFieldsValue(restoreEntryValues((resolved.values || {}) as Record<string, unknown>))
-            setAiIntakeText(String(resolved.assistant_text || '')); setAiIntakeSourceText(String(resolved.assistant_source_text || ''))
+            form.resetFields(); form.setFieldsValue(restoreEntryValues(restoreIntakeDescription(resolved)))
+            setLegacyAssistantText(String(resolved.assistant_text || '')); setAiIntakeSourceText(String(resolved.assistant_source_text || ''))
+            manualFields.current = new Set(Array.isArray(resolved.manual_fields) ? resolved.manual_fields as string[] : [])
             setHadIncidentLocations(Boolean(resolved.had_incident_locations)); setEditRevision(draftConflict.base_case_revision)
             setActiveDraft(draftConflict); setDraftConflict(null); draftSaveRef.current = null; setDraftSavePending(false)
             if (draftSubmissionConflictId) { submissionRef.current = null; setSubmission(null); setSaveConflict(false); setSaveFailure(''); setDraftSubmissionConflictId(null) }
@@ -1976,7 +2030,7 @@ const CaseWorkspace: React.FC = () => {
           {(submission.caseId === undefined || submission.draftId) && <Button loading={saveMutation.isPending} onClick={() => void confirmSubmission(false)}>核对保存结果</Button>}
           <Button disabled={saveConflict || saveMutation.isPending} onClick={() => void confirmSubmission(true)}>{submission.caseId === undefined ? '使用原请求安全重试' : '将原输入重新保存到本案'}</Button>
         </div>}
-        <Form form={form} layout="vertical" style={{ marginTop: 8 }} disabled={Boolean(submission) || savePreparing || draftBusy || draftSavePending || Boolean(editConflict) || Boolean(draftConflict)} onValuesChange={() => setEntryDirty(true)}>
+        <Form form={form} layout="vertical" style={{ marginTop: 8 }} disabled={Boolean(submission) || savePreparing || (draftSavePending && !draftBusy) || Boolean(editConflict) || Boolean(draftConflict)} onValuesChange={changes => { onManualChange(changes); if (!draftSaveRef.current) setDraftFailure('') }}>
           <div className="cases-ai-assistant">
             <div className="cases-ai-assistant__head">
               <div>
@@ -1989,39 +2043,27 @@ const CaseWorkspace: React.FC = () => {
                   : '规则可用，模型状态以实际提取结果为准'}
               </b>
             </div>
-            <TextArea
-              rows={4}
-              value={aiIntakeText}
-              onChange={event => { setAiIntakeText(event.target.value); setEntryDirty(true) }}
-              placeholder="粘贴已掌握的时间、地点、简要经过和本单位处置。来源去向、公安后续不了解时不用补造；候选字段需与原文核对。"
-            />
+            <Form.Item name="description" label="简要经过／原始记录（只写已掌握内容）">
+              <TextArea rows={5} placeholder="填写或粘贴已掌握的时间、地点、简要经过和本单位处置。一份原文用于正式记录和辅助提取，未知情况不用补造。" />
+            </Form.Item>
+            {legacyAssistantText && legacyAssistantText !== form.getFieldValue('description') && <details><summary>旧草稿保留的辅助原文</summary><p style={{ whiteSpace: 'pre-wrap' }}>{legacyAssistantText}</p><small>保留历史输入，不替换上方原始记录；需要时自行核对合并。</small></details>}
             <div className="cases-ai-assistant__actions">
               <Button
                 type="primary"
                 icon={<ApiOutlined />}
                 loading={structureMutation.isPending}
+                disabled={draftBusy || draftSavePending}
                 onClick={handleRunAiIntake}
               >
                 从原文提取候选字段
               </Button>
-              <Form.Item
-                noStyle
-                shouldUpdate={(previous, current) => previous.description !== current.description}
-              >
-                {({ getFieldValue }) => {
-                  const description = String(getFieldValue('description') || '')
-                  return (
-                    <Button
-                      onClick={() => setAiIntakeText(description)}
-                      disabled={!description}
-                    >
-                      读取案情描述
-                    </Button>
-                  )
-                }}
-              </Form.Item>
-              <span>{structureMutation.isSuccess ? '结果已写入表单，可继续人工修改。' : '提取不保存正式案件，手工录入无需模型。'}</span>
+              <span>{structureMutation.isSuccess ? '仅补齐空白；已有内容和人工清空项保持不变。' : '提取不保存正式案件，手工录入无需模型。'}</span>
             </div>
+
+            {intakeConflicts.length > 0 && <section aria-label="提取差异"><Alert type="info" showIcon message={`${intakeConflicts.length} 项候选与当前填写不同，已保留当前内容`} />
+              <ul>{intakeConflicts.map(item => <li key={item.field}>
+                <strong>{structureMutation.data?.candidates?.find(candidate => candidate.field === item.field)?.label || item.field}</strong>：当前 {formatAiIntakeValue(item.current)}；候选 {formatAiIntakeValue(item.proposed)}。
+              </li>)}</ul><small>如原文支持候选，可直接修改对应字段；不会自动覆盖。</small></section>}
 
             {aiIntakeApplication && (
               <div className="cases-ai-intake">
@@ -2185,13 +2227,6 @@ const CaseWorkspace: React.FC = () => {
 
           <Form.Item name="case_type" label="类型（可选）">
             <Input placeholder="如：管线开孔、油库入侵、罐车劫持等" />
-          </Form.Item>
-
-          <Form.Item
-            name="description"
-            label="简要经过／原始记录（只写已掌握内容）"
-          >
-            <TextArea rows={4} placeholder="记录当时发现了什么、本单位做了什么。未知的来源、去向和公安后续可直接注明未知。" />
           </Form.Item>
 
           <section aria-label="本单位已知处置">
@@ -2575,9 +2610,11 @@ const CaseWorkspace: React.FC = () => {
         ) : null}
         {importModalVisible && importPreview?.dry_run !== false && <CaseImportConfiguration
           file={selectedImportFile} areaId={importOperationalAreaId}
-          settings={{ worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping }}
+          settings={{ worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey, source_revision: importSourceRevision }}
           disabled={previewImportMutation.isPending || importMutation.isPending}
           onChange={applyImportConfiguration} onBusyChange={setImportCorrectionBusy} />}
+        <CaseClipboardImport disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+          onSelect={file => { setSelectedImportFile(file); setImportWorksheet(''); setImportHeaderRow(1); setImportFieldMapping({}); setImportPreview(null) }} />
         <Upload.Dragger
           name="file"
           multiple={false}
@@ -2612,7 +2649,7 @@ const CaseWorkspace: React.FC = () => {
           <div className="cases-import-preview">
             {importPreview.dry_run === false && (
               <Alert type={importPreview.errors.length ? 'warning' : 'success'} showIcon
-                message={importPreview.replayed ? `已恢复原批次回执，本次新增 0 条` : `本批已写入 ${importPreview.created} 条案件`}
+                message={importPreview.replayed ? `已恢复原批次回执，本次新增 0 条` : `本批新增 ${importPreview.created} 条、更正 ${importPreview.updated ?? 0} 条案件`}
                 description={`批次 ${importPreview.batch_id ?? '—'}。相同文件和设置重传不会重复建案；可直接修正下面的失败行。`} />
             )}
             {!!importPreview.table?.ignored_headers.length && (
@@ -2638,15 +2675,18 @@ const CaseWorkspace: React.FC = () => {
               onCorrected={applyImportReceipt} onDirtyChange={setImportCorrectionDirty} />}
             {(importPreview.preview?.length ?? 0) > 0 && (
               <div className="cases-import-rows">
-                {importPreview.preview!.slice(0, 5).map((row, idx) => (
+                {importPreview.preview!.slice(0, 20).map((row, idx) => (
                   <div key={idx} className="cases-import-row">
+                    {typeof row.action === 'string' && <strong>{({ created: '新增', unchanged: '未变化', update: '来源更正', updated: '来源更正', failed: '格式待修', conflict: '冲突待核' } as Record<string, string>)[row.action] || row.action}</strong>}
                     {Object.entries(row).slice(0, 5).map(([key, value]) => (
                       <span key={key}>
-                        <b>{key}</b>{String(value ?? '—')}
+                        <b>{key}</b>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '—')}
                       </span>
                     ))}
+                    {row.differences != null && <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.differences, null, 2)}</pre>}
                   </div>
                 ))}
+                {importPreview.preview!.length > 20 && <p>这里只展示前 20 条预览，全部行仍按来源和权限校验，失败行见完整错误回执。</p>}
               </div>
             )}
           </div>

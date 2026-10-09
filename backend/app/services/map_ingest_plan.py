@@ -298,9 +298,10 @@ def make_plan(db, source, template, rows, structure, *, file_hash, promotions=No
             MapIngestRun.table_metadata.isnot(None)).order_by(MapIngestRun.started_at.desc(), MapIngestRun.id.desc()).first()
         from app.services.map_ledger_completeness import correction_metadata
         previous_structure = correction_metadata(previous.table_metadata) if previous else None
-        if previous and previous_structure != correction_metadata(structure):
-            drift.append({"field": "headers", "code": "header_drift", "message": "与该模板上次导入结构不同，请确认新模板",
-                          "old": previous_structure, "new": correction_metadata(structure)})
+        if previous:
+            from types import SimpleNamespace
+            drift.extend(detect_drift(SimpleNamespace(expected_structure=previous_structure,
+                field_mapping=template.field_mapping), structure))
     entries = []
     identifiers = Counter(str(raw.get((template.field_mapping or {}).get("external_id"))).strip()
                           for _, raw in rows if template and raw.get((template.field_mapping or {}).get("external_id")) not in (None, ""))
@@ -358,7 +359,9 @@ def make_plan(db, source, template, rows, structure, *, file_hash, promotions=No
         "template": service.template_to_dict(template) if template else None,
         "source": [source.id, source.source_key, source.source_type, source.trust_rank, source.status, source.configuration],
         "boundary": area.boundary if area else None, "structure": structure, "drift": drift, "rows": entries})
+    from app.services.map_import_contract import structure_changes
     return {"source_id": source.id, "template_id": template.id if template else None,
+            "structure_changes": structure_changes(template, structure) if template else [],
             "plan_token": token, "structure": structure, "drift": drift, "counts": counts, "rows": entries,
             "publishable": bool(entries) and not drift and counts["failed"] < len(entries),
             "total_rows": len(entries), "valid_rows": len(entries) - counts["failed"] - counts["conflict"],

@@ -80,14 +80,15 @@ def test_ambiguous_legacy_identifier_is_rejected_without_overwriting(db):
     assert all(asset.name == "同名井" for asset in db.query(JurisdictionAsset))
 
 
-def test_manual_create_and_rename_keep_observed_versions_without_claim(db):
+def test_manual_create_and_rename_keep_observed_versions_with_adoption_claim(db):
     asset = JurisdictionService.create_asset(db, _payload(source="manual", attributes={"aliases": ["旧称"]}))
     JurisdictionService.update_asset(db, asset.id, {"name": "新井名", "attributes": {"aliases": ["旧称", "同名井"]}})
     versions = db.query(JurisdictionAssetVersion).order_by(JurisdictionAssetVersion.version).all()
     assert [version.version for version in versions] == [1, 2]
     assert [version.snapshot["name"] for version in versions] == ["同名井", "新井名"]
-    assert versions[0].snapshot["attributes"] == {"aliases": ["旧称"]}
-    assert all(version.source_claim_id is None for version in versions)
+    assert versions[0].snapshot["attributes"]["aliases"] == ["旧称"]
+    assert all(version.source_claim_id for version in versions)
+    assert versions[1].snapshot['attributes']['field_groups']['details']['manual_override']
 
 
 def test_legacy_unversioned_asset_records_only_observed_baseline_and_new_value(db):
@@ -96,7 +97,8 @@ def test_legacy_unversioned_asset_records_only_observed_baseline_and_new_value(d
     db.commit()
     JurisdictionService.update_asset(db, asset.id, {"name": "新井名"})
     versions = db.query(JurisdictionAssetVersion).order_by(JurisdictionAssetVersion.version).all()
-    assert [version.change_type for version in versions] == ["baseline_observed", "manual_updated"]
+    assert [version.change_type for version in versions] == ["baseline_observed", "updated"]
+    assert versions[0].source_claim_id is None and versions[1].source_claim_id
     assert [version.snapshot["name"] for version in versions] == ["同名井", "新井名"]
 
 

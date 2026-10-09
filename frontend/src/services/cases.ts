@@ -47,6 +47,7 @@ export interface CaseImportError {
 }
 
 export interface CasePageParams {
+  time_basis?: 'discovery' | 'incident' | 'entry'
   page?: number
   page_size?: number
   keyword?: string
@@ -89,6 +90,8 @@ export interface CaseImportResult {
 }
 
 export interface CaseImportOptions {
+  source_key?: string
+  source_revision?: string
   time_zone?: 'UTC' | 'Asia/Shanghai'
   worksheet?: string
   header_row?: number
@@ -178,6 +181,7 @@ export const caseApi = {
     case_types?: string[]
     oil_types?: string[]
     end_exclusive?: boolean
+    time_basis?: 'discovery' | 'incident' | 'entry'
     source_type?: string
     report_unit?: string
     current_stage?: string
@@ -653,6 +657,8 @@ export const caseApi = {
         dry_run: dryRun, operational_area_id: operationalAreaId,
         worksheet: options.worksheet || undefined, header_row: options.header_row,
         time_zone: options.time_zone,
+        source_key: options.source_key || undefined, source_revision: options.source_revision || undefined,
+        input_method: file.name === '人工粘贴.tsv' && file.type === 'text/tab-separated-values' ? 'clipboard' : 'file',
         field_mapping: options.field_mapping ? JSON.stringify(options.field_mapping) : undefined,
       },
       headers: {

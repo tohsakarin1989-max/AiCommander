@@ -4,7 +4,10 @@ import type { MapImportTemplate, MapIngestRun, MapPreview, MapLedgerDeclaration 
 export type MapRowClassification = 'new' | 'updated' | 'unchanged' | 'identity_pending' | 'conflict' | 'failed'
 export interface MapImportField { key: string; label: string; type: string; description: string; group: string | null; required: boolean }
 export interface MapFieldContract { schema_version: string; fields: MapImportField[]; groups: Record<string, string[]>; value_states: string[] }
-export interface MapImportStructure { headers: string[]; sheet_name: string | null; header_row: number }
+export interface MapImportStructure { headers: string[]; sheet_name: string | null; header_row: number; available_sheets?: string[]
+  job?: { parsed_rows: number; planned_rows: number; visibility: string; phase: string } }
+export interface MapTableInspection { structure: MapImportStructure; sample: Record<string, unknown>[]
+  suggested_mapping: Record<string, string>; compatible_templates: MapImportTemplate[]; recommended_template_id: number | null; boundary: string }
 export interface MapPlanRow {
   row_number: number; classification: MapRowClassification; asset_id: number | null; asset_version: number | null
   changes: Array<{ field: string; old: unknown; new: unknown }>
@@ -20,6 +23,7 @@ export interface MapLedgerPreview extends MapPreview {
   rows_complete?: boolean
   structure: MapImportStructure
   drift: Array<{ field: string; code: string; message: string; old?: unknown; new?: unknown }>
+  structure_changes?: Array<{ code: string; message: string }>
 }
 export interface MapLedgerRun extends MapIngestRun {
   ledger_declaration?: MapLedgerDeclaration | null
@@ -56,6 +60,18 @@ export interface MapFieldDecisionRequest {
 }
 export interface OffsetPage<T> { items: T[]; total: number; offset: number; limit: number }
 export const mapLedgerImportsApi = {
+  inspect: async (sourceId: number, file: File, sheetName?: string, headerRow = 1): Promise<MapTableInspection> => {
+    const data = new FormData(); data.append('file', file)
+    return (await api.post(`/map-sources/${sourceId}/inspect`, data, { params: { sheet_name: sheetName, header_row: headerRow } })).data
+  },
+  enqueue: async (sourceId: number, file: File, templateId: number, revision: string, declaration?: MapLedgerDeclaration, inputKind: 'file' | 'clipboard' = 'file'): Promise<MapLedgerRun> => {
+    const data = new FormData(); data.append('file', file)
+    if (declaration) data.append('ledger_declaration', JSON.stringify(declaration))
+    return (await api.post(`/map-sources/${sourceId}/jobs`, data, { params: { template_id: templateId, source_revision: revision, input_kind: inputKind } })).data
+  },
+  jobPreview: async (runId: string): Promise<MapLedgerPreview> => (await api.get(`/map-ingest-runs/${encodeURIComponent(runId)}/job-preview`)).data,
+  control: async (runId: string, action: 'pause' | 'resume' | 'cancel' | 'adopt', planToken?: string): Promise<MapLedgerRun> =>
+    (await api.post(`/map-ingest-runs/${encodeURIComponent(runId)}/control`, { action, plan_token: planToken })).data,
   fields: async (signal?: AbortSignal): Promise<MapFieldContract> => (await api.get('/map-import-fields', { signal })).data,
   example: async (): Promise<Blob> => (await api.get('/map-import-example', { responseType: 'blob' })).data,
   preview: async (sourceId: number, file: File, templateId?: number, signal?: AbortSignal, declaration?: MapLedgerDeclaration): Promise<MapLedgerPreview> => {

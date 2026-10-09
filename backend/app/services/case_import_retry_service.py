@@ -58,13 +58,18 @@ def list_import_batches(
             len(receipt["errors"]) if isinstance(receipt.get("errors"), list) else None
         )
         can_write = levels is None or levels.get(batch.operational_area_id) in {"write", "manage"}
+        source_mode = bool(receipt.get('source_key'))
+        updated, unchanged, conflicts = (statuses.get(name, 0) for name in ('updated', 'unchanged', 'conflict'))
         items.append({
             "batch_id": batch.id, "created_at": utc_datetime(batch.created_at),
             "operational_area_id": batch.operational_area_id,
             "total": row_total if statuses else receipt.get("total"),
             "success": success, "failed": failed, "duplicate": None,
-            "state": ("partial" if failed else "completed") if statuses else "legacy_receipt",
-            "retry_available": bool(statuses and failed and can_write),
+            "created": success, "updated": updated, "unchanged": unchanged, "conflict": conflicts,
+            "state": ("partial" if failed or conflicts else "completed") if statuses else "legacy_receipt",
+            "retry_available": bool(statuses and failed and can_write and not source_mode),
+            "source_key": receipt.get('source_key'), "source_revision": receipt.get('source_revision'),
+            "next_action": '保留稳定源键，回原来源修正后重新预览导入；不可使用首次建案重试' if source_mode else None,
             "worksheet": table.get("worksheet"), "time_zone": table.get("time_zone"),
         })
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -86,9 +91,19 @@ def _row_result(row: CaseImportRow) -> dict[str, Any]:
 def get_batch_rows(db: Session, batch_id: str) -> dict[str, Any]:
     batch = _get_batch(db, batch_id)
     rows = db.query(CaseImportRow).filter(CaseImportRow.batch_id == batch.id).order_by(CaseImportRow.row_number).all()
-    return {"batch_id": batch.id, "retry_available": bool(rows),
+    receipt = batch.result or {}
+    source_mode = bool(receipt.get('source_key'))
+    levels = db.info.get('area_access_levels')
+    can_write = levels is None or levels.get(batch.operational_area_id) in {'write', 'manage'}
+    return {"batch_id": batch.id, "retry_available": bool(not source_mode and can_write and any(row.status == 'failed' for row in rows)),
             "created_total": sum(row.status == "created" for row in rows),
-            "rows": [_row_result(row) for row in rows if row.status == "failed"]}
+            "updated_total": sum(row.status == 'updated' for row in rows),
+            "unchanged_total": sum(row.status == 'unchanged' for row in rows),
+            "conflict_total": sum(row.status == 'conflict' for row in rows),
+            "failed_total": sum(row.status == 'failed' for row in rows),
+            "source_key": receipt.get('source_key'), "source_revision": receipt.get('source_revision'),
+            "next_action": '保留稳定源键，回原来源修正后重新预览导入；不可使用首次建案重试' if source_mode else None,
+            "rows": [_row_result(row) for row in rows if source_mode or row.status == "failed"]}
 
 
 def _validate_changes(requests: Any) -> None:
@@ -124,6 +139,8 @@ def _retry_batch_rows(db: Session, batch_id: str, requests: list[dict[str, Any]]
     _validate_changes(requests)
     batch = _get_batch(db, batch_id)
     require_area_write_access(db, batch.operational_area_id)
+    if (batch.result or {}).get('source_key'):
+        raise HTTPException(status_code=409, detail='持续来源批次须保留源键重新预览导入，不可走首次建案重试')
     # Serialize corrections of the same batch, including DIFFERENT rows: row CAS
     # alone cannot prevent lost updates of the shared aggregate receipt on PG.
     db.execute(update(CaseImportBatch).where(

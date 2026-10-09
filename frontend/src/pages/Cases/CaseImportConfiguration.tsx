@@ -41,6 +41,16 @@ export default function CaseImportConfiguration({ file, areaId, settings, disabl
     <summary>字段映射与导入模板</summary>
     <div style={{ padding: '12px 0' }}>
       <p>模板只保存列名和解析设置，不保存案件内容。使用后仍须预览。</p>
+      <fieldset style={{ marginBottom: 12 }}><legend>持续更新来源（可选）</legend>
+        <label>已确认的来源标识<Input aria-label="案件台账来源标识" value={settings.source_key || ''} maxLength={80} disabled={busy}
+          placeholder="例如：本单位案件月台账；同一来源后续保持不变"
+          onChange={event => onChange({ ...settings, source_key: event.target.value })} /></label>
+        <label>来源表版本<Input aria-label="案件台账来源表版本" value={settings.source_revision || ''} maxLength={80} disabled={busy || !settings.source_key?.trim()}
+          placeholder="可选，例如：2026-10修订1；不是文件名"
+          onChange={event => onChange({ ...settings, source_revision: event.target.value })} /></label>
+        <p>使用持续更新时，必须把来源中的稳定编号列映射为“外部稳定记录键”。不以文件名、行号、相似文本或系统案件编号猜测身份。</p>
+        <p>不填来源则按普通首次新增处理；相同文件幂等不等于不同文件能自动识别同一案件。来源冲突、人工已修改和空白清值不自动覆盖。</p>
+      </fieldset>
       {templates.isError && <Alert type="error" message="模板读取失败或无权访问" />}
       <Select aria-label="套用导入模板" placeholder="选择本厂区已有模板" style={{ width: '100%' }}
         disabled={busy || !templates.isSuccess} value={null}

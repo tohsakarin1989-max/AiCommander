@@ -84,7 +84,7 @@ def normalize_case_row(row: dict[str, Any], *, time_zone: str = "UTC") -> dict[s
     if _empty(row.get("description")) or not str(row["description"]).strip():
         raise ValueError("缺少描述；发生时间未知可留空")
     result: dict[str, Any] = {}
-    for field in sorted(FIELDS - {"security_team"}):
+    for field in sorted(FIELDS - {"security_team", "external_record_key"}):
         value = row.get(field)
         if field in TIME_FIELDS:
             result[field] = _time(value, time_zone)

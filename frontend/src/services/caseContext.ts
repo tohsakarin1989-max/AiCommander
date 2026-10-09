@@ -1,6 +1,6 @@
 import type { CasePageParams } from './cases'
 
-const filterKeys = ['keyword', 'statuses', 'case_types', 'oil_types', 'start_date', 'end_date', 'has_geo', 'operational_area_id'] as const
+const filterKeys = ['keyword', 'statuses', 'case_types', 'oil_types', 'start_date', 'end_date', 'time_basis', 'has_geo', 'operational_area_id'] as const
 // Carry context as a reading aid only. Each destination still checks current
 // access and its own source versions; these values never select a report by ID.
 export const businessContextKeys = [...filterKeys, 'caseId', 'case_view', 'case_page', 'case_page_size',
@@ -25,6 +25,12 @@ export function parseCaseContextParams(params: URLSearchParams): { caseId: numbe
   }
   if (filters.start_date && filters.end_date && Date.parse(filters.start_date) >= Date.parse(filters.end_date))
     error = '开始时间必须早于截止时间。'
+  if (params.has('time_basis')) {
+    const basis = params.get('time_basis')
+    if (['discovery', 'incident', 'entry'].includes(basis || '') && params.getAll('time_basis').length === 1)
+      filters.time_basis = basis as 'discovery' | 'incident' | 'entry'
+    else error = '时间口径无效，未自动替换统计条件。'
+  }
   if (params.has('operational_area_id')) {
     const areaId = positiveId(params.get('operational_area_id'))
     if (areaId) filters.operational_area_id = areaId

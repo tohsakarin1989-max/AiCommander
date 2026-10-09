@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../auth/AuthContext'
 import { caseImportsApi, type FailedImportRow, type ImportCorrectionResult } from '../../services/caseImports'
 import { changedImportFields, correctionReceiptState, importFieldLabels, importTimeZoneLabel } from './importCorrection'
+import CaseImportBulkCorrections from './CaseImportBulkCorrections'
 
 interface Props {
   batchId: string
@@ -27,6 +28,8 @@ function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange, onDir
   const [notice, setNotice] = useState('')
   const [mustRefresh, setMustRefresh] = useState(false)
   const [newerRow, setNewerRow] = useState<FailedImportRow | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkDirty, setBulkDirty] = useState(false)
   const key = ['case-import-rows', user?.id, sessionEpoch, batchId]
   const rows = useQuery({ queryKey: key, enabled: open, retry: false,
     queryFn: ({ signal }) => caseImportsApi.getRows(batchId, signal) })
@@ -61,13 +64,13 @@ function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange, onDir
     },
   })
   useEffect(() => {
-    onBusyChange(mutation.isPending)
+    onBusyChange(mutation.isPending || bulkBusy)
     return () => onBusyChange(false)
-  }, [mutation.isPending, onBusyChange])
+  }, [mutation.isPending, bulkBusy, onBusyChange])
   useEffect(() => {
-    onDirtyChange?.(Boolean(selected && Object.keys(changedImportFields(selected.values, draft)).length))
+    onDirtyChange?.(bulkDirty || Boolean(selected && Object.keys(changedImportFields(selected.values, draft)).length))
     return () => onDirtyChange?.(false)
-  }, [selected, draft, onDirtyChange])
+  }, [selected, draft, bulkDirty, onDirtyChange])
 
   const data = rows.isSuccess ? rows.data : undefined
   return <details className="cases-import-corrections" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
@@ -89,9 +92,12 @@ function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange, onDir
       }}>刷新失败行</Button>
       {data && !data.retry_available && <p>历史批次未保存源行，无法在此修正，请由管理员核验原文件。</p>}
       {data?.retry_available && data.rows.length === 0 && <p>本批失败行已全部处理。</p>}
+      {data?.retry_available && data.rows.length > 1 && <CaseImportBulkCorrections batchId={batchId} rows={data.rows}
+        disabled={mutation.isPending || Boolean(selected)} onCorrected={onCorrected} onBusyChange={setBulkBusy} onDirtyChange={setBulkDirty}
+        refresh={async () => { const result = await rows.refetch(); if (!result.isSuccess) throw new Error('回执刷新失败'); void client.invalidateQueries({ queryKey: ['cases'] }) }} />}
       {!!data?.rows.length && <>
         <Select aria-label="选择失败行" style={{ width: '100%', marginTop: 12 }}
-          placeholder="选择需要修正的失败行" value={selected?.row} disabled={mutation.isPending}
+          placeholder="选择需要修正的失败行" value={selected?.row} disabled={mutation.isPending || bulkBusy || bulkDirty}
           options={data.rows.map(row => ({ value: row.row, label: `第 ${row.row} 行：${row.error}` }))}
           onChange={number => {
             if (selected && Object.keys(changedImportFields(selected.values, draft)).length && !window.confirm('切换失败行会放弃当前未提交修正，仍要切换吗？')) return
@@ -115,6 +121,7 @@ function ScopedCaseImportCorrections({ batchId, onCorrected, onBusyChange, onDir
           <Button type="primary" loading={mutation.isPending}
             disabled={mustRefresh || !Object.keys(changedImportFields(selected.values, draft)).length || mutation.isPending}
             onClick={() => mutation.mutate()}>仅重试此失败行</Button>
+          <Button disabled={mutation.isPending} onClick={() => { if (!Object.keys(changedImportFields(selected.values, draft)).length || window.confirm('关闭单行修正并放弃本页未提交修改？')) { setSelected(null); setDraft({}); setFailure(''); setMustRefresh(false); setNewerRow(null) } }}>关闭单行修正</Button>
         </div>}
     </div>}
   </details>

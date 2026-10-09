@@ -58,7 +58,7 @@ def test_daily_is_read_only_and_full_authorized_summary_not_latest_500():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["schema_version"] == "daily-workbench-5.0-1"
+    assert payload["schema_version"] == "daily-workbench-9.0-1"
     assert payload["summary"] == {
         "total_cases": 600, "needs_information": 1,
         "analysis_pending": 599, "analysis_ready": 1,
@@ -123,10 +123,10 @@ def test_daily_information_gaps_use_official_fields_not_old_quality_score():
     rows = {row["id"]: row for row in payload["cases"]}
     assert rows[location_only.id]["information_gaps"] == []
     assert rows[coordinates_only.id]["information_gaps"] == []
-    assert rows[invalid.id]["information_gaps"] == ["案发地点或合法坐标", "案情描述"]
+    assert rows[invalid.id]["information_gaps"] == ["地点原文或已核对坐标", "案情描述"]
     assert payload["summary"]["needs_information"] == 1
     assert payload["summary"]["analysis_pending"] == 3
-    assert information_gaps(Case()) == ["案发时间", "案发地点或合法坐标", "案情描述"]
+    assert information_gaps(Case()) == ["地点原文或已核对坐标", "案情描述"]
 
 
 def test_daily_summary_pagination_and_profiles_follow_current_area_scope():

@@ -205,6 +205,8 @@ function fileBody(file: File): FormData {
 }
 
 export const mapFoundationApi = {
+  maintenanceScope: async (): Promise<{ areas: OperationalArea[]; can_publish_map: boolean; can_download_original: boolean }> =>
+    (await api.get('/map-maintenance-scope')).data,
   listAreas: async (): Promise<OperationalArea[]> => {
     const response = await api.get<OperationalArea[]>('/operational-areas')
     return response.data

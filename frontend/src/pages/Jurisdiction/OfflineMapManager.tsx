@@ -74,12 +74,12 @@ export default function OfflineMapManager({ initialAreaId }: { initialAreaId?: n
   const ready = snapshots.find(item => item.status === 'ready')
 
   return (
-    <Card className="jurisdiction-card offline-map-manager" title="真正离线厂区地图" extra={<Tag color={current ? 'green' : 'orange'}>{current ? '离线可用' : '待发布'}</Tag>}>
+    <Card className="jurisdiction-card offline-map-manager" title="离线厂区地图版本" extra={<Tag color={current ? 'blue' : 'orange'}>{current ? '已有发布记录' : '待发布'}</Tag>}>
       <Alert
         showIcon
         type="info"
         message="浏览器缓存只用于加速；正式底图由内网 MBTiles 服务提供"
-        description="联网区地图包只含公共道路、村屯、水系和边界；重点井、管线和技防位置只在内网合并。"
+        description="联网区地图包只含公共道路、村屯、水系和边界；重点井、管线和技防位置只在内网合并。发布记录不代替资源完整性、瓦片服务与清缓存断公网验收；地图显示、生产有效期和道路可计算范围分别核对。"
       />
       <Steps
         size="small"

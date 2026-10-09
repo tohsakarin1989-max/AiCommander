@@ -24,6 +24,7 @@ export default function MapImportPlan({ preview, fields }: { preview: MapLedgerP
   return <section aria-label="逐行导入差异预览">
     {preview.ledger_comparison && <LedgerComparisonView comparison={preview.ledger_comparison} declaration={preview.ledger_declaration} />}
     <Space wrap>{Object.entries(mapRowLabels).map(([key, label]) => <Tag key={key}>{label} {preview.counts[key as keyof typeof mapRowLabels] ?? 0}</Tag>)}</Space>
+    {preview.structure_changes?.map(item => <Alert key={item.code} type="info" message={item.message} />)}
     {preview.drift.map((item, index) => <Alert key={index} type="warning" showIcon message={item.message}
       description={`${item.field}：${displayMapValue(item.old)} → ${displayMapValue(item.new)}。请核对来源并另存模板，再重新预览。`} />)}
     {(preview.rows_complete === false || preview.rows.length < preview.total_rows) && <Alert type="info" showIcon

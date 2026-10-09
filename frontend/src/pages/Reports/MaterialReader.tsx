@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { isMaterialTemplate, isResultKind, materialCatalogPath, materialFilename, materialSourcePath, resultKinds, resultPath, resultsApi } from '../../services/results'
-import type { MaterialTemplate, ResultMaterial } from '../../services/results'
+import { isMaterialTemplate, isResultKind, materialCatalogPath, materialFilename, materialSourcePath, parseMaterialSections, resultKinds, resultPath, resultsApi } from '../../services/results'
+import type { MaterialSection, MaterialTemplate, ResultMaterial } from '../../services/results'
 import { knowledgeApi } from '../../services/knowledge'
 import { buildReportReviewPresentation } from './reportPresentationModel'
 import MaterialJudgment from './MaterialJudgment'
 import MaterialMap from './MaterialMap'
+import OutputTemplatePicker from '../../components/OutputTemplatePicker'
 
 const experienceStates: Record<string, string> = { draft: '草稿／待确认', confirmed: '已确认', archived: '已归档' }
 // In the browser, invalidate downloads synchronously when this reader unmounts.
@@ -20,13 +21,14 @@ export function MaterialDocument({ material }: { material: ResultMaterial }) {
       : <p className={block.kind === 'source' ? 'material-source' : undefined} key={index}>{block.text}</p>)}
   </article>
 }
-export default function MaterialReader({ material, identity, allowed, onSaved, onTemplateChange, context }: { material: ResultMaterial; identity: string; allowed: boolean; onSaved: () => void; onTemplateChange: (template: MaterialTemplate) => void; context?: URLSearchParams }) {
+export default function MaterialReader({ material, identity, allowed, onSaved, onTemplateChange, onSectionsChange, context }: { material: ResultMaterial; identity: string; allowed: boolean; onSaved: () => void; onTemplateChange: (template: MaterialTemplate) => void; onSectionsChange?: (sections: MaterialSection[]) => void; context?: URLSearchParams }) {
   const [exporting, setExporting] = useState(false)
   const [notice, setNotice] = useState('')
   const active = useRef(true)
   const controller = useRef<AbortController | null>(null)
   const template = material.presentation.template
-  const selection = `${identity}:${material.kind}:${material.id}:${material.content_sha256}:${template}`
+  const sections = material.presentation.sections_customized ? material.presentation.sections : undefined
+  const selection = `${identity}:${material.kind}:${material.id}:${material.content_sha256}:${template}:${sections?.join(',') || ''}`
   const currentSelection = useRef(selection)
   currentSelection.current = selection
   useReaderEffect(() => {
@@ -41,7 +43,7 @@ export default function MaterialReader({ material, identity, allowed, onSaved, o
     if (exporting) return
     const abort = new AbortController(); controller.current = abort; setExporting(true); setNotice('')
     try {
-      const blob = await resultsApi.document(material, format, abort.signal, { template, expectedContentSha256: material.content_sha256 })
+      const blob = await resultsApi.document(material, format, abort.signal, { template, expectedContentSha256: material.content_sha256, ...(sections ? { sections } : {}) })
       if (!active.current || abort.signal.aborted || currentSelection.current !== selection) return
       const url = URL.createObjectURL(blob); const link = document.createElement('a')
       link.href = url; link.download = materialFilename(material, format, template); link.click()
@@ -54,6 +56,7 @@ export default function MaterialReader({ material, identity, allowed, onSaved, o
       {isResultKind(context?.get('fromKind') ?? null) && /^[A-Za-z0-9_-]{1,80}$/.test(context?.get('fromId') || '') && <Link className="btn-ghost" to={resultPath(context!.get('fromKind') as ResultMaterial['kind'], context!.get('fromId')!, context, {
         template: isMaterialTemplate(context?.get('fromTemplate') ?? null) ? context!.get('fromTemplate') as MaterialTemplate : 'full',
         expectedContentSha256: /^[a-f0-9]{64}$/.test(context?.get('fromContentSha256') || '') ? context!.get('fromContentSha256')! : undefined,
+        sections: parseMaterialSections(context?.getAll('fromSections') || []),
       })}>返回引用此资料的材料</Link>}
     </nav>
     <header><p>{resultKinds[material.kind]} · {material.created_at}</p><h1>{material.title}</h1></header>
@@ -67,12 +70,29 @@ export default function MaterialReader({ material, identity, allowed, onSaved, o
       }}>{material.presentation.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
       <p id="material-format-boundary">{material.presentation.boundary}</p>
     </div>
+    {onSectionsChange && material.presentation.sections && <details className="material-section-options"><summary>按用途组合章节</summary>
+      <p>{material.presentation.sections_boundary}</p>
+      <fieldset><legend>本次阅读与导出使用相同章节</legend>{material.presentation.section_options?.map(option =>
+        <label key={option.id}><input type="checkbox" checked={material.presentation.sections!.includes(option.id)}
+          disabled={option.id === 'boundary' || material.presentation.sections!.length === 1 && material.presentation.sections!.includes(option.id)}
+          onChange={event => {
+            const values = event.target.checked ? [...material.presentation.sections!, option.id] : material.presentation.sections!.filter(item => item !== option.id)
+            const valid = parseMaterialSections(values)
+            if (valid) { controller.current?.abort(); onSectionsChange(valid) }
+          }} />{option.label}{option.id === 'boundary' ? '（必要，始终保留）' : ''}</label>)}</fieldset>
+      <OutputTemplatePicker kind="material_sections" configuration={{ sections: material.presentation.sections }} onApply={configuration => {
+        if ('sections' in configuration) {
+          const values = parseMaterialSections(configuration.sections)
+          if (values) { controller.current?.abort(); onSectionsChange(values) }
+        }
+      }} />
+    </details>}
     <div className="material-actions"><button className="btn-ghost" disabled={exporting} onClick={() => void download('docx')}>导出本版 Word</button>
       <button className="btn-ghost" disabled={exporting} onClick={() => void download('pdf')}>导出本版 PDF</button>
       {exporting && <span role="status">正在生成材料…</span>}</div>
     {notice && <p role="status">{notice}</p>}
     <MaterialDocument material={material} />
-    <MaterialMap material={material} identity={identity} />
+    {(!sections || sections.includes('map')) && <MaterialMap material={material} identity={identity} />}
     {material.experience_review && <section aria-label="经验确认状态"><h2>经验确认状态</h2><p>{experienceStates[material.experience_review.status] || '状态待核'} · {material.experience_review.reviewer_label || '尚无确认人'}</p><p>{material.experience_review.review_note}</p><small>这是当前人工确认记录，不改写上方冻结正文。</small></section>}
     <details><summary>引用与版本</summary><p>内容摘要：<code>{material.content_sha256}</code></p>
       <p>结构版本：{material.schema_version}；格式版本：{material.presentation.schema_version} / {template}</p><ul>{material.sources.map((source, i) => <li key={i}>

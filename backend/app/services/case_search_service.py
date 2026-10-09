@@ -23,6 +23,7 @@ class CaseSearchService:
         operational_area_id: int | None = None,
         case_id: int | None = None,
         include_categories: bool = True,
+        time_basis: str | None = None,
     ):
         # 使用 ORM 保持 database.py 对查询、分类聚合和计数的一致范围控制。
         query = db.query(Case)
@@ -41,7 +42,7 @@ class CaseSearchService:
                     Case.source_detail, Case.facility_type, Case.facility_owner,
                     Case.oil_type, Case.oil_nature, Case.source_type, Case.report_unit)
             )))
-        query = filter_case_time_window(query, start_date, end_date)
+        query = filter_case_time_window(query, start_date, end_date, time_basis=time_basis)
         if has_geo is True:
             query = query.filter(Case.latitude.isnot(None), Case.longitude.isnot(None))
         elif has_geo is False:
@@ -55,10 +56,10 @@ class CaseSearchService:
     @staticmethod
     def page(db: Session, *, page: int, page_size: int, keyword=None, statuses=None,
              case_types=None, oil_types=None, start_date=None, end_date=None,
-             has_geo=None, operational_area_id=None, case_id=None) -> dict:
+             has_geo=None, operational_area_id=None, case_id=None, time_basis=None) -> dict:
         query = CaseSearchService.filtered_query(db, keyword=keyword, start_date=start_date,
             end_date=end_date, has_geo=has_geo, operational_area_id=operational_area_id, case_id=case_id,
-            include_categories=False)
+            include_categories=False, time_basis=time_basis)
 
         # 分类计数基于授权 + 关键词 + 日期 + 坐标条件，故多选后仍可发现其他分类。
         facets = {}
@@ -70,5 +71,6 @@ class CaseSearchService:
                 query = query.filter(field.in_(values))
 
         total = query.count()
-        items = query.order_by(Case.occurred_time.desc(), Case.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        time_field = {'discovery': Case.discovered_at, 'entry': Case.created_at}.get(time_basis, Case.occurred_time)
+        items = query.order_by(time_field.desc(), Case.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
         return {"items": items, "total": total, "page": page, "page_size": page_size, "facets": facets}

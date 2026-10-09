@@ -10,13 +10,16 @@ from app.models.case_import import CaseImportBatch
 from app.services.case_service import CaseService
 
 
-def acquire_import_batch(db: Session, *, content: bytes, area_id: int | None, table):
-    configuration = json.dumps({
+def acquire_import_batch(db: Session, *, content: bytes, area_id: int | None, table, source_identity=None):
+    identity = {
         "area_id": area_id, "worksheet": table.worksheet, "header_row": table.header_row,
         # Fixed identity, NOT a software version. Parser/alias changes must never
         # implicitly create the same source rows again after an upgrade.
         "identity_schema": "case-import-v1",
-    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    }
+    if source_identity is not None:
+        identity['source_identity'] = source_identity
+    configuration = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     input_hash = hashlib.sha256(hashlib.sha256(content).digest() + configuration).hexdigest()
 
     def existing():

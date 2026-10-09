@@ -11,7 +11,7 @@ export function answerValid(value: unknown, cards: QueryCard[]): value is Answer
     && answer.findings.every(item => item && typeof item.text === 'string' && Number.isInteger(item.card_index)
       && item.card_index >= 0 && item.card_index < cards.length && Array.isArray(item.evidence_refs)
       && item.evidence_refs.every(ref => typeof ref === 'string'))
-  if (!common || answer.schema_version === 'query-answer-6.4-1') return common
+  if (!common || (answer.schema_version === 'query-answer-6.4-1' && !answer.answer_contract_version)) return common
   return typeof answer.direct_answer === 'string'
     && ['answered', 'partial', 'insufficient_data', 'service_unavailable'].includes(answer.completeness || '')
     && [answer.evidence, answer.differences].every(items => Array.isArray(items) && items.every(item => item
@@ -27,9 +27,12 @@ export function answerValid(value: unknown, cards: QueryCard[]): value is Answer
 export default function EvidenceAnswer({ answer, cards }: { answer: unknown; cards: QueryCard[] }) {
   const [showMap, setShowMap] = useState(false)
   if (!answerValid(answer, cards)) return <p role="alert">答案依据结构不完整，请核对下方工具结果，不能据此作出结论。</p>
-  if (answer.schema_version === 'business-answer-8.4-1') return <section className="query-answer" aria-label="业务问题的完整回答">
+  if (answer.schema_version === 'business-answer-8.4-1' || answer.answer_contract_version === 'answer-snapshot-9.3-1') return <section className="query-answer" aria-label="业务问题的完整回答">
     <h2>{{ answered: '已回答', partial: '部分回答', insufficient_data: '资料不足', service_unavailable: '依赖服务不可用' }[answer.completeness!]}</h2>
     <p>{answer.direct_answer}</p>
+    {answer.time_scope && <p>时间口径：{{ discovery: '发现／查获', incident: '案发', entry: '录入' }[answer.time_scope.time_basis]}；时间未知不以录入时间替代。</p>}
+    {answer.capabilities?.model_enhancement === 'not_used' && <p>本回答未使用模型增强；采用业务规则与已有资料。</p>}
+    {answer.answer_requirements && <p>必要回答要点：已覆盖 {answer.answer_requirements.satisfied.length} / {answer.answer_requirements.required.length} 项。工具执行完成不等于问题已完整回答。</p>}
     <h3>支持依据</h3>
     {answer.evidence!.length ? <ol>{answer.evidence!.map((item, index) => <li key={index}><p>{item.text}</p>
       <small>来源：{item.evidence_refs.join('；') || '范围与版本见下方，不包含对象事实判断'}</small></li>)}</ol> : <p>尚无足够支持依据。</p>}
