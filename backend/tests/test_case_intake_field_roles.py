@@ -230,3 +230,46 @@ def test_explicit_quantity_and_adjacent_time_still_work_with_zero_and_transfer(u
     fields = preview(raw, expected if use_model else None)["case_fields"]
     for field, value in expected.items():
         assert fields[field] == value
+
+
+@pytest.mark.parametrize("use_model", [False, True])
+@pytest.mark.parametrize("objects", ["车辆及人员", "人员及车辆", "车辆、人员", "人员和车辆", "车辆与人员"])
+def test_explicit_coordinated_objects_share_completed_transfer(objects, use_model):
+    expected = {"person_handling": "移交公安", "vehicle_handling": "移交公安"}
+    result = preview(f"{objects}已移交公安。", expected if use_model else None)
+    for field, value in expected.items():
+        assert result["case_fields"][field] == value
+
+
+@pytest.mark.parametrize("use_model", [False, True])
+@pytest.mark.parametrize("text", [
+    "车辆及人员尚未移交公安。", "车辆、人员移交公安未获同意。",
+    "建议将人员与车辆移交公安。", "车辆及人员名单已移交公安。",
+    "人员与车辆将移交公安。", "人员与车辆将要移交公安。", "人员与车辆待移交公安。",
+    "车辆将移交公安。", "人员与车辆即将被移交公安。",
+])
+def test_coordinated_uncertain_actions_or_documents_do_not_become_object_transfers(text, use_model):
+    expected = {"person_handling": "移交公安", "vehicle_handling": "移交公安"}
+    fields = preview(text, expected if use_model else None)["case_fields"]
+    assert fields.get("person_handling") is None
+    assert fields.get("vehicle_handling") is None
+
+
+@pytest.mark.parametrize("use_model", [False, True])
+@pytest.mark.parametrize("text", [
+    "车辆登记在册，人员已移交公安。", "车辆停放完毕后人员已移交公安。",
+])
+def test_shared_action_does_not_expand_to_uncoordinated_prior_objects(text, use_model):
+    expected = {"person_handling": "移交公安", "vehicle_handling": "移交公安"}
+    fields = preview(text, expected if use_model else None)["case_fields"]
+    assert fields["person_handling"] == "移交公安"
+    assert fields.get("vehicle_handling") is None
+
+
+@pytest.mark.parametrize("use_model", [False, True])
+def test_completed_ba_construction_keeps_coordinated_objects_not_the_actor(use_model):
+    expected = {"vehicle_handling": "移交公安", "oil_handling": "移交公安"}
+    fields = preview("人员已将车辆及原油移交公安。", expected if use_model else None)["case_fields"]
+    assert fields.get("person_handling") is None
+    for field, value in expected.items():
+        assert fields[field] == value

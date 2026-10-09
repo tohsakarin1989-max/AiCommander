@@ -161,33 +161,47 @@ def _handling_roles(text):
                     if action.end() <= item.start() <= action.end() + 4), None)
             if obj is None:
                 continue
-            field = obj.lastgroup
-            boundary = max((item.end() for item in objects if item.end() <= obj.start()), default=0)
+            coordinated = [obj]
+            for previous in reversed(prior[:-1]):
+                if not re.fullmatch(r"\s*(?:及|和|与|、)\s*", fragment[previous.end():coordinated[0].start()]):
+                    break
+                coordinated.insert(0, previous)
+            fields = {item.lastgroup for item in coordinated}
+            boundary = max((item.end() for item in objects if item.end() <= coordinated[0].start()), default=0)
             scope = fragment[boundary:action.start()]
             following = fragment[action.end():]
             if (UNCERTAIN_ACTION.search(scope) or HANDLING_NOT_COMPLETED.search(scope)
+                    or re.search(r"(?:将(?:要|被|会)?|待)\s*$", fragment[obj.end():action.start()])
                     or UNKNOWN_HANDLING_TAIL.match(following)
                     or text[clause.end():clause.end() + 1] in {"?", "？"}):
-                uncertain.add(field)
+                uncertain.update(fields)
+                continue
+            if len(coordinated) > 1 and not re.fullmatch(
+                    r"\s*(?:(?:已|均|都|全部|一并|共同|被|予以)\s*)*", fragment[obj.end():action.start()]):
+                # “车辆及人员名单已移交” transfers a document, not the listed
+                # objects. Only adjacent explicit coordination shares a verb.
+                uncertain.update(fields)
                 continue
             verb = action.group()
-            value = None
+            transfer = None
             if verb in {"移交", "交公安"} and ("公安" in following[:12] or verb == "交公安"):
                 tail = following
                 if obj.start() >= action.end():
                     tail = fragment[obj.end():]
                 if not TRANSFER_COMPLETION_TAIL.fullmatch(tail):
-                    uncertain.add(field)
+                    uncertain.update(fields)
                     continue
-                value = "移交公安"
-            elif field == "person_handling" and verb in {"治安拘留", "行政拘留", "刑事拘留", "刑拘"}:
-                value = verb
-            elif field == "vehicle_handling" and verb in {"扣押", "查扣"}:
-                value = "扣押停放"
-            elif field == "oil_handling" and verb in {"检斤入库", "回收入库", "入库", "暂存"}:
-                value = "检斤入库" if "入库" in verb else "暂存"
-            if value:
-                found.setdefault(field, []).append(_record(value, clause.start(), clause.end()))
+                transfer = "移交公安"
+            for field in fields:
+                value = transfer
+                if field == "person_handling" and verb in {"治安拘留", "行政拘留", "刑事拘留", "刑拘"}:
+                    value = verb
+                elif field == "vehicle_handling" and verb in {"扣押", "查扣"}:
+                    value = "扣押停放"
+                elif field == "oil_handling" and verb in {"检斤入库", "回收入库", "入库", "暂存"}:
+                    value = "检斤入库" if "入库" in verb else "暂存"
+                if value:
+                    found.setdefault(field, []).append(_record(value, clause.start(), clause.end()))
     return {key: items[0] for key, items in found.items() if key not in uncertain
             and len({item["value"] for item in items}) == 1}
 
@@ -318,6 +332,6 @@ def finalize_intake_evidence(text: str, result: dict) -> dict:
         anchors.append({"id": f"anchor-{index}", "field": field,
                         "source": item.get("source", ""), **ref})
     result.update(case_fields=fields, candidates=candidates, evidence_anchors=anchors,
-                  field_sources=source_fields, extraction_evidence_version="intake-evidence-field-roles-2",
+                  field_sources=source_fields, extraction_evidence_version="intake-evidence-field-roles-3",
                   source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
     return result
