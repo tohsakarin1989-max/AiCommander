@@ -72,5 +72,7 @@ class CaseSearchService:
 
         total = query.count()
         time_field = {'discovery': Case.discovered_at, 'entry': Case.created_at}.get(time_basis, Case.occurred_time)
-        items = query.order_by(time_field.desc(), Case.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        # PostgreSQL DESC defaults to NULLS FIRST; unknown dates must not displace
+        # known recent records. The ID tie-breaker keeps pagination stable.
+        items = query.order_by(time_field.desc().nulls_last(), Case.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
         return {"items": items, "total": total, "page": page, "page_size": page_size, "facets": facets}

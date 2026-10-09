@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime
 import pytest
 
@@ -38,7 +39,87 @@ def test_source_reorder_repeat_and_safe_update(search_db):
     assert result['updated'] == 1
     assert search_db.query(Case).one().oil_type == '柴油'
     assert search_db.query(Case).count() == 1
-    assert search_db.query(SourceReference).count() == 2
+    assert search_db.query(SourceReference).count() == 3
+
+
+def test_unchanged_new_source_version_keeps_complete_audit_without_case_work(search_db):
+    from app.models.case_import import CaseImportBatch, CaseImportRow
+    from app.models.case_pipeline import OutboxEvent
+    from app.models.case_source import CaseRevision, DomainChange
+    from app.services.case_source_service import CaseSourceService
+    original = HEADER + ROW + ROW.replace('K01', 'K02')
+    first = run(search_db, original, '来源第一版')
+    records = {record.external_key: record for record in search_db.query(CaseImportSourceRecord)}
+    prior = {key: {'revision': record.revision, 'source_hash': record.source_hash,
+                   'adopted': deepcopy(record.adopted_values)} for key, record in records.items()}
+    facts = {case.id: deepcopy(CaseSourceService.source_payload(search_db, case))
+             for case in search_db.query(Case)}
+    counts = {model: search_db.query(model).count() for model in (CaseRevision, DomainChange)}
+    case_jobs = search_db.query(OutboxEvent).filter_by(event_type='case.analysis.requested').count()
+    reordered = HEADER + ROW.replace('K01', 'K02') + ROW
+    second = run(search_db, reordered, '来源第二版')
+    assert second['unchanged'] == 2 and second['created'] == second['updated'] == 0
+    assert second['batch_id'] != first['batch_id']
+    for key, row_number in (('K02', 2), ('K01', 3)):
+        record = records[key]
+        search_db.refresh(record)
+        assert record.source_version == '来源第二版'
+        assert record.last_batch_id == second['batch_id']
+        assert record.last_row_number == row_number
+        assert record.revision == prior[key]['revision'] + 1
+        assert record.source_hash == prior[key]['source_hash'] and record.adopted_values == prior[key]['adopted']
+        reference = search_db.query(SourceReference).filter_by(case_id=record.case_id,
+            evidence_object_id=second['original_evidence_id']).one()
+        assert reference.source_revision_id == CaseSourceService.latest_revision(search_db, record.case_id).id
+        assert reference.locator['batch_id'] == second['batch_id'] and reference.locator['row'] == row_number
+        assert reference.locator['source_status'] == 'unchanged'
+        assert reference.locator['source_key'] == '台账A'
+        assert reference.locator['source_version'] == '来源第二版'
+        assert reference.locator['external_record_key'] == key
+    assert search_db.get(EvidenceObject, second['original_evidence_id']).content == reordered.encode()
+    assert {case.id: CaseSourceService.source_payload(search_db, case) for case in search_db.query(Case)} == facts
+    assert {model.__tablename__: search_db.query(model).count() for model in counts} == {
+        model.__tablename__: count for model, count in counts.items()}
+    assert search_db.query(OutboxEvent).filter_by(event_type='case.analysis.requested').count() == case_jobs
+    before_replay = {model: search_db.query(model).count() for model in (
+        CaseImportBatch, CaseImportRow, SourceReference, EvidenceObject)}
+    replay = run(search_db, reordered, '来源第二版')
+    assert replay['replayed'] and replay['batch_id'] == second['batch_id']
+    assert all(search_db.query(model).count() == count for model, count in before_replay.items())
+    assert all(record.revision == prior[key]['revision'] + 1 for key, record in records.items())
+
+
+def test_same_source_version_does_not_advance_identity_and_preview_is_read_only(search_db):
+    first = run(search_db, HEADER + ROW, '同一来源版')
+    record = search_db.query(CaseImportSourceRecord).one()
+    reordered = '简要案情,地点,发现时间,源记录键,油品类型\n现场发现,路口,2026-10-08,K01,原油\n'
+    assert run(search_db, reordered, '另一来源版', dry=True)['unchanged'] == 1
+    assert (record.source_version, record.revision, record.last_batch_id) == ('同一来源版', 1, first['batch_id'])
+    assert search_db.query(EvidenceObject).count() == search_db.query(SourceReference).count() == 1
+    received = run(search_db, reordered, '同一来源版')
+    search_db.refresh(record)
+    assert received['unchanged'] == 1 and not received['replayed']
+    assert (record.source_version, record.revision, record.last_batch_id) == ('同一来源版', 1, first['batch_id'])
+    # A different received file remains traceable, without inventing another
+    # source identity version or another official case revision.
+    assert search_db.query(SourceReference).filter_by(evidence_object_id=received['original_evidence_id']).count() == 1
+    assert run(search_db, reordered, '同一来源版')['replayed']
+    assert search_db.query(EvidenceObject).count() == search_db.query(SourceReference).count() == 2
+
+
+def test_unchanged_source_audit_and_original_roll_back_together(search_db, monkeypatch):
+    first = run(search_db, HEADER + ROW, '第一版')
+    original_commit = search_db.commit
+    monkeypatch.setattr(search_db, 'commit', lambda: (_ for _ in ()).throw(RuntimeError('合成提交失败')))
+    with pytest.raises(RuntimeError, match='合成提交失败'):
+        run(search_db, HEADER + ROW, '第二版')
+    search_db.rollback()
+    monkeypatch.setattr(search_db, 'commit', original_commit)
+    record = search_db.query(CaseImportSourceRecord).one()
+    assert (record.source_version, record.revision, record.last_batch_id) == ('第一版', 1, first['batch_id'])
+    assert search_db.query(EvidenceObject).count() == search_db.query(SourceReference).count() == 1
+    assert run(search_db, HEADER + ROW, '第二版')['unchanged'] == 1
+    assert search_db.query(CaseImportSourceRecord).one().revision == 2
 
 
 def test_manual_fact_same_version_blank_and_reused_identity_are_protected(search_db):

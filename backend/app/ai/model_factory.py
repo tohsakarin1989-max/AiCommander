@@ -23,7 +23,7 @@ class ModelFactory:
           - "anthropic": Claude 模型
         - 其它 provider 当前会抛出错误，后续可在 LLMProvider 中扩展
         """
-        provider = (model.provider or "").lower()
+        provider = (model.provider or "").strip().lower()
         try:
             self._assert_data_egress_allowed(
                 model,

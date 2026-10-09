@@ -142,8 +142,14 @@ def import_source_table(db, *, table, content, area_id, source_key, source_revis
                     db.add(record)
                     db.flush()
                 preview['case_id'] = case.id
-            elif not dry_run and action == 'unchanged' and source_revision:
+            elif (not dry_run and action == 'unchanged' and source_revision
+                  and source_revision != record.source_version):
+                # A new declaration is a source audit revision, not a case
+                # mutation. Keep its receipt/row with the version and leave
+                # the adopted-field baseline and analysis inputs untouched.
                 record.source_version = source_revision
+                record.last_batch_id, record.last_row_number = batch.id, item.number
+                record.revision += 1
             previews.append(preview)
         except (ValueError, IntegrityError) as exc:
             action = 'failed'
@@ -172,7 +178,8 @@ def import_source_table(db, *, table, content, area_id, source_key, source_revis
               'boundary': '来源记录身份不等于事件身份；缺席不删除，冲突不覆盖，请回原记录核对后重新预览'}
     if batch:
         from app.services.case_import_original import preserve_received_input
-        result['original_evidence_id'] = preserve_received_input(db, batch, content, input_method)
+        result['original_evidence_id'] = preserve_received_input(db, batch, content, input_method,
+            source_context={'source_key': source_key, 'source_version': source_revision})
         batch.result = result
         db.commit()
     return result

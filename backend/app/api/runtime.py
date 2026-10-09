@@ -34,7 +34,8 @@ def runtime_capabilities(request: Request, db: Session = Depends(get_db)):
         map_state = 'unavailable'
     model_id = settings.AGENT_MODEL_ID
     model = db.query(AIModel).filter(AIModel.id == model_id, AIModel.is_active.is_(True)).first() if model_id else None
-    trusted_model = bool(model and ModelFactory._is_trusted_local_endpoint(model, model.provider))
+    provider = (model.provider or '').strip().lower() if model else ''
+    trusted_model = bool(model and ModelFactory._is_trusted_local_endpoint(model, provider))
     bundle = settings.LOCAL_EMBEDDING_BUNDLE
     return {'schema_version': 'runtime-capabilities-9.0-1', 'checked_at': checked_at,
             'capabilities': [
