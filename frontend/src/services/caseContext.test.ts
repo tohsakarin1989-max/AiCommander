@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { caseContextPath, parseCaseContextParams, writeCaseFilterParams } from './caseContext'
 
 describe('业务页面条件接续', () => {
+  it('时间口径随跨页条件保留，非法或重复口径不悄悄替换', () => {
+    const params = writeCaseFilterParams(new URLSearchParams('caseId=1'), { time_basis: 'discovery', start_date: '2026-10-01T00:00:00Z' })
+    expect(parseCaseContextParams(new URLSearchParams(caseContextPath('/cases/map', params).split('?')[1])).filters.time_basis).toBe('discovery')
+    expect(parseCaseContextParams(new URLSearchParams('time_basis=other')).error).toBeTruthy()
+    expect(parseCaseContextParams(new URLSearchParams('time_basis=entry&time_basis=incident')).error).toBeTruthy()
+  })
   it('保留多选、时间和案件选择，不继承别的报告/查询身份', () => {
     const params = new URLSearchParams('caseId=18&statuses=pending&statuses=closed&has_geo=false&resultId=old&query=old')
     const next = new URLSearchParams(caseContextPath('/cases/map', params).split('?')[1])

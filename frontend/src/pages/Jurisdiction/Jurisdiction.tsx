@@ -42,6 +42,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useRegionalContext } from '../../services/useRegionalContext'
 import RegionalControls from '../../components/Facility/RegionalControls'
 import { openFacilityDossier } from '../../services/regionalContext'
+import { canMaintainArea } from './maintenanceAccess'
 import './Jurisdiction.css'
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
@@ -247,8 +248,8 @@ const assetColumns: ColumnsType<JurisdictionAsset> = [
 export default function Jurisdiction() {
   const { user } = useAuth()
   const regional = useRegionalContext()
-  const canManageAssets = user?.role === 'admin'
-  const canWrite = canManageAssets || user?.role === 'analyst'
+  const canManageAssets = regional.ready && canMaintainArea(user?.role, regional.scopes, regional.areaId)
+  const canWrite = user?.role === 'admin' || user?.role === 'analyst'
   const [form] = Form.useForm<AssetFormValues>()
   const [editForm] = Form.useForm<AssetFormValues>()
   const queryClient = useQueryClient()
@@ -271,7 +272,9 @@ export default function Jurisdiction() {
 
   useEffect(() => {
     setHiddenAssetTypes([])
+    setEditingAsset(null)
   }, [activeAreaId])
+  useEffect(() => { if (!canManageAssets) setEditingAsset(null) }, [canManageAssets])
 
   const summaryQuery = useQuery({
     queryKey: ['jurisdiction-summary', activeAreaId],
@@ -319,14 +322,15 @@ export default function Jurisdiction() {
   }
 
   const createAssetMutation = useMutation({
-    mutationFn: (values: AssetFormValues) => jurisdictionApi.createAsset({
+    mutationFn: (values: AssetFormValues) => {
+      if (!canManageAssets || activeAreaId == null) throw new Error('当前厂区没有地图维护权限')
+      return jurisdictionApi.createAsset({
       ...values,
       operational_area_id: activeAreaId ?? undefined,
       geometry_type: values.geometry_type ?? 'point',
       source: values.source ?? 'manual',
       status: values.status ?? 'active',
-      risk_level: values.risk_level ?? 1,
-    }),
+    })},
     onSuccess: () => {
       message.success('辖区要素已录入')
       form.resetFields()
@@ -336,7 +340,7 @@ export default function Jurisdiction() {
 
   const updateAssetMutation = useMutation({
     mutationFn: (values: AssetFormValues) => {
-      if (!editingAsset) throw new Error('未选择要素')
+      if (!editingAsset || editingAsset.operational_area_id !== activeAreaId || !canManageAssets) throw new Error('当前要素没有地图维护权限')
       return jurisdictionApi.updateAsset(editingAsset.id, values)
     },
     onSuccess: asset => {
@@ -412,7 +416,7 @@ export default function Jurisdiction() {
 
   const openEditAsset = (asset: JurisdictionAsset) => {
     setSelectedAssetId(asset.id)
-    if (!canManageAssets) return
+    if (!canManageAssets || asset.operational_area_id !== activeAreaId) return
     setEditingAsset(asset)
     editForm.setFieldsValue({
       external_id: asset.external_id ?? undefined,
@@ -425,8 +429,8 @@ export default function Jurisdiction() {
       description: asset.description ?? undefined,
       source: asset.source ?? 'manual',
       status: asset.status ?? 'active',
-      risk_level: asset.risk_level ?? 1,
-      confidence_score: asset.confidence_score ?? 1,
+      risk_level: asset.risk_level ?? undefined,
+      confidence_score: asset.confidence_score ?? undefined,
       verified: Boolean(asset.verified),
       tags: asset.tags ?? [],
     })
@@ -453,7 +457,7 @@ export default function Jurisdiction() {
 
       <FacilityLookup key={activeAreaId ?? 'none'} areaId={activeAreaId} />
       <MapDataGovernance initialAreaId={activeAreaId ?? undefined} />
-      {!canManageAssets && <Alert type="info" message="地图资产由管理员维护，当前账号可查看授权范围内的资产与研判" />}
+      {!canManageAssets && <Alert type="info" message="本厂区地图资料仅由具备维护权限的人员处理；当前仍可查看授权资料与研判" />}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
@@ -607,7 +611,7 @@ export default function Jurisdiction() {
               form={form}
               layout="vertical"
               onFinish={(values) => createAssetMutation.mutate(values)}
-              initialValues={{ source: 'manual', geometry_type: 'point', status: 'active', risk_level: 1 }}
+              initialValues={{ source: 'manual', geometry_type: 'point', status: 'active' }}
             >
               <Row gutter={12}>
                 <Col xs={24} md={12}>
@@ -642,8 +646,8 @@ export default function Jurisdiction() {
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Form.Item name="risk_level" label="人工风险等级">
-                    <InputNumber style={{ width: '100%' }} min={1} max={5} />
+                  <Form.Item name="risk_level" label="人工登记等级（可不填）">
+                    <InputNumber style={{ width: '100%' }} min={1} max={5} placeholder="未知时留空" />
                   </Form.Item>
                 </Col>
                 <Col span={24}>
@@ -755,19 +759,19 @@ export default function Jurisdiction() {
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="asset_type" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
-                <Select>
+                <Select disabled>
                   {renderAssetTypeOptions(true)}
                 </Select>
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="latitude" label="纬度">
-                <InputNumber style={{ width: '100%' }} precision={6} />
+                <InputNumber style={{ width: '100%' }} precision={6} disabled={editingAsset?.geometry_type !== 'point'} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="longitude" label="经度">
-                <InputNumber style={{ width: '100%' }} precision={6} />
+                <InputNumber style={{ width: '100%' }} precision={6} disabled={editingAsset?.geometry_type !== 'point'} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>

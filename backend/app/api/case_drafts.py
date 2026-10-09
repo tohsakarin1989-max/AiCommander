@@ -1,5 +1,6 @@
 """Explicit private draft writes; all reads are owner/scope/expiry filtered."""
 from datetime import datetime
+from time import perf_counter
 from typing import Any, Literal
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from app.services.case_draft_service import (
 from app.services.case_edit_service import CaseEditConflict, CaseEditUnavailable
 from app.services.case_submission_service import SubmissionConflictError, SubmissionUnavailableError
 from app.utils.datetimes import utc_datetime
+from app.utils.logger import logger
 
 
 router = APIRouter()
@@ -102,11 +104,20 @@ def get_drafts(response: Response, page: int = Query(1, ge=1), page_size: int = 
 
 
 @router.get("/{draft_id}", response_model=DraftResponse)
-def read_draft(draft_id: UUID, response: Response, db: Session = Depends(get_db)):
+def read_draft(draft_id: UUID, response: Response,
+               purpose: Literal['inspect', 'resume'] = 'inspect', db: Session = Depends(get_db)):
     response.headers["Cache-Control"] = "no-store"
+    started = perf_counter()
     try:
-        return get_draft(db, str(draft_id))
+        result = get_draft(db, str(draft_id))
+        if purpose == 'resume':
+            logger.info('work_operation kind=draft_resume outcome=available elapsed_ms=%d',
+                        round((perf_counter() - started) * 1000))
+        return result
     except (ValueError, PermissionError, LookupError) as exc:
+        if purpose == 'resume':
+            logger.info('work_operation kind=draft_resume outcome=unavailable elapsed_ms=%d',
+                        round((perf_counter() - started) * 1000))
         _raise(exc)
 
 
@@ -133,6 +144,7 @@ def commit_draft(draft_id: UUID, payload: DraftSubmitRequest, response: Response
                  idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
                  db: Session = Depends(get_db)):
     response.headers["Cache-Control"] = "no-store"
+    started = perf_counter()
     try:
         draft = get_draft(db, str(draft_id))
         schema = CaseCreate if draft.mode == "create" else CaseUpdate
@@ -143,7 +155,12 @@ def commit_draft(draft_id: UUID, payload: DraftSubmitRequest, response: Response
         result = submit_draft(db, str(draft_id), expected_revision=payload.expected_revision,
             request_payload=request_payload, values=values, idempotency_key=idempotency_key,
             confirm_only=payload.confirm_only)
+        logger.info('work_operation kind=draft_submit outcome=%s elapsed_ms=%d',
+                    'confirmed_existing' if payload.confirm_only else 'confirmed',
+                    round((perf_counter() - started) * 1000))
         return {"id": result.id, "revision": result.revision, "status": result.status,
                 "submitted_case_id": result.submitted_case_id, "case_id": result.submitted_case_id}
     except (ValueError, PermissionError, LookupError) as exc:
+        logger.info('work_operation kind=draft_submit outcome=not_confirmed elapsed_ms=%d',
+                    round((perf_counter() - started) * 1000))
         _raise(exc)

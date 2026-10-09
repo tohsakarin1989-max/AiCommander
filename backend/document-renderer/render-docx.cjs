@@ -70,6 +70,7 @@ function frozenMapImage(input, map) {
 async function render(input) {
   if (!['case-result-document-4.1.0-1', 'case-result-document-5.1.0-1', 'intelligent-query-document-4.3-1', 'topic-document-5.3-1', 'business-result-document-6.5-1',
     'material-presentation-7.4-1/case_summary', 'material-presentation-7.4-1/facility_sheet', 'material-presentation-7.4-1/period_brief',
+    'material-presentation-9.4-1/case_summary', 'material-presentation-9.4-1/facility_sheet', 'material-presentation-9.4-1/period_brief', 'material-presentation-9.4-1/sections',
   ].includes(input.schema) || !Array.isArray(input.blocks)) {
     throw new Error('unsupported_document_schema')
   }
@@ -101,7 +102,7 @@ async function render(input) {
     } else throw new Error('unsupported_document_block')
   }
   const document = new Document({
-    creator: 'AiCommander', title: input.schema.startsWith('material-presentation-7.4-1/') || input.schema === 'business-result-document-6.5-1' ? '统一业务材料' : input.schema === 'topic-document-5.3-1' ? '专题研判与周期材料' : input.schema === 'intelligent-query-document-4.3-1' ? '专题查询研判报告' : '案件统一研判成果',
+    creator: 'AiCommander', title: input.schema.startsWith('material-presentation-') || input.schema === 'business-result-document-6.5-1' ? '统一业务材料' : input.schema === 'topic-document-5.3-1' ? '专题研判与周期材料' : input.schema === 'intelligent-query-document-4.3-1' ? '专题查询研判报告' : '案件统一研判成果',
     styles: {
       default: { document: { run: { font: FONT, size: 22 }, paragraph: { spacing: { line: 320 } } } },
       paragraphStyles: [

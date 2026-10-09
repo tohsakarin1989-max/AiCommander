@@ -66,6 +66,51 @@ def test_paging_searches_beyond_first_hundred_with_stable_order(search_db):
     assert found["items"][0]["case_number"] == "CASE-000"
 
 
+@pytest.mark.parametrize('basis,field', [
+    ('discovery', 'discovered_at'), ('incident', 'occurred_time'), (None, 'occurred_time'),
+])
+def test_time_order_places_unknown_last_and_keeps_page_ties_stable(search_db, basis, field):
+    from app.services.case_search_service import CaseSearchService
+
+    for number, value in [('older', datetime(2026, 10, 1)), ('latest-first', datetime(2026, 10, 9)),
+                          ('latest-second', datetime(2026, 10, 9)), ('unknown-first', None),
+                          ('unknown-second', None)]:
+        add_case(search_db, number, **{field: value})
+    search_db.commit()
+    pages = [CaseSearchService.page(search_db, page=index, page_size=2, time_basis=basis)
+             for index in (1, 2, 3)]
+    assert [[row.case_number for row in page['items']] for page in pages] == [
+        ['latest-second', 'latest-first'], ['older', 'unknown-second'], ['unknown-first'],
+    ]
+    assert all(page['total'] == 5 for page in pages)
+
+
+@pytest.mark.parametrize('basis,field', [
+    ('discovery', 'discovered_at'), ('incident', 'occurred_time'),
+    ('entry', 'created_at'), (None, 'occurred_time'),
+])
+def test_pagination_sql_explicitly_orders_nulls_last_on_postgres(search_db, basis, field):
+    from sqlalchemy import event
+    from sqlalchemy.dialects import postgresql
+    from app.services.case_search_service import CaseSearchService
+
+    statements = []
+
+    def capture(execution):
+        if execution.is_select:
+            statements.append(str(execution.statement.compile(dialect=postgresql.dialect(),
+                compile_kwargs={'literal_binds': True})))
+
+    event.listen(search_db, 'do_orm_execute', capture)
+    try:
+        CaseSearchService.page(search_db, page=1, page_size=2, time_basis=basis)
+    finally:
+        event.remove(search_db, 'do_orm_execute', capture)
+    paged = [statement for statement in statements if 'LIMIT 2' in statement][-1]
+    # PostgreSQL DESC otherwise defaults to NULLS FIRST, unlike SQLite.
+    assert f'ORDER BY cases.{field} DESC NULLS LAST, cases.id DESC' in paged
+
+
 def test_filters_and_facets_include_full_authorized_data_only(search_db):
     add_case(search_db, "A", status="pending")
     add_case(search_db, "B", status="resolved", oil_type="柴油")

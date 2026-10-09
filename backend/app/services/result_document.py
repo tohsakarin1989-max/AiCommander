@@ -4,19 +4,19 @@ from app.services.case_result_pdf import export_case_result_pdf, _convert_genera
 from app.services.document_budget import document_budget
 from app.services.intelligent_query_tasks import _identity
 from app.services.result_catalog import _read
-from app.services.result_presentation import download_filename, format_document
+from app.services.result_presentation import download_filename, format_document, validate_sections
 
 
 @document_budget
-def export_result(db, kind, identifier, format, *, template='full', expected_content_sha256=None, with_metadata=False):
+def export_result(db, kind, identifier, format, *, template='full', expected_content_sha256=None, with_metadata=False, sections=None):
     if format not in {'docx', 'pdf'}:
         raise ValueError('invalid_document_format')
     _identity(db)
     before, document = _read(db, kind, identifier, topic_document_preview=False)
     if expected_content_sha256 and before['content_sha256'] != expected_content_sha256:
         raise ValueError('material_content_changed')
-    document = format_document(before, document, template)
-    if kind == 'case' and template == 'full':
+    document = format_document(before, document, template, sections=sections)
+    if kind == 'case' and template == 'full' and sections is None:
         exporter = export_case_result_pdf if format == 'pdf' else export_case_result_docx
         document, data = exporter(db, identifier)
     else:
@@ -44,5 +44,6 @@ def export_result(db, kind, identifier, format, *, template='full', expected_con
     if before['content_sha256'] != after['content_sha256']:
         raise PermissionError('document_source_changed')
     if with_metadata:
-        return document, data, {'filename': download_filename(before, format, template), 'template': template}
+        return document, data, {'filename': download_filename(before, format, template), 'template': template,
+                                'sections': validate_sections(sections)}
     return document, data

@@ -60,6 +60,19 @@ MANUAL_CASE_MAINTENANCE = re.compile(
     r"^/api/cases/(?:[0-9]+/preprocess|preprocess/batch|batch-review)$"
 )
 
+# Only these data-maintenance routes may reach a second, area-manage check.
+# Original downloads, road permissions and global publication stay admin-only.
+SCOPED_MAP_MAINTENANCE = re.compile(
+    r'^/api/(?:map-sources(?:/[0-9]+/(?:inspect|preview|ingest|jobs))?'
+    r'|map-import-templates'
+    r'|map-ingest-runs(?:/[^/]+(?:/(?:job-preview|control|ledger-comparison|claims|retry-preview|retry))?)?'
+    r'|map-conflicts(?:/[0-9]+/(?:field-decision-preview|field-decision|resolve))?)$'
+)
+SCOPED_ASSET_CREATION = re.compile(
+    r'^/api/jurisdiction/assets(?:/(?:bulk|import-geojson|import-table))?$'
+)
+SCOPED_ASSET_UPDATE = re.compile(r'^/api/jurisdiction/assets/[0-9]+$')
+
 
 def _client_ip(request: Request) -> Optional[str]:
     forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
@@ -118,7 +131,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         finally:
             db.close()
 
-        if path.startswith(ADMIN_PATH_PREFIXES) and principal.role != "admin":
+        scoped_map = principal.role == 'analyst' and (
+            SCOPED_MAP_MAINTENANCE.fullmatch(path)
+            or (request.method == 'POST' and SCOPED_ASSET_CREATION.fullmatch(path))
+            or (request.method in {'PUT', 'DELETE'} and SCOPED_ASSET_UPDATE.fullmatch(path))
+        )
+        if path.startswith(ADMIN_PATH_PREFIXES) and principal.role != "admin" and not scoped_map:
             return JSONResponse(status_code=403, content={"detail": "当前账号无权访问该功能"})
         if (request.method not in SAFE_METHODS
                 and MANUAL_CASE_MAINTENANCE.fullmatch(path)
@@ -128,6 +146,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.method not in SAFE_METHODS
             and path.startswith(ADMIN_MUTATION_PATH_PREFIXES)
             and principal.role != "admin"
+            and not scoped_map
         ):
             return JSONResponse(status_code=403, content={"detail": "当前账号无权修改地图或广播数据"})
         is_logout = request.method == "POST" and path == "/api/auth/logout"

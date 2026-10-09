@@ -23,6 +23,11 @@ export interface BusinessAnswerMapContext {
 }
 export interface EvidenceAnswer {
   schema_version: 'query-answer-6.4-1' | 'business-answer-8.4-1'; summary: string
+  answer_contract_version?: 'answer-snapshot-9.3-1'
+  question_spec?: { goal: string; required_points: string[]; interpretation: string }
+  answer_requirements?: { required: string[]; satisfied: string[]; missing: string[] }
+  time_scope?: { time_basis: 'discovery' | 'incident' | 'entry'; timezone: string; start?: string | null; end?: string | null }
+  capabilities?: { rule_answering: string; model_enhancement: string; model_acceptance: string }
   findings: Array<{ text: string; card_index: number; evidence_refs: string[] }>
   information_gaps: string[]; boundary: string
   direct_answer?: string
@@ -71,6 +76,9 @@ export interface QueryTask {
   query: string
   status: string
   result_kind: string
+  reused?: boolean
+  availability?: { state: 'current' | 'historical'; as_of: string; message: string;
+    changed_sources: Array<{ kind: string; id: string | number; frozen_version: string; current_version: string }> }
   question_type?: BusinessQuestionType | null
   source_context?: BusinessSourceContext | null
   clarification?: { id: string; field: 'case_id' | 'area_id'; prompt: string; expires_at: string } | null

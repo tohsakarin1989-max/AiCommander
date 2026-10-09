@@ -22,6 +22,18 @@ ALLOWED_TABLE_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
+def _maintain(db, operation, *args, **kwargs):
+    """Scope is checked again by the write service, not by a menu or role alone."""
+    try:
+        return operation(db, *args, **kwargs)
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail='仅可维护已授权厂区的地图资料') from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404 if str(exc) == 'asset_not_found' else 400, detail=str(exc)) from exc
+
+
 class JurisdictionAssetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -37,8 +49,8 @@ class JurisdictionAssetCreate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=2000)
     source: str = Field("manual", max_length=50, description="manual/map/import")
     status: str = Field("active", max_length=20, description="active/inactive")
-    risk_level: int = Field(1, ge=1, le=5)
-    confidence_score: float = Field(1.0, ge=0, le=1)
+    risk_level: Optional[int] = Field(None, ge=1, le=5)
+    confidence_score: Optional[float] = Field(None, ge=0, le=1)
     verified: bool = False
     tags: Optional[List[str]] = Field(default=None, max_length=50)
     attributes: Optional[Dict[str, Any]] = None
@@ -170,7 +182,7 @@ async def create_asset(
     db: Session = Depends(get_db),
 ) -> JurisdictionAsset:
     """录入油区业务资产、防控设施和内部路线；道路、村屯优先走地图参考导入。"""
-    return JurisdictionService.create_asset(db, payload.dict())
+    return _maintain(db, JurisdictionService.create_asset, payload.dict())
 
 
 @router.post("/assets/bulk")
@@ -179,8 +191,8 @@ async def bulk_create_assets(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """批量导入地图/GIS/内部台账要素，形成公共地图参考和油区业务资产。"""
-    return JurisdictionService.bulk_create_assets(
-        db,
+    return _maintain(
+        db, JurisdictionService.bulk_create_assets,
         [item.dict() for item in payload.items],
     )
 
@@ -219,9 +231,9 @@ async def import_geojson_assets(
     payload: GeoJsonImportRequest,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """导入 GeoJSON FeatureCollection，并按 external_id/name 去重更新。"""
-    return JurisdictionService.import_geojson(
-        db,
+    """导入完整 GeoJSON；身份由来源和编号决定，不按同名合并。"""
+    return _maintain(
+        db, JurisdictionService.import_geojson,
         payload.geojson,
         source=payload.source,
         operational_area_id=payload.operational_area_id,
@@ -236,7 +248,7 @@ async def import_table_assets(
     operational_area_id: Optional[int] = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """导入 CSV/Excel 台账，支持预览和按 external_id/name 去重更新。"""
+    """兼容标准经纬度台账；特殊坐标和字段映射使用受管模板入口。"""
     filename = file.filename or ""
     lowered = filename.lower()
     if not any(lowered.endswith(ext) for ext in ALLOWED_TABLE_EXTENSIONS):
@@ -255,12 +267,13 @@ async def import_table_assets(
 
     if not rows:
         raise HTTPException(status_code=400, detail="文件中没有数据")
-    return JurisdictionService.import_tabular_assets(
-        db,
+    return _maintain(
+        db, JurisdictionService.import_tabular_assets,
         rows,
         source=source,
         dry_run=dry_run,
         operational_area_id=operational_area_id,
+        filename=filename,
     )
 
 
@@ -295,12 +308,7 @@ async def update_asset(
     db: Session = Depends(get_db),
 ) -> JurisdictionAsset:
     """编辑辖区要素，供地图点位校正和台账维护使用。"""
-    try:
-        return JurisdictionService.update_asset(db, asset_id, payload.dict(exclude_unset=True))
-    except ValueError as exc:
-        if str(exc) == "asset_not_found":
-            raise HTTPException(status_code=404, detail="辖区要素不存在") from exc
-        raise
+    return _maintain(db, JurisdictionService.update_asset, asset_id, payload.dict(exclude_unset=True))
 
 
 @router.delete("/assets/{asset_id:int}", response_model=JurisdictionAssetResponse)
@@ -309,12 +317,7 @@ async def deactivate_asset(
     db: Session = Depends(get_db),
 ) -> JurisdictionAsset:
     """软停用辖区要素，保留历史导入和研判依据。"""
-    try:
-        return JurisdictionService.deactivate_asset(db, asset_id)
-    except ValueError as exc:
-        if str(exc) == "asset_not_found":
-            raise HTTPException(status_code=404, detail="辖区要素不存在") from exc
-        raise
+    return _maintain(db, JurisdictionService.deactivate_asset, asset_id)
 
 
 @router.get("/assets/summary")

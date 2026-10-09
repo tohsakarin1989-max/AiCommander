@@ -89,9 +89,9 @@ def test_different_source_and_current_failed_rows_cannot_create_absence(db_sessi
         "coordinate_system": "wgs84", "field_mapping": template.field_mapping})
     different, _, _ = load(db_session, {"id": other.id}, other_template, [{**BASE, "井号": "OTHER"}], declaration(9))
     assert read_comparison(db_session, different.id)["reason"] == "no_previous_comparable_ledger"
-    broken, _, _ = load(db_session, source, template, [BASE, {**BASE, "井号": "C", "经度": "错误"}], declaration(9))
-    result = read_comparison(db_session, broken.id)
-    assert result["reason"] == "current_rows_incomplete" and "missing_count" not in result
+    with pytest.raises(ValueError, match='full_ledger_incomplete'):
+        load(db_session, source, template, [BASE, {**BASE, "井号": "C", "经度": "错误"}], declaration(9))
+    assert not db_session.query(JurisdictionAsset).filter_by(external_id='C').first()
 
 
 @pytest.mark.parametrize("previous_mode,broken,reason", [
@@ -100,7 +100,15 @@ def test_different_source_and_current_failed_rows_cannot_create_absence(db_sessi
 def test_partial_failure_or_incremental_cannot_become_complete_baseline(db_session, previous_mode, broken, reason):
     source, template = setup(db_session)
     rows = [BASE, {**BASE, "井号": "B", "经度": "错误" if broken else 125.1}]
-    first, _, _ = load(db_session, source, template, rows, declaration(8, mode=previous_mode))
+    first, _, _ = load(db_session, source, template, rows, declaration(8, mode='incremental' if broken else previous_mode))
+    if broken:
+        # Historical v8 records could publish good rows from an incomplete
+        # "full" ledger. Retain that legacy reading fixture explicitly; v9's
+        # production write path above now refuses such partial adoption.
+        metadata = deepcopy(first.table_metadata)
+        metadata['ledger_declaration']['mode'] = 'full'
+        first.table_metadata = metadata
+        db_session.commit()
     second, _, _ = load(db_session, source, template, [BASE], declaration(9))
     assert read_comparison(db_session, second.id)["reason"] == reason
     if broken:

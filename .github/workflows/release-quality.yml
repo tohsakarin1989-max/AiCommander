@@ -65,7 +65,6 @@ jobs:
         working-directory: frontend
         run: npm audit --offline --omit=dev --audit-level=high
       - name: Refresh frontend advisory audit
-        continue-on-error: true
         timeout-minutes: 2
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high

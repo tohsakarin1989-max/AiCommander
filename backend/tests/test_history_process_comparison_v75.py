@@ -1,5 +1,6 @@
 """Source-bound two-sided comparisons; synthetic cases, no external models."""
 from copy import deepcopy
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -79,9 +80,16 @@ def test_frozen_two_sided_evidence_cannot_be_rebound_or_promoted(db, tamper):
     validate_history_query_evidence(db, {'cards': [{'tool': 'find_history', 'data': result}]})
 
 
-def test_source_scope_or_revision_changes_invalidates_both_sides(db):
+def test_source_scope_or_revision_changes_invalidates_both_sides(db, monkeypatch):
     current, old = prepared(db)
-    result = CaseHistoryRetrieval.search(db, source_case_id=current.id)
+    # Scope/revision invalidation requires an actual historical hit. Retrieval
+    # timeout behavior is tested separately; do not depend on runner speed here.
+    with monkeypatch.context() as preparation:
+        preparation.setattr('app.services.case_history_fragment_search.time',
+            SimpleNamespace(monotonic=lambda: 100.0))
+        result = CaseHistoryRetrieval.search(db, source_case_id=current.id)
+    assert [item['case_id'] for item in result['items']] == [old.id]
+    assert result['items'][0]['process_comparison']['historical']['case_id'] == old.id
     old.operational_area_id = 2
     db.commit()
     with pytest.raises(PermissionError):

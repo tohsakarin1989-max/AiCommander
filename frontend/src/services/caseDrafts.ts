@@ -27,8 +27,8 @@ export interface CaseDraftSave {
 export const caseDraftsApi = {
   list: async (page = 1, signal?: AbortSignal): Promise<{ items: CaseDraft[]; total: number; page: number; page_size: number }> =>
     (await api.get('/case-drafts', { params: { page, page_size: 20, status: 'all' }, signal })).data,
-  get: async (id: string, signal?: AbortSignal): Promise<CaseDraft> =>
-    (await api.get(`/case-drafts/${encodeURIComponent(id)}`, { signal })).data,
+  get: async (id: string, signal?: AbortSignal, purpose?: 'resume'): Promise<CaseDraft> =>
+    (await api.get(`/case-drafts/${encodeURIComponent(id)}`, { signal, ...(purpose ? { params: { purpose } } : {}) })).data,
   save: async (id: string, payload: CaseDraftSave): Promise<CaseDraft> =>
     (await api.put(`/case-drafts/${encodeURIComponent(id)}`, payload)).data,
   submit: async (id: string, expectedRevision: number, payload: unknown, confirmOnly = false): Promise<{ case_id: number }> =>

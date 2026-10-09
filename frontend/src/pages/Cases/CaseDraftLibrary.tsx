@@ -16,7 +16,7 @@ export default function CaseDraftLibrary({ disabled, onRestore }: { disabled: bo
     <p>只有本人在当前可写范围内可找回。草稿不进入正式案件、统计或研判；到期后不可恢复。已转正式的草稿只保留结果入口。</p>
     {(query.isError || error) && <Alert type="error" message={error || '草稿读取失败或当前无权访问，请重试'} />}
     {query.isFetching && <p role="status">正在读取草稿…</p>}
-    {query.isSuccess && !query.data.items.length && <p>没有可找回的草稿。在录入窗口点击“保存私有草稿”后可跨页面继续。</p>}
+    {query.isSuccess && !query.data.items.length && <p>没有可找回的草稿。录入窗口自动暂存后，可在这里跨页面继续；未确认保存的内容不能保证找回。</p>}
     {query.isSuccess && query.data.items.map(draft => {
       const values = draft.form_snapshot.values as Record<string, unknown> | undefined
       return <div key={draft.id} className="case-facility-choice"><div>

@@ -4,6 +4,10 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import type { Case } from '../../types'
 
 describe('case search contracts', () => {
+  it('sends the chosen time axis without substituting timestamps', () => {
+    expect(buildCaseSearchParams({ startDate: '2026-10-01', timeBasis: 'discovery' }).time_basis).toBe('discovery')
+    expect(buildCaseSearchParams({ timeBasis: 'entry' }).time_basis).toBe('entry')
+  })
   it('窄屏返回列表只关闭档案，不丢筛选、重复状态或授权范围', () => {
     const original = new URLSearchParams('caseId=25&case_view=sources&keyword=井场&statuses=pending&statuses=resolved&operational_area_id=3&start_date=2026-09-01')
     const next = returnToCaseListParams(original)

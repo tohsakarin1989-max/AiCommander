@@ -25,6 +25,7 @@ import { configApi } from '../../services/config'
 import { useRuntimeFeatures } from '../../config/useRuntimeFeatures'
 import type { AIModel, ModelCreate, SystemConfig } from '../../types'
 import './Settings.css'
+import RuntimeCapabilities from './RuntimeCapabilities'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -351,14 +352,15 @@ const Settings: React.FC = () => {
         {runtimeQuery.isError ? <p role="alert">运行状态读取失败</p> : runtimeQuery.data ? <dl>
           <div><dt>数据库</dt><dd>{runtimeQuery.data.database}</dd></div>
           <div><dt>缓存</dt><dd>{runtimeQuery.data.redis === 'ok' ? 'Redis 在线' : 'Redis 未就绪'}</dd></div>
-          <div><dt>可用模型</dt><dd>{runtimeQuery.data.active_model_count} 个</dd></div>
-          <div><dt>地图服务</dt><dd>{runtimeQuery.data.map_configured ? runtimeQuery.data.map_provider : '未配置'}</dd></div>
+          <div><dt>已启用的模型配置</dt><dd>{runtimeQuery.data.active_model_count} 项（非可用性验收）</dd></div>
+          <div><dt>旧公网地图配置</dt><dd>{runtimeQuery.data.map_configured ? `${runtimeQuery.data.map_provider}（未验证连通）` : '未配置'}</dd></div>
         </dl> : <p role="status">正在读取运行状态</p>}
       </section>
       <Tabs
         className="settings-tabs"
-        defaultActiveKey="models"
+        defaultActiveKey="capabilities"
         items={[
+          { key: 'capabilities', label: '实际启用能力', children: <RuntimeCapabilities /> },
           /* ── AI 模型配置 ── */
           {
             key: 'models',
@@ -479,12 +481,12 @@ const Settings: React.FC = () => {
           /* ── 地图 API 配置 ── */
           {
             key: 'map',
-            label: '地图 API',
+            label: '公网地图兼容配置',
             children: (
               <div style={{ paddingTop: 'var(--gap)' }}>
                 <div className="settings-info-block">
                   <div className="settings-info-block__title">MAP API CONFIGURATION</div>
-                  <p className="settings-info-block__text">地图 API 用于「案件地图」页面展示案件位置及地理线索分析。</p>
+                  <p className="settings-info-block__text">仅保留旧版兼容用途；正常内网地图使用已发布的本地资源。填写公网地址不代表离线地图已准备完成，也不会授权上传生产信息。</p>
                   <ul className="settings-info-block__list">
                     <li><strong>OpenStreetMap（推荐）</strong>：免费，无需 API key，功能基础</li>
                     <li><strong>Mapbox</strong>：需要 API key，功能强大，支持多种地图样式</li>

@@ -20,7 +20,10 @@ describe('case import time interpretation', () => {
       field_mapping: { 日期: 'occurred_time', 内容: 'description', 案情描述: null },
     })
     const calls = vi.mocked(api.post).mock.calls
-    expect(JSON.parse(calls[calls.length - 1][2]?.params.field_mapping)).toEqual({
+    const params = calls[calls.length - 1][2]?.params
+    if (!params || typeof params !== 'object' || !('field_mapping' in params)
+      || typeof params.field_mapping !== 'string') throw new Error('字段映射必须序列化为字符串')
+    expect(JSON.parse(params.field_mapping)).toEqual({
       日期: 'occurred_time', 内容: 'description', 案情描述: null,
     })
   })

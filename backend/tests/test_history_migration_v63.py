@@ -24,7 +24,7 @@ def exercise_upgrade(url, monkeypatch):
                                 "VALUES(1,'SYN63-STRUCTURAL','夜里。',1)"))
     migrate(url, 'head')
     with engine.connect() as connection:
-        assert connection.scalar(text('SELECT version_num FROM alembic_version')) == 'v80f01'
+        assert connection.scalar(text('SELECT version_num FROM alembic_version')) == 'v94o01'
         assert connection.scalar(text('SELECT description FROM cases WHERE id=1')) == '夜里。'
     model = SimpleNamespace(state='ready', model_version='synthetic-v63-pg',
         encode=lambda value: [1., 0.] if value == '另一种完全不同表述。' else [0., 1.])
@@ -95,7 +95,7 @@ def test_v63_disposable_postgres_queries_and_restore(monkeypatch):
         restored_engine = create_engine(url.set(database='aic_v63_restore'))
         try:
             with restored_engine.connect() as db:
-                assert db.scalar(text('SELECT version_num FROM alembic_version')) == 'v80f01'
+                assert db.scalar(text('SELECT version_num FROM alembic_version')) == 'v94o01'
                 assert db.scalar(text('SELECT count(*) FROM cases')) == 3
                 assert db.scalar(text('SELECT count(*) FROM case_history_fragments')) > 3
                 assert db.scalar(text('SELECT count(*) FROM case_history_postings')) > 3

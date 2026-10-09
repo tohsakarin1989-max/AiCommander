@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { businessContextPath } from '../../services/businessNavigation'
 import BusinessReturnLink from '../../components/BusinessReturnLink'
-import { isMaterialTemplate, isMaterialTemplateApplicable, isResultKind, resultKinds, resultPath, resultsApi } from '../../services/results'
+import { isMaterialTemplate, isMaterialTemplateApplicable, isResultKind, parseMaterialSections, resultKinds, resultPath, resultsApi } from '../../services/results'
 import type { ResultKind } from '../../services/results'
 import MaterialReader from './MaterialReader'
 import './Materials.css'
@@ -22,6 +22,9 @@ function MaterialsWorkspace({ identity, allowed }: { identity: string; allowed: 
   const rawTemplate = params.get('template') ?? 'full'
   const template = isMaterialTemplate(rawTemplate) ? rawTemplate : undefined
   const expectedContentSha256 = params.get('expected_content_sha256') ?? undefined
+  const rawSections = params.getAll('sections')
+  const sections = rawSections.length ? parseMaterialSections(rawSections) : undefined
+  const invalidSections = rawSections.length > 0 && !sections
   const invalidTemplate = !!id && (params.getAll('template').length > 1 || !template || !!kind && !isMaterialTemplateApplicable(kind, template))
   const invalidVersion = !!id && (params.getAll('expected_content_sha256').length > 1
     || expectedContentSha256 !== undefined && !/^[a-f0-9]{64}$/.test(expectedContentSha256))
@@ -42,12 +45,13 @@ function MaterialsWorkspace({ identity, allowed }: { identity: string; allowed: 
   })
   const list = useQuery({ queryKey: ['material-catalog', identity, query, filter, offset, subjectKind, subjectId],
     queryFn: ({ signal }) => resultsApi.list({ q: query, kind: filter, offset, limit: 20, subject_kind: subjectKind, subject_id: subjectId }, signal), retry: false, gcTime: 0 })
-  const selected = useQuery({ queryKey: ['material-reader', identity, kind, id, template, expectedContentSha256],
-    queryFn: ({ signal }) => resultsApi.read(kind!, id, signal, { template, expectedContentSha256 }),
-    enabled: !!id && !invalid && !invalidTemplate && !invalidVersion, retry: false, gcTime: 0, refetchInterval: 30000 })
-  const material = !invalid && !invalidTemplate && !invalidVersion && !selected.error && selected.data
+  const selected = useQuery({ queryKey: ['material-reader', identity, kind, id, template, expectedContentSha256, ...(sections ? [sections.join(',')] : [])],
+    queryFn: ({ signal }) => resultsApi.read(kind!, id, signal, { template, expectedContentSha256, ...(sections ? { sections } : {}) }),
+    enabled: !!id && !invalid && !invalidTemplate && !invalidVersion && !invalidSections, retry: false, gcTime: 0, refetchInterval: 30000 })
+  const material = !invalid && !invalidTemplate && !invalidVersion && !invalidSections && !selected.error && selected.data
     && selected.data.kind === kind && String(selected.data.id) === id && selected.data.presentation?.template === template
-    && (!expectedContentSha256 || selected.data.content_sha256 === expectedContentSha256) ? selected.data : undefined
+    && (!expectedContentSha256 || selected.data.content_sha256 === expectedContentSha256)
+    && (!sections || selected.data.presentation.sections?.join(',') === sections.join(',')) ? selected.data : undefined
   return <main className="page-scrollable materials">
     <header className="page-title"><h1>成果与材料</h1><span className="sub">查阅已有内容，按需导出和判断</span></header>
     <BusinessReturnLink />
@@ -70,9 +74,16 @@ function MaterialsWorkspace({ identity, allowed }: { identity: string; allowed: 
       {invalid ? <p role="alert">材料类型或编号无效，请从目录重新打开。</p>
         : invalidTemplate ? <p role="alert">材料格式无效或不适用于此类材料，已隐藏旧正文与地图。<button className="btn-ghost" onClick={() => updateCatalog({ template: 'full' })}>查看完整资料</button></p>
           : invalidVersion ? <p role="alert">内容版本参数无效，请从目录重新打开材料。</p>
+          : invalidSections ? <p role="alert">章节配置无效，已隐藏旧正文与地图。<button className="btn-ghost" onClick={() => updateCatalog({ sections: undefined })}>恢复完整章节</button></p>
         : selected.error && id ? <p role="alert">材料不存在、当前不可访问、内容版本已变化或格式读取失败，已隐藏旧正文与地图。<button className="btn-ghost" onClick={() => void selected.refetch()}>重新读取</button></p>
           : id && selected.isPending ? <p role="status">正在核对材料与来源权限…</p>
-            : material ? <MaterialReader key={`${identity}:${material.kind}:${material.id}:${material.content_sha256}:${template}`} identity={identity} material={material} allowed={allowed} context={params}
+            : material ? <MaterialReader key={`${identity}:${material.kind}:${material.id}:${material.content_sha256}:${template}:${sections?.join(',') || ''}`} identity={identity} material={material} allowed={allowed} context={params}
+              onSectionsChange={values => setParams(previous => {
+                const next = new URLSearchParams(previous)
+                next.delete('sections'); values.forEach(section => next.append('sections', section))
+                next.set('expected_content_sha256', material.content_sha256)
+                return next
+              })}
               onTemplateChange={next => updateCatalog({ template: next, expected_content_sha256: material.content_sha256 })} onSaved={() => void selected.refetch()} />
               : id ? <p role="alert">返回的材料格式或内容版本不匹配，已隐藏旧正文与地图。</p>
                 : <p>选择一份已有材料，查看同版正文、来源、地图和人工判断。</p>}

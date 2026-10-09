@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { workbenchApi, type DailyWorkbenchCase } from '../../services/workbench'
 import DailyReviewPreview from './DailyReviewPreview'
 import TopicChangeCard from './TopicChangeCard'
+import { formatStoredTime } from '../../utils/caseValues'
 import './Workbench.css'
 
 const PAGE_SIZE = 20
@@ -43,6 +44,7 @@ export function formatDailyCaseTime(item: DailyWorkbenchCase): string {
 
 const Workbench: React.FC = () => {
   const { user, sessionEpoch } = useAuth()
+  const canEdit = user?.role === 'admin' || user?.role === 'analyst'
   const [offset, setOffset] = useState(0)
   const query = useQuery({
     queryKey: ['workbench-daily', user?.id, user?.role, sessionEpoch, offset],
@@ -50,7 +52,9 @@ const Workbench: React.FC = () => {
     refetchInterval: 60_000,
   })
   const quickActions = <nav className="daily-actions" aria-label="常用工作">
-    {user?.role !== 'viewer' && <Link className="btn-primary" to="/cases?create=1">录案件</Link>}
+    {canEdit && <Link className="btn-primary" to="/cases?create=1">录案件</Link>}
+    {canEdit && <Link className="btn-ghost" to="/cases?drafts=1">继续草稿</Link>}
+    {canEdit && <Link className="btn-ghost" to="/cases?imports=1">导入续做</Link>}
     <Link className="btn-ghost" to="/cases">查案件</Link>
     <Link className="btn-ghost" to="/jurisdiction#facility-lookup">查井场</Link>
     <Link className="btn-ghost" to="/reports">取材料</Link>
@@ -93,7 +97,7 @@ const Workbench: React.FC = () => {
     <header className="daily-heading">
       <div>
         <h1>日常工作</h1>
-        <p>查看近期案件、关键补充与已有分析；经验沉淀和报告按需使用。</p>
+        <p>继续自己的录入与导入，查看近期登记、重要变化和已有材料。</p>
       </div>
       <div className="daily-actions">
         <Link className="btn-primary" to="/cases">进入案件</Link>
@@ -105,15 +109,16 @@ const Workbench: React.FC = () => {
     </header>
     {quickActions}
 
-    <section aria-label="案件与分析状态" className="daily-summary">
+    <section aria-label="日常工作概览" className="daily-summary">
       <dl>
         <div><dt>授权案件</dt><dd>{summary.total_cases}</dd></div>
-        <div><dt>关键资料待补充</dt><dd>{summary.needs_information}</dd></div>
-        <div><dt>画像待形成</dt><dd>{summary.analysis_pending}</dd></div>
-        <div><dt>画像可查看</dt><dd>{summary.analysis_ready}</dd></div>
+        {canEdit && <div><dt>我的私有草稿</dt><dd>{data.resume?.state === 'ready' ? data.resume.drafts?.total : '未读取'}</dd></div>}
+        {canEdit && <div><dt>我的导入待续做</dt><dd>{data.resume?.state === 'ready' ? data.resume.imports?.total : '未读取'}</dd></div>}
+        <div><dt>业务材料</dt><dd><Link to="/reports">按需取用</Link></dd></div>
       </dl>
-      <p>口径：授权范围内全部案件。资料缺项与画像待形成可以重叠，画像可查看不代表案件办结。</p>
+      <p>案件为授权范围内全部案件；草稿和导入续做只计本人当前可写范围。不以未出报告、未生成经验卡或未知公安反馈判断案件未完成。</p>
     </section>
+    {user?.role === 'admin' && <details><summary>后台运维状态（管理员）</summary><p>画像可查看 {summary.analysis_ready}；尚未形成 {summary.analysis_pending}。后台状态不等于案件处置状态。</p><Link to="/settings/setup">检查实际启用能力</Link></details>}
 
     <DailyReviewPreview />
 
@@ -127,7 +132,7 @@ const Workbench: React.FC = () => {
 
     <section className="daily-cases" aria-labelledby="daily-cases-title">
       <div className="daily-section-heading">
-        <h2 id="daily-cases-title">近期案件</h2>
+        <h2 id="daily-cases-title">近期登记</h2>
         <span>统计时刻：{formatTime(data.generated_at)}</span>
       </div>
       {data.cases.length === 0 ? <div className="daily-message">
@@ -135,14 +140,17 @@ const Workbench: React.FC = () => {
         <p>可进入案件列表查看授权数据，或正常录入案件。这里不会生成示例记录。</p>
       </div> : <div className="daily-table-scroll">
         <table>
-          <thead><tr><th scope="col">案件与时间</th><th scope="col">地点</th><th scope="col">关键补充</th><th scope="col">自动画像</th><th scope="col">操作</th></tr></thead>
+          <thead><tr><th scope="col">记录与时间</th><th scope="col">地点原文</th><th scope="col">可补充资料</th>{user?.role === 'admin' && <th scope="col">后台状态</th>}<th scope="col">操作</th></tr></thead>
           <tbody>{data.cases.map(item => <tr key={item.id}>
-            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link><small>发生时间：{formatDailyCaseTime(item)}</small></th>
+            <th scope="row"><Link to={`/cases?caseId=${item.id}`}>{item.case_number}</Link>
+              <small>发现／查获：{item.discovered_at ? formatStoredTime(item.discovered_at) : '未掌握'}</small>
+              <small>实际案发：{formatDailyCaseTime(item)}</small>
+              <small>登记：{item.registered_at ? formatStoredTime(item.registered_at) : '未记录'}</small></th>
             <td>{item.location || '地点未记录'}</td>
             <td>{item.information_gaps.length > 0
               ? <ul>{item.information_gaps.slice(0, 3).map((gap, index) => <li key={`${index}:${gap}`}>{gap}</li>)}</ul>
-              : <span className="daily-muted">当前未提示关键缺项</span>}</td>
-            <td><span className={`daily-state ${item.profile_ready ? 'ready' : ''}`}>{dailyProfileStatus(item)}</span></td>
+              : <span className="daily-muted">按已掌握情况使用，不催补未知侦查信息</span>}</td>
+            {user?.role === 'admin' && <td><span className={`daily-state ${item.profile_ready ? 'ready' : ''}`}>{dailyProfileStatus(item)}</span></td>}
             <td><Link className="daily-case-link" to={`/cases?caseId=${item.id}`} aria-label={`查看案件 ${item.case_number}`}>查看案件</Link></td>
           </tr>)}</tbody>
         </table>

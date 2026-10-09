@@ -13,7 +13,7 @@ export function presetArguments(name: QueryPresetName, values: Record<string, st
   const base = { ...(context?.filters || {}), ...(context?.source_case_id ? { case_id: context.source_case_id } : {}) }
   const area = values.area ? positiveId(values.area) : context?.filters.operational_area_id
   if (values.area && !area) throw new Error('辖区编号无效。')
-  if (name === 'case_count') return { name, arguments: base }
+  if (name === 'case_count') return { name, arguments: { ...base, ...(values.timeBasis ? { time_basis: values.timeBasis } : {}) } }
   const args: Record<string, unknown> = area ? { operational_area_id: area } : {}
   if (name === 'case_process' || name === 'case_result') {
     const id = context?.source_case_id || positiveId(values.caseId || '')
@@ -53,7 +53,7 @@ export default function QueryPresets(props: Props) {
 }
 function QueryPresetsSession({ context, assetId, disabled, onRun }: Props) {
   const [name, setName] = useState<QueryPresetName>(assetId ? 'facility_dossier' : context?.source_case_id ? 'case_process' : 'case_count')
-  const [values, setValues] = useState<Record<string, string>>({ assetId: assetId || '' })
+  const [values, setValues] = useState<Record<string, string>>({ assetId: assetId || '', timeBasis: context?.filters.time_basis || 'discovery' })
   const [error, setError] = useState('')
   const [chosenLabel, setChosenLabel] = useState({ case: '', facility: '' })
   const field = (key: string, label: string, type = 'text') => <label key={key}>{label}<input type={type} value={values[key] || ''} disabled={disabled}
@@ -69,6 +69,10 @@ function QueryPresetsSession({ context, assetId, disabled, onRun }: Props) {
       <label>要做什么<select value={name} disabled={disabled} onChange={event => { setName(event.target.value as QueryPresetName); setError('') }}>
         {Object.entries(presetLabels).map(([key, title]) => <option key={key} value={key}>{title}</option>)}
       </select></label>
+      {name === 'case_count' && <label>统计时间口径<select value={values.timeBasis} disabled={disabled || Boolean(context?.filters.time_basis)}
+        onChange={event => setValues(old => ({ ...old, timeBasis: event.target.value }))}>
+        <option value="discovery">发现／查获时间</option><option value="incident">有依据的案发时间</option><option value="entry">录入时间</option>
+      </select><span>继承已有口径；时间未知单列，不使用录入时间补齐。</span></label>}
       {['case_process', 'case_result'].includes(name) && (context?.source_case_id ? <p>使用已选择案件 #{context.source_case_id}</p> : <>
         {values.caseId && <p>已选案件：{chosenLabel.case}</p>}
         <CaseSearch areaId={context?.filters.operational_area_id} disabled={disabled} selectedIds={values.caseId ? [Number(values.caseId)] : []} onChoose={item => {

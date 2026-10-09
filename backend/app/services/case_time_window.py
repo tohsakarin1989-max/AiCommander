@@ -5,7 +5,7 @@ from app.models.case import Case
 from app.utils.datetimes import utc_datetime
 
 
-def filter_case_time_window(query, start=None, end=None, *, end_exclusive=True):
+def filter_case_time_window(query, start=None, end=None, *, end_exclusive=True, time_basis=None):
     """Match exact instants or closed uncertainty intervals against [start, end).
 
     An interval whose endpoints are equal still represents interval input. Unknown
@@ -13,14 +13,29 @@ def filter_case_time_window(query, start=None, end=None, *, end_exclusive=True):
     parameters remain UTC-compatible; intake already normalizes fact timezones.
     The explicit inclusive option supports only the pre-existing legacy list API.
     """
+    if time_basis not in {None, 'incident', 'discovery', 'entry'}:
+        raise ValueError('invalid_time_basis')
     if start is None and end is None:
         return query
     start, end = utc_datetime(start), utc_datetime(end)
     if start is not None and end is not None and (start >= end if end_exclusive else start > end):
         raise ValueError("开始时间必须早于结束时间" if end_exclusive else "结束时间不能早于开始时间")
+    if time_basis in {'discovery', 'entry'}:
+        field = Case.discovered_at if time_basis == 'discovery' else Case.created_at
+        query = query.filter(field.isnot(None))
+        if start is not None:
+            query = query.filter(field >= start)
+        if end is not None:
+            query = query.filter(field < end if end_exclusive else field <= end)
+        return query
     exact = [Case.occurred_time.isnot(None)]
     interval = [Case.occurred_time.is_(None), Case.occurred_from.isnot(None),
                 Case.occurred_to.isnot(None), Case.occurred_to >= Case.occurred_from]
+    if time_basis == 'incident':
+        # New explicit incident queries cannot certify an old generic timestamp.
+        # The None path remains the declared legacy compatibility contract.
+        exact.append(Case.time_precision == 'exact')
+        interval.append(Case.time_precision == 'interval')
     if start is not None:
         exact.append(Case.occurred_time >= start)
         interval.append(Case.occurred_to >= start)
@@ -51,8 +66,18 @@ def case_time_fields(case):
     }
 
 
-def time_precision_counts(query):
+def time_precision_counts(query, time_basis=None):
     """Count distinct time categories in the already-authorized filtered query."""
+    if time_basis in {'discovery', 'entry'}:
+        field = Case.discovered_at if time_basis == 'discovery' else Case.created_at
+        total, exact = query.with_entities(func.count(Case.id), func.count(field)).one()
+        return {'exact': exact, 'interval': 0, 'unknown': total - exact}
+    if time_basis == 'incident':
+        total, exact, interval = query.with_entities(func.count(Case.id),
+            func.count(sql_case((and_(Case.time_precision == 'exact', Case.occurred_time.isnot(None)), 1))),
+            func.count(sql_case((and_(Case.time_precision == 'interval', Case.occurred_time.is_(None),
+                Case.occurred_from.isnot(None), Case.occurred_to.isnot(None), Case.occurred_to >= Case.occurred_from), 1)))).one()
+        return {'exact': exact, 'interval': interval, 'unknown': total - exact - interval}
     total, exact, interval = query.with_entities(
         func.count(Case.id),
         func.count(sql_case((Case.occurred_time.isnot(None), 1))),

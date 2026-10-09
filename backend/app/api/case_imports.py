@@ -56,6 +56,8 @@ class ImportSettings(BaseModel):
     header_row: int = Field(default=1, ge=1, le=100, strict=True)
     time_zone: Literal["UTC", "Asia/Shanghai"] = "UTC"
     field_mapping: dict[str, str | None] = Field(default_factory=dict, max_length=200)
+    source_key: str | None = Field(default=None, min_length=1, max_length=80)
+    source_revision: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("field_mapping")
     @classmethod

@@ -92,6 +92,7 @@ def _view(row):
             'initial_context': (row.input_payload or {}).get('initial_context'),
             'question_type': (row.input_payload or {}).get('question_type'),
             'source_context': (row.input_payload or {}).get('source_context'),
+            'question_spec': (row.input_payload or {}).get('question_spec'),
             'condition_changes': (row.input_payload or {}).get('condition_changes', []),
             'clarification': (row.runtime_state or {}).get('clarification') if row.status == 'waiting_clarification' else None}
 
@@ -128,6 +129,12 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
     user = _identity(db)
     if parent_query_id is not None and initial_context is not None:
         raise ValueError('query_context_conflict')
+    if question_type is None and parent_query_id is None and preset is None and topic_source is None and source_context is None:
+        from app.services.question_contract import explicit_business_question
+        inferred = explicit_business_question(question, initial_context)
+        if inferred is not None:
+            question_type, source_context = inferred
+            initial_context = None
     if parent_query_id and question_type is None:
         parent, _ = _owned(db, parent_query_id)
         question_type = (parent.input_payload or {}).get('question_type')
@@ -167,13 +174,21 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
     # Serialize each owner's admission before checking pending capacity. A no-op
     # UPDATE obtains the same lock on SQLite and PostgreSQL without broker I/O.
     db.execute(update(User).where(User.id == user.id).values(id=User.id))
+    stamp = _stamp(db, user, 'membership-v2')
+    from app.services.query_reuse import fingerprint, find_reusable
+    from app.services.question_contract import make_question_spec
+    reuse_key = None if context or (selected_preset or {}).get('name') != 'case_count' else fingerprint(db, owner=user.id, scope=stamp, question=question,
+        payload={'initial_context': initial, 'preset': selected_preset})
+    reused = find_reusable(db, owner=user.id, scope=stamp, fingerprint_value=reuse_key)
+    if reused:
+        db.commit()
+        return reused
     pending = db.query(AgentRun.id).filter(AgentRun.task_type == TASK_TYPE,
         AgentRun.created_by == user.id, AgentRun.status.in_(['queued', 'running', 'waiting_clarification'])).count()
     if pending >= 4:
         db.rollback()
         raise ValueError('query_capacity_reached')
     run_id = str(uuid4())
-    stamp = _stamp(db, user, 'membership-v2')
     bindings = {key: value for key, value in (context or initial or {}).items()
                 if key in {'source_case', 'topic_source', 'parent_query_id', 'parent_result_hash'}}
     envelope = TaskEnvelope(run_id, 'deterministic_preset' if selected_preset else 'intranet_model', user.id, stamp,
@@ -186,6 +201,8 @@ def create_query(db, question, parent_query_id=None, initial_context=None, prese
     row = AgentRun(id=run_id, task_type=TASK_TYPE, query=question.strip(),
         case_ids=[], asset_ids=[], mode='shadow', status='queued', created_by=user.id,
         data_version=stamp, input_payload={'scope_contract': 'membership-v2', 'task_envelope': envelope,
+            'reuse_fingerprint': reuse_key,
+            'question_spec': make_question_spec(question, context=context or initial, preset=selected_preset),
             **({'preset': selected_preset} if selected_preset else {}),
             **({'followup_context': context} if context else {}),
             **({'initial_context': initial} if initial else {})},
@@ -201,6 +218,12 @@ def read_query(db, run_id):
     row, user = _owned(db, run_id)
     if row.data_version != _current_stamp(db, user, row):
         raise PermissionError('query_scope_changed')
+    if row.status in {'completed', 'degraded'} and (row.result_summary or {}).get('frozen_source_receipt'):
+        from app.services.query_snapshot_availability import snapshot_availability
+        from app.services.business_answer import normalize_context
+        normalize_context(db, row.input_payload['question_type'], row.input_payload['source_context'])
+        availability = snapshot_availability(db, row.result_summary)
+        return {**_view(row), 'availability': availability}
     _validate_context(db, row, user)
     validate_road_query_evidence(db, row.result_summary)
     validate_history_query_evidence(db, row.result_summary)
@@ -289,6 +312,10 @@ def _publish_query(db, run_id, attempt, result):
             encoded['answer']['time_scope_versions']['condition_changes'] = row.input_payload.get('condition_changes', [])
         if result.get('error_code') != 'query_budget_exhausted':
             timeout = max(0, 120 - consumed['active_ms'] / 1000)
+    from app.services.query_snapshot_availability import freeze_validated_business_snapshot
+    encoded = freeze_validated_business_snapshot(db, encoded)
+    if 'frozen_source_receipt' in encoded:
+        result['frozen_source_receipt'] = encoded['frozen_source_receipt']
     changed = db.execute(update(AgentRun).where(AgentRun.id == row.id,
         AgentRun.status == 'running', AgentRun.attempt_count == attempt,
         AgentRun.started_at > now - timedelta(seconds=timeout))
@@ -398,10 +425,12 @@ async def execute_query(db, run_id, *, model=None):
                 from app.services.intelligent_query_answers import compose_answer
                 result = {'status': 'degraded', 'cards': [], 'trace': [],
                           'execution_mode': 'intranet_model', 'task_envelope': envelope,
-                          'answer': compose_answer([]), 'error_code': 'query_model_unavailable'}
+                          'answer': compose_answer([], row.input_payload.get('question_spec'), status='degraded'),
+                          'error_code': 'query_model_unavailable'}
             else:
                 result = await run_query(db, question, selected_model, cancelled=cancelled,
-                    context=request['followup_context'] or request['initial_context'], envelope=envelope)
+                    context=request['followup_context'] or request['initial_context'], envelope=envelope,
+                    question_spec=row.input_payload.get('question_spec'))
     finally:
         db.info.pop('execution_cancel_probe', None)
     if result['status'] == 'cancelled':

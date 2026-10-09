@@ -1,9 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import api from './api'
-import { resultsApi, isResultKind, resultPath, materialCatalogPath, materialSourcePath, materialFilename, type ResultItem } from './results'
+import { resultsApi, isResultKind, resultPath, materialCatalogPath, materialSourcePath, materialFilename, parseMaterialSections, type ResultItem } from './results'
 vi.mock('./api', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 describe('统一材料接口', () => {
   beforeEach(() => vi.resetAllMocks())
+  it('章节组合仅接受白名单，下载校验章节与版本，拒绝旧版文件', async () => {
+    expect(parseMaterialSections(['boundary', 'facts'])).toEqual(['facts', 'boundary'])
+    expect(parseMaterialSections(['facts', 'facts'])).toBeUndefined()
+    expect(parseMaterialSections(['__proto__'])).toBeUndefined()
+    const item = { kind: 'case' as const, id: 'frozen', content_sha256: 'a'.repeat(64) }
+    vi.mocked(api.get).mockResolvedValue({ data: new Blob(['same-version']), headers: {
+      'x-result-content-sha256': item.content_sha256, 'x-result-template': 'full', 'x-result-sections': 'facts,boundary',
+    } })
+    await resultsApi.document(item, 'docx', undefined, { sections: ['facts', 'boundary'] })
+    expect(api.get).toHaveBeenLastCalledWith('/results/case/frozen/document.docx', expect.objectContaining({
+      params: { template: 'full', expected_content_sha256: item.content_sha256, sections: ['facts', 'boundary'] },
+    }))
+    await expect(resultsApi.document(item, 'docx', undefined, { sections: ['gaps', 'boundary'] })).rejects.toThrow('material_sections_invalid')
+    const route = new URLSearchParams(resultPath('case', 'frozen', undefined, { sections: ['facts', 'boundary'] }).split('?')[1])
+    expect(route.getAll('sections')).toEqual(['facts', 'boundary'])
+  })
   it('只按类型与固定ID读取，错误身份响应拒绝', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: { kind: 'facility', id: 'other', content_sha256: 'a'.repeat(64), document: { blocks: [] } } })
     await expect(resultsApi.read('facility', 'wanted')).rejects.toThrow('material_contract_invalid')

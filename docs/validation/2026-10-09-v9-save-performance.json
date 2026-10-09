@@ -1,0 +1,62 @@
+{
+  "measurement": "2026-10-09 isolated local source comparison",
+  "metadata": {
+    "baseline_commit": "60f2b2fa7c0057c5444687a81c3d43701109f359",
+    "baseline_version": "8.4.0-stable",
+    "candidate_label": "9.4 source candidate",
+    "source_hashes": {
+      "baseline": "383874b496331b58c31876ad317561d7f7d4e427d9c7d28f17fe482b1d3185b2",
+      "candidate": "57d3bc1013ea6db0474c0c93c17a2c038dbbb8dbb169c54b248b77af5a337747"
+    },
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.4 (v3.13.4:8a526ec7cbe, Jun  3 2025, 21:14:54) [Clang 16.0.0 (clang-1600.0.26.6)]",
+    "database": "fresh-synthetic-SQLite",
+    "seed_cases": 200,
+    "warmup": 10,
+    "samples_per_run": 50,
+    "order": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline",
+      "baseline",
+      "candidate"
+    ],
+    "protocol": "both idempotent create and strict edit; preparation excluded",
+    "input_sha256": "5a1ba7b0ca16b066cedfd2f1053eb4b8a59d0380e79c369f5b783909f5d1007c",
+    "network_allowed": false,
+    "target_server_verified": false,
+    "threshold_percent": 5
+  },
+  "summary": {
+    "pooled_p95_ms": {
+      "baseline": {
+        "create": 28.347917,
+        "update": 28.249791
+      },
+      "candidate": {
+        "create": 25.419875,
+        "update": 25.552916
+      }
+    },
+    "pooled_median_ms": {
+      "baseline": {
+        "create": 23.6726045,
+        "update": 23.463625
+      },
+      "candidate": {
+        "create": 23.891208,
+        "update": 23.876520499999998
+      }
+    },
+    "change_percent_vs_baseline": {
+      "create": -10.328949389826414,
+      "update": -9.54653080442258
+    },
+    "local_five_percent_target_passed": true
+  },
+  "limits": [
+    "Synthetic SQLite only; not target-server or live business acceptance.",
+    "Candidate frozen before version-only publication bump."
+  ]
+}

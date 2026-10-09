@@ -92,9 +92,11 @@ def detect_drift(template, structure):
     issues = []
     headers = structure["headers"]
     expected = template.expected_structure or {}
-    if expected.get("headers") and expected["headers"] != headers:
-        issues.append({"field": "headers", "code": "header_drift", "message": "表头结构已变化，请另存并确认新模板",
-                       "old": expected["headers"], "new": headers})
+    # Mappings bind column names, not positions. Reordering or adding an unused
+    # comment column is safe; changed mapped names are checked below.
+    names = [name for name in headers if name]
+    if len(names) != len(set(names)):
+        issues.append({"field": "headers", "code": "duplicate_header", "message": "重复列名必须先核对"})
     for key in ("sheet_name", "header_row"):
         if expected.get(key) is not None and expected[key] != structure[key]:
             issues.append({"field": key, "code": "structure_drift", "message": "工作表或表头位置已变化",
@@ -103,3 +105,16 @@ def detect_drift(template, structure):
         if column not in headers:
             issues.append({"field": key, "code": "mapped_column_missing", "message": "已映射列不存在：" + column})
     return issues
+
+
+def structure_changes(template, structure):
+    """Non-blocking changes retained in the receipt, separate from drift."""
+    expected = (template.expected_structure or {}).get("headers") or []
+    actual = structure.get("headers") or []
+    if not expected or expected == actual:
+        return []
+    return [{"code": "unmapped_structure_change", "severity": "information",
+             "message": "列顺序或未映射列已变化；按已确认列名读取，实际列位置继续留存",
+             "added": [name for name in actual if name not in expected],
+             "removed": [name for name in expected if name not in actual],
+             "reordered": [name for name in actual if name in expected] != [name for name in expected if name in actual]}]

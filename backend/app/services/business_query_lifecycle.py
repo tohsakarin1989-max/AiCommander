@@ -24,7 +24,11 @@ def validate_context(db, row, user):
                 or parent.status not in {'completed', 'degraded'}
                 or result_hash(parent.result_summary) != parent_binding['result_hash']):
             raise PermissionError('business_answer_parent_changed')
-        validate_answer(db, parent.result_summary)
+        if (parent.result_summary or {}).get('frozen_source_receipt'):
+            from app.services.query_snapshot_availability import snapshot_availability
+            snapshot_availability(db, parent.result_summary)
+        else:
+            validate_answer(db, parent.result_summary)
     return context
 
 
@@ -55,6 +59,22 @@ def create(db, question, question_type, source_context, parent_query_id):
         consumed = parent.result_summary['chain_usage']
     context = normalize_context(db, question_type, source_context)
     db.execute(update(User).where(User.id == user.id).values(id=User.id))
+    stamp = tasks._stamp(db, user, 'membership-v2')
+    from app.services.query_reuse import fingerprint, find_reusable
+    from app.services.question_contract import make_question_spec
+    reusable_context = dict(context)
+    if not (source_context or {}).get('as_of'):
+        # Default windows use complete business days. An explicit cutoff is
+        # never rounded or discarded; receipt retains its actual original time.
+        from app.services.situation_temporal_changes import closed_window
+        reusable_context['as_of'] = closed_window(datetime.fromisoformat(context['as_of']), context['period']).current_end.isoformat()
+    reuse_key = None if parent_binding else fingerprint(db, owner=user.id, scope=stamp,
+        question=question, payload={'question_type': question_type, 'source_context': reusable_context,
+                                    'area_origin': area_origin})
+    reused = find_reusable(db, owner=user.id, scope=stamp, fingerprint_value=reuse_key)
+    if reused:
+        db.commit()
+        return reused
     pending = db.query(AgentRun.id).filter(AgentRun.task_type == tasks.TASK_TYPE,
         AgentRun.created_by == user.id, AgentRun.status.in_(['queued', 'running', 'waiting_clarification'])).count()
     if pending >= 4:
@@ -67,12 +87,13 @@ def create(db, question, question_type, source_context, parent_query_id):
     if missing:
         state['clarification'] = {'id': str(uuid4()), 'field': missing[0], 'prompt': missing[1],
             'expires_at': (now + timedelta(hours=24)).isoformat()}
-    stamp = tasks._stamp(db, user, 'membership-v2')
     envelope = TaskEnvelope(identifier, 'deterministic_business_question', user.id, stamp,
         source_bindings={'question_type': question_type, 'source_context': context}).public()
     row = AgentRun(id=identifier, task_type=tasks.TASK_TYPE, query=question.strip(), case_ids=[], asset_ids=[],
         mode='shadow', status='waiting_clarification' if missing else 'queued', created_by=user.id,
         data_version=stamp, created_at=now, input_payload={'scope_contract': 'membership-v2', 'task_envelope': envelope,
+            'reuse_fingerprint': reuse_key,
+            'question_spec': make_question_spec(question, question_type=question_type, context=context),
             'question_type': question_type, 'source_context': context, 'source_binding': source_binding(db, context),
             'area_origin': area_origin,
             'history_area_filter': context.get('area_id') if area_origin == 'user' and question_type == 'case_history' else None,

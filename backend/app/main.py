@@ -12,6 +12,7 @@ from app.api import facility_analysis
 from app.api import showcase
 from app.api import case_results
 from app.api import case_drafts
+from app.api import case_exports
 from app.api import results
 from app.api import road_analysis
 from app.cors import build_cors_origins
@@ -89,6 +90,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(runtime.router, prefix="/api/runtime", tags=["runtime"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
 app.include_router(case_drafts.router, prefix="/api/case-drafts", tags=["case-drafts"])
+app.include_router(case_exports.router, prefix="/api/case-exports", tags=["case-exports"])
 app.include_router(case_imports.router, prefix="/api/case-imports", tags=["case-imports"])
 app.include_router(case_pipeline.router, prefix="/api", tags=["case-pipeline"])
 app.include_router(case_insights.router, prefix="/api", tags=["case-insights"])

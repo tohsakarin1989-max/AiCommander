@@ -30,7 +30,8 @@ def test_optional_query_schedule_preserves_all_other_tasks(enabled, mode, schedu
         assert query['schedule'] == 5.0
         assert query['options'] == {'queue': 'isolated-agents', 'expires': 5}
     assert actual == expected
-    assert len(actual) == 18
+    assert len(actual) == 19
+    assert actual['process-map-ledger']['options']['queue'] == 'map_build'
     assert actual['expire-agent-approvals']['task'] == agent_tasks.expire_agent_approvals_task.name
     assert actual['expire-agent-approvals']['options']['queue'] == 'isolated-agents'
     assert actual['process-analysis-topic']['task'] == 'aicommander.topics.process_next'

@@ -77,7 +77,8 @@ def _apply_operational_area_scope(execute_state) -> None:
 def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
     """Build the same mandatory filters once per session and scope version."""
     from app.models.case import Case, CaseTip
-    from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate
+    from app.models.case_import import CaseImportBatch, CaseImportRow, CaseImportTemplate, CaseImportSourceRecord
+    from app.models.output_template import OutputTemplate
     from app.models.deployment_advisor import SituationBrief, TechDefenseEventAggregate, TechDefenseSource
     from app.models.event import AreaProfile, Event
     from app.models.governance import SpatialCoverageComparison
@@ -96,6 +97,8 @@ def _build_area_scope_options(area_ids: tuple[int, ...]) -> tuple:
         CaseImportBatch,
         CaseImportRow,
         CaseImportTemplate,
+        CaseImportSourceRecord,
+        OutputTemplate,
         JurisdictionAsset,
         JurisdictionFeedback,
         MapSource,
@@ -286,10 +289,20 @@ def _record_topic_source_changes(session, _flush_context) -> None:
     record_session_changes(session)
 
 
+def require_area_manage_access(db: Session, operational_area_id: int | None) -> int:
+    """Maintenance is distinct from ordinary editing; callers bind a real principal."""
+    area_id = operational_area_id or db.info.get('default_operational_area_id')
+    levels = db.info.get('area_access_levels')
+    if area_id is None or (levels is not None and levels.get(area_id) != 'manage'):
+        raise AreaWriteAccessError('area_manage_access_required')
+    return area_id
+
+
 def bind_principal_scope(db: Session, principal, *, method: str = "GET") -> None:
     if principal is None:
         return
     db.info["principal_user_id"] = principal.user_id
+    db.info["principal_role"] = principal.role
     from app.models.map_foundation import OperationalArea, UserAreaScope
 
     default_area_id = db.execute(

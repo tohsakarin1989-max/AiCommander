@@ -47,7 +47,7 @@ describe('历史页面与 v3 运行中心边界', () => {
 
   it('辖区只读账号明确资产维护权限且不触发部署参考 POST', () => {
     const html = renderToStaticMarkup(<Jurisdiction />)
-    expect(html).toContain('地图资产由管理员维护')
+    expect(html).toContain('本厂区地图资料仅由具备维护权限的人员处理')
     expect(state.queries.find(q => q.queryKey[0] === 'jurisdiction-patrol-plan')).toBeUndefined()
   })
 

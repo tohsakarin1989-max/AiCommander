@@ -503,7 +503,10 @@ class CaseService:
             if commit:
                 db.commit()
         except Exception:
-            db.rollback()
+            # A source batch owns a nested savepoint when commit=False. A full
+            # rollback here would silently discard earlier successful rows.
+            if commit:
+                db.rollback()
             raise
         if commit:
             db.refresh(case)

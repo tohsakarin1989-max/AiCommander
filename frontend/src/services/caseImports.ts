@@ -61,4 +61,6 @@ export const caseImportsApi = {
     (await api.post(`/case-imports/batches/${encodeURIComponent(batchId)}/retry`, {
       rows: [{ row, revision, changes }],
     })).data,
+  correctMany: async (batchId: string, rows: Array<{ row: number; revision: number; changes: Record<string, string> }>): Promise<ImportCorrectionResult> =>
+    (await api.post(`/case-imports/batches/${encodeURIComponent(batchId)}/retry`, { rows })).data,
 }

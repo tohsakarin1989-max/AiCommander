@@ -71,7 +71,8 @@ def _compare(db, source, plan, declaration):
     identifiers = [(row.get("normalized_payload") or {}).get("external_id") for row in rows]
     if not rows or any(row["classification"] not in allowed for row in rows) or not all(identifiers) or len(set(identifiers)) != len(rows):
         return _status("current_rows_incomplete")
-    roots = db.query(MapIngestRun).filter_by(source_id=source.id, parent_run_id=None).all()
+    roots = db.query(MapIngestRun).filter_by(source_id=source.id, parent_run_id=None).filter(
+        MapIngestRun.status.in_(['completed', 'completed_with_errors'])).all()
     declared = [(run, (run.table_metadata or {}).get("ledger_declaration")) for run in roots]
     same = [(run, previous) for run, previous in declared if previous and _scope(previous) == _scope(declaration)]
     start = _instant(declaration["valid_from"])

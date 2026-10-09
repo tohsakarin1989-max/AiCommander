@@ -6,8 +6,8 @@ import json
 BOUNDARY = '答案仅组织本轮工具已返回的依据；候选、历史参考和情景假设不等于正式事实或执行指令。'
 
 
-def compose_answer(cards):
-    findings, gaps = [], []
+def compose_answer(cards, question_spec=None, *, status=None, model_used=False):
+    findings, gaps, differences = [], [], []
     for index, card in enumerate(cards):
         data = card.get('data') or {}
         tool = card.get('tool')
@@ -79,6 +79,15 @@ def compose_answer(cards):
             add(f"假设方案资料未知的井点 {value['scenario']['unknown_count']} 处；未改变设备和设施记录，未创建执行任务。")
         elif tool == 'find_history':
             add(f"本轮返回 {len(data.get('items', []))} 项历史参考；检索支持度不是事实认定或总体统计。")
+            for item in data.get('items', [])[:3]:
+                item_refs = [ref.get('id') for ref in item.get('evidence_refs', []) if isinstance(ref, dict) and ref.get('id')]
+                item_refs = item_refs or [f"case:{item['case_id']}"]
+                add(f"参考：{item.get('title') or item.get('case_number') or item['case_id']}；原文：{item.get('snippet') or '未提供可引用片段'}。", item_refs)
+                shared = item.get('shared_conditions') or []
+                different = item.get('different_conditions') or []
+                differences.append({'text': '相似条件：' + json.dumps(shared, ensure_ascii=False) +
+                    '；明确差异：' + (json.dumps(different, ensure_ascii=False) if different else '未取得明确差异，不把未提及当否定') +
+                    '。仅供历史参考，不形成正式案件关系。', 'evidence_refs': item_refs})
         elif tool == 'aggregate_case_profiles':
             coverage = data.get('coverage', {})
             add('已完成授权集合的条件统计。' if coverage.get('complete') else '当前仅取得部分统计，尚不能回答全库总体。')
@@ -91,6 +100,9 @@ def compose_answer(cards):
             add(f"已读取 {len(data.get('items', []))} 项业务结果；具体依据和版本见对应工具记录。")
     gap_text = [gap if isinstance(gap, str) else (gap.get('message') or gap.get('reason') or
                 gap.get('description') or json.dumps(gap, ensure_ascii=False)) for gap in gaps]
-    return {'schema_version': 'query-answer-6.4-1',
+    answer = {'schema_version': 'query-answer-6.4-1',
             'summary': '已按本轮授权条件整理可核对的业务依据。' if findings else '当前没有足够依据回答，请查看信息缺口。',
-            'findings': findings, 'information_gaps': list(dict.fromkeys(gap_text)), 'boundary': BOUNDARY}
+            'findings': findings, 'differences': differences,
+            'information_gaps': list(dict.fromkeys(gap_text)), 'boundary': BOUNDARY}
+    from app.services.question_contract import make_question_spec, unify_answer
+    return unify_answer(answer, cards, question_spec or make_question_spec(), status=status, model_used=model_used)

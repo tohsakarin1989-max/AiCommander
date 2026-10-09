@@ -5,6 +5,7 @@ export function changedImportFields(source: Record<string, string | null>, draft
 }
 
 export const importFieldLabels: Record<string, string> = {
+  external_record_key: '外部稳定记录键',
   occurred_time: '案发时间', report_time: '报告时间', description: '案情描述',
   longitude: '经度', latitude: '纬度', location: '案发地点', case_type: '案件类型',
   report_unit: '报告单位', security_team: '保卫队', modus_operandi: '作案手法',

@@ -71,13 +71,15 @@ def _raise_workbench_error(exc: WorkbenchError) -> None:
 @router.get("/daily")
 def get_daily_workbench(
     request: Request,
+    response: Response,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
     """全量授权统计；缺项与分析状态可重叠，分析就绪不代表案件办结。"""
-    _identity(request)
-    return DailyWorkbenchService.daily(db, limit=limit, offset=offset)
+    _, role, user_id = _identity(request)
+    response.headers["Cache-Control"] = "no-store"
+    return DailyWorkbenchService.daily(db, limit=limit, offset=offset, user_id=user_id, role=role)
 
 
 @router.get("/today")

@@ -83,6 +83,8 @@ def build_query_document(task):
               DocumentBlock('paragraph', '本报告保留地图与道路版本引用，不生成未核验的路线示意图。空结果、未完成计算和资料缺失不等于现实中不存在关联。')]
     if task.get('followup_context'):
         blocks.append(DocumentBlock('table', '追问来源与继承条件', tuple(_rows(task['followup_context']))))
+    if task.get('availability'):
+        blocks.append(DocumentBlock('paragraph', task['availability']['message']))
     blocks.append(DocumentBlock('table', '本轮有效条件', tuple(_rows(result.get('query_conditions', {})))))
     if result.get('answer'):
         answer = result['answer']
@@ -92,7 +94,7 @@ def build_query_document(task):
             blocks.append(DocumentBlock('paragraph', finding['text']))
             blocks.append(DocumentBlock('paragraph', '依据：' + '、'.join(finding['evidence_refs'])))
         blocks.append(DocumentBlock('table', '信息缺口', tuple(_rows(answer['information_gaps']))))
-        if answer.get('schema_version') == 'business-answer-8.4-1':
+        if answer.get('schema_version') == 'business-answer-8.4-1' or answer.get('answer_contract_version') == 'answer-snapshot-9.3-1':
             labels = {'answered': '已回答', 'partial': '部分回答', 'insufficient_data': '资料不足',
                       'service_unavailable': '依赖服务不可用'}
             blocks.extend([

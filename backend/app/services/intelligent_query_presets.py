@@ -26,5 +26,8 @@ async def run_preset(db, question, preset, *, context=None, cancelled=lambda: Fa
     # A fixed call is an intentional business preset, explicitly labelled as
     # such; it is not an emulated model response or model acceptance evidence.
     request = QueryPreset.model_validate(preset)
+    from app.services.question_contract import make_question_spec
     return await run_query(db, question, None, context=context, cancelled=cancelled,
-                           preset_call=(PRESETS[request.name], request.arguments), envelope=envelope)
+                           preset_call=(PRESETS[request.name], request.arguments), envelope=envelope,
+                           question_spec=make_question_spec(question, context=context,
+                               preset=request.model_dump(mode='json')))

@@ -160,7 +160,7 @@ async def test_area_only_context_can_use_place_tool_without_losing_authorized_sc
         call('find_places', {'keyword': '井场'}), FINISH,
     ))
     result = tasks.read_query(query_db, request['id'])['result']
-    assert result['status'] == 'completed'
+    assert result['status'] == 'completed', result
     assert result['trace'][0]['arguments']['operational_area_id'] == 1
     assert result['cards'][0]['tool'] == 'find_places'
 

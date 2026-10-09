@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import MapReadinessPanel, { visibleReadiness } from './MapReadinessPanel'
+import MapReadinessPanel, { visibleReadiness, readinessDimensions } from './MapReadinessPanel'
 import type { MapReadiness } from '../../services/facilityAnalysis'
 
 const state = vi.hoisted(() => ({ role: 'admin', error: false, data: undefined as MapReadiness | undefined, keys: [] as unknown[][] }))
@@ -29,5 +29,12 @@ describe('管理员地图计算准备清单', () => {
     state.role = 'analyst'
     expect(renderToStaticMarkup(<MapReadinessPanel />)).toBe('')
     expect(state.keys).toEqual([])
+  })
+  it('有显示快照不代表生产资料或道路计算就绪，分母只表示当前页', () => {
+    const dimensions = readinessDimensions([{ key: 'snapshot', label: '快照', state: 'ready', detail: '登记' }])
+    expect(dimensions.map(row => row.ready)).toEqual([true, false, false])
+    const html = renderToStaticMarkup(<MapReadinessPanel />)
+    expect(html).toContain('不把本页比例当成全域覆盖')
+    expect(html).toContain('道路计算'); expect(html).toContain('生产资料'); expect(html).toContain('地图显示')
   })
 })

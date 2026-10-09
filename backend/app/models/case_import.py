@@ -44,3 +44,23 @@ class CaseImportTemplate(Base):
     settings = Column(JSON, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CaseImportSourceRecord(Base):
+    """Source identity, not event identity; deleted target retains its tombstone."""
+    __tablename__ = 'case_import_source_records'
+    __table_args__ = (UniqueConstraint('operational_area_id', 'source_key', 'external_key',
+                                       name='uq_case_import_source_identity'),)
+    id = Column(Integer, primary_key=True)
+    operational_area_id = Column(Integer, ForeignKey('operational_areas.id'), nullable=False, index=True)
+    source_key = Column(String(80), nullable=False)
+    external_key = Column(String(160), nullable=False)
+    case_id = Column(Integer, ForeignKey('cases.id', ondelete='SET NULL'), nullable=True, index=True)
+    source_version = Column(String(100), nullable=True)
+    source_hash = Column(String(64), nullable=False)
+    source_values = Column(JSON, nullable=False)
+    adopted_values = Column(JSON, nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    last_batch_id = Column(String(36), ForeignKey('case_import_batches.id'), nullable=False)
+    last_row_number = Column(Integer, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
