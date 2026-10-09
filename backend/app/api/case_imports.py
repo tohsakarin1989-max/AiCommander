@@ -58,6 +58,7 @@ class ImportSettings(BaseModel):
     field_mapping: dict[str, str | None] = Field(default_factory=dict, max_length=200)
     source_key: str | None = Field(default=None, min_length=1, max_length=80)
     source_revision: str | None = Field(default=None, min_length=1, max_length=100)
+    import_preset: Literal["security_ledger"] | None = None
 
     @field_validator("field_mapping")
     @classmethod
@@ -116,16 +117,19 @@ def save_import_template(payload: TemplateCreate, db: Session = Depends(get_db))
 
 @router.post("/inspect")
 def inspect_import_file(file: UploadFile = File(...), worksheet: str | None = None, header_row: int = 1,
-                        operational_area_id: int | None = None, db: Session = Depends(get_db)):
+                        operational_area_id: int | None = None, db: Session = Depends(get_db),
+                        import_preset: Literal["security_ledger"] | None = None):
     require_area_write_access(db, operational_area_id)
     content = file.file.read(MAX_BYTES + 1)
     if len(content) > MAX_BYTES:
         raise HTTPException(status_code=413, detail="文件过大，限制为 10MB")
     try:
-        table = parse_case_table(file.filename or "", content, worksheet=worksheet, header_row=header_row, inspect_only=True)
+        table = parse_case_table(file.filename or "", content, worksheet=worksheet, header_row=header_row,
+                                 inspect_only=True, import_preset=import_preset)
     except (ValueError, TypeError, csv.Error, openpyxl.utils.exceptions.InvalidFileException) as exc:
         raise HTTPException(status_code=400, detail=f"读取列名失败: {exc}") from exc
     except (KeyError, OSError, ParseError, XMLSyntaxError, BadZipFile) as exc:
         raise HTTPException(status_code=400, detail="Excel 文件结构损坏或不完整") from exc
     return {"headers": table.headers, "worksheets": table.worksheets, "worksheet": table.worksheet,
-            "header_row": table.header_row, "suggested_mapping": table.field_mapping, "total": len(table.rows)}
+            "header_row": table.header_row, "suggested_mapping": table.field_mapping, "total": len(table.rows),
+            "import_preset": table.import_preset, "warnings": table.warnings}

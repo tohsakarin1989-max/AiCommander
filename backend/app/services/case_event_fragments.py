@@ -5,7 +5,7 @@ import re
 from app.services.case_semantic_evidence import SourceText, TextReference, text_hash
 
 
-FRAGMENT_VERSION = "event-fragments-5.1-1"
+FRAGMENT_VERSION = "event-fragments-9.4-field-1"
 MAX_FRAGMENTS = 100
 SENTENCES = re.compile(r"[^。；;！!？?\n]+[。；;！!？?]?")
 PARTS = re.compile(r"[^，,。；;！!？?\n]+")
@@ -54,6 +54,10 @@ def build_event_fragments(sources: tuple[SourceText, ...], assertions: list[dict
                     text = part.group()
                     offset = sentence.start() + clause.start() + part.start()
                     for match in ACTION_PATTERN.finditer(text):
+                        # Equipment names describe an object, not an extraction
+                        # action. Keep the separate tool/facility assertions.
+                        if match.group() == "抽油" and re.match(r"(?:机|泵|杆|管|设备)", text[match.end():]):
+                            continue
                         action_ref = TextReference(source.field, source.sha256, offset + match.start(),
                                                    offset + match.end(), match.group())
                         action_ref.validate(source)

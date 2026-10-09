@@ -50,6 +50,7 @@ ALIASES = {
 class ImportRow:
     number: int
     values: dict[str, Any]
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,8 @@ class CaseTable:
     field_mapping: dict[str, str]
     ignored_headers: tuple[str, ...]
     headers: tuple[str, ...] = ()
+    import_preset: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def parse_case_table(
@@ -71,6 +74,7 @@ def parse_case_table(
     header_row: int = 1,
     field_mapping: dict[str, str | None] | None = None,
     inspect_only: bool = False,
+    import_preset: str | None = None,
 ) -> CaseTable:
     """Keep source line numbers and reject ambiguous/overwide input before writes."""
     if type(header_row) is not int or not 1 <= header_row <= 100:
@@ -84,6 +88,12 @@ def parse_case_table(
                for k, v in field_mapping.items())
     ):
         raise ValueError("字段映射只能使用允许的案件字段")
+    if import_preset is not None:
+        if import_preset != "security_ledger":
+            raise ValueError("导入预设无效")
+        from app.services.case_security_ledger import parse_security_ledger
+        return parse_security_ledger(filename, content, worksheet=worksheet, header_row=header_row,
+                                     field_mapping=field_mapping, inspect_only=inspect_only)
     custom = field_mapping or {}
     records: list[tuple[int, list[Any]]] = []
     worksheets: tuple[str, ...] = ()

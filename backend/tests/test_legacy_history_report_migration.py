@@ -1,6 +1,7 @@
 """Isolated compatibility acceptance: no raw analysis during report layout."""
 from datetime import datetime
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,7 +55,7 @@ def test_legacy_recall_passes_500_and_retains_versions_scope_and_partial(db_sess
         build_legacy_similar_cases(db_session, target.id, days=0)
 
 
-def test_cases_only_internal_200_does_not_mix_cards(db_session):
+def test_cases_only_internal_200_does_not_mix_cards(db_session, monkeypatch):
     db_session.info["authorized_area_ids"] = (1,)
     cases = [Case(case_number=f"MATCH-{i}", location="未知", description="打孔盗油使用软管。",
                   occurred_time=datetime(2026, 1, 1), operational_area_id=1) for i in range(220)]
@@ -62,7 +63,15 @@ def test_cases_only_internal_200_does_not_mix_cards(db_session):
     db_session.commit()
     build_history_index(db_session)
     _confirmed(db_session, cases[1])
-    result = CaseHistoryRetrieval.search_cases(db_session, source_case_id=cases[0].id, limit=200)
+    # This checks the internal result limit and source-type filter, not latency.
+    # Keep the production five-second budget; elapsed-budget partial results are
+    # tested separately and must not make this contract depend on runner speed.
+    with monkeypatch.context() as retrieval:
+        retrieval.setattr("app.services.case_history_fragment_search.time",
+                          SimpleNamespace(monotonic=lambda: 100.0))
+        result = CaseHistoryRetrieval.search_cases(db_session, source_case_id=cases[0].id, limit=200)
+    assert result["coverage"]["scan_complete"] is True
+    assert result["coverage"]["budget_seconds"] == 5.0
     assert len(result["items"]) == 200
     assert {item["source_type"] for item in result["items"]} == {"case"}
 

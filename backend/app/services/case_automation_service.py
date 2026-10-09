@@ -49,6 +49,7 @@ MATERIAL_RULES = {
 
 AI_INTAKE_FIELD_NAMES = {
     "occurred_time",
+    "discovered_at",
     "location",
     "case_type",
     "description",
@@ -245,11 +246,13 @@ class CaseAutomationService:
                 fields[field] = value
                 field_sources[field] = source
 
-        occurred_time = CaseAutomationService._extract_datetime(text)
-        if occurred_time:
-            set_field("occurred_time", occurred_time.isoformat(), "案情中的日期时间")
-        else:
-            warnings.append("未识别到精确发生时间，可记录时间范围或保留未知，不补造时刻。")
+        from app.services.case_intake_evidence import intake_role_evidence
+
+        roles = intake_role_evidence(text)
+        for field in ("occurred_time", "discovered_at", "report_time"):
+            set_field(field, roles.get(field, {}).get("value"), "原文中明确对应事件角色的精确时间")
+        if "occurred_time" not in fields:
+            warnings.append("未识别到明确案发时间；发现/查获和接报时间单独保留，不补造案发时刻。")
 
         report_unit = CaseAutomationService._extract_report_unit(text)
         set_field("report_unit", report_unit, "细则格式中的报送保卫班")
@@ -291,20 +294,8 @@ class CaseAutomationService:
         if security_officers:
             set_field("security_officers", security_officers, "保卫班出警人片段")
 
-        if _contains_any(text, ("移交公安", "人员移交", "嫌疑人移交")):
-            set_field("person_handling", "移交公安", "人员处置关键词")
-        elif _contains_any(text, ("治安拘留", "行政拘留")):
-            set_field("person_handling", "治安拘留", "人员处置关键词")
-        elif _contains_any(text, ("刑事拘留", "刑拘")):
-            set_field("person_handling", "刑事拘留", "人员处置关键词")
-        if _contains_any(text, ("车辆移交", "移交车辆", "车移交公安")):
-            set_field("vehicle_handling", "移交公安", "车辆处置关键词")
-        elif _contains_any(text, ("扣押车辆", "车辆扣押", "查扣车辆")):
-            set_field("vehicle_handling", "扣押停放", "车辆处置关键词")
-        if _contains_any(text, ("检斤入库", "入库", "回收入库")):
-            set_field("oil_handling", "检斤入库", "油品处置关键词")
-        elif _contains_any(text, ("暂存", "收缴")):
-            set_field("oil_handling", "暂存", "油品处置关键词")
+        for field in ("person_handling", "vehicle_handling", "oil_handling"):
+            set_field(field, roles.get(field, {}).get("value"), "原文处置对象、动作和肯否表达")
 
         plate_numbers = CaseAutomationService._extract_plate_numbers(text)
         if plate_numbers:
@@ -361,14 +352,16 @@ class CaseAutomationService:
 你是涉油案件录入辅助大模型。请把不标准、口语化、顺序混乱的案情整理成“可人工确认的标准录入候选”，不得编造。
 
 要求：
-1. 只基于原文输出；不确定的字段不要填，放入 follow_up_questions。
+1. 只基于原文输出；不确定的字段不填。follow_up_questions 仅询问会影响当前录入的明确矛盾，不追问本单位未知的公安后续信息。
 2. 不做案件定性结论，不预测后续风险，不派发任务。
 3. 输出 JSON，禁止输出 Markdown。
 4. case_fields 只能包含这些字段：{sorted(AI_INTAKE_FIELD_NAMES)}。
 5. description 要写成符合业务管理细则的标准案情摘要：时间、报送保卫班、地点、作业区/区块、车辆、油品数量/含水率、人员、报案立案、车辆/人员/原油处理方式，缺项不编。
 6. 每个 candidates 项要给 label、field、value、source、confidence、status=candidate。
 7. 身份证号、家庭住址可保留在摘要中供人工核对，但不要编造，不要外推。
-8. oil_volume 必须与 oil_volume_unit 同时给出，单位仅可为 tonne/liter/kg/m3/unknown；保留原文数值与单位，不假设密度、不换算吨数，多个不同阶段计量不能合成一个数量。
+8. oil_volume 必须与 oil_volume_unit 同时给出，单位仅可为 tonne/liter/kg/m3/unknown；保留原文数值与单位，不假设密度、不换算吨数，多个不同阶段计量不能合成一个数量；仅有回收、移交或入库数量时保留原文，不填通用涉油量。
+9. discovered_at 是发现/查获时间，occurred_time 只接受明确案发时间，report_time 保留明确接报/报送时间；不能把首个日期默认当案发时间。
+10. 车辆载重、油罐容量不是实际涉油量；人员、车辆和油品处置逐对象判断，不得把油品移交套用到人员，也不能把“未、拟、待核”变成已完成。
 
 {STANDARD_CASE_REPORTING_REQUIREMENTS}
 
@@ -384,7 +377,7 @@ class CaseAutomationService:
   "field_sources": {{}},
   "entities": {{"plate_numbers": [], "person_count": 0, "material_hints": []}},
   "suggested_evidence": [{{"requirement_key": "weigh_water_document", "label": "检斤含水单据", "reason": "..."}}],
-  "candidates": [{{"field": "location", "label": "案发地点", "value": "...", "source": "原文依据", "confidence": 0.8, "status": "candidate"}}],
+  "candidates": [{{"field": "location", "label": "原文地点（角色待核）", "value": "...", "source": "原文依据", "confidence": 0.8, "status": "candidate"}}],
   "follow_up_questions": [],
   "warnings": [],
   "confidence": 0.8
@@ -548,7 +541,8 @@ class CaseAutomationService:
             by_field[field] = {
                 "field": field,
                 "value": item.get("value"),
-                "label": item.get("label") or CaseAutomationService._field_label(field),
+                "label": (CaseAutomationService._field_label(field) if field == "location"
+                          else item.get("label") or CaseAutomationService._field_label(field)),
                 "source": item.get("source") or "大模型语义整理",
                 "confidence": item.get("confidence") or 0.8,
                 "status": item.get("status") or "candidate",
@@ -618,12 +612,12 @@ class CaseAutomationService:
             if item.get("field") != "title"
         ]
         follow_ups = [
-            "请确认发生时间、案发地点和报送单位是否与正式记录一致。",
-            "请补充公安报案、立案和处置结果，避免研判报告缺少事实依据。",
+            "请核对已识别的时间、原文地点和报送单位；地点角色待核，发现地点不自动视为案发地点。",
+            "公安报案、立案和后续处置未获反馈时可保留未知，不要求补齐本单位尚未掌握的信息。",
         ]
         follow_ups.extend(warnings)
         if not suggested_evidence:
-            follow_ups.append("请上传现场照片、处置凭证或其他可支撑案情的佐证材料。")
+            follow_ups.append("如已掌握现场照片或处置凭证，可按需补充；缺少材料不阻止保存简要记录。")
         return {
             "candidates": candidates,
             "evidence_anchors": anchors,
@@ -637,9 +631,10 @@ class CaseAutomationService:
     def _field_label(field: str) -> str:
         labels = {
             "occurred_time": "发生时间",
+            "discovered_at": "发现/查获时间",
             "report_time": "报送时间",
             "report_unit": "报送保卫班",
-            "location": "案发地点",
+            "location": "原文地点（角色待核）",
             "case_type": "案件类型",
             "description": "案情描述",
             "oil_nature": "油品性质",
@@ -1743,16 +1738,10 @@ class CaseAutomationService:
     @staticmethod
     def _extract_oil_measurement(text: str) -> Optional[Tuple[float, str]]:
         """Preserve one unambiguous raw quantity; capacities and multi-stage amounts stay unknown."""
-        if "油" not in text and "检斤" not in text:
-            return None
-        units = {"吨": "tonne", "t": "tonne", "公斤": "kg", "千克": "kg", "kg": "kg",
-                 "升": "liter", "l": "liter", "立方米": "m3", "m3": "m3", "m³": "m3"}
-        found = []
-        for match in re.finditer(r"(\d+(?:\.\d+)?)\s*(立方米|公斤|千克|kg|吨|升|m3|m³|t|l)(?![A-Za-z])", text, re.I):
-            if re.match(r"\s*(?:以上|以下|载重|机动车|卡车|油罐车)", text[match.end():]):
-                continue
-            found.append((float(match.group(1)), units[match.group(2).lower()]))
-        return found[0] if len(found) == 1 else None
+        from app.services.case_intake_evidence import oil_measurement_evidence
+
+        evidence = oil_measurement_evidence(text)
+        return evidence["value"] if evidence else None
 
     @staticmethod
     def _extract_volume_tons(text: str) -> Optional[float]:

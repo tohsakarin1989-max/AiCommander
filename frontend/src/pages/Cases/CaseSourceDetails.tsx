@@ -6,6 +6,7 @@ import { formatCaseTime, formatOilVolume, formatStoredTime } from '../../utils/c
 import type { CaseSourceRevisionDetail } from '../../types'
 import { locationRoleLabels, measurementStageLabels } from './CaseSourceFields'
 import { feedbackDescription } from './caseFeedback'
+import CaseLedgerSource from './CaseLedgerSource'
 
 export function CaseSourceVersionCard({ source }: { source: CaseSourceRevisionDetail }) {
   const original = source.payload?.case
@@ -55,6 +56,7 @@ function ScopedCaseSourceDetails({ caseId, revision }: { caseId: number; revisio
       <p>{sources.data.boundary}</p>
       <ul>{sources.data.revisions.map(item => <li key={item.id}><button className="btn-ghost-sm" onClick={() => setSelected(item.id)}>查看第 {item.revision} 版</button> · {formatStoredTime(item.created_at)}<details><summary>来源校验信息</summary><small>{item.source_hash}</small></details></li>)}</ul>
       <nav aria-label="来源版本分页"><button className="btn-ghost-sm" disabled={pages.length === 1 || sources.isFetching} onClick={() => { setPages(previous => previous.slice(0, -1)); setSelected(null) }}>较新版本</button><span>第 {pages.length} 页</span><button className="btn-ghost-sm" disabled={!sources.data.next_before_revision || sources.isFetching} onClick={() => { setPages(previous => [...previous, sources.data.next_before_revision!]); setSelected(null) }}>更早版本</button></nav>
+      {sources.data.references.map((reference, index) => <CaseLedgerSource key={String(reference.id ?? index)} reference={reference} />)}
       {!!sources.data.references.length && <details><summary>出处索引</summary><pre>{JSON.stringify(sources.data.references, null, 2)}</pre>
         <nav aria-label="出处索引分页"><button className="btn-ghost-sm" disabled={referencePages.length === 1 || sources.isFetching} onClick={() => setReferencePages(previous => previous.slice(0, -1))}>上一页</button><span>第 {referencePages.length} 页</span><button className="btn-ghost-sm" disabled={!sources.data.next_before_reference || sources.isFetching} onClick={() => setReferencePages(previous => [...previous, sources.data.next_before_reference!])}>下一页</button></nav>
       </details>}

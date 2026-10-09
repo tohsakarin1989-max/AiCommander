@@ -118,7 +118,7 @@ def normalize_case_row(row: dict[str, Any], *, time_zone: str = "UTC") -> dict[s
 def case_row_preview(number: int, values: dict[str, Any]) -> dict[str, Any]:
     preview = {key: values[key] for key in (
         "occurred_time", "location", "latitude", "longitude", "report_time",
-        "report_unit", "source_type", "description",
+        "report_unit", "source_type", "description", "discovered_at", "oil_volume", "oil_volume_unit",
     )}
     for field in TIME_FIELDS:
         if field in preview:

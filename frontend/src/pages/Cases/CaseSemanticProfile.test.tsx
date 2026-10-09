@@ -10,6 +10,24 @@ const payload: CaseSemantics = {
 }
 
 describe('案件语义画像展示', () => {
+  it('separates field handling from criminal methods and preserves quantity stages', () => {
+    const reference = { field: 'description', source_sha256: 'synthetic', start: 0, end: 8, quote: '回收原油2吨' }
+    const html = renderToStaticMarkup(<CaseSemanticProfile semantics={{ ...payload, field_observations: {
+      schema_version: 'field-observations-test', boundary: '只整理原文，不作为犯罪链条。',
+      coverage: { state: 'partial', limit: 100, omitted_items: 1 }, items: [{ id: 'one', category: 'recovery', label: '回收',
+        kind: 'stated', reference, is_official_fact: false, measurements: [{ value: 2, unit: 'tonne', oil_type: '原油',
+          stage: 'recovered', kind: 'stated', reference, is_official_fact: false }] },
+      { id: 'two', category: 'handover', label: '移交', kind: 'negated', reference: { ...reference, quote: '人员尚未移交' },
+        is_official_fact: false, measurements: [] }],
+    } }} />)
+    expect(html).toContain('现场发现与处置记录')
+    expect(html).toContain('回收油量：2 吨')
+    expect(html).toContain('人员尚未移交')
+    expect(html).toContain('原文否定')
+    expect(html).toContain('不作为损失量')
+    expect(html).toContain('移交不表示公安已办结')
+    expect(html).toContain('仅整理了部分现场记录')
+  })
   it('模型片段与规则分开显示，部分、故障、未知不冒充完整事实', () => {
     for (const [status, label] of [['partial', '部分结果'], ['unavailable', '暂不可用'], ['ready', '已返回']]) {
       const html = renderToStaticMarkup(<CaseSemanticProfile semantics={{ ...payload,

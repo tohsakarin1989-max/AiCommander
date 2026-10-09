@@ -45,6 +45,7 @@ import CaseFacilityPicker from './CaseFacilityPicker'
 import { intakeCapabilityLabel, intakeEvidenceLabel } from './caseEntryAssistance'
 import CaseHistoryReferences from './CaseHistoryReferences'
 import CaseSemanticProfile from './CaseSemanticProfile'
+import { importPreviewCells } from './importCorrection'
 import { CaseEntryPrecheck } from './CaseEntryPrecheck'
 import { CaseSourceCollections, CaseTimeFields, locationRoleLabels, oilUnitOptions } from './CaseSourceFields'
 import CaseFeedbackFields from './CaseFeedbackFields'
@@ -201,6 +202,7 @@ const CaseWorkspace: React.FC = () => {
   const [importOperationalAreaId, setImportOperationalAreaId] = useState<number | undefined>()
   const [importWorksheet, setImportWorksheet] = useState('')
   const [importHeaderRow, setImportHeaderRow] = useState(1)
+  const [importPreset, setImportPreset] = useState<CaseImportOptions['import_preset']>(null)
   const [importTimeZone, setImportTimeZone] = useState<'UTC' | 'Asia/Shanghai'>('Asia/Shanghai')
   const [importFieldMapping, setImportFieldMapping] = useState<Record<string, string | null>>({})
   const [importSourceKey, setImportSourceKey] = useState('')
@@ -210,6 +212,7 @@ const CaseWorkspace: React.FC = () => {
   const applyImportConfiguration = useCallback((settings: CaseImportOptions) => {
     setImportWorksheet(settings.worksheet ?? '')
     setImportHeaderRow(settings.header_row ?? 1)
+    setImportPreset(settings.import_preset ?? null)
     setImportTimeZone(settings.time_zone ?? 'UTC')
     setImportFieldMapping(settings.field_mapping ?? {})
     setImportSourceKey(settings.source_key ?? '')
@@ -760,7 +763,7 @@ const CaseWorkspace: React.FC = () => {
 
   const previewImportMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.previewImportCases(file, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
+      caseApi.previewImportCases(file, operationalAreaId, { import_preset: importPreset, worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
     ),
     onSuccess: (data) => {
       setImportPreview(data)
@@ -779,7 +782,7 @@ const CaseWorkspace: React.FC = () => {
 
   const importMutation = useMutation({
     mutationFn: ({ file, operationalAreaId }: { file: File; operationalAreaId?: number }) => (
-      caseApi.importCases(file, false, operationalAreaId, { worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
+      caseApi.importCases(file, false, operationalAreaId, { import_preset: importPreset, worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey.trim() || undefined, source_revision: importSourceRevision.trim() || undefined })
     ),
     onSuccess: async (data) => {
       if (data.replayed) {
@@ -806,6 +809,7 @@ const CaseWorkspace: React.FC = () => {
     setImportPreview(null)
     setImportWorksheet('')
     setImportHeaderRow(1)
+    setImportPreset(null)
     setImportTimeZone('Asia/Shanghai')
     setImportFieldMapping({})
     setImportOperationalAreaId(defaultWritableOperationalAreaId)
@@ -2560,11 +2564,23 @@ const CaseWorkspace: React.FC = () => {
             onOpen={batch => void openRecentImport(batch)} />}
         </details>
         <p className="cases-import-hint">
-          支持中文表头：<strong>案发时间</strong>、<strong>案情描述</strong>；也兼容 occurred_time、description。
+          案情描述必填；时间、地点和其他信息不知道可以留空。支持中文表头和英文字段名。
         </p>
         <p className="cases-import-hint">
           可选：案发地点、经度、纬度、案件类型等。单次最多 1000 条；无法识别的列会列出提示。
         </p>
+        <label style={{ display: 'block', marginBottom: 14 }}>台账格式
+          <Select aria-label="案件台账格式" style={{ width: '100%' }} value={importPreset ?? 'general'}
+            disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
+            options={[{ value: 'general', label: '通用案件表' }, { value: 'security_ledger', label: '保卫案件年度台账（标题、年月日、两列备注）' }]}
+            onChange={value => {
+              setImportPreset(value === 'security_ledger' ? value : null)
+              setImportHeaderRow(value === 'security_ledger' ? 3 : 1)
+              setImportFieldMapping({}); setImportSourceKey(''); setImportSourceRevision(''); setImportPreview(null)
+            }} />
+        </label>
+        {importPreset === 'security_ledger' && <Alert type="info" showIcon message="保留原始台账，不替来源作判断"
+          description="首列备注作为案情原文；其余备注、无表头补充及统计列逐行留作来源。系统案件类型与联动方式分开，回收量不当损失量，台账年月日不自动认作案发时间。.et 请先在 WPS 中另存为 .xlsx。" />}
         <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
           <label style={{ flex: 1 }}>工作表名称
             <Input aria-label="导入工作表名称" value={importWorksheet} maxLength={31}
@@ -2610,11 +2626,11 @@ const CaseWorkspace: React.FC = () => {
         ) : null}
         {importModalVisible && importPreview?.dry_run !== false && <CaseImportConfiguration
           file={selectedImportFile} areaId={importOperationalAreaId}
-          settings={{ worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey, source_revision: importSourceRevision }}
+          settings={{ import_preset: importPreset, worksheet: importWorksheet, header_row: importHeaderRow, time_zone: importTimeZone, field_mapping: importFieldMapping, source_key: importSourceKey, source_revision: importSourceRevision }}
           disabled={previewImportMutation.isPending || importMutation.isPending}
           onChange={applyImportConfiguration} onBusyChange={setImportCorrectionBusy} />}
         <CaseClipboardImport disabled={previewImportMutation.isPending || importMutation.isPending || importCorrectionBusy}
-          onSelect={file => { setSelectedImportFile(file); setImportWorksheet(''); setImportHeaderRow(1); setImportFieldMapping({}); setImportPreview(null) }} />
+          onSelect={file => { setSelectedImportFile(file); setImportWorksheet(''); setImportHeaderRow(1); setImportPreset(null); setImportFieldMapping({}); setImportPreview(null) }} />
         <Upload.Dragger
           name="file"
           multiple={false}
@@ -2653,9 +2669,11 @@ const CaseWorkspace: React.FC = () => {
                 description={`批次 ${importPreview.batch_id ?? '—'}。相同文件和设置重传不会重复建案；可直接修正下面的失败行。`} />
             )}
             {!!importPreview.table?.ignored_headers.length && (
-              <Alert type="warning" showIcon message="以下列未导入"
+              <Alert type="warning" showIcon message={importPreview.table.import_preset === 'security_ledger' ? '以下列仅保留来源原值，不映射为案件事实' : '以下列未映射业务字段'}
                 description={importPreview.table.ignored_headers.join('、')} />
             )}
+            {!!importPreview.table?.warnings?.length && <Alert type="info" showIcon message="导入口径提示"
+              description={<ul>{importPreview.table.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>} />}
             <div className="cases-import-summary">
               <span>总行数 <b>{importPreview.total}</b></span>
               <span>有效 <b>{importPreview.valid ?? importPreview.total}</b></span>
@@ -2678,11 +2696,13 @@ const CaseWorkspace: React.FC = () => {
                 {importPreview.preview!.slice(0, 20).map((row, idx) => (
                   <div key={idx} className="cases-import-row">
                     {typeof row.action === 'string' && <strong>{({ created: '新增', unchanged: '未变化', update: '来源更正', updated: '来源更正', failed: '格式待修', conflict: '冲突待核' } as Record<string, string>)[row.action] || row.action}</strong>}
-                    {Object.entries(row).slice(0, 5).map(([key, value]) => (
+                    {importPreviewCells(row).map(({ key, label, value }) => (
                       <span key={key}>
-                        <b>{key}</b>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '—')}
+                        <b>{label}</b>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '未知')}
                       </span>
                     ))}
+                    {Array.isArray(row.warnings) && row.warnings.length > 0 && <ul>{row.warnings.filter((warning): warning is string => typeof warning === 'string')
+                      .map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
                     {row.differences != null && <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(row.differences, null, 2)}</pre>}
                   </div>
                 ))}

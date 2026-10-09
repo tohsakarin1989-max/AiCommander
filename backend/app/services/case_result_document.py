@@ -88,6 +88,25 @@ def _time_label(value: str, precision: str) -> str:
 
 def _semantic_details(semantics: dict) -> list[DocumentBlock]:
     blocks = []
+    observations = semantics.get("field_observations")
+    if observations:
+        blocks.append(DocumentBlock("heading", f'现场发现与处置记录 {len(observations["items"])} 项'))
+        blocks.append(DocumentBlock("paragraph", observations["boundary"]))
+        if observations["coverage"]["state"] == "partial":
+            blocks.append(DocumentBlock("paragraph", "仅整理了部分现场记录，请结合完整原文。"))
+        if not observations["items"]:
+            blocks.append(DocumentBlock("paragraph", "未识别到明确的现场处置片段，不表示未处置。"))
+        stages = {"seized": "查获", "recovered": "回收", "transferred": "移交", "unknown": "环节待核"}
+        units = {"tonne": "吨", "liter": "升", "kg": "千克", "m3": "立方米", "unknown": "单位未知"}
+        for item in observations["items"]:
+            blocks.append(DocumentBlock("paragraph", f'{item["label"]}（{ASSERTION_LABELS.get(item["kind"], "类型待核")}）'))
+            blocks.append(_source(item["reference"]))
+            for measurement in item["measurements"]:
+                blocks.append(DocumentBlock("paragraph",
+                    f'{stages.get(measurement["stage"], "环节待核")}油量：{measurement["value"]:g} '
+                    f'{units.get(measurement["unit"], "单位待核")}（{ASSERTION_LABELS.get(measurement["kind"], "类型待核")}）'))
+                blocks.append(_source(measurement["reference"]))
+        blocks.append(DocumentBlock("paragraph", "各环节数量分别保留，不相加、不折算净油量，也不作为损失量。移交不表示公安已办结。"))
     if semantics.get("process"):
         from app.services.case_process_document import process_blocks
         blocks.extend(process_blocks(semantics["process"]))

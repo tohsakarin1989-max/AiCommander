@@ -184,7 +184,11 @@ def test_structure_preview_uses_llm_to_standardize_nonstandard_case_text():
     assert payload["case_fields"]["location"] == "合成井场东侧临时便道"
     assert payload["case_fields"]["description"].startswith("2026年5月6日2时30分")
     assert payload["case_fields"]["report_unit"] == "合成保卫班"
-    assert payload["case_fields"]["oil_volume"] == 1.5
+    # The source says “大概”; an optional model must not promote that estimate
+    # into an exact quantity. Keep the original statement for human review.
+    assert payload["case_fields"].get("oil_volume") is None
+    assert payload["case_fields"].get("oil_volume_unit") is None
+    assert "大概1.5吨" in payload["case_fields"]["description"]
     assert payload["case_fields"]["water_cut"] == 8.0
     assert payload["case_fields"]["police_phone"] == "000-00000"
     assert payload["case_fields"]["security_officers"] == ["测试乙", "测试丙"]

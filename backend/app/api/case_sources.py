@@ -31,6 +31,17 @@ def _values(row):
     return {key: utc_datetime(value) if isinstance(value, datetime) else value for key, value in values.items()}
 
 
+def _reference_values(row, evidence=None):
+    result = _values(row)
+    if "import_source" in (row.locator or {}):
+        # Imported source cells are content, not harmless locator metadata.
+        # Revoking the received workbook also revokes this copied row content.
+        result["availability"] = evidence.availability if evidence else "unavailable"
+        if result["availability"] != "available":
+            result["locator"] = {key: value for key, value in row.locator.items() if key != "import_source"}
+    return result
+
+
 @router.get("/{case_id:int}/locations")
 def list_locations(case_id: int, db: Session = Depends(get_db)):
     _case(db, case_id)
@@ -60,11 +71,14 @@ def list_sources(case_id: int, limit: int = Query(50, ge=1, le=200), before_revi
     if before_reference is not None:
         references_query = references_query.filter(SourceReference.id < before_reference)
     references = references_query.order_by(SourceReference.id.desc()).limit(references_limit + 1).all()
+    evidence_ids = {row.evidence_object_id for row in references[:references_limit]
+                    if row.evidence_object_id is not None and "import_source" in (row.locator or {})}
+    evidence_by_id = {row.id: row for row in db.query(EvidenceObject).filter(EvidenceObject.id.in_(evidence_ids)).all()} if evidence_ids else {}
     return {"case_id": case_id, "current_revision_id": latest.id if latest else None,
             "current_revision": latest.revision if latest else None,
             "revisions": [{key: value for key, value in _values(row).items() if key != "payload"} for row in rows[:limit]],
             "next_before_revision": rows[limit - 1].revision if len(rows) > limit else None,
-            "references": [_values(row) for row in references[:references_limit]],
+            "references": [_reference_values(row, evidence_by_id.get(row.evidence_object_id)) for row in references[:references_limit]],
             "next_before_reference": references[references_limit - 1].id if len(references) > references_limit else None,
             "references_limit": references_limit,
             "status": "available" if latest else "not_recorded",
@@ -106,9 +120,9 @@ def get_reference(case_id: int, reference_id: int, db: Session = Depends(get_db)
     row = db.query(SourceReference).filter_by(case_id=case_id, id=reference_id).first()
     if row is None:
         raise HTTPException(404, "引用不存在或不可访问")
-    result = _values(row)
+    evidence = db.get(EvidenceObject, row.evidence_object_id) if row.evidence_object_id is not None else None
+    result = _reference_values(row, evidence)
     if row.evidence_object_id is not None:
-        evidence = db.get(EvidenceObject, row.evidence_object_id)
         # Storage location is never a user/model-executable path.
         result["evidence"] = ({key: value for key, value in _values(evidence).items() if key != "storage_key"}
                               if evidence else None)

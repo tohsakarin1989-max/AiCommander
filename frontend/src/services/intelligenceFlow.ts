@@ -7,6 +7,16 @@ export type SemanticReference = {
 }
 export type CaseSemantics = {
   process?: CaseProcess
+  field_observations?: {
+    schema_version: string
+    items: Array<{
+      id: string; category: string; label: string; kind: string; reference: SemanticReference
+      measurements: Array<{ value: number; unit: string; oil_type: string; stage: string; kind: string; reference: SemanticReference; is_official_fact: false }>
+      is_official_fact: false
+    }>
+    coverage: { state: string; limit: number; omitted_items: number }
+    boundary: string
+  }
   rule_version: string
   method: string
   assertions: Array<{
