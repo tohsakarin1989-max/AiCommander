@@ -8,6 +8,9 @@ export interface ImportTemplate {
   settings: CaseImportOptions
 }
 export interface ImportHeaders {
+  import_preset?: 'security_ledger' | null
+  header_row?: number
+  warnings?: string[]
   headers: string[]
   worksheets: string[]
   worksheet: string | null
@@ -53,6 +56,7 @@ export const caseImportsApi = {
     data.append('file', file)
     return (await api.post('/case-imports/inspect', data, { headers: { 'Content-Type': 'multipart/form-data' }, params: {
       operational_area_id: areaId, worksheet: settings.worksheet || undefined, header_row: settings.header_row,
+      import_preset: settings.import_preset || undefined,
     } })).data
   },
   getRows: async (batchId: string, signal?: AbortSignal): Promise<ImportRowReceipt> =>

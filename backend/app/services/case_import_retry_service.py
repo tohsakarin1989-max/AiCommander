@@ -83,9 +83,10 @@ def _get_batch(db: Session, batch_id: str) -> CaseImportBatch:
 
 
 def _row_result(row: CaseImportRow) -> dict[str, Any]:
+    from app.services.case_security_ledger import source_row_preview
     return {"row": row.row_number, "revision": row.revision, "status": row.status,
             "case_id": row.case_id, "error": row.error, "values": row.current_values,
-            "time_zone": row.time_zone}
+            "time_zone": row.time_zone, **source_row_preview(row.source_values.get('_import_provenance'))}
 
 
 def get_batch_rows(db: Session, batch_id: str) -> dict[str, Any]:
@@ -207,6 +208,8 @@ def _retry_batch_rows(db: Session, batch_id: str, requests: list[dict[str, Any]]
         response = {"batch_id": batch.id, "created": len(created_cases), "batch_created_total": created_total,
                     "rows": [_row_result(records[item["row"]]) for item in requests],
                     "errors": batch.result["errors"]}
+        from app.services.case_import_original import attach_received_rows
+        attach_received_rows(db, batch)
         db.commit()
     except Exception:
         db.rollback()

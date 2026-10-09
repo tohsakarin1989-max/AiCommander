@@ -19,6 +19,8 @@ const dimensions: Record<string, string> = {
   action: '明确动作', time: '时间条件', facility: '设施', oil: '油品', place: '地点条件',
   upstream: '来源', downstream: '去向',
 }
+const quantityStages: Record<string, string> = { seized: '查获', recovered: '回收', transferred: '移交', unknown: '环节待核' }
+const quantityUnits: Record<string, string> = { tonne: '吨', liter: '升', kg: '千克', m3: '立方米', unknown: '单位未知' }
 const gaps: Record<string, string> = {
   lineage_not_established: '来源或去向尚未明确', invalid_time_interval: '起止时间需核对',
   relative_time_requires_anchor: '相对时间缺少日期依据', time_expression_requires_context: '时刻缺少日期或上下文',
@@ -49,6 +51,21 @@ export default function CaseSemanticProfile({ semantics, loading, error, updatin
       : <>
         <p className="case-semantics__note">本地规则整理的原文表述，不是核实结论。复杂语义仍需结合上下文判断。</p>
         {updating && <p role="status" className="case-semantics__warning">画像更新中，以下为上一次处理结果。</p>}
+        {semantics.field_observations && <details open={semantics.field_observations.items.length > 0}>
+          <summary>现场发现与处置记录 {semantics.field_observations.items.length} 项</summary>
+          <p>{semantics.field_observations.boundary}</p>
+          {semantics.field_observations.coverage.state === 'partial' && <p className="case-semantics__warning">仅整理了部分现场记录，请结合完整原文。</p>}
+          {!semantics.field_observations.items.length && <p>未识别到明确的现场处置片段，不表示未处置。</p>}
+          <ol>{semantics.field_observations.items.map(item => <li key={item.id}>
+            <p><strong>{item.label}</strong> · {kinds[item.kind] || '类型待核'}</p>
+            <Reference value={item.reference} />
+            {item.measurements.map((measurement, index) => <div key={index}>
+              <p>{quantityStages[measurement.stage] || '环节待核'}油量：{measurement.value} {quantityUnits[measurement.unit] || '单位待核'} · {kinds[measurement.kind] || '类型待核'}</p>
+              <Reference value={measurement.reference} />
+            </div>)}
+          </li>)}</ol>
+          <p>各环节数量分别保留，不相加、不折算净油量，也不作为损失量。移交不表示公安已办结。</p>
+        </details>}
         {semantics.process && <CaseProcessView process={semantics.process} />}
         {semantics.process && !semantics.model_extraction && <p>深层模型理解未启用，当前使用本地规则。</p>}
         {!semantics.process && semantics.event_fragments && <details>

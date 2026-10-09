@@ -174,3 +174,23 @@ def test_event_fragments_share_frozen_source_and_polarity_with_page():
         assert item["reference"]["quote"] in text
     assert "不作为新增必填要求" in text
     assert frozen == original
+
+
+def test_field_response_and_quantities_use_frozen_quotes_without_converting_to_loss():
+    from app.services.case_semantic_service import build_semantic_profile
+
+    profile, _, _ = inputs()
+    profile.payload["semantics"] = build_semantic_profile({
+        "description": "查获原油3吨。回收原油2吨。人员尚未移交。"
+    })
+    frozen = {"id": "synthetic-field-response", **assemble_case_result(profile, None, [])}
+    original = copy.deepcopy(frozen)
+    document = build_case_result_document(frozen)
+    text = "\n".join(block.text for block in document.blocks)
+    assert "现场发现与处置记录" in text
+    assert "查获油量：3 吨" in text and "回收油量：2 吨" in text
+    assert "移交情况（原文否定）" in text
+    assert "不作为损失量" in text and "移交不表示公安已办结" in text
+    for item in profile.payload["semantics"]["field_observations"]["items"]:
+        assert item["reference"]["quote"] in text
+    assert frozen == original

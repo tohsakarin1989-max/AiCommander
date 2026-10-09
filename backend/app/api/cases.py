@@ -1732,10 +1732,11 @@ def import_cases(
     source_key: Annotated[Optional[str], Query(min_length=1, max_length=80)] = None,
     source_revision: Annotated[Optional[str], Query(min_length=1, max_length=100)] = None,
     input_method: Literal['file', 'clipboard'] = 'file',
+    import_preset: Literal['security_ledger'] | None = None,
 ):
     """
     导入历史案件（CSV/Excel）：
-    - 只要求包含列：occurred_time, description
+    - 只要求包含案情描述；发生时间未知可留空
     - 可选：location, latitude, longitude
 
     occurred_time 建议为 ISO 时间或 "YYYY-MM-DD HH:MM" 格式。
@@ -1766,6 +1767,7 @@ def import_cases(
         table = parse_case_table(
             filename, content, worksheet=worksheet, header_row=header_row,
             field_mapping=json.loads(field_mapping) if field_mapping is not None else None,
+            import_preset=import_preset,
         )
     except (ValueError, TypeError, csv.Error, openpyxl.utils.exceptions.InvalidFileException) as e:
         raise HTTPException(status_code=400, detail=f"解析文件失败: {e}")
@@ -1798,7 +1800,8 @@ def import_cases(
         try:
             values = normalize_case_row(row, time_zone=time_zone)
             valid_count += 1
-            preview_rows.append(case_row_preview(idx, values))
+            from app.services.case_security_ledger import source_row_preview
+            preview_rows.append({**case_row_preview(idx, values), **source_row_preview(source_row.provenance)})
 
             if not dry_run:
                 imported_case = create_import_case(
@@ -1814,9 +1817,12 @@ def import_cases(
             errors.append({"row": idx, "error": error})
         if batch is not None:
             snapshot = {key: None if value is None else str(value) for key, value in row.items()}
+            current_values = dict(snapshot)
+            if source_row.provenance:
+                snapshot['_import_provenance'] = source_row.provenance
             db.add(CaseImportRow(
                 batch_id=batch.id, operational_area_id=target_area_id, row_number=idx,
-                source_values=snapshot, current_values=dict(snapshot), time_zone=time_zone,
+                source_values=snapshot, current_values=current_values, time_zone=time_zone,
                 status="created" if imported_case is not None else "failed",
                 case_id=imported_case.id if imported_case is not None else None,
                 error=error, revision=0, corrections=[],
@@ -1834,6 +1840,8 @@ def import_cases(
         "replayed": False,
         "parser_version": "case-table-4.0.0-1",
         "input_method": input_method,
+        "import_preset": table.import_preset,
+        "warnings": table.warnings,
         "table": {
             "worksheets": table.worksheets,
             "worksheet": table.worksheet,
@@ -1841,6 +1849,8 @@ def import_cases(
             "field_mapping": table.field_mapping,
             "ignored_headers": table.ignored_headers,
             "time_zone": time_zone,
+            "import_preset": table.import_preset,
+            "warnings": table.warnings,
         },
     }
     if batch is not None:

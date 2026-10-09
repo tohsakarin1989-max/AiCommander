@@ -9,13 +9,14 @@ from app.services.case_semantic_evidence import (
 from app.services.case_semantic_time import extract_time_intervals
 from app.services.case_semantic_structured import extract_structured_sources
 from app.services.case_event_fragments import build_event_fragments
+from app.services.case_semantic_field_observations import build_field_observations
 from app.services.case_process_service import build_process
 from app.services.case_semantic_mentions import (
     CLAUSE, NEGATED, UNCERTAIN, extract_term_assertions,
 )
 
 
-SEMANTIC_RULE_VERSION = "local-events-6.3-1"
+SEMANTIC_RULE_VERSION = "local-events-9.4-field-1"
 TEXT_FIELDS = (
     "description", "location", "modus_operandi", "facility_type", "oil_type",
     "upstream_source", "downstream_destination",
@@ -85,6 +86,7 @@ def build_semantic_profile(
         "structured_sources": structured_result,
         "potential_conflicts": conflicts, "information_gaps": gaps,
         "event_fragments": fragments, "process": process,
+        "field_observations": build_field_observations(sources),
         "boundary": [
             "词项及句内标记仅整理原文表述，不代表事实已核实。",
             "本地规则尚不能完整解析复杂否定、指代、时间区间及上下游关系。",

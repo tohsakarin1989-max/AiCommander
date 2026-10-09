@@ -113,6 +113,9 @@ def import_source_table(db, *, table, content, area_id, source_key, source_revis
                        'differences': [{'field': name, 'previous_source': record.source_values.get(name) if record else None,
                                         'current': json_value(getattr(case, name, None)) if case else None,
                                         'incoming': json_value(value)} for name, value in changes.items()]}
+            if item.provenance:
+                from app.services.case_security_ledger import source_row_preview
+                preview.update(source_row_preview(item.provenance))
             if action == 'conflict':
                 error = '；'.join(conflicts)
             if not dry_run and action in {'created', 'updated'}:
@@ -161,8 +164,11 @@ def import_source_table(db, *, table, content, area_id, source_key, source_revis
             errors.append({'row': item.number, 'error': error})
         if batch is not None:
             snapshot = json_value(item.values)
+            current_values = dict(snapshot)
+            if item.provenance:
+                snapshot['_import_provenance'] = item.provenance
             db.add(CaseImportRow(batch_id=batch.id, operational_area_id=area_id, row_number=item.number,
-                source_values=snapshot, current_values=snapshot, time_zone=time_zone, status=action,
+                source_values=snapshot, current_values=current_values, time_zone=time_zone, status=action,
                 case_id=case.id if case else None, error=error, revision=0, corrections=[]))
     previews.sort(key=lambda item: item['row'])
     errors.sort(key=lambda item: item['row'])
@@ -172,9 +178,11 @@ def import_source_table(db, *, table, content, area_id, source_key, source_revis
               'batch_id': batch.id if batch else None, 'replayed': False,
               'source_key': source_key, 'source_revision': source_revision,
               'input_method': input_method,
+              'import_preset': table.import_preset, 'warnings': table.warnings,
               'table': {'worksheet': table.worksheet, 'worksheets': table.worksheets,
                         'header_row': table.header_row, 'field_mapping': table.field_mapping,
-                        'ignored_headers': table.ignored_headers, 'time_zone': time_zone},
+                        'ignored_headers': table.ignored_headers, 'time_zone': time_zone,
+                        'import_preset': table.import_preset, 'warnings': table.warnings},
               'boundary': '来源记录身份不等于事件身份；缺席不删除，冲突不覆盖，请回原记录核对后重新预览'}
     if batch:
         from app.services.case_import_original import preserve_received_input

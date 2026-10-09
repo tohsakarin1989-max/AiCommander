@@ -85,11 +85,14 @@ export interface CaseImportResult {
     header_row: number
     field_mapping: Record<string, string>
     ignored_headers: string[]
+    import_preset?: 'security_ledger' | null
+    warnings?: string[]
     time_zone?: 'UTC' | 'Asia/Shanghai'
   }
 }
 
 export interface CaseImportOptions {
+  import_preset?: 'security_ledger' | null
   source_key?: string
   source_revision?: string
   time_zone?: 'UTC' | 'Asia/Shanghai'
@@ -655,6 +658,7 @@ export const caseApi = {
     const response = await api.post<CaseImportResult>('/cases/import', formData, {
       params: {
         dry_run: dryRun, operational_area_id: operationalAreaId,
+        import_preset: options.import_preset || undefined,
         worksheet: options.worksheet || undefined, header_row: options.header_row,
         time_zone: options.time_zone,
         source_key: options.source_key || undefined, source_revision: options.source_revision || undefined,
